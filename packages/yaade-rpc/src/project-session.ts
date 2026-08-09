@@ -21,13 +21,21 @@ export type ProjectSessionLeaf = WorkspaceSessionLeafType
 export const ProjectSessionEditorFile = WorkspaceSessionEditorFile
 export type ProjectSessionEditorFile = WorkspaceSessionEditorFileType
 
+/** Persisted agent-chat pane metadata. Conversation content remains runtime-owned. */
+export const ProjectSessionAgentChatPane = Schema.Struct({
+  agentThreadId: Schema.String,
+})
+export type ProjectSessionAgentChatPane = Schema.Schema.Type<
+  typeof ProjectSessionAgentChatPane
+>
+
 export const EMPTY_PROJECT_SESSION_LAYOUT: ProjectSessionLayout = {
   ...EMPTY_WORKSPACE_SESSION_LAYOUT,
 }
 
 /** Layout + pane state stored in `project_sessions.payload_json`. */
 export const ProjectSessionPayload = Schema.Struct({
-  version: Schema.Literal(1),
+  version: Schema.Literal(2),
   layout: ProjectSessionLayout,
   sessions: Schema.Array(ProjectSessionLeaf),
   gitRoots: Schema.optional(
@@ -38,6 +46,9 @@ export const ProjectSessionPayload = Schema.Struct({
   ),
   editorViewStates: Schema.optional(
     Schema.Record({ key: Schema.String, value: Schema.Unknown }),
+  ),
+  agentChatPanes: Schema.optional(
+    Schema.Record({ key: Schema.String, value: ProjectSessionAgentChatPane }),
   ),
 })
 export type ProjectSessionPayload = Schema.Schema.Type<typeof ProjectSessionPayload>
@@ -137,7 +148,7 @@ export function tryDecodeProjectSessionPayload(
 ): ProjectSessionPayload | null {
   if (!raw || typeof raw !== "object") return null
   const body = raw as Record<string, unknown>
-  if (body.version !== 1) return null
+  if (body.version !== 1 && body.version !== 2) return null
   const layout = parseLayout(body.layout)
   if (!layout) return null
   if (!Array.isArray(body.sessions)) return null
@@ -183,8 +194,17 @@ export function tryDecodeProjectSessionPayload(
       editorViewStates[key] = value
     }
   }
+  let agentChatPanes: Record<string, ProjectSessionAgentChatPane> | undefined
+  if (body.version === 2 && body.agentChatPanes && typeof body.agentChatPanes === "object") {
+    agentChatPanes = {}
+    for (const [key, value] of Object.entries(body.agentChatPanes as Record<string, unknown>)) {
+      if (!key || !value || typeof value !== "object") continue
+      const agentThreadId = asNonEmptyString((value as Record<string, unknown>).agentThreadId)
+      if (agentThreadId) agentChatPanes[key] = { agentThreadId }
+    }
+  }
   return {
-    version: 1,
+    version: 2,
     layout,
     sessions,
     ...(gitRoots && Object.keys(gitRoots).length > 0 ? { gitRoots } : {}),
@@ -194,12 +214,15 @@ export function tryDecodeProjectSessionPayload(
     ...(editorViewStates && Object.keys(editorViewStates).length > 0
       ? { editorViewStates }
       : {}),
+    ...(agentChatPanes && Object.keys(agentChatPanes).length > 0
+      ? { agentChatPanes }
+      : {}),
   }
 }
 
 export function emptyProjectSessionPayload(): ProjectSessionPayload {
   return {
-    version: 1,
+    version: 2,
     layout: { ...EMPTY_PROJECT_SESSION_LAYOUT },
     sessions: [],
   }

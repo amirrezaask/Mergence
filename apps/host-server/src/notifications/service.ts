@@ -429,7 +429,7 @@ export class NotificationService {
     if (raw.resolveOf) {
       const resolved = this.resolveActionable({
         sessionId,
-        type: raw.resolveOf.type ?? "permission-required",
+        type: raw.resolveOf.type,
         eventId: raw.resolveOf.eventId,
         providerTurnId: raw.resolveOf.providerTurnId,
         providerSessionId: raw.resolveOf.providerSessionId,
@@ -702,27 +702,27 @@ export class NotificationService {
 
   resolveActionable(input: {
     sessionId: string | null
-    type: NotificationType
+    type?: NotificationType
     eventId?: string | null
     providerTurnId?: string | null
     providerSessionId?: string | null
   }): AppNotification | null {
     if (!input.sessionId && !input.providerSessionId) return null
+    // Native provider identity is stable across the interactive runtime and
+    // hook/OSC telemetry, while their app session ids may legitimately differ.
     const scope =
-      input.sessionId != null
-        ? { sql: "session_id=?", value: input.sessionId }
-        : {
-            sql: "provider_session_id=?",
-            value: input.providerSessionId as string,
-          }
+      input.providerSessionId != null
+        ? { sql: "provider_session_id=?", value: input.providerSessionId }
+        : { sql: "session_id=?", value: input.sessionId as string }
     const candidates = this.db
       .prepare(
         `SELECT * FROM app_notifications
-         WHERE ${scope.sql} AND type=? AND requires_action=1 AND action_resolved_at IS NULL
+         WHERE ${scope.sql} ${input.type ? "AND type=?" : ""}
+           AND requires_action=1 AND action_resolved_at IS NULL
            AND status != 'dismissed'
          ORDER BY created_at DESC LIMIT 20`,
       )
-      .all(scope.value, input.type) as unknown as NotificationRow[]
+      .all(...(input.type ? [scope.value, input.type] : [scope.value])) as unknown as NotificationRow[]
 
     let match: NotificationRow | undefined
     for (const row of candidates) {
@@ -734,14 +734,6 @@ export class NotificationService {
         input.providerTurnId &&
         row.provider_turn_id &&
         row.provider_turn_id === input.providerTurnId
-      ) {
-        match = row
-        break
-      }
-      if (
-        input.providerSessionId &&
-        row.provider_session_id &&
-        row.provider_session_id === input.providerSessionId
       ) {
         match = row
         break
@@ -884,13 +876,13 @@ export class NotificationService {
   }): AppNotification | null {
     if (!input.sessionId && !input.providerSessionId) return null
     const since = new Date(Date.now() - DEDUPE_WINDOW_MS).toISOString()
+    // A provider session joins interactive events to telemetry even when the
+    // two producers use different YAADE session ids. Exact event/turn keys
+    // below still keep distinct native turns separate.
     const scope =
-      input.sessionId != null
-        ? { sql: "session_id=?", value: input.sessionId }
-        : {
-            sql: "provider_session_id=?",
-            value: input.providerSessionId as string,
-          }
+      input.providerSessionId != null
+        ? { sql: "provider_session_id=?", value: input.providerSessionId }
+        : { sql: "session_id=?", value: input.sessionId as string }
 
     if (input.eventId) {
       const row = this.db

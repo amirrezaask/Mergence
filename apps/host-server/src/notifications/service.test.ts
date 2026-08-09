@@ -119,6 +119,86 @@ describe("NotificationService", () => {
     assert.equal(service.list().items.length, 1)
   })
 
+  for (const order of ["interactive-first", "telemetry-first"] as const) {
+    it(`correlates interactive and telemetry notifications by native turn (${order})`, () => {
+      const interactive = {
+        source: "interactive-runtime" as const,
+        type: "turn-completed" as const,
+        title: "Agent finished",
+        sessionId: "project-session",
+        provider: "codex" as const,
+        providerSessionId: "native-session-1",
+        providerTurnId: "native-turn-1",
+        eventId: "runtime-event-1",
+      }
+      const telemetry = {
+        source: "provider-hook" as const,
+        type: "turn-completed" as const,
+        title: "Codex completed the turn",
+        sessionId: "telemetry-session",
+        provider: "codex" as const,
+        providerSessionId: "native-session-1",
+        providerTurnId: "native-turn-1",
+        eventId: "hook-event-1",
+      }
+      const [first, second] = order === "interactive-first"
+        ? [service.ingest(interactive), service.ingest(telemetry)]
+        : [service.ingest(telemetry), service.ingest(interactive)]
+      assert.equal(first.created, true)
+      assert.equal(second.deduped, true)
+      assert.equal(service.list().items.length, 1)
+      assert.equal(service.list().items[0]?.providerSessionId, "native-session-1")
+      assert.equal(service.list().items[0]?.providerTurnId, "native-turn-1")
+    })
+  }
+
+  it("keeps separate native turns and resolves only the matching interactive permission", () => {
+    const permission = service.ingest({
+      source: "interactive-runtime",
+      type: "permission-required",
+      title: "Approve command",
+      sessionId: "project-session",
+      provider: "codex",
+      providerSessionId: "native-session-2",
+      providerTurnId: "permission-1",
+      eventId: "runtime-permission-1",
+      requiresAction: true,
+    })
+    const unrelated = service.ingest({
+      source: "provider-hook",
+      type: "permission-required",
+      title: "Approve another command",
+      sessionId: "telemetry-session",
+      provider: "codex",
+      providerSessionId: "native-session-2",
+      providerTurnId: "permission-2",
+      eventId: "hook-permission-2",
+      requiresAction: true,
+    })
+    assert.equal(permission.created, true)
+    assert.equal(unrelated.created, true)
+    const resolved = service.ingest({
+      source: "provider-hook",
+      type: "permission-required",
+      title: "Permission answered",
+      sessionId: "telemetry-session",
+      provider: "codex",
+      providerSessionId: "native-session-2",
+      providerTurnId: "permission-1",
+      eventId: "hook-permission-resolved-1",
+      requiresAction: false,
+      resolveOf: {
+        type: "permission-required",
+        providerSessionId: "native-session-2",
+        providerTurnId: "permission-1",
+      },
+    })
+    assert.equal(resolved.updated, true)
+    assert.equal(service.get(permission.notification!.id)?.actionResolvedAt == null, false)
+    assert.equal(service.get(unrelated.notification!.id)?.actionResolvedAt, null)
+    assert.equal(service.list().items.length, 2)
+  })
+
   it("dedupes immediate Claude Stop repeats without collapsing later turns", () => {
     const firstRequest = normalizeProviderHookRequest(
       {

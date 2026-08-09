@@ -94,6 +94,23 @@ export class EventHub {
     return replay
   }
 
+  replayWindow(since: number): {
+    readonly events: HostEvent[]
+    readonly replayFloor: number
+    readonly lastSequence: number
+    readonly historyEvicted: boolean
+  } {
+    const events = this.replayAfter(since)
+    const oldest = this.history[this.historyHead]?.event.sequence
+    const replayFloor = oldest ?? this.sequence + 1
+    return {
+      events,
+      replayFloor,
+      lastSequence: this.sequence,
+      historyEvicted: since > 0 && oldest !== undefined && since < oldest - 1,
+    }
+  }
+
   subscribe(listener: Listener): () => void {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)

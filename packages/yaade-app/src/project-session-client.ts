@@ -30,7 +30,7 @@ function normalizeSession(raw: ProjectSession): ProjectSession {
   return {
     ...raw,
     payload: payload ?? {
-      version: 1,
+      version: 2,
       layout: { tree: { root: null }, focusedPaneId: null, zoomedPaneId: null },
       sessions: [],
     },

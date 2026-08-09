@@ -180,6 +180,7 @@ const TerminalPanel = lazy(async () => {
 })
 
 const MuxEditorPane = lazy(() => import("./MuxEditorPane.js"))
+const MuxAgentChatPane = lazy(() => import("../agent/MuxAgentChatPane.js"))
 
 const MuxExplorerPane = lazy(() =>
   import("./MuxExplorerPane.js").then(module => ({
@@ -495,10 +496,10 @@ function hydratePersistedSessions(
           })
         } else if (leaf.kind === "tool") {
           const tool = muxToolPaneForTab(leaf.ptyTabId)
-          if (tool?.kind === "explorer") {
+          if (tool?.kind === "explorer" || tool?.kind === "agentChat") {
             workspace.registerTab({
               id: tool.tabId,
-              kind: "explorer",
+              kind: tool.kind === "agentChat" ? "agent-chat" : "explorer",
               label: tool.label,
             })
           }
@@ -693,6 +694,7 @@ export function MuxApp({
       callHierarchy: 0,
       typeHierarchy: 0,
       lspOutput: 0,
+      agentChat: 0,
     },
   )
   const sessionRootPathRef = useRef<string>(sessionCwdPath)
@@ -740,6 +742,7 @@ export function MuxApp({
   gitRootsRef.current = gitRoots
   const editorFilesRef = useRef(editorFiles)
   editorFilesRef.current = editorFiles
+  const agentChatPanesRef = useRef({ ...(initialPayload.agentChatPanes ?? {}) })
   const homeDirRef = useRef(homeDir)
   const bootstrappedRef = useRef(false)
   sessionRootPathRef.current = sessionCwdPath
@@ -920,7 +923,7 @@ export function MuxApp({
     const live = persisted[0]
     if (!live) {
       return {
-        version: 1,
+        version: 2,
         layout: {
           tree: emptyMuxTree().toJSON(),
           focusedPaneId: null,
@@ -936,10 +939,13 @@ export function MuxApp({
         ...(Object.keys(editorViewStates).length > 0
           ? { editorViewStates }
           : {}),
+        ...(Object.keys(agentChatPanesRef.current).length > 0
+          ? { agentChatPanes: { ...agentChatPanesRef.current } }
+          : {}),
       }
     }
     return {
-      version: 1,
+      version: 2,
       layout: {
         tree: live.tree,
         focusedPaneId: live.focusedPaneId,
@@ -954,6 +960,9 @@ export function MuxApp({
         : {}),
       ...(Object.keys(editorViewStates).length > 0
         ? { editorViewStates }
+        : {}),
+      ...(Object.keys(agentChatPanesRef.current).length > 0
+        ? { agentChatPanes: { ...agentChatPanesRef.current } }
         : {}),
     }
   }, [])
@@ -971,6 +980,7 @@ export function MuxApp({
       gitRoots: snapshot.gitRoots ?? null,
       editorFiles: snapshot.editorFiles ?? null,
       editorViewStates: snapshot.editorViewStates ?? null,
+      agentChatPanes: snapshot.agentChatPanes ?? null,
     })
     if (structureKey === lastPersistStructureRef.current) return
     lastPersistStructureRef.current = structureKey
@@ -1190,10 +1200,13 @@ export function MuxApp({
   const allocToolPane = useCallback(
     (kind: MuxToolKind): AllocatedToolPane => {
       const tool = muxToolPane(kind)
-      if (!workspace.tabRegistry.get(tool.tabId) && kind === "explorer") {
+      if (
+        !workspace.tabRegistry.get(tool.tabId) &&
+        (kind === "explorer" || kind === "agentChat")
+      ) {
         workspace.registerTab({
           id: tool.tabId,
-          kind: "explorer",
+          kind: kind === "agentChat" ? "agent-chat" : "explorer",
           label: tool.label,
         })
       }
@@ -1952,6 +1965,7 @@ export function MuxApp({
   const applyServerPayload = useCallback(
     (payload: ProjectSessionPayload) => {
       replaceEditorViewStates(sessionIdRef.current, payload.editorViewStates)
+      agentChatPanesRef.current = { ...(payload.agentChatPanes ?? {}) }
       if (payload.gitRoots) {
         setGitRoots(payload.gitRoots)
         gitRootsRef.current = payload.gitRoots
@@ -2960,6 +2974,17 @@ export function MuxApp({
         },
       ),
       commands.register(
+        "agentChat.focus",
+        run(() => runToolPaneRef.current("agentChat")),
+        {
+          id: "agentChat.focus",
+          title: "Open Agent Chat",
+          category: "View",
+          aliases: ["agent", "assistant", "chat"],
+          when: () => window.yaade?.agentRuntime != null,
+        },
+      ),
+      commands.register(
         "editor.action.goToReferences",
         run(() => runToolPaneRef.current("references")),
         {
@@ -3387,13 +3412,13 @@ export function MuxApp({
   )
 
   const keymapContext: KeymapContext = useMemo(() => {
-    const focusedKind: MuxLeafKind | null = (() => {
+    const focusedLeaf = (() => {
       if (!activeWindow?.focusedPaneId) return null
-      const leaf = listPaneLeaves(activeWindow.tree).find(
+      return listPaneLeaves(activeWindow.tree).find(
         l => l.panelId.id === activeWindow.focusedPaneId!.id,
-      )
-      return leaf?.kind ?? null
+      ) ?? null
     })()
+    const focusedKind: MuxLeafKind | null = focusedLeaf?.kind ?? null
     return {
       ...EMPTY_KEYMAP_OVERLAYS,
       // Editor overlays share the quick-open gate so the global listener bails.
@@ -3405,6 +3430,8 @@ export function MuxApp({
       settingsOpen,
       workspaceOpen: workspace.manager.hasFolders(),
       terminalFocus: focusedKind === "terminal",
+      agentChatFocus:
+        focusedLeaf?.kind === "tool" && focusedLeaf.toolKind === "agentChat",
     }
   }, [
     activeWindow,
@@ -3459,7 +3486,7 @@ export function MuxApp({
       },
       sessionMode: "terminal",
       sessionLayout: "sidebar",
-      agentChatEnabled: false,
+      agentChatEnabled: window.yaade?.agentRuntime != null,
       route: "session",
       sessionId,
       sessionCwd: sessionCwdPath,
@@ -3974,6 +4001,32 @@ export function MuxApp({
     (tabId: string): ReactNode => {
       const tool = muxToolPaneForTab(tabId)
       if (!tool) return null
+      if (tool.kind === "agentChat") {
+        return (
+          <Suspense
+            fallback={
+              <div className="flex min-h-0 flex-1 items-center justify-center text-xs text-muted-foreground">
+                Loading Agent Chat…
+              </div>
+            }
+          >
+            <MuxAgentChatPane
+              projectSessionId={sessionId}
+              cwdPath={sessionCwdPath}
+              initialThreadId={
+                agentChatPanesRef.current[tool.tabId]?.agentThreadId
+              }
+              onThreadSelected={agentThreadId => {
+                agentChatPanesRef.current = {
+                  ...agentChatPanesRef.current,
+                  [tool.tabId]: { agentThreadId },
+                }
+                persistRef.current()
+              }}
+            />
+          </Suspense>
+        )
+      }
       if (tool.kind !== "explorer") {
         return (
           <Suspense
@@ -4021,6 +4074,8 @@ export function MuxApp({
       handleExplorerControllerReady,
       openEditorInFocused,
       openToolLocation,
+      sessionCwdPath,
+      sessionId,
       toolRevisions,
       workspace,
     ],

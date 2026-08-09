@@ -365,7 +365,7 @@ describe("ProjectDatabase session roster", () => {
     assert.ok(listed.some(s => s.id === created.id))
 
     const updated = db.updateProjectSessionPayload(created.id, {
-      version: 1,
+      version: 2,
       layout: {
         tree: { kind: "leaf", id: 2 },
         focusedPaneId: 2,

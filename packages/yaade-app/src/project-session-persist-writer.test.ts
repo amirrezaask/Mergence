@@ -5,7 +5,7 @@ import { ProjectSessionPersistWriter } from "./project-session-client.js"
 
 function payload(label: string): ProjectSessionPayload {
   return {
-    version: 1,
+    version: 2,
     layout: {
       tree: { root: null },
       focusedPaneId: null,

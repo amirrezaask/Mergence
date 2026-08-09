@@ -4,8 +4,18 @@ import {
   PerfHost,
   type TerminalHost,
 } from "@yaade/node-host"
-import type { NotificationStreamEvent } from "@yaade/shared"
+import { pathToFileUri, type NotificationStreamEvent } from "@yaade/shared"
 import type { AgentProvider } from "@yaade/agents"
+import type { AgentDriver } from "@yaade/agent-driver"
+import {
+  AcpAgentDriver,
+  cursorAcpProfile,
+  grokAcpProfile,
+  opencodeAcpProfile,
+} from "@yaade/agent-driver-acp"
+import { ClaudeAgentSdkDriver } from "@yaade/agent-driver-claude"
+import { CodexAppServerDriver } from "@yaade/agent-driver-codex"
+import { MockAgentDriver, mockScenarios } from "@yaade/agent-driver-mock"
 import type { HostConfig } from "./config.js"
 import type { EventHub } from "./events.js"
 import {
@@ -19,6 +29,10 @@ import {
   type AgentSnapshotStreamEvent,
 } from "./agents/index.js"
 import type { ProjectDatabase } from "./persistence.js"
+import { createAgentDriverContext, createAgentDriverDetectionContext } from "./agent-runtime/context.js"
+import { AgentThreadRuntime } from "./agent-runtime/index.js"
+import { pruneAgentAttachments } from "./agent-runtime/attachments.js"
+import { projectAgentNotification } from "./agent-runtime/projections.js"
 import { WorkspaceHost } from "./workspace.js"
 
 export type HostRuntime = {
@@ -34,7 +48,12 @@ export type HostRuntime = {
   machineHostname: string
   notifications: NotificationService
   agents: AgentTelemetryService
+  /** Durable interactive control plane; separate from CLI telemetry above. */
+  agentRuntime: AgentThreadRuntime
 }
+
+const ATTACHMENT_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000
+const attachmentRetentionTimers = new WeakMap<HostRuntime, ReturnType<typeof setInterval>>()
 
 function asAgentProvider(value: string | null | undefined): AgentProvider | null {
   if (
@@ -58,6 +77,7 @@ export function createRuntime(
   options?: {
     /** When set, notification stream events go here (e.g. PubSub → EventHub bridge). */
     emitNotification?: (event: NotificationStreamEvent) => void
+    agentDrivers?: ReadonlyArray<AgentDriver>
   },
 ): HostRuntime {
   const terminalOscBuffers = new Map<string, string>()
@@ -72,6 +92,43 @@ export function createRuntime(
     events.emit("agents:event", [streamEvent])
   }
   const agents = new AgentTelemetryService(db.raw(), notifications, emitAgent)
+
+  let runtimeRef: HostRuntime | undefined
+  const agentRuntime = new AgentThreadRuntime({
+    db: db.raw(),
+    drivers: options?.agentDrivers ?? defaultAgentDrivers(),
+    contextFor: input => {
+      if (!runtimeRef) throw new Error("host runtime is not initialized")
+      const projectSession = db.getProjectSession(input.projectSessionId)
+      return createAgentDriverContext(runtimeRef, {
+        ...input,
+        ...(projectSession
+          ? { projectRootUri: pathToFileUri(projectSession.projectPath) }
+          : {}),
+        getEditorBuffer: async uri => {
+          const buffer = projectSession
+            ? db.getEditorRecoveryBuffer(projectSession.id, uri)
+            : null
+          return buffer ? new TextEncoder().encode(buffer.content) : null
+        },
+      })
+    },
+    detectionContextFor: input => {
+      if (!runtimeRef) throw new Error("host runtime is not initialized")
+      return createAgentDriverDetectionContext(runtimeRef, input)
+    },
+    publish: (event, snapshot) => {
+      events.emit("agentRuntime:event", [event])
+      projectAgentNotification(notifications, db, event, snapshot)
+    },
+    publishSnapshot: snapshot => {
+      events.emit("agentRuntime:snapshot", [snapshot])
+    },
+    publishConnection: (threadId, state) => {
+      events.emit("agentRuntime:connection", [{ threadId, state }])
+    },
+  })
+  events.emit("agentRuntime:registryChanged", [agentRuntime.listProviders()])
 
   terminal.setEmit((channel, args) => {
     events.emit(channel, args)
@@ -101,7 +158,21 @@ export function createRuntime(
     machineHostname: os.hostname(),
     notifications,
     agents,
+    agentRuntime,
   }
+  runtimeRef = runtime
+  const pruneAttachments = (): void => {
+    void pruneAgentAttachments(db.raw(), config.dataDir).catch(() => {
+      // Retention must never make the host unavailable; the next bounded pass retries.
+    })
+  }
+  pruneAttachments()
+  const attachmentRetentionTimer = setInterval(
+    pruneAttachments,
+    ATTACHMENT_RETENTION_INTERVAL_MS,
+  )
+  attachmentRetentionTimer.unref?.()
+  attachmentRetentionTimers.set(runtime, attachmentRetentionTimer)
   try {
     db.addProject(config.launchConfig.workspacePath)
   } catch {
@@ -223,8 +294,26 @@ function handleTerminalExit(
   })
 }
 
-export function shutdownRuntime(runtime: HostRuntime): void {
+function defaultAgentDrivers(): AgentDriver[] {
+  const drivers: AgentDriver[] = [
+    new CodexAppServerDriver(),
+    new ClaudeAgentSdkDriver(),
+    new AcpAgentDriver(cursorAcpProfile()),
+    new AcpAgentDriver(grokAcpProfile()),
+    new AcpAgentDriver(opencodeAcpProfile()),
+  ]
+  const scenarioId = process.env.YAADE_AGENT_MOCK_SCENARIO
+  const scenario = scenarioId ? mockScenarios[scenarioId] : undefined
+  if (scenario) drivers.unshift(new MockAgentDriver(scenario))
+  return drivers
+}
+
+export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
   runtime.events.emit("server:shuttingDown", [])
+  const attachmentRetentionTimer = attachmentRetentionTimers.get(runtime)
+  if (attachmentRetentionTimer) clearInterval(attachmentRetentionTimer)
+  attachmentRetentionTimers.delete(runtime)
+  await runtime.agentRuntime.shutdown()
   runtime.workspace.stopAll()
   runtime.terminal.stopAll()
 }

@@ -1,5 +1,15 @@
 import type { WorkspaceFileChangeKind, YaadeHostAPI } from "@yaade/workspace"
-import type { LspLifecycleEvent } from "@yaade/rpc"
+import {
+  tryDecodeAgentRuntimeEvent,
+  tryDecodeAgentRuntimeSnapshot,
+  tryDecodeAgentRuntimeConnectionUpdate,
+  tryDecodeAgentRuntimeRegistrySnapshot,
+  type AgentRuntimeEvent,
+  type AgentRuntimeThreadSnapshot,
+  type AgentRuntimeConnectionUpdate,
+  type AgentRuntimeRegistrySnapshot,
+  type LspLifecycleEvent,
+} from "@yaade/rpc"
 import type { YaadeHostTransport } from "./transport.js"
 import {
   readFileWithDiagnostics,
@@ -125,6 +135,32 @@ export function createYaadeApi(
     }
     for (const cb of agentEventListeners) cb(event)
   })
+  transport.on("agentRuntime:event", (...args: unknown[]) => {
+    const event = tryDecodeAgentRuntimeEvent(args[0])
+    if (!event) return
+    for (const cb of agentRuntimeEventListeners) cb(event)
+  })
+  transport.on("agentRuntime:snapshot", (...args: unknown[]) => {
+    const snapshot = tryDecodeAgentRuntimeSnapshot(args[0])
+    if (!snapshot) return
+    for (const cb of agentRuntimeSnapshotListeners) cb(snapshot)
+  })
+  transport.on("agentRuntime:connection", (...args: unknown[]) => {
+    const update = tryDecodeAgentRuntimeConnectionUpdate(args[0])
+    if (!update) return
+    for (const cb of agentRuntimeConnectionListeners) cb(update)
+  })
+  transport.on("agentRuntime:registryChanged", (...args: unknown[]) => {
+    const providers = tryDecodeAgentRuntimeRegistrySnapshot(args[0])
+    if (!providers) return
+    for (const cb of agentRuntimeRegistryListeners) cb(providers)
+  })
+  transport.on("protocol:replay-gap", (...args: unknown[]) => {
+    const floor = args[0]
+    const lastSequence = args[1]
+    if (typeof floor !== "number" || typeof lastSequence !== "number") return
+    for (const cb of agentRuntimeReplayGapListeners) cb(floor, lastSequence)
+  })
 
   const lspCrashListeners = new Set<(id: string) => void>()
   const lspLifecycleListeners = new Set<(event: LspLifecycleEvent) => void>()
@@ -146,6 +182,11 @@ export function createYaadeApi(
       event?: import("@yaade/agents").AgentEvent
     }) => void
   >()
+  const agentRuntimeEventListeners = new Set<(event: AgentRuntimeEvent) => void>()
+  const agentRuntimeSnapshotListeners = new Set<(snapshot: AgentRuntimeThreadSnapshot) => void>()
+  const agentRuntimeConnectionListeners = new Set<(update: AgentRuntimeConnectionUpdate) => void>()
+  const agentRuntimeRegistryListeners = new Set<(providers: AgentRuntimeRegistrySnapshot) => void>()
+  const agentRuntimeReplayGapListeners = new Set<(floor: number, lastSequence: number) => void>()
 
   return {
     fs: {
@@ -297,6 +338,43 @@ export function createYaadeApi(
       onEvent: callback => {
         agentEventListeners.add(callback)
         return () => agentEventListeners.delete(callback)
+      },
+    },
+    agentRuntime: {
+      createThread: input => transport.invoke("agentRuntime:createThread", input),
+      listThreads: projectSessionId =>
+        projectSessionId
+          ? transport.invoke("agentRuntime:listThreads", projectSessionId)
+          : transport.invoke("agentRuntime:listThreads"),
+      listProviders: () => transport.invoke("agentRuntime:listProviders"),
+      listDrivers: cwdUri => transport.invoke("agentRuntime:listDrivers", cwdUri),
+      uploadAttachment: input => transport.invoke("agentRuntime:uploadAttachment", input),
+      getConnectionState: threadId => transport.invoke("agentRuntime:getConnectionState", threadId),
+      getSnapshot: threadId => transport.invoke("agentRuntime:getSnapshot", threadId),
+      recoverThread: (threadId, afterSequence) =>
+        transport.invoke("agentRuntime:recoverThread", threadId, afterSequence),
+      sendCommand: command => transport.invoke("agentRuntime:sendCommand", command),
+      closeThread: threadId => transport.invoke("agentRuntime:closeThread", threadId),
+      deleteThread: threadId => transport.invoke("agentRuntime:deleteThread", threadId),
+      onEvent: callback => {
+        agentRuntimeEventListeners.add(callback)
+        return () => agentRuntimeEventListeners.delete(callback)
+      },
+      onSnapshot: callback => {
+        agentRuntimeSnapshotListeners.add(callback)
+        return () => agentRuntimeSnapshotListeners.delete(callback)
+      },
+      onConnection: callback => {
+        agentRuntimeConnectionListeners.add(callback)
+        return () => agentRuntimeConnectionListeners.delete(callback)
+      },
+      onRegistryChanged: callback => {
+        agentRuntimeRegistryListeners.add(callback)
+        return () => agentRuntimeRegistryListeners.delete(callback)
+      },
+      onReplayGap: callback => {
+        agentRuntimeReplayGapListeners.add(callback)
+        return () => agentRuntimeReplayGapListeners.delete(callback)
       },
     },
     terminal: {

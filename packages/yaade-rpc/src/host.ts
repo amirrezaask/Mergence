@@ -41,6 +41,10 @@ export const HostEventChannels = [
   "terminal:exit",
   "notifications:event",
   "agents:event",
+  "agentRuntime:event",
+  "agentRuntime:snapshot",
+  "agentRuntime:connection",
+  "agentRuntime:registryChanged",
   "workspace:gitBranch",
   "workspace:searchReady",
   "workspace:fileIndex",
@@ -50,6 +54,7 @@ export const HostEventChannels = [
   "server:shuttingDown",
   "connection:status",
   "protocol:error",
+  "protocol:replay-gap",
 ] as const
 export type HostEventChannel = (typeof HostEventChannels)[number]
 

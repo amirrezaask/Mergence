@@ -11,15 +11,12 @@
     }
   },
   "scripts": {
-    "typecheck": "tsc --noEmit",
-    "build": "tsc -p tsconfig.json --noEmit false",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@yaade/shared": "workspace:*"
+    "@yaade/agent-telemetry": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }
 }

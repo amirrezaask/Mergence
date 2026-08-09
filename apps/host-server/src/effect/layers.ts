@@ -44,11 +44,14 @@ export function makeProjectDatabaseScoped(
  * - Notification events via PubSub → Stream bridge → EventHub
  * - GitService thin Effect facade over node-host git helpers
  */
-export function makeHostLayers(config: HostConfig): Layer.Layer<HostLayerServices> {
+export function makeHostLayers(
+  config: HostConfig,
+  options?: { eventHubCapacity?: number },
+): Layer.Layer<HostLayerServices> {
   const runtimeLayer = Layer.scoped(
     HostRuntimeTag,
     Effect.gen(function* () {
-      const events = new EventHub(EVENT_HUB_CAPACITY)
+      const events = new EventHub(options?.eventHubCapacity ?? EVENT_HUB_CAPACITY)
       const db = yield* makeProjectDatabaseScoped(path.join(config.dataDir, "jet.sqlite3"))
       const terminal = yield* makeTerminalHostScoped
       const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? ""
@@ -84,11 +87,16 @@ export function makeHostLayers(config: HostConfig): Layer.Layer<HostLayerService
         Effect.forkScoped,
       )
 
-      return createRuntime(config, events, db, terminal, lsp, {
+      const runtime = createRuntime(config, events, db, terminal, lsp, {
         emitNotification: event => {
           Effect.runSync(PubSub.publish(pubsub, event))
         },
       })
+      yield* Effect.promise(() => runtime.agentRuntime.restore())
+      yield* Effect.addFinalizer(() =>
+        Effect.promise(() => runtime.agentRuntime.shutdown()),
+      )
+      return runtime
     }),
   )
 

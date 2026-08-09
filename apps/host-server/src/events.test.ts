@@ -13,6 +13,23 @@ test("event replay is bounded by both count and serialized bytes", () => {
   assert.equal(replay.at(-1)?.sequence, 6)
 })
 
+test("replay window explicitly reports when retained history was evicted", () => {
+  const events = new EventHub(2, 1024 * 1024)
+  events.emit("one", [])
+  events.emit("two", [])
+  events.emit("three", [])
+  const replay = events.replayWindow(0)
+  assert.equal(replay.historyEvicted, false)
+  const stale = events.replayWindow(1)
+  assert.equal(stale.historyEvicted, false)
+  events.emit("four", [])
+  const evicted = events.replayWindow(1)
+  assert.equal(evicted.historyEvicted, true)
+  assert.equal(evicted.replayFloor, 3)
+  assert.equal(evicted.lastSequence, 4)
+  assert.deepEqual(evicted.events.map(event => event.sequence), [3, 4])
+})
+
 test("event replay preserves sequence order after repeated queue compaction", () => {
   const events = new EventHub(128, 1024 * 1024)
   for (let index = 0; index < 10_000; index += 1) {

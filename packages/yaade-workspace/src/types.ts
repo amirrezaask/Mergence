@@ -26,6 +26,19 @@ import type {
   TextFileWriteOptions,
   TextFileWriteResult,
   TrashEntry,
+  AgentRuntimeEvent,
+  AgentRuntimeThreadRecovery,
+  AgentRuntimeThreadSnapshot,
+  AgentRuntimeCreateRequest,
+  AgentRuntimeCommandEnvelope,
+  AgentRuntimeCommandResult,
+  AgentRuntimeDriverDiscovery,
+  AgentRuntimeAttachmentUpload,
+  AgentRuntimeAttachmentDescriptor,
+  AgentRuntimeConnectionState,
+  AgentRuntimeConnectionUpdate,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeRegistrySnapshot,
 } from "@yaade/rpc"
 
 export type {
@@ -42,6 +55,19 @@ export type {
   TextFileWriteOptions,
   TextFileWriteResult,
   TrashEntry,
+  AgentRuntimeEvent,
+  AgentRuntimeThreadRecovery,
+  AgentRuntimeThreadSnapshot,
+  AgentRuntimeCreateRequest,
+  AgentRuntimeCommandEnvelope,
+  AgentRuntimeCommandResult,
+  AgentRuntimeDriverDiscovery,
+  AgentRuntimeAttachmentUpload,
+  AgentRuntimeAttachmentDescriptor,
+  AgentRuntimeConnectionState,
+  AgentRuntimeConnectionUpdate,
+  AgentRuntimeProviderDescriptor,
+  AgentRuntimeRegistrySnapshot,
 } from "@yaade/rpc"
 
 export type WorkspaceFile = {
@@ -353,6 +379,32 @@ export type JetElectronAgents = {
   ): () => void
 }
 
+export type JetElectronAgentRuntime = {
+  createThread(input: AgentRuntimeCreateRequest): Promise<AgentRuntimeThreadSnapshot>
+  listThreads(projectSessionId?: string): Promise<AgentRuntimeThreadSnapshot[]>
+  listProviders(): Promise<AgentRuntimeProviderDescriptor[]>
+  listDrivers(cwdUri: string): Promise<AgentRuntimeDriverDiscovery[]>
+  uploadAttachment(
+    input: AgentRuntimeAttachmentUpload,
+  ): Promise<AgentRuntimeAttachmentDescriptor>
+  getSnapshot(threadId: string): Promise<AgentRuntimeThreadSnapshot | null>
+  getConnectionState(threadId: string): Promise<AgentRuntimeConnectionState>
+  recoverThread(
+    threadId: string,
+    afterSequence: number,
+  ): Promise<AgentRuntimeThreadRecovery>
+  sendCommand(
+    command: AgentRuntimeCommandEnvelope,
+  ): Promise<AgentRuntimeCommandResult>
+  closeThread(threadId: string): Promise<AgentRuntimeThreadSnapshot>
+  deleteThread(threadId: string): Promise<boolean>
+  onEvent(callback: (event: AgentRuntimeEvent) => void): () => void
+  onSnapshot(callback: (snapshot: AgentRuntimeThreadSnapshot) => void): () => void
+  onConnection(callback: (update: AgentRuntimeConnectionUpdate) => void): () => void
+  onRegistryChanged(callback: (providers: AgentRuntimeRegistrySnapshot) => void): () => void
+  onReplayGap(callback: (floor: number, lastSequence: number) => void): () => void
+}
+
 export type YaadeHostAPI = {
   fs: JetElectronFS
   search: JetElectronSearch
@@ -364,6 +416,7 @@ export type YaadeHostAPI = {
   shell?: JetElectronShell
   notifications?: JetElectronNotifications
   agents?: JetElectronAgents
+  agentRuntime?: JetElectronAgentRuntime
   getLaunchConfig?(): Promise<LaunchConfig | null>
   getHomeDir?(): Promise<string>
   loadGlobalYaadercScanRoots?(): Promise<string[]>

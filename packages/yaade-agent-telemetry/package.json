@@ -1,0 +1,25 @@
+{
+  "name": "@yaade/agent-telemetry",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "import": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.json --noEmit false",
+    "test": "tsx --test \"src/**/*.test.ts\""
+  },
+  "dependencies": {
+    "@yaade/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
+  }
+}
