@@ -116,6 +116,7 @@ import { applySessionPaneDrop } from "../session-layout.js"
 import { getAllLeafPanels } from "../panel-routing.js"
 import {
   activeMuxTabInPanel,
+  buildTerminalOnlyDisplayTree,
   clearEditorTabsFromPanel,
   dockSourceLeavesIntoTree,
   emptyMuxTree,
@@ -622,7 +623,10 @@ export function MuxApp({
   const [pendingChordPrefix, setPendingChordPrefix] = useState<string | null>(
     null,
   )
-  const [, bumpSessions] = useReducer((n: number) => n + 1, 0)
+  const [terminalSessionsRevision, bumpSessions] = useReducer(
+    (n: number) => n + 1,
+    0,
+  )
 
   // One browser tab = one project window (no in-app tab strip).
   const [windows, setWindows] = useState<LiveWindow[]>([])
@@ -3498,6 +3502,21 @@ export function MuxApp({
     () => (activeWindow ? listPaneLeaves(activeWindow.tree) : []),
     [activeWindow],
   )
+  const terminalSurfaceTree = useMemo(() => {
+    if (surface !== "terminals" || !activeWindow) return null
+    return buildTerminalOnlyDisplayTree(
+      activeWindow.tree,
+      tabId => !terminalSessionForTab(tabId)?.agentId,
+    )
+  }, [activeWindow, surface, terminalSessionsRevision])
+  const terminalSurfaceLeaves = useMemo(
+    () => (terminalSurfaceTree ? listTerminalLeaves(terminalSurfaceTree) : []),
+    [terminalSurfaceTree],
+  )
+  const terminalSurfacePtyIds = useMemo(
+    () => terminalSurfaceLeaves.map(leaf => leaf.ptyTabId),
+    [terminalSurfaceLeaves],
+  )
   const activePtyIds = useMemo(
     () =>
       activeLeaves
@@ -3534,8 +3553,17 @@ export function MuxApp({
   }, [activeWindow, activeLeaves])
   const focusedPtyTabId = useMemo(() => {
     if (surface === "agents" && focusAgentTabId) return focusAgentTabId
+    if (surface === "terminals") {
+      return (
+        terminalSurfaceLeaves.find(
+          leaf => leaf.panelId.id === activeWindow?.focusedPaneId?.id,
+        )?.ptyTabId ??
+        terminalSurfaceLeaves[0]?.ptyTabId ??
+        null
+      )
+    }
     return focusedLeaf?.kind === "terminal" ? focusedLeaf.ptyTabId : null
-  }, [focusAgentTabId, focusedLeaf, surface])
+  }, [activeWindow?.focusedPaneId, focusAgentTabId, focusedLeaf, surface, terminalSurfaceLeaves])
   focusedPtyTabIdRef.current = focusedPtyTabId
 
   // Terminals surface with an empty layout → spawn one shell immediately.
@@ -3544,9 +3572,13 @@ export function MuxApp({
     if (!layoutReady || !serverHydratedRef.current) return
     const w = windowsRef.current.find(x => x.id === activeWindowIdRef.current)
     if (!w) return
-    if (listTerminalLeaves(w.tree).length > 0) return
+    if (
+      listTerminalLeaves(w.tree).some(
+        leaf => !terminalSessionForTab(leaf.ptyTabId)?.agentId,
+      )
+    ) return
     void openTerminalInActiveWindowRef.current("right")
-  }, [surface, layoutReady, layoutEpoch, activeWindowId])
+  }, [surface, layoutReady, layoutEpoch, activeWindowId, terminalSessionsRevision])
 
   const surfaceEditorBuffers = useMemo((): ModalEditorBuffer[] => {
     if (!activeWindow) return []
@@ -3578,6 +3610,11 @@ export function MuxApp({
     dockSurfaceRef,
     surface === "agents" || surface === "editors"
       ? []
+      : surface === "terminals"
+        ? activeWindow?.zoomedPaneId &&
+          terminalSurfacePtyIds.includes(activeWindow.zoomedPaneId)
+          ? [activeWindow.zoomedPaneId]
+          : terminalSurfacePtyIds
       : activeWindow?.zoomedPaneId
         ? [activeWindow.zoomedPaneId]
         : activeLeaves.map(leaf => leaf.ptyTabId),
@@ -3590,12 +3627,18 @@ export function MuxApp({
       return focusAgentTabId ? [focusAgentTabId] : []
     }
     if (surface === "editors") return []
+    if (surface === "terminals") {
+      return activeWindow?.zoomedPaneId &&
+        terminalSurfacePtyIds.includes(activeWindow.zoomedPaneId)
+        ? [activeWindow.zoomedPaneId]
+        : terminalSurfacePtyIds
+    }
     return activeWindow?.zoomedPaneId
       ? isTerminalTabId(activeWindow.zoomedPaneId)
         ? [activeWindow.zoomedPaneId]
         : []
       : activePtyIds
-  }, [activePtyIds, activeWindow?.zoomedPaneId, focusAgentTabId, surface])
+  }, [activePtyIds, activeWindow?.zoomedPaneId, focusAgentTabId, surface, terminalSurfacePtyIds])
 
   const slotBoxes = useMuxTerminalSlotBoxes(
     workspaceSurfaceRef,
@@ -4627,9 +4670,21 @@ export function MuxApp({
                 >
                 <MuxWindowView
                   key={activeWindow.id}
-                  tree={activeWindow.tree}
-                  focusedPanelId={activeWindow.focusedPaneId}
-                  zoomedPaneId={activeWindow.zoomedPaneId}
+                  tree={terminalSurfaceTree ?? activeWindow.tree}
+                  focusedPanelId={
+                    surface === "terminals"
+                      ? terminalSurfaceLeaves.find(
+                          leaf => leaf.panelId.id === activeWindow.focusedPaneId?.id,
+                        )?.panelId ?? terminalSurfaceLeaves[0]?.panelId ?? null
+                      : activeWindow.focusedPaneId
+                  }
+                  zoomedPaneId={
+                    surface === "terminals" &&
+                    activeWindow.zoomedPaneId &&
+                    !terminalSurfacePtyIds.includes(activeWindow.zoomedPaneId)
+                      ? null
+                      : activeWindow.zoomedPaneId
+                  }
                   paneTitle={paneTitle}
                   paneProcessName={paneProcessName}
                   onFocusPanel={panelId => {
@@ -4638,7 +4693,17 @@ export function MuxApp({
                     )
                     focusPane(activeWindow.id, panelId, pty?.ptyTabId)
                   }}
-                  onEvent={event => handlePanelEvent(activeWindow.id, event)}
+                  onEvent={event => {
+                    // The terminal surface is a pruned display projection, so
+                    // its split paths do not correspond to the persisted tree.
+                    if (
+                      surface === "terminals" &&
+                      event.type === "splitRatiosChanged"
+                    ) {
+                      return
+                    }
+                    handlePanelEvent(activeWindow.id, event)
+                  }}
                   tabDnd={tabDnd}
                   onSplit={(panelId, edge) =>
                     void splitPane(activeWindow.id, panelId, edge)

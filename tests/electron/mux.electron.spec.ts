@@ -36,6 +36,42 @@ test.describe("mux shell", () => {
     }
   })
 
+  test("Terminals surface renders only shell panes", async () => {
+    const { app, page } = await launchJet()
+    try {
+      await waitForMux(page)
+      await execCommand(page, "mux.openGit")
+      await page.evaluate(() =>
+        window.__yaadeAgent!.openFile("untitled:TerminalsSurface.ts"),
+      )
+
+      const surface = page.locator(
+        '[data-yaade-project-surface="terminals"]',
+      )
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-project-surface="terminals"]',
+      )
+      await expect
+        .poll(async () => surface.locator('[data-yaade-mux-pane-kind="terminal"]').count())
+        .toBe(1)
+      await expect
+        .poll(async () => surface.locator('[data-yaade-mux-pane-kind="git"]').count())
+        .toBe(0)
+      await expect
+        .poll(async () => surface.locator('[data-yaade-mux-pane-kind="editor"]').count())
+        .toBe(0)
+      await expect
+        .poll(async () => surface.locator("[data-yaade-git-root]").count())
+        .toBe(0)
+      await expect
+        .poll(async () => surface.locator("[data-yaade-monaco-editor]").count())
+        .toBe(0)
+    } finally {
+      await app.close()
+    }
+  })
+
   test("context menus open on pane chrome and terminal", async () => {
     const { app, page } = await launchJet()
     try {
