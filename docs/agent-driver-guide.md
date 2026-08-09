@@ -219,6 +219,20 @@ Real-provider tests must use an explicit environment gate such as
 `YAADE_CURSOR_LIVE=1`, describe any usage/cost before running, avoid destructive
 prompts, and never print account details or tokens.
 
+Before the full browser matrix, use the shared scenario runner for a free probe
+and then one minimal canonical turn:
+
+```bash
+pnpm agent:scenario -- --driver=all --probe
+pnpm agent:scenario -- --driver=cursor --live
+```
+
+The live scenario runs in an isolated temporary workspace, disables terminal,
+attachment, and file-write use, rejects any permission request, requires an
+exact sentinel reply, and validates the native event stream through the
+canonical reducer. It is the cheap compatibility gate; it does not replace
+provider-specific UI, permission, tool, interrupt, reload, or recovery coverage.
+
 For Cursor, the opt-in Playwright suite is:
 
 ```bash
@@ -274,6 +288,8 @@ The evidence labels in this table are deliberately strict:
   ran without credentials or provider usage;
 - **read-only live probe** means an installed CLI was inspected without sending
   a turn;
+- **live smoke** means the isolated scenario runner completed one exact-response
+  turn through the canonical reducer;
 - **live verified** means the gated prompt-bearing suite passed on the stated
   version.
 
@@ -281,7 +297,7 @@ The evidence labels in this table are deliberately strict:
 | --- | --- | --- | --- |
 | Mock | Canonical lifecycle, duplicate-command contract, recovery scenarios, and the generic UI matrix | Not applicable | Reference implementation |
 | Generic ACP | Shared lifecycle; streamed-text completion; permission option validation; terminal bridge; dynamic configuration; reasoning/tool lifecycle; structured elicitation; RPC, queue, and semantic-output bounds | None; a generic ACP peer is used for deterministic tests | Not independently signed off |
-| Cursor (`cursor:acp`) | Strict ACP v1 initialization/cwd/MCP shape; native load and close; unsupported-resume rejection; image bytes; native IDs/cursors; vendor-elicitation gating; malformed-version/session rejection; command/version/auth detection | Read-only CLI initialization/protocol probe only. The `YAADE_CURSOR_LIVE=1` suite exists but has not been run as part of this documentation update | **Not signed off**: no live turn/lifecycle result or pinned minimum Cursor version yet |
+| Cursor (`cursor:acp`) | Strict ACP v1 initialization/cwd/MCP shape; native load and close; unsupported-resume rejection; image bytes; native IDs/cursors; vendor-elicitation gating; malformed-version/session rejection; command/version/auth detection | Probe and isolated exact-response smoke passed on `2026.08.04-aaa8809` (2026-08-09). The full `YAADE_CURSOR_LIVE=1` suite has not been run | **Not signed off**: full lifecycle, host-restart load, and minimum-version evidence remain pending |
 | Codex (`codex:app-server`) | Adapter and deterministic tests present | Real-adapter fidelity matrix has not been recorded | Not signed off |
 | Claude (`claude:agent-sdk`) | Adapter and deterministic tests present | Real-adapter fidelity matrix has not been recorded | Not signed off |
 
@@ -289,9 +305,9 @@ The evidence labels in this table are deliberately strict:
 
 | Behavior | Deterministic ACP/Cursor evidence | Live Cursor evidence |
 | --- | --- | --- |
-| Discovery and protocol initialization | Alias fallback, real-version parsing, auth remedy, abort/probe failure, strict v1 capability/MCP transport and malformed-boundary tests | Read-only initialization observed; version-specific sign-off not recorded |
-| New/load/resume/close | New/load/close request shapes verified; unadvertised resume is rejected | Not signed off; do not claim resume |
-| Streaming and exact final text | Accumulated-text completion and Cursor fixture completion verified | Opt-in test present, not executed here |
+| Discovery and protocol initialization | Alias fallback, real-version parsing, auth remedy, abort/probe failure, strict v1 capability/MCP transport and malformed-boundary tests | Probe passed on `2026.08.04-aaa8809` |
+| New/load/resume/close | New/load/close request shapes verified; unadvertised resume is rejected | New session observed in the smoke; load/resume/close remain unsigned |
+| Streaming and exact final text | Accumulated-text completion and Cursor fixture completion verified | Isolated smoke streamed reasoning and assistant text, returned the exact sentinel, and reduced to idle with no violations |
 | Read-only tool and terminal bridge | Deterministic normalized lifecycle/terminal coverage | Opt-in read-only tool test present, not executed here |
 | Permission rejection and exact option IDs | Deterministic validation and race coverage | Opt-in rejection test present, not executed here |
 | Configuration, elicitation, authentication, images | Dynamic configuration and structured elicitation are covered generically; Cursor image mapping reads controlled attachment bytes; Cursor vendor elicitation is profile-gated | Not signed off |

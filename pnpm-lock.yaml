@@ -29,6 +29,9 @@ importers:
       babel-plugin-react-compiler:
         specifier: ^1.0.0
         version: 1.0.0
+      effect:
+        specifier: 3.22.1
+        version: 3.22.1
       expect-webdriverio:
         specifier: ^5.1.0
         version: 5.7.0(@wdio/globals@9.29.1)(@wdio/logger@9.29.1)(webdriverio@9.29.1)

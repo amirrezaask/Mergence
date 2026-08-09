@@ -199,6 +199,26 @@ pnpm agent:scenario -- --help
 pnpm agent:scenario:ui
 ```
 
+The same runner provides a cheap compatibility ladder for every native driver.
+Detection is read-only and submits no prompt:
+
+```bash
+pnpm agent:scenario -- --driver=all --probe
+pnpm agent:scenario -- --driver=cursor --probe
+```
+
+When a probe passes, run one isolated, tool-free sentinel turn. The runner uses
+a temporary workspace by default, requires the exact
+`YAADE_AGENT_SMOKE_OK` response, rejects permission requests, and emits the same
+canonical trace and reducer invariants as Mock scenarios:
+
+```bash
+pnpm agent:scenario -- --driver=cursor --live
+```
+
+`--live` may consume provider quota. Use `--cwd=/path` only when deliberately
+testing a real project; the temporary workspace is cheaper and safer.
+
 The Mock driver speaks the same `AgentDriver` contract and emits the same
 canonical protocol as production drivers. It replaces only the native provider
 transport.
@@ -229,10 +249,10 @@ after host restart is a separate release gate when the installed CLI advertises
 load; resume must not be claimed unless it is both advertised and observed.
 
 Current status is conservative: deterministic Mock/ACP and generic Playwright
-coverage exist, and a read-only Cursor initialization probe has been observed,
-but no prompt-bearing Cursor result or minimum supported Cursor version was
-recorded by this documentation update. Therefore `cursor:acp` is not yet live
-signed off. See the exact matrix in
+coverage exist, and the isolated sentinel scenario passed against Cursor
+`2026.08.04-aaa8809` on 2026-08-09. The full gated Playwright matrix,
+load-after-host-restart behavior, and a minimum supported Cursor version remain
+unverified, so `cursor:acp` is not yet live signed off. See the exact matrix in
 [`docs/agent-driver-guide.md`](agent-driver-guide.md#cursor-verification-matrix).
 
 Live assertions target canonical state and generic DOM surfaces: the shared

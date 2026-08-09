@@ -16,11 +16,12 @@ generic agent Playwright scenarios pass. The gated Cursor suite is present and
 skips all five prompt-bearing cases unless `YAADE_CURSOR_LIVE=1` is explicitly
 set.
 
-Production sign-off remains intentionally pending because no live Cursor turn
-or native load-after-host-restart result has been authorized or recorded, and
-no minimum Cursor CLI version has been pinned. The full web E2E run completed
-with 121 passing, 6 skipped, and 6 failures in unrelated HQ, LSP/editor, mux,
-and terminal tests; the complete agent block passed.
+An isolated exact-response smoke passed against Cursor
+`2026.08.04-aaa8809` on 2026-08-09. Production sign-off remains intentionally
+pending because the full gated Cursor suite and native load-after-host-restart
+have not been run, and no minimum Cursor CLI version has been pinned. The full
+web E2E run completed with 121 passing, 6 skipped, and 6 failures in unrelated
+HQ, LSP/editor, mux, and terminal tests; the complete agent block passed.
 
 ## Executive summary
 
