@@ -27,6 +27,7 @@ import {
   fileUriToPath,
   pathToFileUri,
 } from "@yaade/shared"
+import { ensureAgentThreadSchema } from "./agent-runtime/schema.js"
 
 export type Project = {
   id: string
@@ -166,6 +167,7 @@ export class ProjectDatabase {
     this.ensureWorkspaceSessionSchema()
     this.ensureProjectSessionSchema()
     this.ensureEditorRecoverySchema()
+    ensureAgentThreadSchema(this.db)
     this.backfillProjectsFromProjectSessions()
   }
 
@@ -336,7 +338,7 @@ export class ProjectDatabase {
         const decoded = tryDecodeWorkspaceSession(JSON.parse(row.payload_json))
         if (decoded) {
           payload = {
-            version: 1,
+            version: 2,
             layout: decoded.layout,
             sessions: decoded.sessions,
             ...(decoded.gitRoots ? { gitRoots: decoded.gitRoots } : {}),
@@ -1325,7 +1327,7 @@ export class ProjectDatabase {
         : {}),
     }))
     return {
-      version: 1,
+      version: 2,
       layout: payload.layout,
       sessions,
       ...(payload.gitRoots ? { gitRoots: payload.gitRoots } : {}),
@@ -1333,6 +1335,7 @@ export class ProjectDatabase {
       ...(payload.editorViewStates
         ? { editorViewStates: payload.editorViewStates }
         : {}),
+      ...(payload.agentChatPanes ? { agentChatPanes: payload.agentChatPanes } : {}),
     }
   }
 

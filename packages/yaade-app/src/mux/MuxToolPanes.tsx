@@ -963,6 +963,7 @@ export function MuxToolPanes(props: MuxToolPanesProps) {
     case "lspOutput":
       return <LspOutputTool {...props} />
     case "explorer":
+    case "agentChat":
       return null
   }
 }

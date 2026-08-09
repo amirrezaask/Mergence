@@ -72,7 +72,13 @@ yaade/
 │   ├── yaade-host-client/      Effect HostClient + Promise shim → HTTP/WS
 │   ├── yaade-panels/           PanelTree — splits, tabs, resize, serde
 │   ├── yaade-workspace/        WorkspaceService, commands, keymaps, browser-reserved keys
-│   ├── yaade-agents/           CLI agent id helpers (`*:cli` driver ids)
+│   ├── yaade-agent-protocol/   Canonical interactive schemas and identities
+│   ├── yaade-agent-driver/     Host-only provider adapter contract
+│   ├── yaade-agent-driver-*/   Mock, ACP, Codex, and Claude adapters
+│   ├── yaade-agent-runtime/    Provider-neutral runtime helpers
+│   ├── yaade-agent-testkit/    Shared driver conformance suite
+│   ├── yaade-agent-telemetry/  Passive CLI agent telemetry + notifications
+│   ├── yaade-agents/           Compatibility export for agent telemetry
 │   ├── yaade-monaco/           Monaco editor host + model registry (lazy in mux)
 │   ├── yaade-lsp/              Language server client pool → Monaco providers (lazy)
 │   ├── yaade-ui/               Panel dock, TerminalPanel, overlays, themes
@@ -97,6 +103,11 @@ yaade-shared              ←  yaade-panels, yaade-workspace, yaade-node-host
 yaade-workspace + yaade-panels + yaade-ui  ←  yaade-app
 yaade-app + yaade-host-client              ←  apps/yaade (Vite)
 yaade-node-host           ←  apps/host-server
+
+yaade-agent-protocol      ←  agent-driver, agent-runtime, agent-testkit,
+                              provider drivers, rpc, ui, app, host-server
+yaade-agent-driver        ←  provider drivers, agent-testkit, host-server
+yaade-agent-runtime       ←  host-server
 ```
 
 Keep imports acyclic. Lower layers must not import React.
@@ -113,6 +124,9 @@ pnpm test             # unit tests (node:test via tsx) across packages
 pnpm test:e2e         # Playwright web E2E (headless Chromium)
 pnpm test:bench       # UX latency benchmarks (tests/bench/)
 pnpm build            # SPA + dist/yaade server binary
+pnpm agent:scenario   # Run deterministic Mock-agent protocol scenarios
+pnpm agent:scenario:ui # Open the UI for a deterministic scenario
+pnpm agent:demo       # Launch the complete interactive-agent UI showcase
 ```
 
 Unit tests use **`node:test` + `node:assert/strict`**, run through `tsx --test`
@@ -297,6 +311,88 @@ Chord resolution lives in `context-keys.ts` (`resolveKeydownBinding`,
 
 ---
 
+## Interactive agent architecture
+
+The interactive agent system is provider-agnostic and separate from passive
+CLI telemetry. Read these before changing it:
+
+- [`docs/interactive-agent-system.md`](docs/interactive-agent-system.md) —
+  protocol, runtime, durability, recovery, and UI flow.
+- [`docs/agent-driver-guide.md`](docs/agent-driver-guide.md) — how to add or
+  extend a provider driver.
+- [`docs/adr/0001-interactive-agent-runtime.md`](docs/adr/0001-interactive-agent-runtime.md) —
+  architectural decision and terminology.
+
+### Two planes
+
+- `@yaade/agent-telemetry` observes terminal-launched agents and feeds
+  notifications. `@yaade/agents` is a compatibility export.
+- The interactive runtime owns durable `AgentThread` conversations, accepts
+  commands, connects provider drivers, and publishes canonical events.
+
+Never reuse telemetry events/reducers for interactive threads.
+
+### Data flow and ownership
+
+```text
+AgentChatView → MuxAgentChatPane → window.yaade.agentRuntime
+  → AgentRuntimeClient/external store → HTTP/WS RPC
+  → AgentThreadRuntime → AgentDriver → native provider
+
+native events → driver normalization → persist canonical event/snapshot
+  → publish WS event → browser reducer → provider-neutral UI
+```
+
+- `ProviderId` is the user-facing agent. `DriverId` is the concrete integration
+  (`cursor:acp`, `codex:app-server`, and so on).
+- Project-session payloads store an `AgentThreadId` reference, never a
+  transcript. SQLite agent events/snapshots own the timeline.
+- Drivers emit `UnsequencedAgentEvent`. The runtime owns durable event IDs,
+  per-thread sequence, connection generation, command correlation,
+  persist-before-publish ordering, and recovery.
+- The browser client uses an external store and repairs sequence gaps from the
+  host. Never put streamed token deltas in React state.
+- The UI is capability-driven. It must not branch on provider or driver IDs or
+  import driver packages.
+
+### Canonical protocol invariants
+
+- Commands are `turn.submit`, `turn.interrupt`, `action.respond`,
+  `configuration.set`, and `thread.close`, wrapped in an Effect Schema-decoded
+  `AgentCommandEnvelope`.
+- A retried command keeps the same `commandId`; accepted duplicates return
+  `already-applied`.
+- Provider session IDs, event IDs/cursors, action IDs, option IDs, and
+  configuration IDs are opaque. Round-trip them exactly.
+- Timeline items are semantic: messages, reasoning, tool calls, plans, diffs,
+  subagents, artifacts, errors, or namespaced extensions.
+- Capabilities are `native`, `emulated`, `unsupported`, or `unknown`. Advertise
+  only adapter behavior that is implemented and tested.
+- Persist a canonical event before publishing it. Provider replay must not
+  duplicate already durable content.
+
+### Driver rules
+
+- Prefer a typed profile on an existing standards adapter. Cursor is an ACP
+  profile; create a separate Cursor package only if a captured incompatibility
+  cannot be represented without polluting generic ACP.
+- All provider filesystem, terminal, process, attachment, credential, MCP,
+  clock, logging, and cancellation access goes through `AgentDriverContext`.
+- Restrict provider access to the thread workspace. Do not expose all host
+  allowed roots or arbitrary `process.env` lookup.
+- Convert file URIs to absolute native paths only at a protocol boundary that
+  requires it, then validate provider-requested paths on the way back in.
+- Bound frames, event queues, semantic payloads, pending requests/actions,
+  terminal handles, attachments, and shutdown time. Cleanup is idempotent.
+- Run `runAgentDriverConformanceSuite` for every driver, add deterministic
+  protocol fixtures, then verify the generic UI with Playwright. Real-provider
+  smoke tests must be explicit opt-in when credentials or usage are involved.
+
+The current Cursor implementation plan is
+[`plans/001-productionize-cursor-acp-driver.md`](plans/001-productionize-cursor-acp-driver.md).
+
+---
+
 ## Host server & IPC
 
 Wired by `@yaade/host-client` `createWebTransport()` → `createYaadeApi()`;
@@ -310,6 +406,11 @@ types in `@yaade/workspace` (`YaadeHostAPI` name retained for stability).
 | `git:defaultBranch` | Resolve HEAD / default branch |
 | `lsp:start`, `lsp:stop` | Spawn language server, WS bridge |
 | `terminal:create/attach/write/resize/dispose` | PTY lifecycle |
+| `agentRuntime:listProviders/listDrivers/listThreads` | Interactive provider discovery and durable thread listing |
+| `agentRuntime:createThread/closeThread/deleteThread` | Interactive thread lifecycle and durable cleanup |
+| `agentRuntime:sendCommand/getSnapshot/recoverThread` | Canonical commands, snapshots, and gap recovery |
+| `agentRuntime:uploadAttachment/getConnectionState` | Thread-scoped attachments and live provider connection state |
+| `agentRuntime:event/snapshot/connection/registryChanged` | WS canonical stream, recovery snapshots, and discovery updates |
 | `notifications:*` | Notification center CRUD + WS `notifications:event` |
 | `POST /api/v1/notifications/ingest` | Provider hook ingest (Claude/Codex Stop) |
 | `GET/POST /api/v1/project-sessions` | List / create project sessions |
@@ -543,6 +644,21 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 | `apps/host-server/src/worktree-path.ts` | `~/.yaade/worktrees/…` path derivation |
 | `packages/yaade-node-host/src/terminal.ts` | PTY batching, flow control, replay |
 | `packages/yaade-node-host/src/git.ts` | Git + worktree CLI wrappers |
+| `packages/yaade-agent-protocol/src/commands.ts` | Canonical interactive command envelope and results |
+| `packages/yaade-agent-protocol/src/events.ts` | Canonical durable event envelope |
+| `packages/yaade-agent-protocol/src/content.ts` | Provider-neutral timeline item schemas |
+| `packages/yaade-agent-runtime/src/reducer.ts` | Deterministic `AgentThread` aggregate reducer |
+| `packages/yaade-agent-driver/src/index.ts` | Driver/context/connection contract |
+| `packages/yaade-agent-driver-acp/src/index.ts` | Generic ACP v1 normalization and lifecycle |
+| `packages/yaade-agent-driver-acp/src/profiles.ts` | Cursor, Grok, OpenCode, and Mock ACP profiles |
+| `packages/yaade-agent-testkit/src/index.ts` | Shared driver conformance suite |
+| `apps/host-server/src/agent-runtime/runtime.ts` | Registry binding, commands, connections, and recovery |
+| `apps/host-server/src/agent-runtime/store.ts` | SQLite agent event/snapshot persistence |
+| `apps/host-server/src/agent-runtime/context.ts` | Thread-scoped provider security boundary |
+| `packages/yaade-app/src/agent/runtime-client.ts` | Browser stream client and gap repair |
+| `packages/yaade-app/src/agent/MuxAgentChatPane.tsx` | Agent pane lifecycle and command bridge |
+| `packages/yaade-ui/src/agent-chat/AgentChatView.tsx` | Generic agent timeline, actions, config, composer |
+| `scripts/agent-demo.ts` | Deterministic full UI showcase |
 
 ---
 
@@ -557,5 +673,13 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 - Writing new tests with vitest; this repo uses `node:test`.
 - Extending `App.tsx` or anything in the legacy Mission Control surface.
 - Putting terminal output or editor document text in React state.
+- Putting agent token deltas in React state instead of the external runtime store.
+- Importing a provider driver into the browser/UI or branching UI on provider ID.
+- Advertising a native provider capability before the adapter and generic UI
+  implement and test it.
+- Rebuilding opaque provider session/action/option IDs instead of round-tripping
+  them exactly.
+- Letting a driver access raw filesystem/process/environment APIs instead of its
+  thread-scoped `AgentDriverContext`.
 - Calling Node APIs from lower packages (use `window.yaade` / `@yaade/host-client`).
 - Adding Rust / Cargo / Tauri / Electron back into the repo.

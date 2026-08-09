@@ -45,7 +45,7 @@ describe("HQ aggregation", () => {
       machine: "test-machine", projectPath: alpha, cwdPath: alpha, title: "Old mapping",
     })
     db.updateProjectSessionPayload(old.id, {
-      version: 1,
+      version: 2,
       layout: emptyLayout,
       sessions: [{ ptyTabId: "agent-old", ptyId: "pty-shared", cwdRootUri: pathToFileUri(alpha), launchCommand: "codex" }],
     })
@@ -53,7 +53,7 @@ describe("HQ aggregation", () => {
       machine: "test-machine", projectPath: alpha, cwdPath: alpha, title: "New mapping",
     })
     db.updateProjectSessionPayload(newest.id, {
-      version: 1,
+      version: 2,
       layout: emptyLayout,
       sessions: [{ ptyTabId: "agent-new", ptyId: "pty-shared", cwdRootUri: pathToFileUri(alpha), agentProvider: "codex", agentTitle: "Implement HQ" }],
     })
@@ -64,7 +64,7 @@ describe("HQ aggregation", () => {
       machine: "test-machine", projectPath: beta, cwdPath: beta, title: "Beta main",
     })
     db.updateProjectSessionPayload(pending.id, {
-      version: 1,
+      version: 2,
       layout: emptyLayout,
       sessions: [
         { ptyTabId: "agent-pending", ptyId: "pty-pending", cwdRootUri: pathToFileUri(beta), launchCommand: "/usr/local/bin/claude" },
@@ -143,7 +143,7 @@ describe("HQ aggregation", () => {
       title: "Main",
     })
     db.updateProjectSessionPayload(main.id, {
-      version: 1,
+      version: 2,
       layout: emptyLayout,
       sessions: [],
     })

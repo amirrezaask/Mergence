@@ -44,7 +44,7 @@ export function buildNeovimQflistSessionPayload(
     launchArgs,
   })
   return {
-    version: 1,
+    version: 2,
     layout: {
       tree: live.tree.toJSON(),
       focusedPaneId: live.focusedPaneId?.id ?? null,

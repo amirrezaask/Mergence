@@ -28,6 +28,7 @@ const SCENARIOS = [
   "slow_stream",
   "usage_meter",
   "config_model",
+  "config_malformed",
   "slash_commands",
   "chaos_malformed",
   "partial_then_error",
@@ -43,6 +44,8 @@ const SCENARIOS = [
   "image_prompt",
   "set_mode_plan",
   "mcp_servers_inject",
+  "malformed_callbacks",
+  "malformed_update",
 ] as const
 
 type Scenario = (typeof SCENARIOS)[number]
@@ -372,11 +375,27 @@ class MockState {
   }
 
   supportsLoadSession(): boolean {
-    return this.scenario === "load_session" || this.capabilityFlag("load_session")
+    return this.args.providerProfile === "cursor" || this.scenario === "load_session" || this.capabilityFlag("load_session")
   }
 
   supportsResumeSession(): boolean {
     return this.scenario === "load_session" || this.capabilityFlag("resume")
+  }
+
+  supportsCloseSession(): boolean {
+    return this.scenario === "load_session" || this.capabilityFlag("close")
+  }
+
+  protocolVersion(): number {
+    return this.capabilityFlag("protocol_v2") ? 2 : 1
+  }
+
+  malformedSession(): boolean {
+    return this.capabilityFlag("malformed_session")
+  }
+
+  malformedInitialize(): boolean {
+    return this.capabilityFlag("malformed_initialize")
   }
 
   requiresAuth(): boolean {
@@ -406,8 +425,17 @@ function textChunk(text: string): JsonObject {
   return { content: { type: "text", text } }
 }
 
+let updateSequence = 0
 function sendUpdate(connection: Connection, sessionId: string, update: JsonObject): void {
-  connection.notify("session/update", { sessionId, update })
+  updateSequence += 1
+  connection.notify("session/update", {
+    sessionId,
+    update: {
+      eventId: `mock-event-${updateSequence}`,
+      cursor: String(updateSequence),
+      ...update,
+    },
+  })
 }
 
 function promptText(params: JsonObject): string {
@@ -481,10 +509,12 @@ async function handleRequest(
 
     case "session/new": {
       if (state.requiresAuth() && !state.authenticated) throw authRequiredError()
+      validateOpenParams(state, params)
       state.lastMcpServerCount = ((params.mcpServers as unknown[] | undefined) ?? []).length
       const sessionId = state.newSession()
       const response: JsonObject = { sessionId }
-      if (state.scenario === "config_model") response.configOptions = modelOptions()
+      if (state.malformedSession()) delete response.sessionId
+      if (state.scenario === "config_model" || state.scenario === "config_malformed") response.configOptions = modelOptions()
       if (state.scenario === "set_mode_plan") {
         response.modes = {
           currentModeId: "agent",
@@ -499,6 +529,8 @@ async function handleRequest(
     }
 
     case "session/load": {
+      if (!state.supportsLoadSession()) throw new ProtocolError({ code: METHOD_NOT_FOUND, message: "Method not found" })
+      validateOpenParams(state, params)
       const sessionId = String(params.sessionId ?? "")
       state.session(sessionId)
       if (state.scenario === "load_session") {
@@ -511,6 +543,8 @@ async function handleRequest(
     }
 
     case "session/resume":
+      if (!state.supportsResumeSession()) throw new ProtocolError({ code: METHOD_NOT_FOUND, message: "Method not found" })
+      validateOpenParams(state, params)
       // Resume restores context without replaying history.
       state.session(String(params.sessionId ?? ""))
       return {}
@@ -533,11 +567,16 @@ async function handleRequest(
       }
 
     case "session/close":
+      if (!state.supportsCloseSession()) throw new ProtocolError({ code: METHOD_NOT_FOUND, message: "Method not found" })
+      if (state.args.strict && !state.sessions.has(String(params.sessionId ?? ""))) throw internalError("session already closed")
+      state.sessions.delete(String(params.sessionId ?? ""))
+      return {}
     case "session/delete":
       state.sessions.delete(String(params.sessionId ?? ""))
       return {}
 
     case "session/set_config_option":
+      if (state.scenario === "config_malformed") return []
       return { configOptions: [] }
 
     case "session/set_mode":
@@ -561,28 +600,78 @@ function handleInitialize(state: MockState, params: JsonObject): JsonValue {
   if (state.args.strict && params.protocolVersion !== 1) {
     throw internalError("yaade-mock-acp supports ACP protocol V1 only")
   }
+  if (state.args.strict) {
+    const client = params.clientCapabilities as JsonObject | undefined
+    const fs = client?.fs as JsonObject | undefined
+    const elicitation = client?.elicitation as JsonObject | undefined
+    if (fs?.readTextFile !== true || fs.writeTextFile !== true || client?.terminal !== true || typeof elicitation?.form !== "object") {
+      throw internalError("ACP v1 client capabilities must explicitly enable fs read/write, terminal, and elicitation")
+    }
+  }
+
+  const cursor = state.args.providerProfile === "cursor"
 
   const agentCapabilities: JsonObject = {
-    loadSession: state.supportsLoadSession(),
-    promptCapabilities: { image: false, audio: false, embeddedContext: false },
-    mcpCapabilities: { http: false, sse: false },
+    loadSession: cursor || state.supportsLoadSession(),
+    promptCapabilities: { image: cursor, audio: false, embeddedContext: cursor },
+    mcpCapabilities: { http: cursor, sse: cursor },
     sessionCapabilities: {},
     auth: {},
   }
-  if (state.supportsResumeSession() || state.supportsLoadSession()) {
-    agentCapabilities.sessionCapabilities = { list: {}, delete: {}, resume: {}, close: {} }
+  if (cursor) {
+    agentCapabilities.sessionCapabilities = { list: {} }
+  } else if (state.supportsResumeSession() || state.supportsLoadSession()) {
+    agentCapabilities.sessionCapabilities = {
+      list: {},
+      delete: {},
+      ...(state.supportsResumeSession() ? { resume: {} } : {}),
+      ...(state.supportsCloseSession() ? { close: {} } : {}),
+    }
   }
   if (state.advertisesAuth()) agentCapabilities.auth = { logout: {} }
 
   return {
-    protocolVersion: 1,
-    agentCapabilities,
-    authMethods: state.advertisesAuth() ? [{ id: "mock-token", name: "Mock token auth" }] : [],
+    protocolVersion: state.protocolVersion(),
+    agentCapabilities: state.malformedInitialize() ? null : agentCapabilities,
+    authMethods: cursor
+      ? [{ id: "cursor_login", name: "Log in to Cursor" }]
+      : state.advertisesAuth() ? [{ id: "mock-token", name: "Mock token auth" }] : [],
     agentInfo: {
       name: "yaade-mock-acp",
       title: `YAADE Mock ACP (${state.args.providerProfile})`,
       version: "0.1",
     },
+  }
+}
+
+function validateOpenParams(state: MockState, params: JsonObject): void {
+  if (!state.args.strict) return
+  const cwd = params.cwd
+  if (typeof cwd !== "string" || !path.isAbsolute(cwd) || cwd.startsWith("file:")) {
+    throw internalError("session open cwd must be an absolute native path")
+  }
+  if (!Array.isArray(params.mcpServers)) {
+    throw internalError("session open mcpServers is required")
+  }
+  for (const raw of params.mcpServers) {
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) throw internalError("MCP server must be an object")
+    const server = raw as JsonObject
+    if (server.id !== undefined || typeof server.name !== "string") throw internalError("MCP wire server must strip id and retain name")
+    if (server.type === undefined) {
+      if (typeof server.command !== "string" || !Array.isArray(server.args) || !Array.isArray(server.env)) {
+        throw internalError("stdio MCP server requires command, args, and env without type")
+      }
+      for (const entry of server.env) {
+        if (!entry || typeof entry !== "object" || typeof (entry as JsonObject).name !== "string" || typeof (entry as JsonObject).value !== "string") throw internalError("stdio MCP env entry is malformed")
+      }
+    } else if (server.type === "http" || server.type === "sse") {
+      if (typeof server.url !== "string" || !Array.isArray(server.headers)) throw internalError(`${server.type} MCP server requires url and headers`)
+      for (const entry of server.headers) {
+        if (!entry || typeof entry !== "object" || typeof (entry as JsonObject).name !== "string" || typeof (entry as JsonObject).value !== "string") throw internalError(`${server.type} MCP header is malformed`)
+      }
+    } else {
+      throw internalError("MCP server type is invalid")
+    }
   }
 }
 
@@ -621,6 +710,32 @@ async function handlePrompt(
   let stopReason: StopReason
 
   switch (state.scenario) {
+    case "malformed_callbacks": {
+      const malformedRequests: Array<[string, JsonObject]> = [
+        ["session/request_permission", { sessionId, toolCall: { toolCallId: "bad" }, options: [{ name: "Missing option id", kind: "allow_once" }] }],
+        ["fs/read_text_file", { sessionId }],
+        ["terminal/create", { sessionId, command: "printf", args: [1] }],
+      ]
+      for (const [method, malformed] of malformedRequests) {
+        let rejected = false
+        try {
+          await connection.request(method, malformed)
+        } catch (error) {
+          if (!(error instanceof ProtocolError)) throw error
+          rejected = true
+        }
+        if (!rejected) throw internalError(`${method} unexpectedly accepted malformed input`)
+      }
+      stopReason = await answer(state, connection, sessionId, prompt)
+      break
+    }
+
+    case "malformed_update": {
+      sendUpdate(connection, sessionId, { sessionUpdate: "usage_update", used: "invalid", size: 4096 })
+      stopReason = "end_turn"
+      break
+    }
+
     case "thought_then_answer": {
       sendUpdate(connection, sessionId, {
         sessionUpdate: "agent_thought_chunk",

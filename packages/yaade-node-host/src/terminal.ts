@@ -119,6 +119,7 @@ type TerminalEntry = {
   disposed: boolean
   dataDisposable: pty.IDisposable | null
   exitDisposable: pty.IDisposable | null
+  exitWaiters: Array<(result: { exitCode: number | null; signal?: string }) => void>
 }
 
 function pausePtyForFlowControl(entry: TerminalEntry): void {
@@ -384,6 +385,7 @@ export class TerminalHost {
       disposed: false,
       dataDisposable: null,
       exitDisposable: null,
+      exitWaiters: [],
     }
     this.entries.set(id, entry)
 
@@ -417,6 +419,7 @@ export class TerminalHost {
       const args: unknown[] = [id, exitCode]
       if (entry.signal) args.push(entry.signal)
       this.emit("terminal:exit", args)
+      for (const resolve of entry.exitWaiters.splice(0)) resolve({ exitCode, ...(signal ? { signal: String(signal) } : {}) })
       this.scheduleDisposeAfterExit(entry)
     })
 
@@ -612,6 +615,23 @@ export class TerminalHost {
     }
   }
 
+  /** Bounded replay snapshot for an agent-owned PTY; does not attach or change ownership. */
+  readOutput(id: string, maxBytes = EXITED_TERMINAL_REPLAY): { output: string; truncated: boolean } | null {
+    const entry = this.entries.get(id)
+    if (!entry || entry.disposed) return null
+    const joined = entry.output.slice(entry.outputHead).join("")
+    const encoded = Buffer.from(joined, "utf8")
+    if (encoded.byteLength <= maxBytes) return { output: joined, truncated: false }
+    return { output: encoded.subarray(encoded.byteLength - maxBytes).toString("utf8"), truncated: true }
+  }
+
+  waitForExit(id: string): Promise<{ exitCode: number | null; signal?: string }> {
+    const entry = this.entries.get(id)
+    if (!entry || entry.disposed) return Promise.reject(new Error("terminal not found"))
+    if (entry.status === "exited") return Promise.resolve({ exitCode: entry.exitCode, ...(entry.signal ? { signal: String(entry.signal) } : {}) })
+    return new Promise(resolve => entry.exitWaiters.push(resolve))
+  }
+
   dispose(id: string): null {
     const entry = this.entries.get(id)
     if (!entry) return null
@@ -628,6 +648,7 @@ export class TerminalHost {
     entry.exitDisposable?.dispose()
     entry.dataDisposable = null
     entry.exitDisposable = null
+    for (const resolve of entry.exitWaiters.splice(0)) resolve({ exitCode: null, signal: "disposed" })
     if (entry.titleKey) {
       const n = (this.titleCounts.get(entry.titleKey) ?? 1) - 1
       if (n <= 0) this.titleCounts.delete(entry.titleKey)

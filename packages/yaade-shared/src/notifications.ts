@@ -27,6 +27,7 @@ export type NotificationSeverity = "info" | "success" | "warning" | "error"
 export type NotificationStatus = "unread" | "read" | "resolved" | "dismissed"
 
 export type NotificationSource =
+  | "interactive-runtime"
   | "provider-hook"
   | "provider-plugin"
   | "osc"
@@ -209,6 +210,7 @@ export interface BindNotificationSessionRequest {
 
 /** Source strength for dedupe enrichment (higher wins). */
 export const NOTIFICATION_SOURCE_RANK: Record<NotificationSource, number> = {
+  "interactive-runtime": 60,
   "provider-hook": 50,
   "provider-plugin": 40,
   osc: 30,

@@ -204,6 +204,22 @@ export {
 export { cn } from "./lib/utils.js"
 export { formatKeyBinding } from "./lib/format-key.js"
 export { TooltipProvider } from "./components/ui/tooltip.js"
+export { MessageScroller } from "./components/ui/message-scroller.js"
+export {
+  AgentChatView,
+  Turn,
+  TimelineItemRenderer,
+  Tool,
+  Permission,
+  Elicitation,
+  Reasoning,
+  Plan,
+  Composer,
+  Status,
+  type AgentChatViewProps,
+  type AgentChatCallbacks,
+  type AgentComposerAttachment,
+} from "./agent-chat/AgentChatView.js"
 export { Toaster } from "./components/ui/sonner.js"
 export {
   ConfirmDialogHost,

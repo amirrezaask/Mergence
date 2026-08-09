@@ -28,7 +28,7 @@ describe("buildNeovimQflistSessionPayload", () => {
       "/tmp/proj",
       "/tmp/hits.qf",
     )
-    assert.equal(payload.version, 1)
+    assert.equal(payload.version, 2)
     assert.equal(payload.sessions.length, 1)
     const leaf = payload.sessions[0]!
     assert.equal(leaf.launchCommand, "nvim")

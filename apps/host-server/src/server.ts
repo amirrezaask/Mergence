@@ -78,12 +78,15 @@ function runHostRpc(
   )
 }
 
-export async function startHostServer(config: HostConfig): Promise<{
+export async function startHostServer(
+  config: HostConfig,
+  options?: { eventHubCapacity?: number },
+): Promise<{
   runtime: HostRuntime
   close: () => Promise<void>
   port: number
 }> {
-  const hostLayer = makeHostLayers(config)
+  const hostLayer = makeHostLayers(config, options)
   /** Keeps the Layer scope open for the process lifetime (TerminalHost acquireRelease). */
   const managed = ManagedRuntime.make(hostLayer)
   const runtime = await managed.runPromise(
@@ -148,7 +151,7 @@ export async function startHostServer(config: HostConfig): Promise<{
   let closePromise: Promise<void> | null = null
   const close = () => {
     closePromise ??= (async () => {
-      shutdownRuntime(runtime)
+      await shutdownRuntime(runtime)
       const serverClosed = new Promise<void>((resolve, reject) => {
         server.close(err => (err ? reject(err) : resolve()))
       })
@@ -1463,7 +1466,16 @@ function handleEventSocket(
     requestedClientId && /^[A-Za-z0-9-]{1,128}$/.test(requestedClientId)
       ? requestedClientId
       : `ws-${randomUUID()}`
-  for (const event of runtime.events.replayAfter(since)) {
+  const replay = runtime.events.replayWindow(since)
+  if (replay.historyEvicted) {
+    sendEventSocketMessage(ws, {
+      protocolVersion: 1,
+      sequence: replay.replayFloor - 1,
+      channel: "protocol:replay-gap",
+      args: [replay.replayFloor, replay.lastSequence],
+    })
+  }
+  for (const event of replay.events) {
     sendEventSocketMessage(ws, event)
   }
   const unsubscribe = runtime.events.subscribe(event => {
@@ -1580,6 +1592,46 @@ function validateRpcPaths(
 }
 
 function validateRpcPathsOrThrow(config: HostConfig, channel: string, args: unknown[]): void {
+  if (channel.startsWith("agentRuntime:")) {
+    const first = args[0]
+    if (channel === "agentRuntime:createThread") {
+      const cwdUri =
+        first && typeof first === "object" && "cwdUri" in first
+          ? Reflect.get(first, "cwdUri")
+          : undefined
+      if (
+        typeof cwdUri !== "string" ||
+        !pathAllowed(uriOrPath(cwdUri), config.allowedRoots)
+      ) {
+        throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS")
+      }
+    }
+    if (
+      channel === "agentRuntime:sendCommand" &&
+      first &&
+      typeof first === "object"
+    ) {
+      const command = Reflect.get(first, "command")
+      const input =
+        command && typeof command === "object" && Reflect.get(command, "type") === "turn.submit"
+          ? Reflect.get(command, "input")
+          : undefined
+      if (Array.isArray(input)) {
+        for (const part of input) {
+          if (!part || typeof part !== "object") continue
+          if (Reflect.get(part, "type") !== "workspace-resource") continue
+          const uri = Reflect.get(part, "uri")
+          if (
+            typeof uri !== "string" ||
+            !pathAllowed(uriOrPath(uri), config.allowedRoots)
+          ) {
+            throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS")
+          }
+        }
+      }
+    }
+    return
+  }
   if (channel.startsWith("agents:")) {
     const first = args[0]
     if (first && typeof first === "object") {
