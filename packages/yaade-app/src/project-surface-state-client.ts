@@ -1,4 +1,9 @@
-export type ProjectSurface = "changes" | "agents" | "editors" | "terminals"
+export type ProjectSurface =
+  | "changes"
+  | "agents"
+  | "native-agents"
+  | "editors"
+  | "terminals"
 
 export type ProjectSurfaceSelection = {
   workspaceId?: string | null

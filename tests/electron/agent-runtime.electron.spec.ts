@@ -1,11 +1,11 @@
 import { expect, test } from "@playwright/test"
 import { expectLocatorContainsText, expectLocatorVisible } from "../shell/assert.js"
-import { execCommand, launchJet, waitForMux } from "./_launch.js"
+import { launchJet, waitForMux } from "./_launch.js"
 
 async function openMockThread(
   page: Awaited<ReturnType<typeof launchJet>>["page"],
 ): Promise<void> {
-  await execCommand(page, "agentChat.focus")
+  await page.locator('[data-yaade-project-tab="native-agents"]').click()
   const pane = page.locator('[data-yaade-tool-pane="agentChat"]')
   await pane.waitFor({ state: "visible", timeout: 15_000 })
   await pane.getByRole("button", { name: /Canonical Mock Driver/ }).click()

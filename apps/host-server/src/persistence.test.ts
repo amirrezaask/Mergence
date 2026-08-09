@@ -680,12 +680,22 @@ describe("ProjectDatabase canonical projects and checkouts", () => {
       surface: "terminals",
       state: { workspaceId: "ses-terminal" },
     })
+    db.putProjectSurfaceState({
+      projectId: project.id,
+      machine: "host",
+      surface: "native-agents",
+      state: { workspaceId: "ses-native" },
+    })
 
     assert.equal(second.revision, first.revision + 1)
     const rows = db.projectSurfaceState(project.id, "host")
-    assert.equal(rows.length, 2)
+    assert.equal(rows.length, 3)
     assert.equal(rows.find(row => row.surface === "changes")?.state.checkoutKey, "wt-2")
     assert.equal(rows.find(row => row.surface === "terminals")?.state.workspaceId, "ses-terminal")
+    assert.equal(
+      rows.find(row => row.surface === "native-agents")?.state.workspaceId,
+      "ses-native",
+    )
   })
 
   it("archives an explicit legacy duplicate while preserving its layout", () => {

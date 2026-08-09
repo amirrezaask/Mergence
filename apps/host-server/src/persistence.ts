@@ -618,7 +618,11 @@ export class ProjectDatabase {
     state: Record<string, unknown>
   }): { surface: string; state: Record<string, unknown>; revision: number; updatedAt: string } {
     if (!this.project(input.projectId)) throw new Error("project not found")
-    if (!["changes", "agents", "editors", "terminals"].includes(input.surface)) {
+    if (
+      !["changes", "agents", "native-agents", "editors", "terminals"].includes(
+        input.surface,
+      )
+    ) {
       throw new Error("invalid project surface")
     }
     const updatedAt = new Date().toISOString()

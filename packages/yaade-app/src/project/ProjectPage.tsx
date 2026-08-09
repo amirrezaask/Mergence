@@ -115,7 +115,12 @@ type ActiveCheckout = {
 }
 
 function isSurfaceView(view: ProjectView): view is MuxSurface {
-  return view === "agents" || view === "editors" || view === "terminals"
+  return (
+    view === "agents" ||
+    view === "native-agents" ||
+    view === "editors" ||
+    view === "terminals"
+  )
 }
 
 function surfaceForView(view: ProjectView): MuxSurface | null {
@@ -334,6 +339,7 @@ export function ProjectPage({
         next.changes?.checkoutPath ??
         next.editors?.checkoutPath ??
         next.terminals?.checkoutPath ??
+        next["native-agents"]?.checkoutPath ??
         next.agents?.checkoutPath
       if (savedCheckout) {
         const summary = sessions.find(item => item.cwdPath === savedCheckout)
@@ -346,6 +352,7 @@ export function ProjectPage({
               next.changes?.checkoutKey ??
               next.editors?.checkoutKey ??
               next.terminals?.checkoutKey ??
+              next["native-agents"]?.checkoutKey ??
               next.agents?.checkoutKey,
           ),
         )
@@ -445,6 +452,7 @@ export function ProjectPage({
           checkoutPath: checkout.cwdPath,
         },
         agents: { ...current.agents, ...selection, runId: current.agents?.runId },
+        "native-agents": { ...current["native-agents"], ...selection },
         editors: { ...current.editors, ...selection },
         terminals: { ...current.terminals, ...selection },
       }))
@@ -452,7 +460,12 @@ export function ProjectPage({
         checkoutKey: checkout.checkoutKey,
         checkoutPath: checkout.cwdPath,
       })
-      for (const surface of ["agents", "editors", "terminals"] as const) {
+      for (const surface of [
+        "agents",
+        "native-agents",
+        "editors",
+        "terminals",
+      ] as const) {
         void saveProjectSurfaceState(projectId, surface, {
           ...selection,
           runId: surface === "agents" ? focusAgentTabId : undefined,
@@ -914,6 +927,13 @@ export function ProjectPage({
                   Agents
                 </TabsTrigger>
                 <TabsTrigger
+                  value="native-agents"
+                  data-yaade-project-tab="native-agents"
+                  className="w-[7.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
+                >
+                  Agents (native)
+                </TabsTrigger>
+                <TabsTrigger
                   value="editors"
                   data-yaade-project-tab="editors"
                   className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
@@ -1079,6 +1099,16 @@ export function ProjectPage({
                       muxSurface === "agents" ? focusAgentTabId : null
                     }
                     onBackToProject={onClearSession}
+                    onOpenNativeAgents={() => {
+                      void ensureCheckoutSession("native-agents").catch(error => {
+                        showYaadeToast(
+                          error instanceof Error
+                            ? error.message
+                            : "Native agents are unavailable.",
+                          { variant: "destructive" },
+                        )
+                      })
+                    }}
                     launchRequest={launchRequest}
                     onLaunchRequestHandled={handleLaunchRequestHandled}
                   />

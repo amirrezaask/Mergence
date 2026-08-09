@@ -1,7 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { expectLocatorContainsText, expectLocatorVisible } from "../shell/assert.js"
 import {
-  execCommand,
   hasCursorAgent,
   launchJet,
   waitForMux,
@@ -23,7 +22,7 @@ type LiveThreadState = {
 }
 
 async function openCursorStartView(page: ShellDriver) {
-  await execCommand(page, "agentChat.focus")
+  await page.locator('[data-yaade-project-tab="native-agents"]').click()
   const pane = page.locator('[data-yaade-tool-pane="agentChat"]')
   await pane.waitFor({ state: "visible", timeout: 15_000 })
   await expectLocatorContainsText(pane, "Start an agent thread")

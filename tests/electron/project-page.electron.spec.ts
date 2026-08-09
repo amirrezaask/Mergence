@@ -25,12 +25,13 @@ test.describe("project page", () => {
     try {
       await waitForProjectPage(page)
       const tabs = page.locator("[data-yaade-project-tab]")
-      await expect.poll(() => tabs.count()).toBe(5)
+      await expect.poll(() => tabs.count()).toBe(6)
       expect(
         await tabs.evaluateAll(items => items.map(item => item.textContent?.trim())),
       ).toEqual([
         "Changes",
         "Agents",
+        "Agents (native)",
         "Editors",
         "Terminals",
         "History",
@@ -57,10 +58,21 @@ test.describe("project page", () => {
         projects.some(item => fs.realpathSync(item.rootPath) === fs.realpathSync(project)),
       ).toBe(true)
 
-      const widths = await tabs.evaluateAll(items =>
-        items.map(item => Math.round(item.getBoundingClientRect().width)),
-      )
-      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(16)
+      await expect
+        .poll(() =>
+          page
+            .locator('[data-yaade-project-tab="native-agents"]')
+            .getAttribute("aria-selected"),
+        )
+        .toBe("false")
+      const standardWidths = await page
+        .locator(
+          '[data-yaade-project-tab]:not([data-yaade-project-tab="native-agents"])',
+        )
+        .evaluateAll(items =>
+          items.map(item => Math.round(item.getBoundingClientRect().width)),
+        )
+      expect(Math.max(...standardWidths) - Math.min(...standardWidths)).toBeLessThan(16)
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

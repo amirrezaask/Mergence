@@ -525,7 +525,7 @@ const EMPTY_KEYMAP_OVERLAYS = {
 } as const
 
 /** Project-page surface modes (embedded mux only). */
-export type MuxSurface = "agents" | "editors" | "terminals"
+export type MuxSurface = "agents" | "native-agents" | "editors" | "terminals"
 
 export type MuxAppProps = {
   session: ProjectSession
@@ -534,6 +534,8 @@ export type MuxAppProps = {
   homeDir: string
   machineHostname: string
   onBackToProject?: () => void
+  /** Project shell navigation target for the native agent command. */
+  onOpenNativeAgents?: () => void
   /**
    * Render inside ProjectPage content (no nested AppShell / session chrome).
    * Footer (WhichKey / status) stays at the bottom of this pane.
@@ -571,6 +573,7 @@ export function MuxApp({
   homeDir,
   machineHostname,
   onBackToProject,
+  onOpenNativeAgents,
   embedded = false,
   surface = null,
   focusAgentTabId = null,
@@ -2978,7 +2981,13 @@ export function MuxApp({
       ),
       commands.register(
         "agentChat.focus",
-        run(() => runToolPaneRef.current("agentChat")),
+        run(() => {
+          if (embedded && onOpenNativeAgents) {
+            onOpenNativeAgents()
+            return
+          }
+          runToolPaneRef.current("agentChat")
+        }),
         {
           id: "agentChat.focus",
           title: "Open Agent Chat",
@@ -3282,6 +3291,8 @@ export function MuxApp({
     handleZoom,
     hasEditorDocument,
     navigateJumpHistory,
+    embedded,
+    onOpenNativeAgents,
     reopenClosedEditor,
     resetAppearanceSettings,
     runActiveEditorAction,
@@ -3580,6 +3591,7 @@ export function MuxApp({
   }, [activeWindow, activeLeaves])
   const focusedPtyTabId = useMemo(() => {
     if (surface === "agents" && focusAgentTabId) return focusAgentTabId
+    if (surface === "native-agents") return null
     if (surface === "terminals") {
       return (
         terminalSurfaceLeaves.find(
@@ -3635,7 +3647,7 @@ export function MuxApp({
   const paneBoxes = useMuxPaneBoxes(
     workspaceSurfaceRef,
     dockSurfaceRef,
-    surface === "agents" || surface === "editors"
+    surface === "agents" || surface === "native-agents" || surface === "editors"
       ? []
       : surface === "terminals"
         ? activeWindow?.zoomedPaneId &&
@@ -3653,6 +3665,7 @@ export function MuxApp({
     if (surface === "agents") {
       return focusAgentTabId ? [focusAgentTabId] : []
     }
+    if (surface === "native-agents") return []
     if (surface === "editors") return []
     if (surface === "terminals") {
       return activeWindow?.zoomedPaneId &&
@@ -4059,10 +4072,10 @@ export function MuxApp({
                 agentChatPanesRef.current[tool.tabId]?.agentThreadId
               }
               onThreadSelected={agentThreadId => {
-                agentChatPanesRef.current = {
-                  ...agentChatPanesRef.current,
-                  [tool.tabId]: { agentThreadId },
-                }
+                const next = { ...agentChatPanesRef.current }
+                if (agentThreadId) next[tool.tabId] = { agentThreadId }
+                else delete next[tool.tabId]
+                agentChatPanesRef.current = next
                 persistRef.current()
               }}
             />
@@ -4582,7 +4595,40 @@ export function MuxApp({
           className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
           data-yaade-mux-surface={surface ?? "full"}
         >
-              {surface === "agents" ? (
+              {surface === "native-agents" ? (
+                <div
+                  ref={dockSurfaceRef}
+                  className="absolute inset-0 overflow-hidden rounded-lg border border-border bg-card"
+                  data-yaade-project-surface="native-agents"
+                >
+                  <Suspense
+                    fallback={
+                      <div className="grid h-full place-items-center text-xs text-muted-foreground">
+                        Loading native agents…
+                      </div>
+                    }
+                  >
+                    <MuxAgentChatPane
+                      projectSessionId={sessionId}
+                      cwdPath={sessionCwdPath}
+                      initialThreadId={
+                        agentChatPanesRef.current["yaade:tool:agent-chat"]
+                          ?.agentThreadId
+                      }
+                      onThreadSelected={agentThreadId => {
+                        const next = { ...agentChatPanesRef.current }
+                        if (agentThreadId) {
+                          next["yaade:tool:agent-chat"] = { agentThreadId }
+                        } else {
+                          delete next["yaade:tool:agent-chat"]
+                        }
+                        agentChatPanesRef.current = next
+                        persistRef.current()
+                      }}
+                    />
+                  </Suspense>
+                </div>
+              ) : surface === "agents" ? (
                 <div
                   ref={dockSurfaceRef}
                   className="absolute inset-0"

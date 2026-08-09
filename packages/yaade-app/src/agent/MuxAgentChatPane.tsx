@@ -16,6 +16,7 @@ import {
 import { pathToFileUri } from "@yaade/shared"
 import {
   AgentChatView,
+  requestConfirm,
   showYaadeToast,
   type AgentComposerAttachment,
 } from "@yaade/ui"
@@ -27,9 +28,22 @@ import {
   CardDescription,
   CardHeader,
   CardTitle,
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
   Skeleton,
 } from "@yaade/ui/primitives"
-import { Bot, RefreshCw } from "lucide-react"
+import {
+  Bot,
+  ChevronDown,
+  Plus,
+  RefreshCw,
+  Trash2,
+  X,
+} from "lucide-react"
 import { Schema } from "effect"
 import { AgentRuntimeClient } from "./runtime-client.js"
 
@@ -37,7 +51,7 @@ export type MuxAgentChatPaneProps = {
   projectSessionId: string
   cwdPath: string
   initialThreadId?: string | null
-  onThreadSelected?: (threadId: string) => void
+  onThreadSelected?: (threadId: string | null) => void
 }
 
 export default function MuxAgentChatPane({
@@ -53,6 +67,9 @@ export default function MuxAgentChatPane({
   const [drivers, setDrivers] = useState<AgentDriverDiscovery[]>([])
   const [loading, setLoading] = useState(true)
   const [creatingDriverId, setCreatingDriverId] = useState<string | null>(null)
+  const [threadAction, setThreadAction] = useState<"close" | "delete" | null>(
+    null,
+  )
   const [error, setError] = useState<string | null>(null)
   const actionCommandIds = useRef(new Map<string, string>())
 
@@ -86,7 +103,7 @@ export default function MuxAgentChatPane({
           : null) ??
         (nextThreads[0] ? String(nextThreads[0].state.id) : null)
       setThreadId(nextId)
-      if (nextId) onThreadSelected?.(nextId)
+      onThreadSelected?.(nextId)
       setError(null)
     } catch (cause) {
       setError(message(cause, "Could not load agent threads."))
@@ -123,17 +140,69 @@ export default function MuxAgentChatPane({
       const snapshot = await api.createThread({
         projectSessionId,
         cwdUri: pathToFileUri(cwdPath),
-        providerId: String(driver.providerId),
+        driverId: String(driver.id),
       })
       client.hydrate(snapshot)
       setThreads(current => [snapshot, ...current])
       selectThread(String(snapshot.state.id))
     } catch (cause) {
-      setError(message(cause, `Could not start ${driver.name}.`))
+      const detail = message(cause, `Could not start ${driver.name}.`)
+      setError(detail)
+      showYaadeToast(detail, { variant: "destructive" })
     } finally {
       setCreatingDriverId(null)
     }
   }, [api, client, cwdPath, projectSessionId, selectThread])
+
+  const closeThread = useCallback(async () => {
+    if (!api || !client || !threadId) return
+    setThreadAction("close")
+    try {
+      const snapshot = await api.closeThread(threadId)
+      client.hydrate(snapshot)
+      setThreads(current =>
+        current.map(item =>
+          String(item.state.id) === threadId ? snapshot : item,
+        ),
+      )
+    } catch (cause) {
+      showYaadeToast(message(cause, "Could not close the agent thread."), {
+        variant: "destructive",
+      })
+    } finally {
+      setThreadAction(null)
+    }
+  }, [api, client, threadId])
+
+  const deleteThread = useCallback(async () => {
+    if (!api || !threadId) return
+    const confirmed = await requestConfirm({
+      title: "Delete native agent thread?",
+      description:
+        "This removes the durable YAADE thread, its events, and uploaded attachments.",
+      confirmLabel: "Delete thread",
+      cancelLabel: "Cancel",
+      destructive: true,
+    })
+    if (!confirmed) return
+    setThreadAction("delete")
+    try {
+      await api.deleteThread(threadId)
+      const remaining = threads.filter(
+        item => String(item.state.id) !== threadId,
+      )
+      setThreads(remaining)
+      const nextId = remaining[0] ? String(remaining[0].state.id) : null
+      setThreadId(nextId)
+      onThreadSelected?.(nextId)
+    } catch (cause) {
+      showYaadeToast(message(cause, "Could not delete the agent thread."), {
+        variant: "destructive",
+      })
+    } finally {
+      setThreadAction(null)
+    }
+  }, [api, onThreadSelected, threadId, threads])
 
   const send = useCallback(async (
     command: AgentCommandEnvelope["command"],
@@ -193,12 +262,16 @@ export default function MuxAgentChatPane({
 
   return (
     <div className="flex h-full min-h-0 flex-col" data-yaade-tool-pane="agentChat">
-      {threads.length > 1 ? (
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-3">
-          <span className="text-2xs text-muted-foreground">Thread</span>
+      <div
+        className="flex h-10 shrink-0 items-center gap-2 border-b border-border bg-secondary/20 px-3"
+        data-yaade-native-agent-menu=""
+      >
+        <Bot className="size-3.5 shrink-0 text-muted-foreground" aria-hidden />
+        <span className="sr-only">Native agent thread</span>
+        {threads.length > 0 ? (
           <select
             aria-label="Agent thread"
-            className="min-w-0 flex-1 bg-transparent text-xs outline-none"
+            className="min-w-0 max-w-64 flex-1 rounded-sm bg-background px-1.5 py-1 text-xs font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring"
             value={threadId ?? ""}
             onChange={event => selectThread(event.target.value)}
           >
@@ -208,8 +281,21 @@ export default function MuxAgentChatPane({
               </option>
             ))}
           </select>
+        ) : null}
+        <div className="ml-auto flex items-center gap-1">
+          <DriverMenu
+            drivers={drivers}
+            creatingDriverId={creatingDriverId}
+            onCreate={driver => void createThread(driver)}
+          />
+          <ThreadMenu
+            closed={snapshot.state.status === "closed"}
+            busy={threadAction !== null}
+            onClose={() => void closeThread()}
+            onDelete={() => void deleteThread()}
+          />
         </div>
-      ) : null}
+      </div>
       <AgentChatView
         snapshot={snapshot}
         connection={connection}
@@ -302,9 +388,15 @@ function AgentStart(props: {
             Choose an integration. The host keeps the conversation durable when this tab reloads.
           </CardDescription>
         </CardHeader>
-        <CardContent className="flex flex-col gap-2">
+        <CardContent
+          className="flex flex-col gap-2"
+          data-yaade-list-panel="native-agent-drivers"
+        >
           {props.error ? (
-            <p className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive">
+            <p
+              role="alert"
+              className="rounded-md border border-destructive/30 bg-destructive/10 p-2 text-xs text-destructive"
+            >
               {props.error}
             </p>
           ) : null}
@@ -326,11 +418,24 @@ function AgentStart(props: {
               key={driver.id}
               variant="outline"
               className="justify-between"
+              data-yaade-list-item=""
+              data-yaade-native-agent-driver={driver.id}
               disabled={props.creatingDriverId !== null || !discovery.available}
               title={discovery.reason}
               onClick={() => props.onCreate(discovery)}
             >
-              {props.creatingDriverId === driver.id ? "Starting…" : driver.name}
+              <span className="min-w-0 text-left">
+                <span className="block truncate">
+                  {props.creatingDriverId === driver.id
+                    ? "Starting…"
+                    : driver.name}
+                </span>
+                {!discovery.available && discovery.reason ? (
+                  <span className="block truncate text-3xs font-normal text-muted-foreground">
+                    {discovery.reason}
+                  </span>
+                ) : null}
+              </span>
               <Badge variant="secondary">{discovery.available ? driver.integration : "unavailable"}</Badge>
             </Button>
             )
@@ -346,6 +451,106 @@ function AgentStart(props: {
           ) : null}
         </CardContent>
       </Card>
+    </div>
+  )
+}
+
+function DriverMenu(props: {
+  drivers: AgentDriverDiscovery[]
+  creatingDriverId: string | null
+  onCreate: (driver: AgentDriverDiscovery) => void
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger asChild>
+        <Button
+          type="button"
+          variant="secondary"
+          size="xs"
+          disabled={props.creatingDriverId !== null}
+          data-yaade-native-agent-new=""
+        >
+          <Plus data-icon="inline-start" />
+          {props.creatingDriverId ? "Starting…" : "New thread"}
+          <ChevronDown data-icon="inline-end" />
+        </Button>
+      </DropdownMenuTrigger>
+      <DropdownMenuContent
+        align="end"
+        className="w-72"
+        data-yaade-list-panel="native-agent-drivers"
+        data-yaade-native-agent-driver-menu=""
+      >
+        <DropdownMenuLabel>Native agent drivers</DropdownMenuLabel>
+        <DropdownMenuSeparator />
+        {props.drivers.length > 0 ? (
+          props.drivers.map(discovery => {
+            const driver = discovery.descriptor
+            return (
+              <DropdownMenuItem
+                key={driver.id}
+                disabled={!discovery.available}
+                data-yaade-list-item=""
+                data-yaade-native-agent-driver={driver.id}
+                onSelect={() => props.onCreate(discovery)}
+                className="shrink-0 items-start gap-2 py-2"
+              >
+                <Bot className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-xs font-medium">
+                    {driver.name}
+                  </span>
+                  <span className="block truncate text-3xs text-muted-foreground">
+                    {discovery.available
+                      ? `${driver.providerId} · ${driver.integration}`
+                      : discovery.reason || "Unavailable on this host"}
+                  </span>
+                </span>
+              </DropdownMenuItem>
+            )
+          })
+        ) : (
+          <DropdownMenuItem disabled>No drivers discovered</DropdownMenuItem>
+        )}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+}
+
+function ThreadMenu(props: {
+  closed: boolean
+  busy: boolean
+  onClose: () => void
+  onDelete: () => void
+}) {
+  return (
+    <div className="flex items-center gap-0.5" aria-label="Agent thread actions">
+      {!props.closed ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-xs"
+          aria-label="Close agent thread"
+          title="Close thread"
+          disabled={props.busy}
+          data-yaade-native-agent-close=""
+          onClick={props.onClose}
+        >
+          <X />
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label="Delete agent thread"
+        title="Delete thread"
+        disabled={props.busy}
+        data-yaade-native-agent-delete=""
+        onClick={props.onDelete}
+      >
+        <Trash2 />
+      </Button>
     </div>
   )
 }

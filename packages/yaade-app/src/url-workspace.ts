@@ -199,6 +199,7 @@ export function sessionIdFromSearch(
 export const PROJECT_VIEWS = [
   "changes",
   "agents",
+  "native-agents",
   "editors",
   "terminals",
   "history",
