@@ -33,6 +33,15 @@ export type GitCommit = {
   subject: string
 }
 
+/** A stable slice of a repository's commit graph. */
+export type GitHistoryPage = {
+  commits: GitCommit[]
+  /** Opaque continuation token, or null when this snapshot is exhausted. */
+  nextCursor: string | null
+  /** HEAD used to create the cursor; later pages read this same commit graph. */
+  snapshotHead: string | null
+}
+
 export type GitNumstatEntry = {
   path: string
   /** null when the file is binary (git prints `-` for added/deleted). */

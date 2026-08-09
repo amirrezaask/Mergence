@@ -1,6 +1,10 @@
 export { PanelDock, type PanelDockProps, type PanelSlotMeta } from "./dock/PanelDock.js"
 export { TabDndRoot, type TabDndHandlers, useDropHot } from "./dock/TabDndRoot.js"
 export {
+  AgentActivityList,
+  type AgentActivityListProps,
+} from "./home/AgentActivityList.js"
+export {
   PanelFloatingPopover,
   type PanelFloatingPopoverProps,
   type PanelFloatCorner,

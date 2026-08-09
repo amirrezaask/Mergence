@@ -247,6 +247,8 @@ describe("ProjectDatabase session roster", () => {
   it("migrates pre-usage-evidence roster tables with safe false defaults", () => {
     db.close()
     fs.rmSync(dbPath, { force: true })
+    fs.rmSync(`${dbPath}-wal`, { force: true })
+    fs.rmSync(`${dbPath}-shm`, { force: true })
     const legacy = new DatabaseSync(dbPath)
     legacy.exec(`
       CREATE TABLE session_roster_entries(
@@ -618,5 +620,117 @@ describe("ProjectDatabase session roster", () => {
     assert.equal(projects.length, 1)
     assert.equal(projects[0]?.rootPath, missingRoot)
     assert.equal(projects[0]?.name, "formerly-present-project")
+  })
+})
+
+describe("ProjectDatabase canonical projects and checkouts", () => {
+  let dir: string
+  let dbPath: string
+  let db: ProjectDatabase
+
+  beforeEach(() => {
+    ;({ dir, dbPath } = tempDbPath())
+    db = new ProjectDatabase(dbPath)
+  })
+
+  afterEach(() => {
+    db.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("opens a canonical project idempotently and has one active checkout", () => {
+    const root = path.join(dir, "project")
+    fs.mkdirSync(root)
+    const first = db.openProject(root, "Project")
+    const second = db.openProject(path.join(root, "."))
+    assert.equal(first.created, true)
+    assert.equal(second.created, false)
+    assert.equal(first.project.id, second.project.id)
+
+    const a = db.openProjectCheckout({
+      machine: "host", projectPath: root, cwdPath: root,
+    })
+    const b = db.openProjectCheckout({
+      machine: "host", projectPath: root, cwdPath: path.join(root, "."),
+    })
+    assert.equal(a.id, b.id)
+    assert.equal(a.checkoutKey, "main")
+    assert.equal(db.listProjectSessions("host", root).filter(row => !row.archivedAt).length, 1)
+  })
+
+  it("persists independent project surface selections with ordered revisions", () => {
+    const root = path.join(dir, "surface-project")
+    fs.mkdirSync(root)
+    const project = db.openProject(root).project
+    const first = db.putProjectSurfaceState({
+      projectId: project.id,
+      machine: "host",
+      surface: "changes",
+      state: { checkoutKey: "main", checkoutPath: root },
+    })
+    const second = db.putProjectSurfaceState({
+      projectId: project.id,
+      machine: "host",
+      surface: "changes",
+      state: { checkoutKey: "wt-2", checkoutPath: path.join(root, "wt-2") },
+    })
+    db.putProjectSurfaceState({
+      projectId: project.id,
+      machine: "host",
+      surface: "terminals",
+      state: { workspaceId: "ses-terminal" },
+    })
+
+    assert.equal(second.revision, first.revision + 1)
+    const rows = db.projectSurfaceState(project.id, "host")
+    assert.equal(rows.length, 2)
+    assert.equal(rows.find(row => row.surface === "changes")?.state.checkoutKey, "wt-2")
+    assert.equal(rows.find(row => row.surface === "terminals")?.state.workspaceId, "ses-terminal")
+  })
+
+  it("archives an explicit legacy duplicate while preserving its layout", () => {
+    const root = path.join(dir, "project")
+    fs.mkdirSync(root)
+    const old = db.createProjectSession({
+      machine: "host", projectPath: root, cwdPath: root, title: "Old",
+    })
+    const replacement = db.createProjectSession({
+      machine: "host", projectPath: root, cwdPath: root, title: "New",
+    })
+    assert.notEqual(old.id, replacement.id)
+    assert.ok(db.getProjectSession(old.id)?.archivedAt)
+    assert.equal(db.openProjectCheckout({ machine: "host", projectPath: root, cwdPath: root }).id, replacement.id)
+  })
+
+  it("migration keeps the newest duplicate active and archives older layouts", () => {
+    db.close()
+    fs.rmSync(dbPath, { force: true })
+    fs.rmSync(`${dbPath}-wal`, { force: true })
+    fs.rmSync(`${dbPath}-shm`, { force: true })
+    const root = path.join(dir, "migrated-project")
+    fs.mkdirSync(root)
+    const raw = new DatabaseSync(dbPath)
+    raw.exec(`
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
+      INSERT INTO schema_migrations(version) VALUES(8),(9);
+      CREATE TABLE project_sessions(
+        id TEXT PRIMARY KEY, machine TEXT NOT NULL, project_path TEXT NOT NULL,
+        cwd_path TEXT NOT NULL, title TEXT NOT NULL, worktree_branch TEXT,
+        worktree_path TEXT, payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, archived_at TEXT
+      );
+    `)
+    const payload = JSON.stringify({ version: 1, layout: { tree: { root: null }, focusedPaneId: null, zoomedPaneId: null }, sessions: [] })
+    const insert = raw.prepare(`INSERT INTO project_sessions(id,machine,project_path,cwd_path,title,payload_json,created_at,updated_at,archived_at) VALUES(?,?,?,?,?,?,?,?,NULL)`)
+    insert.run("ses-old", "host", root, root, "Old", payload, "2026-01-01T00:00:00.000Z", "2026-01-01T00:00:00.000Z")
+    insert.run("ses-new", "host", root, root, "New", payload, "2026-01-02T00:00:00.000Z", "2026-01-02T00:00:00.000Z")
+    assert.equal((raw.prepare("SELECT COUNT(*) AS count FROM project_sessions").get() as { count: number }).count, 2)
+    raw.close()
+    db = new ProjectDatabase(dbPath)
+    const rows = db.listProjectSessions("host", root)
+    assert.equal(rows.length, 2)
+    assert.equal(rows.find(row => row.id === "ses-new")?.archivedAt, null)
+    assert.ok(rows.find(row => row.id === "ses-old")?.archivedAt)
+    assert.equal(db.openProjectCheckout({ machine: "host", projectPath: root, cwdPath: root }).id, "ses-new")
   })
 })

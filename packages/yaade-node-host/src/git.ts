@@ -7,6 +7,7 @@ import type {
   GitCommitFile,
   GitCommitDetail,
   GitWorktree,
+  GitHistoryPage,
 } from "@yaade/shared"
 import { uriToPath } from "./paths.js"
 
@@ -356,15 +357,40 @@ export type GitHistoryCommit = {
   subject: string
 }
 
-export async function gitHistory(rootUri: string, limit = 50): Promise<GitHistoryCommit[]> {
-  const capped = Math.min(Math.max(limit, 1), 200)
-  const out = await runGit(uriToPath(rootUri), [
-    "log",
-    `-n${capped}`,
-    "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s%x1e",
-  ])
+type HistoryCursor = {
+  head: string
+  offset: number
+}
+
+function encodeHistoryCursor(cursor: HistoryCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url")
+}
+
+function decodeHistoryCursor(value: string): HistoryCursor {
+  try {
+    const decoded: unknown = JSON.parse(Buffer.from(value, "base64url").toString("utf8"))
+    if (
+      typeof decoded === "object" &&
+      decoded !== null &&
+      "head" in decoded &&
+      "offset" in decoded &&
+      typeof decoded.head === "string" &&
+      /^[0-9a-f]{40}$/i.test(decoded.head) &&
+      typeof decoded.offset === "number" &&
+      Number.isSafeInteger(decoded.offset) &&
+      decoded.offset >= 0
+    ) {
+      return { head: decoded.head, offset: decoded.offset }
+    }
+  } catch {
+    // Return the same safe public error for malformed and undecodable cursors.
+  }
+  throw new Error("invalid git history cursor")
+}
+
+function parseGitHistory(output: string): GitHistoryCommit[] {
   const commits: GitHistoryCommit[] = []
-  for (const record of out.split("\u001e")) {
+  for (const record of output.split("\u001e")) {
     const trimmed = record.trim()
     if (!trimmed) continue
     const fields = trimmed.split("\u001f")
@@ -377,6 +403,56 @@ export async function gitHistory(rootUri: string, limit = 50): Promise<GitHistor
     commits.push({ hash, shortHash, author, authoredAt, subject })
   }
   return commits
+}
+
+/**
+ * Read one stable page from the commit graph. The cursor pins subsequent pages
+ * to the initial HEAD, so a newly created commit cannot shift or duplicate
+ * rows already loaded by a virtualized history view.
+ */
+export async function gitHistoryPage(
+  rootUri: string,
+  cursor?: string,
+  pageSize = 100,
+): Promise<GitHistoryPage> {
+  const cwd = uriToPath(rootUri)
+  const size = Math.min(Math.max(pageSize, 1), 200)
+  let snapshotHead: string
+  let offset = 0
+  if (cursor) {
+    const decoded = decodeHistoryCursor(cursor)
+    snapshotHead = decoded.head
+    offset = decoded.offset
+  } else {
+    try {
+      snapshotHead = (await runGit(cwd, ["rev-parse", "HEAD"])).trim()
+    } catch {
+      return { commits: [], nextCursor: null, snapshotHead: null }
+    }
+  }
+  if (!/^[0-9a-f]{40}$/i.test(snapshotHead)) {
+    throw new Error("invalid git history snapshot")
+  }
+  const out = await runGit(cwd, [
+    "log",
+    snapshotHead,
+    `--skip=${offset}`,
+    `-n${size}`,
+    "--format=%H%x1f%h%x1f%an%x1f%at%x1f%s%x1e",
+  ])
+  const commits = parseGitHistory(out)
+  return {
+    commits,
+    nextCursor: commits.length === size
+      ? encodeHistoryCursor({ head: snapshotHead, offset: offset + commits.length })
+      : null,
+    snapshotHead,
+  }
+}
+
+export async function gitHistory(rootUri: string, limit = 50): Promise<GitHistoryCommit[]> {
+  const capped = Math.min(Math.max(limit, 1), 200)
+  return (await gitHistoryPage(rootUri, undefined, capped)).commits
 }
 
 /** Resolve a numstat rename path (`old => new`, `dir/{old => new}/f`) to the new path. */

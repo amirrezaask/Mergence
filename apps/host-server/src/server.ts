@@ -865,7 +865,6 @@ async function handleHttp(
       let cwdPath = rootPath
       let worktreeBranch: string | null = null
       let worktreePath: string | null = null
-      let createdWorktree = false
       const worktree = body.worktree
       if (worktree && typeof worktree.branch === "string" && worktree.branch.trim()) {
         const branch = worktree.branch.trim()
@@ -907,16 +906,23 @@ async function handleHttp(
           })
           cwdPath = worktreePath
           worktreeBranch = branch
-          createdWorktree = true
         } catch (error) {
-          sendJson(res, 400, {
-            error: {
-              code: "WORKTREE_CREATE_FAILED",
-              message: error instanceof Error ? error.message : String(error),
-              details: {},
-            },
-          })
-          return
+          // A concurrent/idempotent request may have created the valid Git
+          // worktree before its workspace row was inserted. Adopt it instead
+          // of force-deleting shared state.
+          if (worktreePath && fs.existsSync(worktreePath) && fs.statSync(worktreePath).isDirectory()) {
+            cwdPath = worktreePath
+            worktreeBranch = branch
+          } else {
+            sendJson(res, 400, {
+              error: {
+                code: "WORKTREE_CREATE_FAILED",
+                message: error instanceof Error ? error.message : String(error),
+                details: {},
+              },
+            })
+            return
+          }
         }
       } else if (typeof body.cwdPath === "string" && body.cwdPath.trim()) {
         const attachCwd = body.cwdPath.trim()
@@ -953,7 +959,7 @@ async function handleHttp(
       }
 
       try {
-        const created = runtime.db.createProjectSession({
+        const created = runtime.db.openProjectCheckout({
           machine: runtime.machineHostname,
           projectPath: rootPath,
           cwdPath,
@@ -968,15 +974,6 @@ async function handleHttp(
         })
         sendJson(res, 201, created)
       } catch (error) {
-        if (createdWorktree && worktreePath) {
-          try {
-            await gitWorktreeRemove(pathToFileUri(rootPath), worktreePath, {
-              force: true,
-            })
-          } catch {
-            /* best-effort cleanup */
-          }
-        }
         sendJson(res, 400, {
           error: {
             code: "INVALID_PROJECT_SESSION",
@@ -987,6 +984,50 @@ async function handleHttp(
       }
       return
     }
+  }
+
+  if (pathname === "/api/v1/project-sessions/open-checkout" && req.method === "POST") {
+    const body = (await readJson(req)) as {
+      projectId?: string
+      rootPath?: string
+      checkoutKey?: string
+      cwdPath?: string
+      title?: string
+      worktreeBranch?: string | null
+      worktreePath?: string | null
+    }
+    const project = typeof body.projectId === "string" ? runtime.db.project(body.projectId) : null
+    const rootPath = project?.rootPath ?? (typeof body.rootPath === "string" ? body.rootPath.trim() : "")
+    const checkoutKey = typeof body.checkoutKey === "string" ? body.checkoutKey.trim() : ""
+    const cwdPath = checkoutKey === "main" ? rootPath : (typeof body.cwdPath === "string" ? body.cwdPath.trim() : "")
+    if (!rootPath || !cwdPath) {
+      sendJson(res, 400, { error: { code: "INVALID_CHECKOUT", message: "project and checkout path required", details: {} } })
+      return
+    }
+    if (!pathAllowed(rootPath, runtime.config.allowedRoots) || !pathAllowed(cwdPath, runtime.config.allowedRoots)) {
+      sendJson(res, 403, { error: { code: "FORBIDDEN", message: "checkout outside allowed roots", details: {} } })
+      return
+    }
+    try {
+      const rootStat = fs.statSync(rootPath)
+      const cwdStat = fs.statSync(cwdPath)
+      if (!rootStat.isDirectory() || !cwdStat.isDirectory()) {
+        sendJson(res, 400, { error: { code: "NOT_DIRECTORY", message: "project and checkout must be directories", details: {} } })
+        return
+      }
+      const session = runtime.db.openProjectCheckout({
+        machine: runtime.machineHostname,
+        projectPath: rootPath,
+        cwdPath,
+        title: typeof body.title === "string" ? body.title : undefined,
+        worktreeBranch: typeof body.worktreeBranch === "string" ? body.worktreeBranch : null,
+        worktreePath: typeof body.worktreePath === "string" ? body.worktreePath : null,
+      })
+      sendJson(res, 200, session)
+    } catch (error) {
+      sendJson(res, 400, { error: { code: "INVALID_CHECKOUT", message: error instanceof Error ? error.message : String(error), details: {} } })
+    }
+    return
   }
 
   const projectSessionMatch = pathname.match(
@@ -1115,11 +1156,35 @@ async function handleHttp(
       }
       const removeWorktree = url.searchParams.get("removeWorktree") === "1"
       if (removeWorktree && existing.worktreePath) {
+        const blockingAgents = runtime.agentRuns
+          .listLive()
+          .filter(run => run.checkoutPath === existing.cwdPath)
+          .map(run => ({ kind: "agent", id: run.runId, title: run.title }))
+        const blockingTerminals = existing.payload.sessions
+          .filter(leaf => {
+            if (!leaf.ptyId) return false
+            return runtime.terminal.inspect(leaf.ptyId)?.status === "running"
+          })
+          .map(leaf => ({ kind: "terminal", id: leaf.ptyId!, title: leaf.label ?? "Terminal" }))
+        const dirtyEditors = runtime.db.listEditorRecoveryBuffers(existing.id)
+          .map(buffer => ({ kind: "editor", id: buffer.uri, title: buffer.uri }))
+        const blockers = [...blockingAgents, ...blockingTerminals, ...dirtyEditors]
+        if (blockers.length > 0) {
+          const blockerNames = blockers.slice(0, 6).map(blocker => blocker.title).join(", ")
+          sendJson(res, 409, {
+            error: {
+              code: "WORKTREE_IN_USE",
+              message: `Worktree is in use by ${blockerNames}${blockers.length > 6 ? ` and ${blockers.length - 6} more` : ""}. Stop them first.`,
+              details: { blockers },
+            },
+          })
+          return
+        }
         try {
           await gitWorktreeRemove(
             pathToFileUri(existing.projectPath),
             existing.worktreePath,
-            { force: true },
+            { force: false },
           )
         } catch (error) {
           sendJson(res, 400, {
@@ -1191,6 +1256,73 @@ async function handleHttp(
         sendJson(res, 400, {
           error: { code: "INVALID_PROJECT_PATH", message: String(error), details: {} },
         })
+      }
+      return
+    }
+  }
+
+  if (pathname === "/api/v1/projects/open" && req.method === "POST") {
+    const body = (await readJson(req)) as { rootPath?: string; name?: string }
+    const rootPath = typeof body.rootPath === "string" ? body.rootPath.trim() : ""
+    if (!rootPath) {
+      sendJson(res, 400, { error: { code: "INVALID_PROJECT_PATH", message: "rootPath required", details: {} } })
+      return
+    }
+    if (!pathAllowed(rootPath, runtime.config.allowedRoots)) {
+      sendJson(res, 403, { error: { code: "FORBIDDEN", message: "project path outside allowed roots", details: {} } })
+      return
+    }
+    let stat: fs.Stats
+    try {
+      stat = fs.statSync(rootPath)
+    } catch {
+      sendJson(res, 404, { error: { code: "NOT_FOUND", message: "project path does not exist", details: {} } })
+      return
+    }
+    if (!stat.isDirectory()) {
+      sendJson(res, 400, { error: { code: "NOT_DIRECTORY", message: "project path is not a directory", details: {} } })
+      return
+    }
+    try {
+      const opened = runtime.db.openProject(rootPath, typeof body.name === "string" ? body.name : undefined)
+      sendJson(res, 200, opened)
+    } catch (error) {
+      sendJson(res, 400, { error: { code: "INVALID_PROJECT_PATH", message: error instanceof Error ? error.message : String(error), details: {} } })
+    }
+    return
+  }
+
+  const surfaceStateMatch = /^\/api\/v1\/projects\/([^/]+)\/surface-state$/.exec(pathname)
+  if (surfaceStateMatch) {
+    const projectId = decodeURIComponent(surfaceStateMatch[1]!)
+    if (!runtime.db.project(projectId)) {
+      sendJson(res, 404, { error: { code: "PROJECT_NOT_FOUND", message: "project not found", details: {} } })
+      return
+    }
+    if (req.method === "GET") {
+      sendJson(res, 200, runtime.db.projectSurfaceState(projectId, runtime.machineHostname))
+      return
+    }
+    if (req.method === "PUT") {
+      const body = (await readJson(req)) as { surface?: string; state?: unknown }
+      if (
+        typeof body.surface !== "string" ||
+        !body.state ||
+        typeof body.state !== "object" ||
+        Array.isArray(body.state)
+      ) {
+        sendJson(res, 400, { error: { code: "INVALID_SURFACE_STATE", message: "surface and state are required", details: {} } })
+        return
+      }
+      try {
+        sendJson(res, 200, runtime.db.putProjectSurfaceState({
+          projectId,
+          machine: runtime.machineHostname,
+          surface: body.surface,
+          state: body.state as Record<string, unknown>,
+        }))
+      } catch (error) {
+        sendJson(res, 400, { error: { code: "INVALID_SURFACE_STATE", message: error instanceof Error ? error.message : String(error), details: {} } })
       }
       return
     }

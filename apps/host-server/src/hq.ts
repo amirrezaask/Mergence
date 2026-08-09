@@ -137,46 +137,96 @@ function findProjectForCwd<T extends { rootPath: string }>(
 export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
   const projects = runtime.db.projects()
   const sessions = runtime.db.listAllProjectSessions(runtime.machineHostname)
-  const projectByPath = new Map(
-    projects.map(project => [canonicalPath(project.rootPath), project]),
-  )
+  const projectById = new Map(projects.map(project => [project.id, project]))
+  const sessionById = new Map(sessions.map(session => [session.id, session]))
+  const sessionsByProjectPath = new Map<string, typeof sessions>()
+  for (const session of sessions) {
+    if (session.archivedAt) continue
+    const bucket = sessionsByProjectPath.get(session.projectPath)
+    if (bucket) bucket.push(session)
+    else sessionsByProjectPath.set(session.projectPath, [session])
+  }
   const unreadBySession = runtime.notifications.unreadBySession()
   const unreadByProject = runtime.notifications.unreadByProject()
   const attentionBySession = runtime.notifications.attentionBySession()
   const attentionByProject = runtime.notifications.attentionByProject()
-  const claimedPtyIds = new Set<string>()
   const agents: HqAgentSummary[] = []
+  // AgentRunService is the only live source. It has a process-generation
+  // binding, unlike old layout leaves and cwd-based PTY guesses.
+  const durableRunService = (runtime as unknown as {
+    agentRuns?: { listLive: () => ReturnType<HostRuntime["agentRuns"]["listLive"]> }
+  }).agentRuns
+  for (const run of durableRunService?.listLive() ?? []) {
+    if (!run.ptyId) continue
+    const inspected = runtime.terminal.inspect(run.ptyId)
+    if (!inspected || inspected.status !== "running") continue
+    const project = projectById.get(run.projectId)
+    const projectSession = sessionById.get(run.workspaceId)
+    if (!project || !projectSession || projectSession.archivedAt) continue
+    const snapshot = runtime.agents.getSnapshot(run.runId)
+    const unreadCount = unreadBySession[run.runId] ?? 0
+    const attention = snapshotAttention(snapshot, attentionBySession[run.runId] ?? 0)
+    const status = run.activityState === "working" || run.activityState === "running_tool"
+      ? run.activityState
+      : run.activityState === "waiting_for_permission" || run.activityState === "waiting_for_user"
+        ? run.activityState
+        : run.activityState === "failed" ? "failed" : "starting"
+    const activity = snapshot
+      ? describeAgentActivity(snapshot)
+      : run.telemetryState === "degraded"
+        ? "Running · limited telemetry"
+        : run.telemetryState === "process_only"
+          ? "Running · process telemetry"
+          : "Telemetry connecting"
+    agents.push(HqAgentSummary.make({
+      runId: run.runId,
+      generation: run.generation,
+      sessionId: run.runId,
+      ptyId: run.ptyId,
+      projectId: project.id,
+      projectName: project.name,
+      projectPath: project.rootPath,
+      projectSessionId: projectSession.id,
+      projectSessionTitle: projectSession.title,
+      cwdPath: run.checkoutPath,
+      worktreeBranch: projectSession.worktreeBranch,
+      provider: run.provider,
+      title: run.title,
+      status,
+      activity,
+      telemetry: run.telemetryState === "connecting" ? "pending" : run.telemetryState,
+      startedAt: run.startedAt,
+      lastActivityAt: run.lastActivityAt,
+      runtimeMs: run.startedAt ? Math.max(0, Date.now() - Date.parse(run.startedAt)) : 0,
+      unreadCount,
+      attention,
+      currentTool: snapshot?.currentTool
+        ? { name: snapshot.currentTool.name, category: snapshot.currentTool.category }
+        : null,
+    }))
+  }
 
-  // Project sessions are newest-first, so the first repeated PTY mapping wins.
-  for (const projectSession of sessions) {
-    if (projectSession.archivedAt) continue
-    for (const leaf of projectSession.payload.sessions) {
-      const ptyId = leaf.ptyId
-      if (!ptyId || claimedPtyIds.has(ptyId)) continue
-      const provider = inferAgentProvider(leaf.agentProvider, leaf.launchCommand)
-      if (!provider) continue
-      claimedPtyIds.add(ptyId)
-      const inspected = runtime.terminal.inspect(ptyId)
-      if (!inspected || inspected.status !== "running") continue
-
-      const project = projectByPath.get(canonicalPath(projectSession.projectPath))
-      if (!project) continue
-      const sessionId = leaf.ptyTabId
-      const snapshot = runtime.agents.getSnapshot(sessionId)
-      if (!agentProcessAccessible(snapshot)) continue
-      const binding = runtime.notifications.bindingForSession(sessionId)
-      const unreadCount = unreadBySession[sessionId] ?? 0
-      const attention = snapshotAttention(
-        snapshot,
-        attentionBySession[sessionId] ?? 0,
-      )
-      const startedAt = snapshot?.startedAt ?? null
-      const runtimeMs = snapshot?.runtime.processRuntimeMs ?? 0
-      const providerTitle = provider.charAt(0).toUpperCase() + provider.slice(1)
-
-      agents.push(
-        HqAgentSummary.make({
-          sessionId,
+  // Compatibility only for databases/pages that predate agent_runs. New
+  // launches never enter this branch; it can disappear after migration rollout.
+  if (!durableRunService) {
+    const claimedPtyIds = new Set<string>()
+    for (const projectSession of sessions) {
+      if (projectSession.archivedAt) continue
+      for (const leaf of projectSession.payload.sessions) {
+        const ptyId = leaf.ptyId
+        if (!ptyId || claimedPtyIds.has(ptyId)) continue
+        const provider = inferAgentProvider(leaf.agentProvider, leaf.launchCommand)
+        if (!provider) continue
+        claimedPtyIds.add(ptyId)
+        const inspected = runtime.terminal.inspect(ptyId)
+        if (!inspected || inspected.status !== "running") continue
+        const project = projects.find(candidate => candidate.rootPath === projectSession.projectPath)
+        if (!project) continue
+        const snapshot = runtime.agents.getSnapshot(leaf.ptyTabId)
+        if (!agentProcessAccessible(snapshot)) continue
+        const binding = runtime.notifications.bindingForSession(leaf.ptyTabId)
+        agents.push(HqAgentSummary.make({
+          sessionId: leaf.ptyTabId,
           ptyId,
           projectId: project.id,
           projectName: project.name,
@@ -186,67 +236,37 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
           cwdPath: leafCwd(leaf.cwdRootUri, projectSession.cwdPath),
           worktreeBranch: projectSession.worktreeBranch,
           provider,
-          title:
-            binding?.sessionTitle ?? leaf.agentTitle ?? inspected.title ?? providerTitle,
+          title: binding?.sessionTitle ?? leaf.agentTitle ?? inspected.title ?? provider,
           status: snapshot?.status ?? "starting",
           activity: snapshot ? describeAgentActivity(snapshot) : "Telemetry connecting",
           telemetry: snapshot ? "connected" : "pending",
-          startedAt,
+          startedAt: snapshot?.startedAt ?? null,
           lastActivityAt: snapshot?.lastActivityAt ?? projectSession.updatedAt,
-          runtimeMs,
-          unreadCount,
-          attention,
+          runtimeMs: snapshot?.runtime.processRuntimeMs ?? 0,
+          unreadCount: unreadBySession[leaf.ptyTabId] ?? 0,
+          attention: snapshotAttention(snapshot, attentionBySession[leaf.ptyTabId] ?? 0),
           currentTool: snapshot?.currentTool
-            ? {
-                name: snapshot.currentTool.name,
-                category: snapshot.currentTool.category,
-              }
+            ? { name: snapshot.currentTool.name, category: snapshot.currentTool.category }
             : null,
-        }),
-      )
+        }))
+      }
     }
-  }
-
-  // Fallback: running agent PTYs that are not yet (or no longer) in SQLite leaves.
-  // Debounced persist / StrictMode races can leave a live cursor-agent invisible.
-  const listRunning = runtime.terminal.listRunning?.bind(runtime.terminal)
-  if (listRunning) {
-    for (const inspected of listRunning()) {
-      if (claimedPtyIds.has(inspected.id)) continue
-      const provider = inferAgentProvider(
-        undefined,
-        inspected.spawnCommand ?? undefined,
-      )
-      if (!provider) continue
-      const project = findProjectForCwd(inspected.spawnCwd, projects)
-      if (!project) continue
-
-      const projectSessions = sessions.filter(
-        session =>
-          !session.archivedAt &&
-          canonicalPath(session.projectPath) === canonicalPath(project.rootPath),
-      )
-      const cwdMatch = projectSessions.find(
-        session =>
-          canonicalPath(session.cwdPath) === canonicalPath(inspected.spawnCwd),
-      )
-      const projectSession = cwdMatch ?? projectSessions[0]
-      if (!projectSession) continue
-
-      claimedPtyIds.add(inspected.id)
-      const binding = runtime.notifications.bindingForPty(inspected.id)
-      const sessionId = binding?.sessionId ?? `pty:${inspected.id}`
-      const snapshot = runtime.agents.getSnapshot(sessionId)
-      if (!agentProcessAccessible(snapshot)) continue
-      const unreadCount = unreadBySession[sessionId] ?? 0
-      const attention = snapshotAttention(
-        snapshot,
-        attentionBySession[sessionId] ?? 0,
-      )
-      const providerTitle = provider.charAt(0).toUpperCase() + provider.slice(1)
-
-      agents.push(
-        HqAgentSummary.make({
+    const listRunning = runtime.terminal.listRunning?.bind(runtime.terminal)
+    if (listRunning) {
+      for (const inspected of listRunning()) {
+        if (claimedPtyIds.has(inspected.id)) continue
+        const provider = inferAgentProvider(undefined, inspected.spawnCommand ?? undefined)
+        const project = provider ? findProjectForCwd(inspected.spawnCwd, projects) : null
+        if (!provider || !project) continue
+        const projectSession = sessions.find(session =>
+          !session.archivedAt && session.projectPath === project.rootPath && session.cwdPath === inspected.spawnCwd,
+        ) ?? sessions.find(session => !session.archivedAt && session.projectPath === project.rootPath)
+        if (!projectSession) continue
+        const binding = runtime.notifications.bindingForPty(inspected.id)
+        const sessionId = binding?.sessionId ?? `pty:${inspected.id}`
+        const snapshot = runtime.agents.getSnapshot(sessionId)
+        if (!agentProcessAccessible(snapshot)) continue
+        agents.push(HqAgentSummary.make({
           sessionId,
           ptyId: inspected.id,
           projectId: project.id,
@@ -257,34 +277,36 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
           cwdPath: inspected.spawnCwd,
           worktreeBranch: projectSession.worktreeBranch,
           provider,
-          title:
-            binding?.sessionTitle ?? inspected.title ?? providerTitle,
+          title: binding?.sessionTitle ?? inspected.title ?? provider,
           status: snapshot?.status ?? "starting",
           activity: snapshot ? describeAgentActivity(snapshot) : "Telemetry connecting",
           telemetry: snapshot ? "connected" : "pending",
           startedAt: snapshot?.startedAt ?? null,
           lastActivityAt: snapshot?.lastActivityAt ?? projectSession.updatedAt,
           runtimeMs: snapshot?.runtime.processRuntimeMs ?? 0,
-          unreadCount,
-          attention,
+          unreadCount: unreadBySession[sessionId] ?? 0,
+          attention: snapshotAttention(snapshot, attentionBySession[sessionId] ?? 0),
           currentTool: snapshot?.currentTool
-            ? {
-                name: snapshot.currentTool.name,
-                category: snapshot.currentTool.category,
-              }
+            ? { name: snapshot.currentTool.name, category: snapshot.currentTool.category }
             : null,
-        }),
-      )
+        }))
+      }
     }
   }
 
+  const agentsByProjectId = new Map<string, HqAgentSummary[]>()
+  for (const agent of agents) {
+    const bucket = agentsByProjectId.get(agent.projectId)
+    if (bucket) bucket.push(agent)
+    else agentsByProjectId.set(agent.projectId, [agent])
+  }
+
   const projectSummaries = projects.map(project => {
-    const projectSessions = sessions.filter(
-      session =>
-        !session.archivedAt &&
-        canonicalPath(session.projectPath) === canonicalPath(project.rootPath),
-    )
-    const projectAgents = agents.filter(agent => agent.projectId === project.id)
+    // Project and workspace paths are canonicalized at insertion. Indexed maps
+    // keep HQ aggregation O(projects + workspaces + live runs) and avoid
+    // filesystem canonicalization inside the summary loop.
+    const projectSessions = sessionsByProjectPath.get(project.rootPath) ?? []
+    const projectAgents = agentsByProjectId.get(project.id) ?? []
     const liveAttention = projectAgents.filter(agent => agent.attention != null).length
     return HqProjectSummary.make({
       id: project.id,

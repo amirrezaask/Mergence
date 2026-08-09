@@ -7,84 +7,12 @@ import { expectListRows } from "../helpers/list.js"
 import { launchJet, waitForProjectPage } from "./_launch.js"
 
 test.describe("project page", () => {
-  test("overview shows project README", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-overview-"))
+  test("a bare project URL registers the directory and lands on Changes/Main", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-route-"))
     const project = path.join(home, "repo")
     fs.mkdirSync(project, { recursive: true })
-    fs.writeFileSync(
-      path.join(project, "README.md"),
-      "# Overview Fixture\n\nHello from README.\n",
-    )
-
-    const { app, page } = await launchJet({
-      projectPage: true,
-      launchWithoutWorkspace: true,
-      homeDir: home,
-      startPath: "/repo",
-    })
-    try {
-      await waitForProjectPage(page)
-      await expect
-        .poll(
-          async () =>
-            page.locator("[data-yaade-project-tab='overview']").count(),
-          { timeout: 5_000 },
-        )
-        .toBe(1)
-      await expect
-        .poll(
-          async () =>
-            (await page.locator("[data-yaade-project-readme-head]").textContent()) ??
-            "",
-          { timeout: 10_000 },
-        )
-        .toMatch(/Overview Fixture[\s\S]*Hello from README/)
-      await expect
-        .poll(
-          async () => page.locator("[data-yaade-project-readme-expand]").count(),
-          { timeout: 3_000 },
-        )
-        .toBe(0)
-      await expect
-        .poll(
-          async () => page.locator("[data-yaade-worktree-switcher]").count(),
-          { timeout: 5_000 },
-        )
-        .toBe(3)
-      await expect
-        .poll(
-          async () => page.locator("[data-yaade-agent-switcher]").count(),
-          { timeout: 5_000 },
-        )
-        .toBe(1)
-      await expect
-        .poll(() =>
-          page.evaluate(() => ({
-            commandDeck: document.querySelectorAll("[data-yaade-command-deck]").length,
-            worktrees: document.querySelectorAll("[data-yaade-project-worktrees]").length,
-          })),
-        )
-        .toEqual({ commandDeck: 0, worktrees: 0 })
-    } finally {
-      await app.close()
-      fs.rmSync(home, { recursive: true, force: true })
-    }
-  })
-
-  test("overview shows recent commits before the full-width README", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-overview-git-"))
-    const project = path.join(home, "repo")
-    fs.mkdirSync(project, { recursive: true })
-    const longReadme = [
-      "# Overview Fixture",
-      "",
-      "Hello from README.",
-      ...Array.from({ length: 20 }, (_, i) => `Line ${i + 1} of the long body.`),
-      "TAIL_MARKER_SHOULD_BE_HIDDEN",
-    ].join("\n")
-    fs.writeFileSync(path.join(project, "README.md"), `${longReadme}\n`)
     execSync(
-      "git init && git config user.email t@t && git config user.name tester && git add README.md && git commit -m 'feat: seed overview fixture' && echo follow-up > note.txt && git add note.txt && git commit -m 'docs: add follow-up note' && git branch feature/switch-target",
+      "git init && git config user.email t@t && git config user.name tester && echo one > note.txt && git add . && git commit -m seed",
       { cwd: project, stdio: "ignore" },
     )
 
@@ -96,253 +24,84 @@ test.describe("project page", () => {
     })
     try {
       await waitForProjectPage(page)
-
-      const branchMenu = page.locator("[data-yaade-project-branch-menu]")
-      await branchMenu.waitFor({ state: "visible" })
-      await branchMenu.click()
-      await expectListRows(page, {
-        panel: "project-branches",
-        minItems: 2,
-        needle: "feature/switch-target",
-        noResultsText: "No branches",
-      })
-      await page.locator('[data-yaade-project-branch="feature/switch-target"]').click()
-      await expect
-        .poll(async () => (await branchMenu.textContent()) ?? "")
-        .toContain("feature/switch-target")
-      await expect
-        .poll(() => execSync("git branch --show-current", { cwd: project }).toString().trim())
-        .toBe("feature/switch-target")
+      const tabs = page.locator("[data-yaade-project-tab]")
+      await expect.poll(() => tabs.count()).toBe(5)
+      expect(
+        await tabs.evaluateAll(items => items.map(item => item.textContent?.trim())),
+      ).toEqual([
+        "Changes",
+        "Agents",
+        "Editors",
+        "Terminals",
+        "History",
+      ])
       await expect
         .poll(() =>
-          page.evaluate(() => ({
-            commandDeck: document.querySelectorAll("[data-yaade-command-deck]").length,
-            worktreeCards: document.querySelectorAll("[data-yaade-project-worktrees]").length,
-            worktreeSwitcher: document.querySelectorAll("[data-yaade-worktree-switcher]").length,
-          })),
+          page
+            .locator('[data-yaade-project-tab="changes"]')
+            .getAttribute("aria-selected"),
         )
-        .toEqual({ commandDeck: 0, worktreeCards: 0, worktreeSwitcher: 3 })
-      await expectListRows(page, {
-        panel: "project-commits",
-        minItems: 2,
-        needle: "docs: add follow-up note",
-        noResultsText: "No commits yet",
+        .toBe("true")
+      await expect
+        .poll(async () =>
+          (await page.locator("[data-yaade-worktree-switcher]").textContent()) ?? "",
+        )
+        .toContain("Main")
+      expect(await page.evaluate(() => location.search)).toBe("")
+
+      const projects = await page.evaluate(async () => {
+        const response = await fetch("/api/v1/hq")
+        return (await response.json()).projects as Array<{ rootPath: string }>
       })
       expect(
-        await page.evaluate(() => {
-          const commits = document.querySelector("[data-yaade-project-commits]")
-          const readme = document.querySelector("[data-yaade-project-readme]")
-          return Boolean(
-            commits &&
-              readme &&
-              (commits.compareDocumentPosition(readme) &
-                Node.DOCUMENT_POSITION_FOLLOWING) !==
-                0,
-          )
-        }),
+        projects.some(item => fs.realpathSync(item.rootPath) === fs.realpathSync(project)),
       ).toBe(true)
 
-      await expect
-        .poll(
-          async () =>
-            (await page.locator("[data-yaade-project-readme-head]").textContent()) ??
-            "",
-          { timeout: 10_000 },
-        )
-        .toMatch(/Overview Fixture[\s\S]*Hello from README/)
-      await expect
-        .poll(
-          async () =>
-            (
-              (await page.locator("[data-yaade-project-readme-head]").textContent()) ??
-              ""
-            ).includes("TAIL_MARKER_SHOULD_BE_HIDDEN"),
-          { timeout: 3_000 },
-        )
-        .toBe(false)
-      await expect
-        .poll(
-          async () => page.locator("[data-yaade-project-readme-expand]").count(),
-          { timeout: 5_000 },
-        )
-        .toBe(1)
-      await expect
-        .poll(
-          async () => {
-            const full = page.locator("[data-yaade-project-readme-full]")
-            const count = await full.count()
-            if (count === 0) return "absent"
-            return (await full.isVisible()) ? "visible" : "hidden"
-          },
-          { timeout: 3_000 },
-        )
-        .toBe("absent")
-
-      await page.locator("[data-yaade-project-readme-expand]").click()
-      await expect
-        .poll(
-          async () => {
-            const full = page.locator("[data-yaade-project-readme-full]")
-            if ((await full.count()) === 0) return ""
-            return (await full.textContent()) ?? ""
-          },
-          { timeout: 5_000 },
-        )
-        .toMatch(/TAIL_MARKER_SHOULD_BE_HIDDEN/)
+      const widths = await tabs.evaluateAll(items =>
+        items.map(item => Math.round(item.getBoundingClientRect().width)),
+      )
+      expect(Math.max(...widths) - Math.min(...widths)).toBeLessThan(16)
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })
     }
   })
 
-  test("path switcher navigates to a sibling directory", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-path-switch-"))
-    const home = path.join(root, "home")
-    fs.mkdirSync(path.join(home, "dev", "alpha"), { recursive: true })
-    fs.mkdirSync(path.join(home, "dev", "beta"), { recursive: true })
-    fs.writeFileSync(path.join(home, "dev", "alpha", "README.md"), "alpha\n")
-    fs.writeFileSync(path.join(home, "dev", "beta", "README.md"), "beta\n")
-
+  test("a missing URL directory is actionable and is never created", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-missing-"))
+    const missing = path.join(home, "missing")
     const { app, page } = await launchJet({
       projectPage: true,
       launchWithoutWorkspace: true,
+      expectBootError: true,
+      expectedHttpErrors: [
+        { method: "POST", path: "/api/v1/projects/open", status: 404 },
+      ],
       homeDir: home,
-      startPath: "/dev/alpha",
+      startPath: "/missing",
     })
     try {
-      await waitForProjectPage(page)
-      await expect
-        .poll(
-          async () =>
-            page.locator("[data-yaade-project-path]").getAttribute(
-              "data-yaade-project-path",
-            ),
-          { timeout: 5_000 },
-        )
-        .toBe(path.join(home, "dev", "alpha"))
-
-      await page.locator('[data-yaade-path-segment="alpha"]').click()
-      await page
-        .locator('[data-yaade-path-switcher-menu="alpha"]')
-        .waitFor({ state: "visible", timeout: 5_000 })
-      await page.locator("[data-yaade-path-switcher-search]").waitFor({
+      await page.locator('[data-yaade-boot="error"]').waitFor({
         state: "visible",
-        timeout: 5_000,
-      })
-      await page.locator("[data-yaade-path-switcher-search]").fill("bet")
-      await page.locator('[data-yaade-path-sibling="beta"]').waitFor({
-        state: "visible",
-        timeout: 5_000,
+        timeout: 15_000,
       })
       await expect
-        .poll(
-          async () => page.locator('[data-yaade-path-sibling="alpha"]').count(),
-          { timeout: 3_000 },
+        .poll(async () =>
+          (await page.locator('[data-yaade-boot="error"]').textContent()) ?? "",
         )
-        .toBe(0)
-      await page.locator("[data-yaade-path-switcher-search]").press("Enter")
-
+        .toMatch(/does not exist|not found/i)
       await expect
-        .poll(
-          async () =>
-            page.locator("[data-yaade-project-path]").getAttribute(
-              "data-yaade-project-path",
-            ),
-          { timeout: 10_000 },
+        .poll(() =>
+          page
+            .locator('[data-yaade-boot="error"]')
+            .getByRole("button", { name: "Open Project" })
+            .isVisible(),
         )
-        .toBe(path.join(home, "dev", "beta"))
-
-      await page.locator('[data-yaade-path-segment="beta"]').waitFor({
-        state: "visible",
-        timeout: 5_000,
-      })
-      expect(await page.evaluate(() => location.pathname)).toBe("/dev/beta")
+        .toBe(true)
+      expect(fs.existsSync(missing)).toBe(false)
     } finally {
       await app.close()
-    }
-  })
-
-  test("path switcher arrow keys move selection", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-path-arrows-"))
-    const home = path.join(root, "home")
-    fs.mkdirSync(path.join(home, "dev", "alpha"), { recursive: true })
-    fs.mkdirSync(path.join(home, "dev", "beta"), { recursive: true })
-    fs.mkdirSync(path.join(home, "dev", "gamma"), { recursive: true })
-
-    const { app, page } = await launchJet({
-      projectPage: true,
-      launchWithoutWorkspace: true,
-      homeDir: home,
-      startPath: "/dev/alpha",
-    })
-    try {
-      await waitForProjectPage(page)
-      await page.locator('[data-yaade-path-segment="alpha"]').click()
-      await page
-        .locator('[data-yaade-path-switcher-menu="alpha"]')
-        .waitFor({ state: "visible", timeout: 5_000 })
-      await page.locator('[data-yaade-path-sibling="beta"]').waitFor({
-        state: "visible",
-        timeout: 5_000,
-      })
-
-      await page.locator("[data-yaade-path-switcher-search]").press("ArrowDown")
-      await expect
-        .poll(async () => {
-          return page.evaluate(() => {
-            const selected = document.querySelector(
-              "[data-yaade-path-sibling][data-selected='true']",
-            )
-            return selected?.getAttribute("data-yaade-path-sibling") ?? null
-          })
-        })
-        .toBe("beta")
-      await page.locator("[data-yaade-path-switcher-search]").press("Enter")
-
-      await expect
-        .poll(
-          async () =>
-            page.locator("[data-yaade-project-path]").getAttribute(
-              "data-yaade-project-path",
-            ),
-          { timeout: 10_000 },
-        )
-        .toBe(path.join(home, "dev", "beta"))
-    } finally {
-      await app.close()
-    }
-  })
-
-  test("breadcrumb segment opens switcher to navigate up", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-path-up-"))
-    const home = path.join(root, "home")
-    fs.mkdirSync(path.join(home, "dev", "nested"), { recursive: true })
-
-    const { app, page } = await launchJet({
-      projectPage: true,
-      launchWithoutWorkspace: true,
-      homeDir: home,
-      startPath: "/dev/nested",
-    })
-    try {
-      await waitForProjectPage(page)
-      await page.locator('[data-yaade-path-segment="dev"]').click()
-      await page
-        .locator('[data-yaade-path-switcher-menu="dev"]')
-        .waitFor({ state: "visible", timeout: 5_000 })
-      await page.locator('[data-yaade-path-sibling="dev"]').click()
-      await expect
-        .poll(
-          async () =>
-            page.locator("[data-yaade-project-path]").getAttribute(
-              "data-yaade-project-path",
-            ),
-          { timeout: 10_000 },
-        )
-        .toBe(path.join(home, "dev"))
-      expect(await page.evaluate(() => location.pathname)).toBe("/dev")
-    } finally {
-      await app.close()
+      fs.rmSync(home, { recursive: true, force: true })
     }
   })
 
@@ -427,7 +186,9 @@ test.describe("project page", () => {
         "[data-yaade-commit-changes-dialog] [data-yaade-git-diff] [data-yaade-pierre-diff]",
       )
       await expect
-        .poll(async () => (await historyDiff.boundingBox())?.height ?? 0, { timeout: 10_000 })
+        .poll(async () => (await historyDiff.boundingBox())?.height ?? 0, {
+          timeout: 10_000,
+        })
         .toBeGreaterThan(80)
     } finally {
       await app.close()
@@ -435,4 +196,50 @@ test.describe("project page", () => {
     }
   })
 
+  test("virtualized history paginates to the oldest of more than 250 commits", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-history-pages-"))
+    const project = path.join(home, "repo")
+    fs.mkdirSync(project, { recursive: true })
+    execSync(
+      "git init -q && git config user.email t@t && git config user.name t && git config gc.auto 0 && git config maintenance.auto false && for i in $(seq 0 259); do echo $i > counter.txt; git add counter.txt; git -c gc.auto=0 commit -q -m history-$i; done",
+      { cwd: project, stdio: "ignore" },
+    )
+
+    const { app, page } = await launchJet({
+      homeDir: home,
+      startPath: "/repo",
+      launchWithoutWorkspace: true,
+      projectPage: true,
+    })
+    try {
+      await waitForProjectPage(page)
+      await page.locator('[data-yaade-project-tab="history"]').click()
+      const panel = page.locator('[data-yaade-list-panel="git-history"]')
+      await panel.waitFor({ state: "visible", timeout: 15_000 })
+      await expect
+        .poll(
+          async () => {
+            await panel.evaluate(element => {
+              element.scrollTop = element.scrollHeight
+            })
+            await page.waitForTimeout(150)
+            return (await panel.textContent()) ?? ""
+          },
+          { timeout: 20_000 },
+        )
+        .toContain("history-0")
+
+      await expectListRows(page, {
+        panel: "git-history",
+        minItems: 1,
+        needle: "history-0",
+        noResultsText: "No commit history",
+      })
+      const rendered = await panel.locator("[data-yaade-list-item]").count()
+      expect(rendered).toBeLessThan(60)
+    } finally {
+      await app.close()
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
 })

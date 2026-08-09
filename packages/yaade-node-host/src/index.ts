@@ -35,6 +35,7 @@ export {
   gitBranch,
   gitSummary,
   gitHistory,
+  gitHistoryPage,
   gitStage,
   gitUnstage,
   gitCommit,

@@ -85,10 +85,6 @@ test.describe("git worktree sessions", () => {
     try {
       await waitForProjectPage(page)
 
-      const switcher = page.locator(
-        '[data-yaade-worktree-switcher-for="terminals"]',
-      )
-      await switcher.waitFor({ state: "visible" })
       await expect
         .poll(() =>
           page.evaluate(() => {
@@ -98,7 +94,13 @@ test.describe("git worktree sessions", () => {
             return tabs
           }),
         )
-        .toEqual(["overview", "history", "agents", "editors", "terminals", "changes"])
+        .toEqual(["changes", "agents", "editors", "terminals", "history"])
+
+      await page.locator('[data-yaade-project-tab="terminals"]').click()
+      const switcher = page.locator(
+        '[data-yaade-worktree-switcher-for="terminals"]',
+      )
+      await switcher.waitFor({ state: "visible" })
 
       await switcher.click()
       const menu = page.locator(
@@ -136,13 +138,19 @@ test.describe("git worktree sessions", () => {
         )
         .toEqual({ isRepo: true, isWorktree: false })
 
-      await page.locator('[data-yaade-project-tab="overview"]').click()
-      await page.locator("[data-yaade-project-overview]").waitFor({
+      await page.locator('[data-yaade-project-tab="changes"]').click()
+      await page.locator('[data-yaade-project-panel="changes"]').waitFor({
         state: "visible",
       })
 
-      await switcher.click()
-      await menu.waitFor({ state: "visible" })
+      const changesSwitcher = page.locator(
+        '[data-yaade-worktree-switcher-for="changes"]',
+      )
+      await changesSwitcher.click()
+      const changesMenu = page.locator(
+        '[data-yaade-worktree-switcher-menu-for="changes"]',
+      )
+      await changesMenu.waitFor({ state: "visible" })
       await page.locator("[data-yaade-worktree-create]").waitFor({
         state: "visible",
       })
@@ -152,18 +160,17 @@ test.describe("git worktree sessions", () => {
       const branch = `picker-wt-${Date.now().toString(36)}`
       await dialog.locator("[data-yaade-worktree-branch]").fill(branch)
       await dialog.locator("[data-yaade-create-worktree]").click()
-      await waitForMux(page)
-      await expect
-        .poll(() =>
-          page.evaluate(() => window.__yaadeAgent!.getState().sessionCwd),
-        )
-        .toContain(".yaade/worktrees")
       await expect
         .poll(
-          async () => (await switcher.textContent()) ?? "",
+          async () => (await changesSwitcher.textContent()) ?? "",
           { timeout: 5_000 },
         )
         .toContain(branch)
+      await expect
+        .poll(() =>
+          page.evaluate(() => new URLSearchParams(location.search).get("checkout")),
+        )
+        .toContain(".yaade/worktrees")
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

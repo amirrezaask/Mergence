@@ -13,6 +13,7 @@ export type NotificationRow = {
   id: string
   project_id: string | null
   session_id: string | null
+  run_id: string | null
   project_name: string | null
   session_title: string | null
   provider: string | null
@@ -44,6 +45,7 @@ export function ensureNotificationSchema(db: DatabaseSync): void {
       id TEXT PRIMARY KEY,
       project_id TEXT,
       session_id TEXT,
+      run_id TEXT,
       project_name TEXT,
       session_title TEXT,
       provider TEXT,
@@ -85,6 +87,7 @@ export function ensureNotificationSchema(db: DatabaseSync): void {
 
     CREATE TABLE IF NOT EXISTS notification_session_bindings (
       session_id TEXT PRIMARY KEY,
+      run_id TEXT,
       project_id TEXT,
       project_name TEXT,
       session_title TEXT,
@@ -99,6 +102,24 @@ export function ensureNotificationSchema(db: DatabaseSync): void {
       id INTEGER PRIMARY KEY CHECK (id = 1),
       prefs_json TEXT NOT NULL
     );
+  `)
+  for (const statement of [
+    "ALTER TABLE app_notifications ADD COLUMN run_id TEXT",
+    "ALTER TABLE notification_session_bindings ADD COLUMN run_id TEXT",
+  ]) {
+    try { db.exec(statement) } catch { /* column already exists */ }
+  }
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_app_notifications_run
+      ON app_notifications(run_id, created_at DESC);
+    CREATE INDEX IF NOT EXISTS idx_notification_bindings_run
+      ON notification_session_bindings(run_id);
+    UPDATE notification_session_bindings
+       SET run_id=session_id
+     WHERE run_id IS NULL AND session_id LIKE 'run-%';
+    UPDATE app_notifications
+       SET run_id=session_id
+     WHERE run_id IS NULL AND session_id LIKE 'run-%';
   `)
   try {
     db.prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(2)").run()
@@ -126,6 +147,7 @@ export function rowToNotification(row: NotificationRow): AppNotification {
     id: row.id,
     projectId: row.project_id,
     sessionId: row.session_id,
+    runId: row.run_id,
     projectName: row.project_name,
     sessionTitle: row.session_title,
     provider: (row.provider as AgentProvider | null) ?? null,

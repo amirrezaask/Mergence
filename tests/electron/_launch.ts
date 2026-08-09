@@ -16,6 +16,8 @@ export type LaunchJetOptions = {
    * session workspace. Default false — most mux/terminal E2E specs need a session.
    */
   projectPage?: boolean
+  /** Return after rendering an intentional boot error instead of waiting for the agent bridge. */
+  expectBootError?: boolean
   /** Stay on the host-wide HQ route (`/`). */
   hq?: boolean
   /**
@@ -60,19 +62,18 @@ export function hasCursorAgent(): boolean {
 /**
  * Shared E2E entry. Historical specs remain under tests/electron/.
  *
- * Parallelism note: speed now comes from Playwright `fullyParallel: true`, which
- * runs distinct spec *files* concurrently across workers (see
- * `playwright.config.ts`). Each `launchJet()` call still spins up its own
- * `@yaade/host-server` + browser context and tears it down in the test's
- * `finally` via `app.close()`.
+ * Each `launchJet()` call spins up its own `@yaade/host-server` + browser
+ * context and tears it down in the test's `finally` via `app.close()`.
+ * The default suite is serial because PTY/LSP timing becomes flaky under host
+ * contention; `PLAYWRIGHT_WORKERS=N` remains available for targeted runs.
  *
  * A shared host-per-worker fixture was intentionally NOT adopted: several active
  * specs assert against fresh host state — e.g. `mux.electron.spec.ts` /
  * `url-session.electron.spec.ts` reload to restore persisted layouts and expect
  * to start from a single pane, and PTYs/workspace-sessions would leak between
  * tests sharing a host. Reusing one host across tests in a worker would make
- * these order-dependent and flaky. Keep the per-test host lifecycle; parallelize
- * at the file level instead. If a shared host is ever revisited, migrate one
+ * these order-dependent and flaky. Keep the per-test host lifecycle. If a
+ * shared host is ever revisited, migrate one
  * spec (mux) as a pilot behind a worker-scoped Playwright fixture and prove
  * isolation (reset sessions + dispose PTYs between tests) before expanding.
  */
@@ -82,6 +83,7 @@ export async function launchJet(
   const opts: LaunchJetOptions =
     typeof workspaceRelOrOpts === "string" ? { workspaceRel: workspaceRelOrOpts } : workspaceRelOrOpts
   const result = await launchWeb(opts)
+  if (opts.expectBootError) return result
   if (opts.hq) {
     await waitForHq(result.page)
   } else if (!opts.projectPage) {
@@ -219,16 +221,26 @@ export async function openMuxTerminal(
   page: ShellDriver,
   timeoutMs = 15_000,
 ): Promise<void> {
-  if ((await page.locator("[data-yaade-terminal-panel]").count()) > 0) return
+  const deadline = Date.now() + timeoutMs
+  const terminal = page.locator("[data-yaade-terminal-panel]")
   const emptyTile = page.locator('[data-yaade-mux-empty-action="terminal"]')
-  await emptyTile.waitFor({ state: "visible", timeout: timeoutMs })
-  await emptyTile.click()
-  await page.waitForSelector("[data-yaade-terminal-panel]", {
-    timeout: timeoutMs,
-  })
+  while (Date.now() < deadline) {
+    // Restored sessions can hydrate their terminal after waitForMux resolves.
+    // Do not wait exclusively for the empty picker in that transition window.
+    if ((await terminal.count()) > 0) return
+    if ((await emptyTile.count()) > 0) {
+      await emptyTile.click()
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
+    await page.waitForTimeout(50)
+  }
+  throw new Error("openMuxTerminal: terminal or empty picker did not become available")
 }
 
-/** Wait for the GitHub-style project landing page (Overview). */
+/** Wait for the project shell and its default Changes surface. */
 export async function waitForProjectPage(
   page: ShellDriver,
   timeoutMs = 30_000,
@@ -236,7 +248,7 @@ export async function waitForProjectPage(
   await page.waitForSelector("[data-yaade-shell='project']", {
     timeout: timeoutMs,
   })
-  await page.waitForSelector("[data-yaade-project-overview], [data-yaade-project-tab='overview']", {
+  await page.waitForSelector("[data-yaade-project-tab][aria-selected='true']", {
     timeout: Math.min(timeoutMs, 10_000),
   })
 }

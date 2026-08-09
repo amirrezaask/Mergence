@@ -34,6 +34,7 @@ export const HOST_CHANNELS = new Set([
   "git:pull",
   "git:push",
   "git:history",
+  "git:historyPage",
   "git:numstat",
   "git:commitFiles",
   "git:applyPatch",

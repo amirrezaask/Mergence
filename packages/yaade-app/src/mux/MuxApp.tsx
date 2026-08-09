@@ -76,6 +76,7 @@ import {
   panelTabIds,
   sameFileTab,
   terminalTabId,
+  terminalSessionKeyFromTabId,
   type JetCommandContext,
   type JetKeyBinding,
   type KeymapContext,
@@ -89,10 +90,6 @@ import {
   replaceEditorViewStates,
   snapshotEditorViewStates,
 } from "../editor/editor-view-state-store.js"
-import {
-  buildAgentCliLaunchArgs,
-  buildAgentCliLaunchEnv,
-} from "../agent-cli-launch.js"
 import { agentDriverIdForMode } from "@yaade/agents"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useGlobalKeymap } from "../hooks/useGlobalKeymap.js"
@@ -549,7 +546,7 @@ export type MuxAppProps = {
   /** Called after the request succeeds or fails so the caller can clear it. */
   onLaunchRequestHandled?: (
     requestId: string,
-    result?: { agentTabId?: string | null },
+    result?: { agentTabId?: string | null; agentRunId?: string | null },
   ) => void
 }
 
@@ -637,10 +634,12 @@ export function MuxApp({
     for (const liveWindow of windows) {
       for (const leaf of listTerminalLeaves(liveWindow.tree)) {
         const terminalSession = terminalSessionForTab(leaf.ptyTabId)
+        const agentRunKey = terminalSessionKeyFromTabId(leaf.ptyTabId)
         const ptyId = terminalSession?.ptyId
         const provider = terminalSession?.agentId as AgentProvider | undefined
         if (
           !ptyId ||
+          agentRunKey?.startsWith("run-") ||
           boundAgentPtysRef.current.has(ptyId) ||
           (provider !== "claude" &&
             provider !== "codex" &&
@@ -1652,37 +1651,35 @@ export function MuxApp({
 
   /** Launch a known agent CLI into the active (or empty) window. */
   const openAgentCliPane = useCallback(
-    (driver: AgentCliDriver): string | null => {
+    async (
+      driver: AgentCliDriver,
+      launchRequestId = `agent-${Date.now()}-${driver.id}`,
+    ): Promise<{ tabId: string; runId: string } | null> => {
       const w = ensureProjectWindow()
       if (!canAddTerminalPane(w.id)) return null
       const rootUri = cwdUri()
-      const projectRoot = rootUri ? fileUriToPath(rootUri) : ""
-      const launchContext = {
-        sessionId: "pending",
-        origin: window.location.origin,
-        projectRoot,
+      const api = window.yaade?.agents
+      if (!api) throw new Error("Agent management is unavailable")
+      const launched = await api.launch({
+        launchRequestId,
+        provider: driver.id,
+        projectId,
+        workspaceId: sessionId,
+        checkoutKey: session.checkoutKey,
+        title: driver.label,
+      })
+      if (!launched.pty?.id || launched.run.processState !== "running") {
+        throw new Error("The agent process did not start")
       }
-      // Args/env need the real tab id — allocate first with placeholders, then
-      // the session store already holds the tab id for build* helpers below.
-      const sessionKey = allocTerminalSessionKey()
-      const ptyTabId = terminalTabId(sessionKey)
-      const launchArgs = buildAgentCliLaunchArgs(driver.id, {
-        ...launchContext,
-        sessionId: ptyTabId,
-      })
-      const launchEnv = buildAgentCliLaunchEnv(driver.id, {
-        ...launchContext,
-        sessionId: ptyTabId,
-      })
-      registerTerminalSession(ptyTabId, rootUri, driver.command, {
+      const ptyTabId = terminalTabId(launched.run.runId)
+      registerTerminalSession(ptyTabId, rootUri, undefined, {
         customLabel: driver.label,
-        launchArgs,
-        launchEnv,
         agentId: driver.id,
         agentTitle: driver.label,
         agentDriverId: agentDriverIdForMode(driver.id, "cli"),
-        pendingCliMint: driver.id === "cursor",
+        pendingCliMint: false,
       })
+      trackTerminalPtyId(ptyTabId, launched.pty.id)
       workspace.registerTab({
         id: ptyTabId,
         kind: "terminal",
@@ -1692,21 +1689,20 @@ export function MuxApp({
         ptyTabId,
         label: driver.label,
         rootUri,
-        launchCommand: driver.command,
-        launchArgs,
       }
       updateWindow(w.id, live => placeTerminalPane(live, pane))
-      if (projectRoot) {
-        void window.yaade?.agents
-          ?.installProjectHooks?.({
-            provider: driver.id,
-            projectRoot,
-          })
-          .catch(() => undefined)
-      }
-      return ptyTabId
+      return { tabId: ptyTabId, runId: launched.run.runId }
     },
-    [canAddTerminalPane, cwdUri, ensureProjectWindow, updateWindow, workspace],
+    [
+      canAddTerminalPane,
+      cwdUri,
+      ensureProjectWindow,
+      projectId,
+      session.checkoutKey,
+      sessionId,
+      updateWindow,
+      workspace,
+    ],
   )
 
   const openGitSplit = useCallback(
@@ -2421,13 +2417,16 @@ export function MuxApp({
 
     void (async () => {
       let agentTabId: string | null = null
+      let agentRunId: string | null = null
       try {
         const action = launchRequest.action
         if (action.kind === "agent") {
           const driver = AGENT_CLI_DRIVERS.find(item => item.id === action.driverId)
           if (!driver) throw new Error(`Unknown agent provider: ${action.driverId}`)
-          agentTabId = openAgentCliPane(driver)
-          if (!agentTabId) {
+          const opened = await openAgentCliPane(driver, launchRequest.id)
+          agentTabId = opened?.tabId ?? null
+          agentRunId = opened?.runId ?? null
+          if (!opened) {
             showYaadeToast("Could not open another terminal pane for that agent.")
           }
         } else if (action.kind === "terminal") {
@@ -2453,7 +2452,7 @@ export function MuxApp({
           error instanceof Error ? error.message : "Could not launch that tool.",
         )
       } finally {
-        onLaunchRequestHandled?.(launchRequest.id, { agentTabId })
+        onLaunchRequestHandled?.(launchRequest.id, { agentTabId, agentRunId })
       }
     })()
   }, [
@@ -4690,7 +4689,12 @@ export function MuxApp({
                     void executeCommand("mux.openEditor")
                   }}
                   onEmptyOpenAgent={driver => {
-                    openAgentCliPane(driver)
+                    void openAgentCliPane(driver).catch(error => {
+                      showYaadeToast(
+                        error instanceof Error ? error.message : "Could not launch agent",
+                        { variant: "destructive" },
+                      )
+                    })
                   }}
                   onNewWindow={() => openBrowserProjectTab()}
                   gitRootForTab={tabId =>

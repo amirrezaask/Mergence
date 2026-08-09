@@ -28,10 +28,14 @@ export type AgentSwitcherProps = {
   onLaunchAgent?: () => void
   onIntent?: () => void
   onOpenChange?: (open: boolean) => void
+  /** Render as the compact selector beside semantic project tabs. */
+  contextual?: boolean
 }
 
 function statusLabel(agent: HqAgentSummary): string {
   if (agent.telemetry === "pending") return "Connecting"
+  if (agent.telemetry === "degraded") return "Limited telemetry"
+  if (agent.telemetry === "process_only") return "Running"
   return agent.status.replaceAll("_", " ")
 }
 
@@ -46,6 +50,7 @@ export function AgentSwitcher({
   onLaunchAgent,
   onIntent,
   onOpenChange,
+  contextual = false,
 }: AgentSwitcherProps) {
   const [open, setOpen] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -78,22 +83,27 @@ export function AgentSwitcher({
           variant="ghost"
           size="xs"
           data-yaade-agent-switcher=""
-          data-yaade-project-tab="agents"
-          aria-label="Agents"
+          data-yaade-project-tab={contextual ? undefined : "agents"}
+          data-yaade-context-selector={contextual ? "agents" : undefined}
+          aria-label={contextual ? "Select agent" : "Agents"}
           aria-expanded={open}
           disabled={busy}
           onPointerEnter={onIntent}
           onFocus={onIntent}
           className={cn(
-            "relative h-[calc(100%-1px)] gap-0.5 border border-transparent px-1.5 py-0 text-xs text-muted-foreground",
-            "hover:text-foreground",
-            "after:absolute after:inset-x-0 after:bottom-0.5 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
+            "relative gap-1 border border-transparent text-xs text-muted-foreground hover:text-foreground",
+            contextual
+              ? "h-7 max-w-56 bg-secondary/60 px-2 text-foreground"
+              : "h-[calc(100%-1px)] gap-0.5 px-1.5 py-0 after:absolute after:inset-x-0 after:bottom-0.5 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
             (open || active) && "text-foreground",
-            active && "after:opacity-100",
+            active && !contextual && "after:opacity-100",
           )}
         >
-          Agents
-          {active && activeLabel ? (
+          <Bot className="size-3.5" aria-hidden />
+          <span className="truncate">
+            {contextual ? (activeLabel ?? "Select agent") : "Agents"}
+          </span>
+          {!contextual && active && activeLabel ? (
             <span className="hidden max-w-[7rem] truncate font-normal text-foreground/80 sm:inline">
               · {activeLabel}
             </span>

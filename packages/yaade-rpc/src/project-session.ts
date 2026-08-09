@@ -51,6 +51,8 @@ export const ProjectSessionSummary = Schema.Struct({
   title: Schema.String,
   worktreeBranch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  /** `main` for the project root, otherwise a stable opaque path-derived key. */
+  checkoutKey: Schema.String,
   createdAt: Schema.String,
   updatedAt: Schema.String,
   archivedAt: Schema.NullOr(Schema.String),
@@ -66,6 +68,7 @@ export const ProjectSession = Schema.Struct({
   title: Schema.String,
   worktreeBranch: Schema.NullOr(Schema.String),
   worktreePath: Schema.NullOr(Schema.String),
+  checkoutKey: Schema.String,
   createdAt: Schema.String,
   updatedAt: Schema.String,
   archivedAt: Schema.NullOr(Schema.String),

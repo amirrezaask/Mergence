@@ -1,13 +1,10 @@
-import os from "node:os"
 import { defineConfig } from "@playwright/test"
-
-const defaultWorkers = Math.max(1, Math.floor((os.cpus().length || 4) / 2))
 
 export default defineConfig({
   timeout: 120_000,
   retries: process.env.CI ? 1 : 0,
-  workers: process.env.PLAYWRIGHT_WORKERS ? Number(process.env.PLAYWRIGHT_WORKERS) : defaultWorkers,
-  fullyParallel: true,
+  workers: process.env.PLAYWRIGHT_WORKERS ? Number(process.env.PLAYWRIGHT_WORKERS) : 1,
+  fullyParallel: false,
   globalSetup: "./tests/web/global-setup.ts",
   use: {
     trace: "retain-on-failure",

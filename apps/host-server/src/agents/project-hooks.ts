@@ -3,6 +3,21 @@ import path from "node:path"
 import os from "node:os"
 import type { AgentProvider } from "@yaade/agents"
 
+function atomicWrite(file: string, content: string, mode?: number): void {
+  const temporary = `${file}.tmp-${process.pid}-${Date.now()}`
+  fs.writeFileSync(temporary, content, { encoding: "utf8", ...(mode ? { mode } : {}) })
+  fs.renameSync(temporary, file)
+}
+
+function readJsonObject(file: string): Record<string, unknown> {
+  if (!fs.existsSync(file)) return {}
+  const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as unknown
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+    throw new Error(`${file} must contain a JSON object`)
+  }
+  return parsed as Record<string, unknown>
+}
+
 /** Shared forwarder script invoked by Codex/Cursor project hooks. */
 export function ensureHookForwarderScript(dataDir?: string): string {
   const root =
@@ -42,7 +57,7 @@ BODY="$PAYLOAD"
 ) >/dev/null 2>&1 &
 exit 0
 `
-  fs.writeFileSync(scriptPath, script, { mode: 0o755 })
+  atomicWrite(scriptPath, script, 0o755)
   return scriptPath
 }
 
@@ -71,15 +86,12 @@ export function installCodexProjectHooks(
   const dir = path.join(projectRoot, ".codex")
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, "hooks.json")
-  let current: { hooks?: Record<string, unknown> } = {}
-  if (fs.existsSync(file)) {
-    try {
-      current = JSON.parse(fs.readFileSync(file, "utf8")) as typeof current
-    } catch {
-      current = {}
-    }
+  const current = readJsonObject(file)
+  const currentHooks = current.hooks
+  if (currentHooks != null && (typeof currentHooks !== "object" || Array.isArray(currentHooks))) {
+    throw new Error(`${file} hooks must be an object`)
   }
-  const hooks = { ...(current.hooks ?? {}) }
+  const hooks = { ...((currentHooks as Record<string, unknown> | undefined) ?? {}) }
   const events = [
     "SessionStart",
     "SessionEnd",
@@ -94,22 +106,19 @@ export function installCodexProjectHooks(
     "Stop",
   ]
   for (const ev of events) {
-    hooks[ev] = [
-      {
-        hooks: mergeHookCommand(
-          Array.isArray(hooks[ev])
-            ? (hooks[ev] as unknown[]).flatMap((e) =>
-                e && typeof e === "object" && "hooks" in e
-                  ? ((e as { hooks: unknown }).hooks as unknown[])
-                  : [],
-              )
-            : [],
-          forwarder,
-        ),
-      },
-    ]
+    const groups = Array.isArray(hooks[ev]) ? [...(hooks[ev] as unknown[])] : []
+    const withoutYaade = groups.filter(group => {
+      if (!group || typeof group !== "object") return true
+      const commands = (group as { hooks?: unknown }).hooks
+      return !Array.isArray(commands) || !commands.some(command =>
+        command && typeof command === "object" &&
+        typeof (command as { command?: unknown }).command === "string" &&
+        (command as { command: string }).command.includes("yaade-hook-forward"),
+      )
+    })
+    hooks[ev] = [...withoutYaade, { hooks: [{ command: forwarder }] }]
   }
-  fs.writeFileSync(file, JSON.stringify({ hooks }, null, 2), "utf8")
+  atomicWrite(file, JSON.stringify({ ...current, hooks }, null, 2))
   return file
 }
 
@@ -122,18 +131,12 @@ export function installCursorProjectHooks(
   const dir = path.join(projectRoot, ".cursor")
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, "hooks.json")
-  let current: { version?: number; hooks?: Record<string, unknown[]> } = {
-    version: 1,
-    hooks: {},
+  const current = readJsonObject(file)
+  const currentHooks = current.hooks
+  if (currentHooks != null && (typeof currentHooks !== "object" || Array.isArray(currentHooks))) {
+    throw new Error(`${file} hooks must be an object`)
   }
-  if (fs.existsSync(file)) {
-    try {
-      current = JSON.parse(fs.readFileSync(file, "utf8")) as typeof current
-    } catch {
-      /* keep default */
-    }
-  }
-  const hooks = { ...(current.hooks ?? {}) }
+  const hooks = { ...((currentHooks as Record<string, unknown[]> | undefined) ?? {}) }
   // High-signal only. afterFileEdit / shell hooks fire constantly and made
   // Cursor IDE unusable when this file is present in the project.
   const events = [
@@ -163,11 +166,7 @@ export function installCursorProjectHooks(
   for (const ev of events) {
     hooks[ev] = mergeHookCommand(hooks[ev], forwarder) as unknown[]
   }
-  fs.writeFileSync(
-    file,
-    JSON.stringify({ version: 1, hooks }, null, 2),
-    "utf8",
-  )
+  atomicWrite(file, JSON.stringify({ ...current, version: 1, hooks }, null, 2))
   return file
 }
 
@@ -179,7 +178,8 @@ export function installOpenCodePlugin(
   const dir = path.join(projectRoot, ".opencode", "plugin")
   fs.mkdirSync(dir, { recursive: true })
   const file = path.join(dir, "yaade-telemetry.js")
-  const source = `// Yaade ADE telemetry plugin — fire-and-forget, never block OpenCode.
+  const source = `// @yaade-telemetry-plugin v1
+// Yaade ADE telemetry plugin — fire-and-forget, never block OpenCode.
 export const YaadeTelemetry = async () => {
   return {
     event: async ({ event }) => {
@@ -197,7 +197,7 @@ export const YaadeTelemetry = async () => {
   }
 }
 `
-  fs.writeFileSync(file, source, "utf8")
+  atomicWrite(file, source)
   return file
 }
 

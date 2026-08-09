@@ -1,4 +1,6 @@
-import { FolderOpen, Plus, Trash2 } from "lucide-react"
+import { FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react"
+import { useCallback, useEffect, useMemo, useState } from "react"
+import type { AgentDriverCapabilities, AgentProvider } from "@yaade/agents"
 import {
   Command,
   CommandEmpty,
@@ -48,6 +50,15 @@ export type AgentCliPickerOverlayProps = {
   onAddProject?: () => void
 }
 
+type ProviderAvailability = {
+  provider: AgentProvider
+  available: boolean
+  binary: string
+  version: string | null
+  capabilities: AgentDriverCapabilities
+  error: string | null
+}
+
 export function AgentCliPickerOverlay({
   open,
   onOpenChange,
@@ -58,6 +69,32 @@ export function AgentCliPickerOverlay({
   onRemoveProject,
   onAddProject,
 }: AgentCliPickerOverlayProps) {
+  const [providers, setProviders] = useState<ProviderAvailability[]>([])
+  const [providersLoading, setProvidersLoading] = useState(false)
+  const [providersError, setProvidersError] = useState<string | null>(null)
+  const refreshProviders = useCallback(async (refresh = false) => {
+    const api = window.yaade?.agents
+    if (!api) {
+      setProvidersError("Provider detection is unavailable")
+      return
+    }
+    setProvidersLoading(true)
+    try {
+      setProviders(await api.listProviders(refresh))
+      setProvidersError(null)
+    } catch (error) {
+      setProvidersError(error instanceof Error ? error.message : "Could not detect providers")
+    } finally {
+      setProvidersLoading(false)
+    }
+  }, [])
+  useEffect(() => {
+    if (open) void refreshProviders(false)
+  }, [open, refreshProviders])
+  const providerById = useMemo(
+    () => new Map(providers.map(provider => [provider.provider, provider])),
+    [providers],
+  )
   const selectedProject =
     projects.find(project => project.rootUri === selectedRootUri) ?? projects[0]
   const showProjectControl = projects.length > 0 || onAddProject != null
@@ -74,7 +111,18 @@ export function AgentCliPickerOverlay({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="picker" className="gap-0 overflow-hidden p-0">
         <DialogHeader className="px-4 pt-4 pb-3">
+          <div className="flex items-start justify-between gap-3">
           <DialogTitle>Launch an agent</DialogTitle>
+          <Button
+            size="xs"
+            variant="ghost"
+            disabled={providersLoading}
+            onClick={() => void refreshProviders(true)}
+          >
+            <RefreshCw className={providersLoading ? "animate-spin" : undefined} />
+            Refresh
+          </Button>
+          </div>
           <DialogDescription>
             Choose a provider to start in the selected project workspace.
           </DialogDescription>
@@ -155,12 +203,22 @@ export function AgentCliPickerOverlay({
           >
             <CommandEmpty>No matching agents.</CommandEmpty>
             <CommandGroup heading="Providers">
-              {AGENT_CLI_DRIVERS.map(driver => (
-                <CommandItem
+              {AGENT_CLI_DRIVERS.map(driver => {
+                const detected = providerById.get(driver.id)
+                const unavailable = detected ? !detected.available : providersLoading
+                const capabilityLabels = detected
+                  ? Object.entries(detected.capabilities)
+                      .filter(([, enabled]) => enabled)
+                      .map(([name]) => name.replace(/Lifecycle$/, ""))
+                      .slice(0, 3)
+                  : []
+                return <CommandItem
                   key={driver.id}
                   value={`${driver.label} ${driver.description} ${driver.command}`}
                   onSelect={() => onSelect(driver)}
+                  disabled={unavailable}
                   data-yaade-list-item=""
+                  data-yaade-agent-provider-available={detected?.available ? "true" : "false"}
                   className="py-3"
                 >
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/50">
@@ -174,15 +232,20 @@ export function AgentCliPickerOverlay({
                       {driver.label}
                     </span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {driver.description}
+                      {detected?.available
+                        ? [detected.version, ...capabilityLabels].filter(Boolean).join(" · ") || driver.description
+                        : detected?.error ?? (providersLoading ? "Checking availability…" : "CLI not found in PATH")}
                     </span>
                   </span>
                   <code className="text-xs text-muted-foreground">
-                    {driver.command}
+                    {detected?.available ? detected.binary : "Unavailable"}
                   </code>
                 </CommandItem>
-              ))}
+              })}
             </CommandGroup>
+            {providersError ? (
+              <p className="px-3 py-2 text-xs text-destructive">{providersError}</p>
+            ) : null}
           </CommandList>
         </Command>
       </DialogContent>

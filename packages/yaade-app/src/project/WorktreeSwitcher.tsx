@@ -20,6 +20,7 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   PlusIcon,
+  Trash2Icon,
 } from "lucide-react"
 import { CreateWorktreeDialog } from "./CreateWorktreeDialog.js"
 
@@ -49,8 +50,11 @@ export type WorktreeSwitcherProps = {
     branch: string
     baseRef?: string
   }) => Promise<void>
+  onRemoveWorktree?: (input: { cwdPath: string; branch: string | null }) => Promise<void>
   /** Warm the session workspace when the user signals intent to open it. */
   onIntent?: () => void
+  /** Render as the compact selector beside semantic project tabs. */
+  contextual?: boolean
 }
 
 function branchLabel(wt: GitWorktree): string {
@@ -79,7 +83,9 @@ export function WorktreeSwitcher({
   activeCwdPath,
   onSelectCheckout,
   onCreateWorktree,
+  onRemoveWorktree,
   onIntent,
+  contextual = false,
 }: WorktreeSwitcherProps) {
   const [open, setOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -99,6 +105,9 @@ export function WorktreeSwitcher({
         !sameCheckoutPath(wt.path, projectPath),
     )
   }, [projectPath, worktrees])
+  const activeWorktree = linked.find(
+    worktree => activeCwdPath && sameCheckoutPath(activeCwdPath, worktree.path),
+  )
 
   useEffect(() => {
     if (!open) return
@@ -181,25 +190,28 @@ export function WorktreeSwitcher({
             size="xs"
             data-yaade-worktree-switcher=""
             data-yaade-worktree-switcher-for={tab}
-            data-yaade-project-tab={tab}
-            aria-label={label}
+            data-yaade-project-tab={contextual ? undefined : tab}
+            data-yaade-context-selector={contextual ? tab : undefined}
+            aria-label={contextual ? `${label} worktree` : label}
             aria-expanded={open}
             disabled={busy}
             onPointerEnter={onIntent}
             onFocus={onIntent}
             className={cn(
-              "relative h-[calc(100%-1px)] gap-0.5 border border-transparent px-1.5 py-0 text-xs text-muted-foreground",
-              "hover:text-foreground",
-              "after:absolute after:inset-x-0 after:bottom-0.5 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
+              "relative gap-1 border border-transparent text-xs text-muted-foreground hover:text-foreground",
+              contextual
+                ? "h-7 max-w-48 bg-secondary/60 px-2 text-foreground"
+                : "h-[calc(100%-1px)] gap-0.5 px-1.5 py-0 after:absolute after:inset-x-0 after:bottom-0.5 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
               (open || active) && "text-foreground",
-              active && "after:opacity-100",
+              active && !contextual && "after:opacity-100",
             )}
           >
-            {label}
-            {active && activeLabel ? (
-              <span className="hidden max-w-[7rem] truncate font-normal text-foreground/80 sm:inline">
-                · {activeLabel}
-              </span>
+            <GitBranchIcon className="size-3.5" aria-hidden />
+            <span className="truncate">
+              {contextual ? (activeLabel ?? "Main") : label}
+            </span>
+            {!contextual && active && activeLabel ? (
+              <span className="hidden max-w-[7rem] truncate font-normal text-foreground/80 sm:inline">· {activeLabel}</span>
             ) : null}
             <ChevronDownIcon className="size-2.5 opacity-70" aria-hidden />
           </Button>
@@ -319,6 +331,26 @@ export function WorktreeSwitcher({
                       <PlusIcon className="size-3.5 shrink-0" />
                       <span>Create worktree…</span>
                     </CommandItem>
+                    {onRemoveWorktree && activeWorktree ? (
+                      <CommandItem
+                        value={`remove ${branchLabel(activeWorktree)} worktree`}
+                        data-yaade-worktree-remove={branchLabel(activeWorktree)}
+                        disabled={busy}
+                        onSelect={() => {
+                          setBusy(true)
+                          void onRemoveWorktree({
+                            cwdPath: activeWorktree.path,
+                            branch: activeWorktree.branch
+                              ? activeWorktree.branch.replace(/^refs\/heads\//, "")
+                              : null,
+                          }).then(() => setOpen(false)).finally(() => setBusy(false))
+                        }}
+                        className="gap-2 text-destructive"
+                      >
+                        <Trash2Icon className="size-3.5 shrink-0" />
+                        <span>Remove current worktree…</span>
+                      </CommandItem>
+                    ) : null}
                   </CommandGroup>
                 </>
               )}

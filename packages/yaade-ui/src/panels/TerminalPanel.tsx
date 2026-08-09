@@ -73,6 +73,8 @@ type TerminalSession = {
   wantedRows: number
   resizeInFlight: boolean
   resizeQueued: boolean
+  /** False before xterm disposal; every delayed measurement checks this. */
+  live: boolean
 }
 
 const MONO_FONT_FALLBACK = '"Commit Mono", ui-monospace, monospace'
@@ -219,6 +221,9 @@ function restoreScrollSnapshot(
 
 /** Fit xterm to container. Returns true when cols/rows changed (PTY resize needed). */
 function fitWhenReady(session: TerminalSession, container: HTMLElement): boolean {
+  if (!session.live || !container.isConnected) return false
+  const core = (session.term as XTerm & { _core?: { _isDisposed?: boolean } })._core
+  if (!core || core._isDisposed) return false
   if (container.clientWidth < 8 || container.clientHeight < 8) return false
   const prevCols = session.term.cols
   const prevRows = session.term.rows
@@ -237,7 +242,7 @@ function fitWhenReady(session: TerminalSession, container: HTMLElement): boolean
  * geometry (stale smaller/larger sizes make progress bars wrap instead of \\r-update).
  */
 function resizePty(session: TerminalSession): void {
-  if (!session.ptyId) return
+  if (!session.live || !session.ptyId) return
   session.wantedCols = session.term.cols
   session.wantedRows = session.term.rows
   if (session.resizeInFlight) {
@@ -261,6 +266,7 @@ function resizePty(session: TerminalSession): void {
       return
     }
     void Promise.resolve(api.resize(id, cols, rows)).finally(() => {
+      if (!session.live) return
       session.resizeInFlight = false
       if (
         session.resizeQueued ||
@@ -459,6 +465,7 @@ export function TerminalPanel({
       wantedRows: term.rows,
       resizeInFlight: false,
       resizeQueued: false,
+      live: true,
     }
     sessionRef.current = session
 
@@ -491,6 +498,7 @@ export function TerminalPanel({
     }
 
     const syncTypography = () => {
+      if (!session.live) return
       const px = readRootFontSize()
       const family = readTerminalFontFamily()
       const lineHeight = readTerminalLineHeight()
@@ -516,6 +524,7 @@ export function TerminalPanel({
     }
 
     const syncTheme = () => {
+      if (!session.live) return
       term.options.theme = liveThemeOptions(themeRef.current)
       // Skip full refresh when the pane is off-screen — options still apply
       // on the next paint / visibility refit.
@@ -733,10 +742,11 @@ export function TerminalPanel({
     const onFontsLoadingDone = () => refitAfterFonts()
     document.fonts?.addEventListener?.("loadingdone", onFontsLoadingDone)
 
+    let startTimer = 0
     void Promise.race([
       fontsReady,
       new Promise<void>(resolve => {
-        window.setTimeout(resolve, 300)
+        startTimer = window.setTimeout(resolve, 300)
       }),
     ]).finally(() => {
       if (cancelled) return
@@ -760,6 +770,7 @@ export function TerminalPanel({
     })
 
     let wasVisible = false
+    let visibilityRaf = 0
     const visibilityObserver = new IntersectionObserver(entries => {
       const visible = entries.some(e => e.isIntersecting)
       if (!visible) {
@@ -768,7 +779,8 @@ export function TerminalPanel({
       }
       if (wasVisible) return
       wasVisible = true
-      requestAnimationFrame(() => {
+      visibilityRaf = requestAnimationFrame(() => {
+        visibilityRaf = 0
         if (cancelled) return
         syncTypography()
         syncFit()
@@ -779,7 +791,10 @@ export function TerminalPanel({
 
     return () => {
       cancelled = true
+      session.live = false
       if (resizeRaf) cancelAnimationFrame(resizeRaf)
+      if (visibilityRaf) cancelAnimationFrame(visibilityRaf)
+      if (startTimer) window.clearTimeout(startTimer)
       document.fonts?.removeEventListener?.("loadingdone", onFontsLoadingDone)
       resizeObserver.disconnect()
       unsubscribeRootStyleObserver()
@@ -836,7 +851,12 @@ export function TerminalPanel({
     session.term.options.theme = liveThemeOptions(themeRef.current)
 
     if (!focused || !isActive) return
-    requestAnimationFrame(() => focusTerminalInput(tabId))
+    const focusRaf = requestAnimationFrame(() => {
+      if (sessionRef.current === session && container.isConnected) {
+        focusTerminalInput(tabId)
+      }
+    })
+    return () => cancelAnimationFrame(focusRaf)
   }, [focused, isActive, theme.id, tabId])
 
   if (!window.yaade?.terminal) {

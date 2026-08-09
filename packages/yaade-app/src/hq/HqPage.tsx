@@ -9,7 +9,8 @@ import {
 import type { HqAgentSummary, HqProjectSummary } from "@yaade/rpc"
 import { pathToFileUri } from "@yaade/shared"
 import type { AgentCliDriver } from "@yaade/ui/agent-picker"
-import { ConfirmDialogHost, requestConfirm } from "@yaade/ui"
+import { AgentActivityList, ConfirmDialogHost, requestConfirm } from "@yaade/ui"
+import type { AgentRunInfo } from "@yaade/workspace"
 import { bundledThemeList } from "@yaade/ui/appearance"
 import { NotificationBell } from "@yaade/ui/notifications"
 import {
@@ -28,23 +29,12 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
   Empty,
   EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
   EmptyTitle,
-  Field,
-  FieldDescription,
-  FieldError,
-  FieldGroup,
-  FieldLabel,
   Input,
   Item,
   ItemContent,
@@ -95,8 +85,9 @@ import {
 } from "../project-session-client.js"
 import { useSystemSignals } from "../system-signals/SystemSignalsProvider.js"
 import { filterHqAgents, type HqAgentFilter } from "./hq-model.js"
+import { OpenProjectOverlay } from "../project/OpenProjectOverlay.js"
+import { projectRouteUrl, urlPathForKnownProject } from "../url-workspace.js"
 
-const HqAgentDialog = lazy(() => import("./HqAgentDialog.js"))
 const AgentCliPickerOverlay = lazy(() =>
   import("@yaade/ui/agent-picker").then(module => ({
     default: module.AgentCliPickerOverlay,
@@ -120,6 +111,9 @@ export type HqPageProps = {
   onOpenProject: (project: Pick<HqProjectSummary, "id" | "rootPath">) => void
   onOpenWorkspace: (agent: HqAgentSummary) => void
   onOpenRegisteredProject: (project: KnownProject) => void
+  onOpenProjectPath: (rootPath: string) => Promise<void>
+  agentHref: (agent: HqAgentSummary) => string
+  initialOpenProject?: boolean
   onLaunchAgent: (
     project: Pick<HqProjectSummary, "id" | "rootPath">,
     driverId: AgentCliDriver["id"],
@@ -154,6 +148,8 @@ function formatRuntime(ms: number): string {
 
 function statusLabel(agent: HqAgentSummary): string {
   if (agent.telemetry === "pending") return "Connecting"
+  if (agent.telemetry === "degraded") return "Limited telemetry"
+  if (agent.telemetry === "process_only") return "Running"
   return agent.status.replaceAll("_", " ")
 }
 
@@ -166,21 +162,15 @@ function statusVariant(agent: HqAgentSummary): BadgeVariant {
   return "secondary"
 }
 
-function resolveProjectInput(input: string, homeDir: string): string {
-  const trimmed = input.trim()
-  if (trimmed === "~") return homeDir
-  if (trimmed.startsWith("~/")) {
-    return `${homeDir.replace(/\/+$/, "")}/${trimmed.slice(2)}`
-  }
-  return trimmed
-}
-
 export function HqPage({
   homeDir,
   machineHostname,
   onOpenProject,
   onOpenWorkspace,
   onOpenRegisteredProject,
+  onOpenProjectPath,
+  agentHref,
+  initialOpenProject = false,
   onLaunchAgent,
   onCountsChange,
 }: HqPageProps) {
@@ -189,19 +179,18 @@ export function HqPage({
   const {
     appearanceSettings,
     setAppearanceSettings,
-    activeTheme,
     resetAppearanceSettings,
   } = useAppearanceSettings()
   const [query, setQuery] = useState("")
   const [projectId, setProjectId] = useState("")
   const [filter, setFilter] = useState<HqAgentFilter>("all")
-  const [selectedAgent, setSelectedAgent] = useState<HqAgentSummary | null>(null)
+  const [activityProvider, setActivityProvider] = useState("")
+  const [activityRuns, setActivityRuns] = useState<AgentRunInfo[]>([])
+  const [activityCursor, setActivityCursor] = useState<string | null>(null)
+  const [activityLoading, setActivityLoading] = useState(false)
   const [launchPickerOpen, setLaunchPickerOpen] = useState(false)
   const [selectedLaunchRootUri, setSelectedLaunchRootUri] = useState<string | null>(null)
-  const [openProjectOpen, setOpenProjectOpen] = useState(false)
-  const [projectInput, setProjectInput] = useState("")
-  const [projectError, setProjectError] = useState<string | null>(null)
-  const [projectSubmitting, setProjectSubmitting] = useState(false)
+  const [openProjectOpen, setOpenProjectOpen] = useState(initialOpenProject)
   const [settingsOpen, setSettingsOpen] = useState(false)
   const snapshot = overview.snapshot
 
@@ -214,18 +203,6 @@ export function HqPage({
     window.addEventListener("yaade:open-settings", openSettings)
     return () => window.removeEventListener("yaade:open-settings", openSettings)
   }, [])
-
-  useEffect(() => {
-    const openAgent = (event: Event) => {
-      const sessionId = (event as CustomEvent<{ sessionId?: string }>).detail
-        ?.sessionId
-      if (!sessionId) return
-      const agent = snapshot?.agents.find(item => item.sessionId === sessionId)
-      if (agent) setSelectedAgent(agent)
-    }
-    window.addEventListener("yaade:open-agent", openAgent)
-    return () => window.removeEventListener("yaade:open-agent", openAgent)
-  }, [snapshot])
 
   const agents = useMemo(
     () =>
@@ -272,6 +249,61 @@ export function HqPage({
     setSelectedLaunchRootUri(null)
   }, [])
 
+  const loadActivity = useCallback(
+    async (reset = false) => {
+      const api = window.yaade?.agents
+      if (!api || activityLoading) return
+      setActivityLoading(true)
+      try {
+        const page = await api.listActivity({
+          limit: 100,
+          ...(reset ? {} : activityCursor ? { cursor: activityCursor } : {}),
+          ...(projectId ? { projectId } : {}),
+        })
+        setActivityRuns(current => {
+          const next = reset ? page.runs : [...current, ...page.runs]
+          return [...new Map(next.map(run => [run.runId, run])).values()]
+        })
+        setActivityCursor(page.nextCursor)
+      } finally {
+        setActivityLoading(false)
+      }
+    },
+    [activityCursor, activityLoading, projectId],
+  )
+
+  useEffect(() => {
+    setActivityRuns([])
+    setActivityCursor(null)
+    void loadActivity(true)
+    const off = window.yaade?.agents?.onEvent(event => {
+      if (event.type === "agents.run" && event.kind === "run.ended") {
+        void loadActivity(true)
+      }
+    })
+    return () => off?.()
+    // Re-run only when the server-side project filter changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [projectId])
+
+  const filteredActivityRuns = useMemo(
+    () =>
+      activityProvider
+        ? activityRuns.filter(run => run.provider === activityProvider)
+        : activityRuns,
+    [activityProvider, activityRuns],
+  )
+
+  const activityHref = useCallback(
+    (run: AgentRunInfo) =>
+      projectRouteUrl(urlPathForKnownProject(run.projectId), {
+        view: "agents",
+        workspaceId: run.workspaceId,
+        agentRunId: run.runId,
+      }),
+    [],
+  )
+
   useEffect(() => {
     onCountsChange?.({
       projects: snapshot?.projects.length ?? 0,
@@ -287,41 +319,6 @@ export function HqPage({
     snapshot?.agents.length,
     snapshot?.projects.length,
   ])
-
-  const submitProject = useCallback(async () => {
-    const rootPath = resolveProjectInput(projectInput, homeDir)
-    if (!rootPath.startsWith("/")) {
-      setProjectError("Enter an absolute path or a path beginning with ~/.")
-      return
-    }
-    setProjectSubmitting(true)
-    setProjectError(null)
-    try {
-      const response = await fetch("/api/v1/projects", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          Accept: "application/json",
-        },
-        body: JSON.stringify({ rootPath }),
-      })
-      const body = (await response.json()) as KnownProject & {
-        error?: { message?: string }
-      }
-      if (!response.ok) {
-        throw new Error(body.error?.message ?? "Could not open this project")
-      }
-      setOpenProjectOpen(false)
-      setProjectInput("")
-      onOpenRegisteredProject(body)
-    } catch (cause) {
-      setProjectError(
-        cause instanceof Error ? cause.message : "Could not open project",
-      )
-    } finally {
-      setProjectSubmitting(false)
-    }
-  }, [homeDir, onOpenRegisteredProject, projectInput])
 
   const forgetProject = async (project: HqProjectSummary) => {
     await fetch(`/api/v1/projects/${encodeURIComponent(project.id)}`, {
@@ -371,9 +368,6 @@ export function HqPage({
         }
       }
 
-      setSelectedAgent(current =>
-        current?.sessionId === agent.sessionId ? null : current,
-      )
       await overview.refresh()
     },
     [overview.refresh],
@@ -607,7 +601,8 @@ export function HqPage({
                     totalAgents={snapshot?.agents.length ?? 0}
                     canLaunch={launchProjects.length > 0}
                     onLaunch={() => openLaunchPicker()}
-                    onOpen={setSelectedAgent}
+                    onOpen={onOpenWorkspace}
+                    hrefForAgent={agentHref}
                     onOpenProject={agent =>
                       onOpenProject({
                         id: agent.projectId,
@@ -628,84 +623,59 @@ export function HqPage({
                 onForget={project => void forgetProject(project)}
               />
             </div>
+
+            <section
+              className="min-w-0 p-3 sm:p-4"
+              aria-labelledby="hq-recent-activity-heading"
+              data-yaade-island=""
+            >
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 id="hq-recent-activity-heading" className="text-base font-semibold">
+                    Recent activity
+                  </h2>
+                  <p className="mt-0.5 text-xs text-muted-foreground">
+                    Ended agent runs remain available without terminal transcripts.
+                  </p>
+                </div>
+                <Select
+                  value={activityProvider || "__all__"}
+                  onValueChange={value =>
+                    setActivityProvider(value === "__all__" ? "" : value)
+                  }
+                >
+                  <SelectTrigger className="w-44" aria-label="Filter activity by provider">
+                    <SelectValue placeholder="All providers" />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="__all__">All providers</SelectItem>
+                    {(["claude", "codex", "cursor", "opencode", "grok"] as const).map(provider => (
+                      <SelectItem key={provider} value={provider} className="capitalize">
+                        {provider}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </div>
+              <AgentActivityList
+                runs={filteredActivityRuns}
+                loading={activityLoading}
+                hasMore={activityCursor != null}
+                onLoadMore={() => void loadActivity(false)}
+                hrefForRun={activityHref}
+              />
+            </section>
           </div>
         </main>
 
-        <Dialog open={openProjectOpen} onOpenChange={setOpenProjectOpen}>
-          <DialogContent size="prompt">
-            <DialogHeader>
-              <DialogTitle>Open a project</DialogTitle>
-              <DialogDescription>
-                Enter an absolute path or a path relative to your home directory.
-              </DialogDescription>
-            </DialogHeader>
-            <form
-              onSubmit={event => {
-                event.preventDefault()
-                void submitProject()
-              }}
-            >
-              <FieldGroup>
-                <Field data-invalid={projectError ? true : undefined}>
-                  <FieldLabel htmlFor="hq-project-path">Project path</FieldLabel>
-                  <Input
-                    id="hq-project-path"
-                    autoFocus
-                    value={projectInput}
-                    onChange={event => setProjectInput(event.target.value)}
-                    placeholder="~/dev/project"
-                    aria-invalid={projectError ? true : undefined}
-                    className="font-mono"
-                  />
-                  <FieldDescription>
-                    Paths outside your home directory use a stable project URL.
-                  </FieldDescription>
-                  {projectError ? <FieldError>{projectError}</FieldError> : null}
-                </Field>
-                <DialogFooter>
-                  <Button
-                    type="button"
-                    variant="outline"
-                    onClick={() => setOpenProjectOpen(false)}
-                  >
-                    Cancel
-                  </Button>
-                  <Button
-                    type="submit"
-                    disabled={!projectInput.trim() || projectSubmitting}
-                  >
-                    {projectSubmitting ? (
-                      <Spinner data-icon="inline-start" />
-                    ) : (
-                      <FolderOpen data-icon="inline-start" />
-                    )}
-                    Open Project
-                  </Button>
-                </DialogFooter>
-              </FieldGroup>
-            </form>
-          </DialogContent>
-        </Dialog>
-
-        {selectedAgent ? (
-          <Suspense fallback={null}>
-            <HqAgentDialog
-              agent={selectedAgent}
-              open
-              onOpenChange={open => {
-                if (!open) setSelectedAgent(null)
-              }}
-              theme={activeTheme}
-              onOpenProject={agent =>
-                onOpenProject({
-                  id: agent.projectId,
-                  rootPath: agent.projectPath,
-                })
-              }
-              onOpenWorkspace={onOpenWorkspace}
-            />
-          </Suspense>
-        ) : null}
+        <OpenProjectOverlay
+          open={openProjectOpen}
+          onOpenChange={setOpenProjectOpen}
+          homeDir={homeDir}
+          projects={snapshot?.projects ?? []}
+          onOpenProject={project => onOpenRegisteredProject(project)}
+          onOpenPath={onOpenProjectPath}
+        />
 
         {launchPickerOpen ? (
           <Suspense fallback={null}>
@@ -797,6 +767,7 @@ function AgentTable({
   canLaunch,
   onLaunch,
   onOpen,
+  hrefForAgent,
   onOpenProject,
   onKill,
 }: {
@@ -805,6 +776,7 @@ function AgentTable({
   canLaunch: boolean
   onLaunch: () => void
   onOpen: (agent: HqAgentSummary) => void
+  hrefForAgent: (agent: HqAgentSummary) => string
   onOpenProject: (agent: HqAgentSummary) => void
   onKill: (agent: HqAgentSummary) => void
 }) {
@@ -876,17 +848,28 @@ function AgentTable({
                 >
                   <TableCell>
                     <div className="min-w-44">
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="max-w-full justify-start"
-                        onClick={event => {
-                          event.stopPropagation()
-                          onOpen(agent)
-                        }}
-                      >
-                        <Bot data-icon="inline-start" />
-                        <span className="truncate">{agent.title}</span>
+                      <Button asChild size="sm" variant="ghost" className="max-w-full justify-start">
+                        <a
+                          href={hrefForAgent(agent)}
+                          onClick={event => {
+                            if (
+                              event.metaKey ||
+                              event.ctrlKey ||
+                              event.shiftKey ||
+                              event.altKey ||
+                              event.button !== 0
+                            ) {
+                              event.stopPropagation()
+                              return
+                            }
+                            event.preventDefault()
+                            event.stopPropagation()
+                            onOpen(agent)
+                          }}
+                        >
+                          <Bot data-icon="inline-start" />
+                          <span className="truncate">{agent.title}</span>
+                        </a>
                       </Button>
                       <div className="flex max-w-64 items-center gap-2 px-2">
                         <Badge variant="outline">{agent.provider}</Badge>

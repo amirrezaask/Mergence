@@ -133,6 +133,9 @@ export class AgentTelemetryService {
     private readonly db: DatabaseSync,
     private readonly notifications: NotificationService,
     private readonly emit: EmitFn,
+    /** Run lifecycle owns process truth; telemetry only enriches it. */
+    /** False keeps late history but suppresses actionable notification projection. */
+    private readonly onAppliedEvent?: (event: AgentEvent) => boolean,
   ) {
     ensureAgentTelemetrySchema(db)
     this.pruneEvents()
@@ -209,6 +212,13 @@ export class AgentTelemetryService {
     this.snapshots.set(event.sessionId, next)
     this.persistEvent(event)
     this.persistSnapshot(next)
+    let actionable = true
+    try {
+      actionable = this.onAppliedEvent?.(event) ?? true
+    } catch {
+      // Telemetry remains useful even if the durable run projection is briefly
+      // unavailable (for example during a migration retry).
+    }
 
     const pub = publicAgentSnapshot(next)
     this.emit({
@@ -222,6 +232,15 @@ export class AgentTelemetryService {
       snapshot: pub,
       nativeSessionId: next.nativeSessionId || undefined,
     })
+
+    if (!actionable) {
+      return {
+        events: [event],
+        snapshot: pub,
+        notifications: [],
+        notificationResults: [],
+      }
+    }
 
     const ctx: NotificationProjectionContext = projection ?? {}
     const projected = projectAgentNotification(event, ctx)

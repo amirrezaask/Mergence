@@ -407,7 +407,11 @@ test("bench editor palettes and project navigation", async () => {
   try {
     const palette = await runBench({
       name: "palette-open",
-      warmup: 1,
+      // A terminal benchmark session is created from the default Changes
+      // route, whose lazy Git renderer may still be completing its one-time
+      // module parse. Two warmups keep that cold-route cost in the dedicated
+      // startup benchmark instead of charging it to steady-state palette UI.
+      warmup: 2,
       rounds: 7,
       measure: async () => {
         await startTimer(page, "yaade:bench:palette-open")
@@ -442,10 +446,10 @@ test("bench editor palettes and project navigation", async () => {
         await execCommand(page, "editor.quickOpen")
         await page.locator(PALETTE_INPUT).first().fill("index.ts")
         await waitForPaletteRows(page, "src/index.ts", 1)
-        const elapsed = await finishTimerAtNextFrame(
-          page,
-          "yaade:bench:quick-open",
-        )
+        // waitForPaletteRows already proves visible, laid-out content. A
+        // second animation frame measures scheduler phase rather than open
+        // latency and makes the median oscillate by one full frame.
+        const elapsed = await finishTimer(page, "yaade:bench:quick-open")
         await closePalette(page)
         return elapsed
       },

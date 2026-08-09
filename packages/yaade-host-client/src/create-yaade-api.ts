@@ -117,7 +117,7 @@ export function createYaadeApi(
   })
   transport.on("agents:event", (...args: unknown[]) => {
     const event = args[0] as {
-      type: "agents.snapshot" | "agents.event"
+      type: "agents.snapshot" | "agents.event" | "agents.run"
       sessionId: string
       snapshot?: import("@yaade/agents").AgentSessionSnapshot
       nativeSessionId?: string
@@ -139,11 +139,13 @@ export function createYaadeApi(
   >()
   const agentEventListeners = new Set<
     (event: {
-      type: "agents.snapshot" | "agents.event"
+      type: "agents.snapshot" | "agents.event" | "agents.run"
       sessionId: string
       snapshot?: import("@yaade/agents").AgentSessionSnapshot
       nativeSessionId?: string
       event?: import("@yaade/agents").AgentEvent
+      kind?: "run.created" | "run.updated" | "run.ended"
+      run?: import("@yaade/workspace").AgentRunInfo
     }) => void
   >()
 
@@ -249,6 +251,8 @@ export function createYaadeApi(
       pull: rootUri => transport.invoke("git:pull", rootUri),
       push: rootUri => transport.invoke("git:push", rootUri),
       history: (rootUri, limit) => transport.invoke("git:history", rootUri, limit),
+      historyPage: (rootUri, cursor, pageSize) =>
+        transport.invoke("git:historyPage", rootUri, cursor, pageSize),
       numstat: rootUri => transport.invoke("git:numstat", rootUri),
       commitFiles: (rootUri, hash) => transport.invoke("git:commitFiles", rootUri, hash),
       applyPatch: (rootUri, patch, opts) =>
@@ -288,6 +292,12 @@ export function createYaadeApi(
       },
     },
     agents: {
+      listProviders: refresh => transport.invoke("agents:listProviders", refresh === true),
+      launch: req => transport.invoke("agents:launch", req),
+      stop: req => transport.invoke("agents:stop", req),
+      listLive: projectId => transport.invoke("agents:listLive", projectId),
+      get: runId => transport.invoke("agents:get", runId),
+      listActivity: opts => transport.invoke("agents:listActivity", opts ?? {}),
       getSnapshot: sessionId => transport.invoke("agents:getSnapshot", sessionId),
       listEvents: (sessionId, opts) =>
         transport.invoke("agents:listEvents", sessionId, opts ?? {}),

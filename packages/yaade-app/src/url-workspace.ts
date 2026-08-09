@@ -3,7 +3,7 @@
  *
  * `http://localhost:5174/dev/consultation` → `{home}/dev/consultation`
  * `/` → HQ, `/~` → home itself.
- * `?s=<sessionId>` → open that project session.
+ * Project state is encoded in query parameters so every surface is deep-linkable.
  */
 
 const RESERVED_PREFIXES = [
@@ -194,6 +194,77 @@ export function sessionIdFromSearch(
   const params = new URLSearchParams(raw)
   const id = params.get("s")?.trim() ?? ""
   return id.length > 0 ? id : null
+}
+
+export const PROJECT_VIEWS = [
+  "changes",
+  "agents",
+  "editors",
+  "terminals",
+  "history",
+] as const
+
+export type ProjectView = (typeof PROJECT_VIEWS)[number]
+
+export type ProjectRoute = {
+  view: ProjectView
+  workspaceId: string | null
+  checkoutKey: string | null
+  agentRunId: string | null
+}
+
+function nonEmptyParam(params: URLSearchParams, key: string): string | null {
+  const value = params.get(key)?.trim() ?? ""
+  return value.length > 0 ? value : null
+}
+
+/** Parse the complete project route. Legacy `?s=` links open Terminals. */
+export function projectRouteFromSearch(
+  search: string = typeof location !== "undefined" ? location.search : "",
+): ProjectRoute {
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search)
+  const workspaceId = nonEmptyParam(params, "s")
+  const requestedView = nonEmptyParam(params, "view")
+  const view = PROJECT_VIEWS.includes(requestedView as ProjectView)
+    ? (requestedView as ProjectView)
+    : workspaceId
+      ? "terminals"
+      : "changes"
+  return {
+    view,
+    workspaceId,
+    checkoutKey: nonEmptyParam(params, "checkout"),
+    agentRunId: nonEmptyParam(params, "agent"),
+  }
+}
+
+/** Build a canonical project URL without discarding unrelated route state. */
+export function projectRouteUrl(
+  pathname: string,
+  route: Partial<ProjectRoute> & { view: ProjectView },
+): string {
+  const params = new URLSearchParams()
+  if (route.view !== "changes") params.set("view", route.view)
+  if (route.workspaceId) params.set("s", route.workspaceId)
+  if (route.checkoutKey && route.view === "changes") {
+    params.set("checkout", route.checkoutKey)
+  }
+  if (route.agentRunId && route.view === "agents") {
+    params.set("agent", route.agentRunId)
+  }
+  const query = params.toString()
+  return `${pathname || "/"}${query ? `?${query}` : ""}`
+}
+
+/** SPA navigation for a project surface, checkout, workspace, or agent run. */
+export function pushProjectRoute(
+  pathname: string,
+  route: Partial<ProjectRoute> & { view: ProjectView },
+): void {
+  if (typeof history === "undefined") return
+  const next = projectRouteUrl(pathname, route)
+  if (`${location.pathname}${location.search}` === next) return
+  history.pushState({ projectRoute: route }, "", next)
 }
 
 /** Build `pathname?s=<sessionId>` (or bare pathname when sessionId is null). */

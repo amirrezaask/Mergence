@@ -8,12 +8,28 @@ export type ServerProject = {
   updatedAt?: string
 }
 
+export type OpenServerProject = {
+  project: ServerProject
+  created: boolean
+}
+
 /** Legacy browser catalog — migrated once into host SQLite then cleared. */
 const LEGACY_PROJECT_CATALOG_KEY = "jet-project-catalog-v1"
 
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(path, init)
-  if (!response.ok) throw new Error(`Jet project API failed (${response.status})`)
+  if (!response.ok) {
+    let message = `YAADE project API failed (${response.status})`
+    try {
+      const body = (await response.json()) as {
+        error?: { code?: string; message?: string }
+      }
+      if (body.error?.message) message = body.error.message
+    } catch {
+      /* keep status fallback */
+    }
+    throw new Error(message)
+  }
   if (response.status === 204) return undefined as T
   return response.json() as Promise<T>
 }
@@ -31,7 +47,15 @@ export async function addServerProject(
   rootPath: string,
   name?: string,
 ): Promise<ServerProject> {
-  return request<ServerProject>("/api/v1/projects", {
+  return (await openServerProject(rootPath, name)).project
+}
+
+/** The sole project-introduction operation. It never creates a filesystem directory. */
+export async function openServerProject(
+  rootPath: string,
+  name?: string,
+): Promise<OpenServerProject> {
+  return request<OpenServerProject>("/api/v1/projects/open", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ rootPath, name }),

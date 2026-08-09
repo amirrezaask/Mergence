@@ -52,7 +52,8 @@ import type {
   NotificationPreferences,
   ProjectSearchOptions,
 } from "@yaade/shared"
-import { fileUriToPath } from "@yaade/shared"
+import { fileUriToPath, pathToFileUri } from "@yaade/shared"
+import { getCliAgentDriver } from "@yaade/agents"
 import { GitServiceLive, GitServiceTag } from "./effect/git.js"
 import { HostRuntimeTag, LspHostTag } from "./effect/tags.js"
 import type { HostRuntime } from "./host-runtime.js"
@@ -139,7 +140,7 @@ async function dispatchImpl(
   }
 
   if (channel.startsWith("agents:")) {
-    return handleAgents(runtime, channel, args)
+    return handleAgents(runtime, channel, args, clientId)
   }
   if (channel.startsWith("notifications:")) {
     return handleNotifications(runtime, channel, args)
@@ -268,9 +269,139 @@ async function handleAgents(
   runtime: HostRuntime,
   channel: string,
   args: unknown[],
+  clientId: string,
 ): Promise<unknown> {
   const agents = runtime.agents
   switch (channel) {
+    case "agents:listProviders":
+      return runtime.agentRuns.listProviders(args[0] === true)
+    case "agents:listLive": {
+      const projectId = typeof args[0] === "string" && args[0] ? args[0] : undefined
+      return runtime.agentRuns.listLive(projectId)
+    }
+    case "agents:get":
+      return runtime.agentRuns.get(str(args[0], "runId"))
+    case "agents:listActivity": {
+      const body = (args[0] as { limit?: number; cursor?: string; projectId?: string } | undefined) ?? {}
+      return runtime.agentRuns.listActivity(body)
+    }
+    case "agents:launch": {
+      const body = args[0] as {
+        launchRequestId?: string
+        provider?: string
+        projectId?: string
+        workspaceId?: string
+        checkoutKey?: string
+        title?: string
+        args?: string[]
+      }
+      if (!body?.launchRequestId || !body.provider || !body.projectId || !body.workspaceId) {
+        throw new Error("agents:launch requires launchRequestId, provider, projectId, and workspaceId")
+      }
+      const provider = parseAgentProvider(body.provider)
+      if (!provider) throw new Error("invalid agent provider")
+      const workspace = runtime.db.raw().prepare(
+        `SELECT id, project_path, cwd_path FROM project_sessions
+          WHERE id=? AND archived_at IS NULL`,
+      ).get(body.workspaceId) as { id: string; project_path: string; cwd_path: string } | undefined
+      const project = runtime.db.project(body.projectId)
+      if (!project || !workspace || workspace.project_path !== project.rootPath) {
+        throw new Error("project workspace is unavailable")
+      }
+      const title = typeof body.title === "string" && body.title.trim()
+        ? body.title.trim().slice(0, 160)
+        : `${provider.charAt(0).toUpperCase()}${provider.slice(1)} agent`
+      const reservation = runtime.agentRuns.reserve({
+        launchRequestId: body.launchRequestId,
+        provider,
+        projectId: project.id,
+        workspaceId: workspace.id,
+        checkoutKey: typeof body.checkoutKey === "string" && body.checkoutKey ? body.checkoutKey : "main",
+        checkoutPath: workspace.cwd_path,
+        title,
+      })
+      if (!reservation.created) {
+        return { run: reservation.run, pty: reservation.run.ptyId ? runtime.terminal.inspect(reservation.run.ptyId) : null }
+      }
+      const run = runtime.agentRuns.begin(reservation.run.runId, reservation.run.generation)
+      if (!run) throw new Error("could not start agent run")
+      const availability = runtime.agentRuns.providerAvailable(provider)
+      if (!availability.available) {
+        runtime.agentRuns.failReservation(run.runId, run.generation, availability.error ?? "provider unavailable")
+        throw new Error(availability.error ?? `${availability.binary} is not available`)
+      }
+      let launchArgs: string[] = []
+      let launchEnv: Record<string, string> = {}
+      let telemetryError: string | null = null
+      try {
+        installProjectHooksForProvider(provider, project.rootPath, runtime.config.dataDir)
+        const driver = getCliAgentDriver(provider)
+        const origin = `http://${runtime.config.host}:${runtime.config.port}`
+        const ingestUrl = new URL("/api/v1/notifications/ingest", origin)
+        ingestUrl.searchParams.set("provider", provider)
+        ingestUrl.searchParams.set("sessionId", run.runId)
+        const installed = await driver.installHooks({
+          sessionId: run.runId,
+          projectRoot: workspace.cwd_path,
+          ingestUrl: ingestUrl.toString(),
+          provider,
+          origin,
+        })
+        launchArgs = installed.launchArgs
+        launchEnv = installed.env
+      } catch (error) {
+        telemetryError = error instanceof Error ? error.message : String(error)
+      }
+      try {
+        const userArgs = Array.isArray(body.args)
+          ? body.args.filter((value): value is string => typeof value === "string")
+          : []
+        const created = runtime.terminal.create(pathToFileUri(workspace.cwd_path), {
+          command: availability.binary,
+          args: [...launchArgs, ...userArgs],
+          env: launchEnv,
+        }, clientId)
+        const bound = runtime.agentRuns.bindPty(run.runId, run.generation, created.id)
+        if (!bound) throw new Error("agent process binding was rejected")
+        runtime.db.recordSession(created.id, "terminal", "running", { title: created.title })
+        runtime.notifications.bindSession({
+          sessionId: bound.runId,
+          runId: bound.runId,
+          projectId: project.id,
+          projectName: project.name,
+          sessionTitle: bound.title,
+          provider,
+          ptyId: created.id,
+        })
+        agents.onProcessStarted({
+          provider,
+          sessionId: bound.runId,
+          processId: created.id,
+          projectId: project.id,
+          cwd: workspace.cwd_path,
+        })
+        const finalRun = telemetryError
+          ? runtime.agentRuns.markTelemetryDegraded(bound.runId, bound.generation, telemetryError)
+          : runtime.agentRuns.get(bound.runId)
+        return { run: finalRun ?? bound, pty: { id: created.id, title: created.title } }
+      } catch (error) {
+        runtime.agentRuns.failReservation(
+          run.runId,
+          run.generation,
+          error instanceof Error ? error.message : String(error),
+        )
+        throw error
+      }
+    }
+    case "agents:stop": {
+      const body = args[0] as { runId?: string; generation?: number }
+      if (!body?.runId) throw new Error("agents:stop requires runId")
+      const run = runtime.agentRuns.get(body.runId)
+      if (!run) return null
+      if (body.generation != null && body.generation !== run.generation) return run
+      if (run.ptyId) runtime.terminal.dispose(run.ptyId)
+      return runtime.agentRuns.stop(run.runId, run.generation)
+    }
     case "agents:getSnapshot":
       return agents.getSnapshot(str(args[0], "sessionId"))
     case "agents:listEvents": {
@@ -467,6 +598,12 @@ function handleGitEffect(
         return null
       case "git:history":
         return yield* git.history(rootUri, typeof args[1] === "number" ? args[1] : 50)
+      case "git:historyPage":
+        return yield* git.historyPage(
+          rootUri,
+          typeof args[1] === "string" ? args[1] : undefined,
+          typeof args[2] === "number" ? args[2] : undefined,
+        )
       case "git:numstat":
         return yield* git.numstat(rootUri)
       case "git:commitFiles":
@@ -651,10 +788,9 @@ async function handleTerminal(
       const id = str(args[0], "id")
       runtime.terminal.dispose(id)
       runtime.db.updateSessionStatus(id, "stopped")
-      const binding = runtime.notifications.bindingForPty(id)
-      if (binding?.sessionId) {
-        runtime.agents.disposeSession(binding.sessionId)
-      }
+      // A terminal can be disposed while its agent history remains useful in
+      // HQ.  The terminal exit callback marks the durable run ended; never
+      // delete its snapshot/events here.
       return null
     }
     default:

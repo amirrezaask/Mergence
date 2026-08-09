@@ -9,6 +9,7 @@ import {
   gitDiscard,
   gitFetch,
   gitHistory,
+  gitHistoryPage,
   gitIsRepo,
   gitPull,
   gitPush,
@@ -29,7 +30,7 @@ import {
   type GitSummary,
 } from "@yaade/node-host"
 import { GitCommandFailedError } from "@yaade/rpc"
-import type { GitStatusEntry, GitNumstatEntry, GitCommitDetail, GitWorktree } from "@yaade/shared"
+import type { GitStatusEntry, GitNumstatEntry, GitCommitDetail, GitHistoryPage, GitWorktree } from "@yaade/shared"
 
 function toGitError(err: unknown): GitCommandFailedError {
   return new GitCommandFailedError({
@@ -78,6 +79,11 @@ export type GitService = {
     rootUri: string,
     limit?: number,
   ) => Effect.Effect<GitHistoryCommit[], GitCommandFailedError>
+  readonly historyPage: (
+    rootUri: string,
+    cursor?: string,
+    pageSize?: number,
+  ) => Effect.Effect<GitHistoryPage, GitCommandFailedError>
   readonly numstat: (rootUri: string) => Effect.Effect<GitNumstatEntry[], GitCommandFailedError>
   readonly commitFiles: (
     rootUri: string,
@@ -122,6 +128,7 @@ export function makeGitService(): GitService {
     pull: rootUri => tryGit(() => gitPull(rootUri)),
     push: rootUri => tryGit(() => gitPush(rootUri)),
     history: (rootUri, limit) => tryGit(() => gitHistory(rootUri, limit)),
+    historyPage: (rootUri, cursor, pageSize) => tryGit(() => gitHistoryPage(rootUri, cursor, pageSize)),
     numstat: rootUri => tryGit(() => gitNumstat(rootUri)),
     commitFiles: (rootUri, hash) => tryGit(() => gitCommitFiles(rootUri, hash)),
     applyPatch: (rootUri, patch, opts) => tryGit(() => gitApplyPatch(rootUri, patch, opts)),

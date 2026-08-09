@@ -1,7 +1,7 @@
 import { DatabaseSync } from "node:sqlite"
 import fs from "node:fs"
 import path from "node:path"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import {
   EMPTY_SESSION_ROSTER,
   MAX_EDITOR_RECOVERY_BUFFER_BYTES,
@@ -151,6 +151,16 @@ export class ProjectDatabase {
       );
       UPDATE sessions SET status='interrupted', updated_at=datetime('now')
         WHERE status IN ('starting','running','waiting');
+      CREATE TABLE IF NOT EXISTS project_surface_state(
+        project_id TEXT NOT NULL,
+        machine TEXT NOT NULL,
+        surface TEXT NOT NULL,
+        state_json TEXT NOT NULL,
+        revision INTEGER NOT NULL DEFAULT 1,
+        updated_at TEXT NOT NULL,
+        PRIMARY KEY(project_id, machine, surface),
+        FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
+      );
     `)
     this.ensureSessionRosterSchema()
     this.ensureWorkspaceSessionSchema()
@@ -190,6 +200,64 @@ export class ProjectDatabase {
         ON project_sessions (machine, project_path, updated_at DESC);
     `)
     this.migrateWorkspaceSessionsToProjectSessions()
+    this.migrateCanonicalProjectSessions()
+  }
+
+  /**
+   * The session pivot briefly allowed multiple live rows for one checkout.
+   * Keep layouts recoverable, but make the newest row the sole active workspace
+   * before installing the database-level invariant used by openCheckout.
+   */
+  private migrateCanonicalProjectSessions(): void {
+    const migrated = this.db
+      .prepare("SELECT version FROM schema_migrations WHERE version=10")
+      .get() as { version: number } | undefined
+    if (migrated) return
+
+    this.db.exec("BEGIN IMMEDIATE")
+    try {
+      const legacyRows = this.db.prepare(
+        "SELECT id, project_path, cwd_path, worktree_path FROM project_sessions",
+      ).all() as Array<{
+        id: string
+        project_path: string
+        cwd_path: string
+        worktree_path: string | null
+      }>
+      const canonicalize = this.db.prepare(
+        "UPDATE project_sessions SET project_path=?, cwd_path=?, worktree_path=? WHERE id=?",
+      )
+      for (const row of legacyRows) {
+        const projectPath = this.canonicalizeRootPath(row.project_path)
+        const cwdPath = this.canonicalizeRootPath(row.cwd_path)
+        const worktreePath = row.worktree_path
+          ? this.canonicalizeRootPath(row.worktree_path)
+          : null
+        canonicalize.run(projectPath, cwdPath, worktreePath, row.id)
+      }
+      this.db.exec(`
+        WITH ranked AS (
+          SELECT id,
+                 ROW_NUMBER() OVER (
+                   PARTITION BY machine, project_path, cwd_path
+                   ORDER BY updated_at DESC, created_at DESC, id DESC
+                 ) AS ordinal
+            FROM project_sessions
+           WHERE archived_at IS NULL
+        )
+        UPDATE project_sessions
+           SET archived_at=COALESCE(archived_at, datetime('now'))
+         WHERE id IN (SELECT id FROM ranked WHERE ordinal > 1);
+        CREATE UNIQUE INDEX IF NOT EXISTS project_sessions_one_active_checkout
+          ON project_sessions(machine, project_path, cwd_path)
+          WHERE archived_at IS NULL;
+      `)
+      this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(10)").run()
+      this.db.exec("COMMIT")
+    } catch (error) {
+      try { this.db.exec("ROLLBACK") } catch { /* ignore */ }
+      throw error
+    }
   }
 
   private ensureEditorRecoverySchema(): void {
@@ -453,9 +521,115 @@ export class ProjectDatabase {
     return { id, name: projectName, rootPath: root, createdAt: now, updatedAt: now }
   }
 
+  /** Atomically get or create a catalog row for an already-canonical directory. */
+  openProject(rootPath: string, name?: string): { project: Project; created: boolean } {
+    const root = fs.realpathSync(path.resolve(rootPath))
+    const existing = this.db
+      .prepare("SELECT id,name,root_path,created_at,updated_at FROM projects WHERE root_path=?")
+      .get(root) as ProjectRow | undefined
+    if (existing) {
+      return {
+        project: {
+          id: existing.id,
+          name: existing.name,
+          rootPath: existing.root_path,
+          createdAt: existing.created_at,
+          updatedAt: existing.updated_at,
+        },
+        created: false,
+      }
+    }
+    const now = new Date().toISOString()
+    const created: Project = {
+      id: randomUUID(),
+      name: name?.trim() || path.basename(root) || root,
+      rootPath: root,
+      createdAt: now,
+      updatedAt: now,
+    }
+    try {
+      this.db
+        .prepare("INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES(?,?,?,?,?)")
+        .run(created.id, created.name, created.rootPath, created.createdAt, created.updatedAt)
+      return { project: created, created: true }
+    } catch (error) {
+      const raced = this.db
+        .prepare("SELECT id,name,root_path,created_at,updated_at FROM projects WHERE root_path=?")
+        .get(root) as ProjectRow | undefined
+      if (!raced) throw error
+      return {
+        project: {
+          id: raced.id,
+          name: raced.name,
+          rootPath: raced.root_path,
+          createdAt: raced.created_at,
+          updatedAt: raced.updated_at,
+        },
+        created: false,
+      }
+    }
+  }
+
   removeProject(id: string): boolean {
     const result = this.db.prepare("DELETE FROM projects WHERE id=?").run(id)
     return Number(result.changes) > 0
+  }
+
+  projectSurfaceState(projectId: string, machine: string): Array<{
+    surface: string
+    state: Record<string, unknown>
+    revision: number
+    updatedAt: string
+  }> {
+    const rows = this.db.prepare(
+      `SELECT surface,state_json,revision,updated_at
+         FROM project_surface_state WHERE project_id=? AND machine=?`,
+    ).all(projectId, machine) as Array<{
+      surface: string
+      state_json: string
+      revision: number
+      updated_at: string
+    }>
+    return rows.map(row => {
+      let state: Record<string, unknown> = {}
+      try {
+        const parsed = JSON.parse(row.state_json) as unknown
+        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+          state = parsed as Record<string, unknown>
+        }
+      } catch {
+        /* malformed legacy state resets on the next write */
+      }
+      return {
+        surface: row.surface,
+        state,
+        revision: row.revision,
+        updatedAt: row.updated_at,
+      }
+    })
+  }
+
+  putProjectSurfaceState(input: {
+    projectId: string
+    machine: string
+    surface: string
+    state: Record<string, unknown>
+  }): { surface: string; state: Record<string, unknown>; revision: number; updatedAt: string } {
+    if (!this.project(input.projectId)) throw new Error("project not found")
+    if (!["changes", "agents", "editors", "terminals"].includes(input.surface)) {
+      throw new Error("invalid project surface")
+    }
+    const updatedAt = new Date().toISOString()
+    this.db.prepare(
+      `INSERT INTO project_surface_state(project_id,machine,surface,state_json,revision,updated_at)
+       VALUES(?,?,?,?,1,?)
+       ON CONFLICT(project_id,machine,surface) DO UPDATE SET
+         state_json=excluded.state_json,
+         revision=project_surface_state.revision+1,
+         updated_at=excluded.updated_at`,
+    ).run(input.projectId, input.machine, input.surface, JSON.stringify(input.state), updatedAt)
+    return this.projectSurfaceState(input.projectId, input.machine)
+      .find(row => row.surface === input.surface)!
   }
 
   recordSession(id: string, kind: string, status: string, metadata: unknown = {}): void {
@@ -774,7 +948,15 @@ export class ProjectDatabase {
     if (!payload) throw new Error("invalid project session payload")
     const id = `ses-${randomUUID()}`
     const now = new Date().toISOString()
-    this.addProject(projectPath)
+    this.openProject(projectPath)
+    // Compatibility path for callers that explicitly create a new named
+    // session: preserve its layout by archiving the older active checkout.
+    this.db
+      .prepare(
+        `UPDATE project_sessions SET archived_at=?, updated_at=?
+          WHERE machine=? AND project_path=? AND cwd_path=? AND archived_at IS NULL`,
+      )
+      .run(now, now, machine, projectPath, cwdPath)
     this.db
       .prepare(
         `INSERT INTO project_sessions(
@@ -795,6 +977,58 @@ export class ProjectDatabase {
         now,
         now,
       )
+    const created = this.getProjectSession(id)
+    if (!created) throw new Error("failed to create project session")
+    return created
+  }
+
+  /** Return the one active persistent workspace for this canonical checkout. */
+  openProjectCheckout(input: {
+    machine: string
+    projectPath: string
+    cwdPath: string
+    title?: string
+    worktreeBranch?: string | null
+    worktreePath?: string | null
+  }): ProjectSession {
+    const machine = input.machine.trim()
+    if (!machine) throw new Error("invalid project session machine")
+    const projectPath = fs.realpathSync(path.resolve(input.projectPath))
+    const cwdPath = fs.realpathSync(path.resolve(input.cwdPath))
+    const existing = this.db.prepare(
+      `SELECT id, machine, project_path, cwd_path, title, worktree_branch,
+              worktree_path, payload_json, created_at, updated_at, archived_at
+         FROM project_sessions
+        WHERE machine=? AND project_path=? AND cwd_path=? AND archived_at IS NULL`,
+    ).get(machine, projectPath, cwdPath) as Parameters<ProjectDatabase["mapProjectSession"]>[0] | undefined
+    if (existing) return this.mapProjectSession(existing)
+
+    const id = `ses-${randomUUID()}`
+    const now = new Date().toISOString()
+    this.openProject(projectPath)
+    try {
+      this.db.prepare(
+        `INSERT INTO project_sessions(
+           id, machine, project_path, cwd_path, title, worktree_branch,
+           worktree_path, payload_json, created_at, updated_at, archived_at
+         ) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)`,
+      ).run(
+        id, machine, projectPath, cwdPath,
+        input.title?.trim() || input.worktreeBranch?.trim() || (cwdPath === projectPath ? "Main" : "Worktree"),
+        input.worktreeBranch ?? null,
+        input.worktreePath ? fs.realpathSync(path.resolve(input.worktreePath)) : (cwdPath === projectPath ? null : cwdPath),
+        JSON.stringify(this.normalizePayload(emptyProjectSessionPayload())), now, now,
+      )
+    } catch (error) {
+      const raced = this.db.prepare(
+        `SELECT id, machine, project_path, cwd_path, title, worktree_branch,
+                worktree_path, payload_json, created_at, updated_at, archived_at
+           FROM project_sessions
+          WHERE machine=? AND project_path=? AND cwd_path=? AND archived_at IS NULL`,
+      ).get(machine, projectPath, cwdPath) as Parameters<ProjectDatabase["mapProjectSession"]>[0] | undefined
+      if (!raced) throw error
+      return this.mapProjectSession(raced)
+    }
     const created = this.getProjectSession(id)
     if (!created) throw new Error("failed to create project session")
     return created
@@ -1122,10 +1356,16 @@ export class ProjectDatabase {
       title: row.title,
       worktreeBranch: row.worktree_branch,
       worktreePath: row.worktree_path,
+      checkoutKey: this.checkoutKey(row.project_path, row.cwd_path),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       archivedAt: row.archived_at,
     }
+  }
+
+  private checkoutKey(projectPath: string, cwdPath: string): string {
+    if (projectPath === cwdPath) return "main"
+    return `wt-${createHash("sha256").update(cwdPath).digest("base64url").slice(0, 22)}`
   }
 
   private mapProjectSession(row: {

@@ -1,6 +1,7 @@
 import type {
   GitCommit,
   GitCommitDetail,
+  GitHistoryPage,
   GitNumstatEntry,
   GitRepositorySummary,
   GitStatusEntry,
@@ -242,6 +243,7 @@ export type JetElectronGit = {
   pull(rootUri: string): Promise<void>
   push(rootUri: string): Promise<void>
   history(rootUri: string, limit?: number): Promise<GitCommit[]>
+  historyPage(rootUri: string, cursor?: string, pageSize?: number): Promise<GitHistoryPage>
   numstat(rootUri: string): Promise<GitNumstatEntry[]>
   commitFiles(rootUri: string, hash: string): Promise<GitCommitDetail>
   applyPatch(rootUri: string, patch: string, opts?: { reverse?: boolean }): Promise<void>
@@ -318,6 +320,33 @@ export type JetElectronNotifications = {
 }
 
 export type JetElectronAgents = {
+  listProviders(refresh?: boolean): Promise<Array<{
+    provider: "claude" | "codex" | "cursor" | "opencode" | "grok"
+    available: boolean
+    binary: string
+    version: string | null
+    capabilities: import("@yaade/agents").AgentDriverCapabilities
+    error: string | null
+  }>>
+  launch(req: {
+    launchRequestId: string
+    provider: "claude" | "codex" | "cursor" | "opencode" | "grok"
+    projectId: string
+    workspaceId: string
+    checkoutKey?: string
+    title?: string
+    args?: string[]
+  }): Promise<{
+    run: AgentRunInfo
+    pty: { id: string; title: string | null } | null
+  }>
+  stop(req: { runId: string; generation?: number }): Promise<AgentRunInfo | null>
+  listLive(projectId?: string): Promise<AgentRunInfo[]>
+  get(runId: string): Promise<AgentRunInfo | null>
+  listActivity(opts?: { limit?: number; cursor?: string; projectId?: string }): Promise<{
+    runs: AgentRunInfo[]
+    nextCursor: string | null
+  }>
   getSnapshot(
     sessionId: string,
   ): Promise<import("@yaade/agents").AgentSessionSnapshot | null>
@@ -344,13 +373,40 @@ export type JetElectronAgents = {
   }): Promise<{ written: string[] }>
   onEvent(
     callback: (event: {
-      type: "agents.snapshot" | "agents.event"
+      type: "agents.snapshot" | "agents.event" | "agents.run"
       sessionId: string
       snapshot?: import("@yaade/agents").AgentSessionSnapshot
       nativeSessionId?: string
       event?: import("@yaade/agents").AgentEvent
+      kind?: "run.created" | "run.updated" | "run.ended"
+      run?: AgentRunInfo
     }) => void,
   ): () => void
+}
+
+export type AgentRunInfo = {
+  runId: string
+  launchRequestId: string
+  generation: number
+  provider: "claude" | "codex" | "cursor" | "opencode" | "grok"
+  projectId: string
+  workspaceId: string
+  checkoutKey: string
+  checkoutPath: string
+  title: string
+  ptyId: string | null
+  nativeSessionId: string | null
+  processState: "reserved" | "starting" | "running" | "exited" | "disconnected"
+  activityState: "starting" | "working" | "running_tool" | "waiting_for_permission" | "waiting_for_user" | "idle" | "failed"
+  telemetryState: "connecting" | "connected" | "degraded" | "process_only"
+  createdAt: string
+  startedAt: string | null
+  lastActivityAt: string | null
+  endedAt: string | null
+  exitCode: number | null
+  endReason: string | null
+  telemetryError: string | null
+  revision: number
 }
 
 export type YaadeHostAPI = {

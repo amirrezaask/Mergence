@@ -233,8 +233,13 @@ test("LSP browser surface handles diagnostics, navigation, interaction, and prog
         ),
       )
       .toBe(1);
+    // Click the visible editor before focusing Monaco's hidden textarea. A
+    // programmatic textarea focus alone does not always activate Monaco after
+    // closing an adjacent tool pane.
+    await page.locator("[data-yaade-monaco-editor]").last().click();
     await page
       .locator("[data-yaade-monaco-editor] textarea.inputarea")
+      .last()
       .focus();
     await page.evaluate(() => window.__yaadeAgent!.setEditorSelection(1, 2));
     await page.keyboard.press("Control+Space");
