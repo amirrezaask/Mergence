@@ -1,5 +1,5 @@
 import type { AgentDriver, AgentDriverContext, AgentDriverDetection, AgentDriverDetectionContext, AgentThreadConnection, OpenAgentThreadRequest, AgentSpawnedProcess } from "@yaade/agent-driver"
-import { AgentCapabilities, AgentConnectionId, AgentDriverDescriptor, UnsequencedAgentEvent, type AgentCommandEnvelope, type AgentCommandResult, type AgentEvent, type AgentConfigurationOption } from "@yaade/agent-protocol"
+import { AgentCapabilities, AgentConfigurationOption, AgentConnectionId, AgentDriverDescriptor, UnsequencedAgentEvent, type AgentCommandEnvelope, type AgentCommandResult, type AgentEvent } from "@yaade/agent-protocol"
 import { Schema } from "effect"
 
 type Json = Record<string, unknown>
@@ -129,7 +129,7 @@ class ClaudeConnection implements AgentThreadConnection {
         ;(this.binding as { providerSessionId?: string }).providerSessionId = sessionId
         this.emit({ type: "thread.binding-updated", providerSessionId: sessionId as never })
       }
-      const updated = configuration(message)
+      const updated = configuration(message, this.config)
       if (updated.length) { this.config = updated; this.emit({ type: "configuration.updated", configuration: updated }) }
       return
     }
@@ -231,5 +231,50 @@ export class ClaudeStreamClient {
 class Queue<T> { static readonly maxItems = 256; static readonly maxBytes = 1_048_576; private values: T[] = []; private waiters: Array<(value: IteratorResult<T>) => void> = []; private closed = false; private bytes = 0; private overflowed = false; get didOverflow(): boolean { return this.overflowed } push(value: T): boolean { if (this.closed) return false; const waiter = this.waiters.shift(); if (waiter) { waiter({ done: false, value }); return true }; const bytes = new TextEncoder().encode(JSON.stringify(value)).byteLength; if (this.values.length >= Queue.maxItems || this.bytes + bytes > Queue.maxBytes) { this.overflowed = true; this.close(); return false }; this.values.push(value); this.bytes += bytes; return true } close(): void { this.closed = true; for (const waiter of this.waiters.splice(0)) waiter({ done: true, value: undefined }) } async *iterate(signal?: AbortSignal): AsyncIterable<T> { while (!signal?.aborted) { const value = this.values.shift(); if (value !== undefined) { this.bytes = Math.max(0, this.bytes - new TextEncoder().encode(JSON.stringify(value)).byteLength); yield value; continue } if (this.closed) return; const next = await new Promise<IteratorResult<T>>(resolve => this.waiters.push(resolve)); if (next.done) return; yield next.value } } }
 
 function capabilities(): AgentThreadConnection["capabilities"] { return Schema.decodeUnknownSync(AgentCapabilities)({ input: { text: "native", images: "unsupported", workspaceFiles: "unsupported", uploadedFiles: "unsupported" }, threads: { load: "unsupported", resume: "native", fork: "unsupported", list: "unsupported", delete: "unsupported" }, turns: { interrupt: "native", queue: "unsupported", retry: "unsupported", steer: "unsupported" }, output: { reasoning: "unsupported", plans: "unsupported", usage: "native", contextWindow: "unknown", cost: "native", subagents: "unsupported" }, tools: { streaming: "unsupported", parallel: "unknown", terminal: "unsupported", fileDiffs: "unknown" }, interaction: { permissions: "native", structuredInput: "unsupported", externalUrlInput: "unsupported" }, configuration: { dynamicOptions: "native", slashCommands: "unsupported" } }) }
-function configuration(raw: Json): AgentConfigurationOption[] { const models = array(raw.models).map(model => object(model)).filter(model => text(model.value)).map(model => ({ value: text(model.value), label: text(model.displayName) || text(model.value) })); const out: AgentConfigurationOption[] = []; if (models.length) out.push({ id: "model", category: "model", label: "Model", value: { type: "enum", current: models[0]!.value, choices: models } }); out.push({ id: "permission", category: "permission", label: "Permission mode", value: { type: "enum", current: text(raw.permissionMode) || "default", choices: [{ value: "default", label: "Default" }, { value: "acceptEdits", label: "Accept edits" }, { value: "bypassPermissions", label: "Bypass permissions" }] } }); return out }
+function configuration(
+  raw: Json,
+  previous: ReadonlyArray<AgentConfigurationOption> = [],
+): AgentConfigurationOption[] {
+  let models = array(raw.models).map(model => object(model)).flatMap(model => {
+    const value = text(model.value) || text(model.id)
+    if (!value) return []
+    return [{
+      value,
+      label: text(model.displayName) || text(model.name) || text(model.label) || value,
+      ...(text(model.description) ? { description: text(model.description) } : {}),
+    }]
+  })
+  if (!models.length) {
+    const prior = previous.find(option => option.id === "model")
+    if (prior?.value.type === "enum") models = [...prior.value.choices]
+  }
+  const out: AgentConfigurationOption[] = []
+  if (models.length) {
+    const active = text(raw.model) || text(raw.modelId)
+    const current = active && models.some(model => model.value === active) ? active : models[0]!.value
+    out.push(Schema.decodeUnknownSync(AgentConfigurationOption)({
+      id: "model",
+      category: "model",
+      label: "Model",
+      value: { type: "enum", current, choices: models },
+    }))
+  }
+  const priorPermission = previous.find(option => option.id === "permission")
+  out.push(Schema.decodeUnknownSync(AgentConfigurationOption)({
+    id: "permission",
+    category: "permission",
+    label: "Permission mode",
+    value: {
+      type: "enum",
+      current: text(raw.permissionMode)
+        || (priorPermission?.value.type === "enum" ? priorPermission.value.current : "default"),
+      choices: [
+        { value: "default", label: "Default" },
+        { value: "acceptEdits", label: "Accept edits" },
+        { value: "bypassPermissions", label: "Bypass permissions" },
+      ],
+    },
+  }))
+  return out
+}
 function reject(commandId: string, code: string, message: string, retryable: boolean): AgentCommandResult { return { status: "rejected", commandId, error: { code, message, retryable } } }

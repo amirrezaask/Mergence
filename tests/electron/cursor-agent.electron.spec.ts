@@ -1,5 +1,8 @@
 import { expect, test } from "@playwright/test"
-import { expectLocatorContainsText, expectLocatorVisible } from "../shell/assert.js"
+import {
+  expectLocatorContainsText,
+  expectLocatorVisible,
+} from "../shell/assert.js"
 import {
   hasCursorAgent,
   launchJet,
@@ -25,14 +28,29 @@ async function openCursorStartView(page: ShellDriver) {
   await page.locator('[data-yaade-project-tab="native-agents"]').click()
   const pane = page.locator('[data-yaade-tool-pane="agentChat"]')
   await pane.waitFor({ state: "visible", timeout: 15_000 })
-  await expectLocatorContainsText(pane, "Start an agent thread")
+  await pane.locator("[data-yaade-agent-composer]").waitFor({
+    state: "visible",
+    timeout: 15_000,
+  })
+  await expectLocatorVisible(
+    pane.locator('[data-chat-provider-model-picker="true"]'),
+  )
   return pane
 }
 
 async function openCursorThread(page: ShellDriver) {
   const pane = await openCursorStartView(page)
-  await pane.getByRole("button", { name: /Cursor ACP/ }).click()
-  await pane.locator('[aria-label="Message agent"]').waitFor({
+  await pane.locator('[data-chat-provider-model-picker="true"]').click()
+  const picker = page.locator("[data-model-picker-content]")
+  await picker.waitFor({ state: "visible", timeout: 10_000 })
+  const cursorSidebar = picker.locator('[data-model-picker-provider="cursor"]')
+  if ((await cursorSidebar.count()) > 0) await cursorSidebar.click()
+  await picker.locator("[data-model-slug]").first().click()
+  const input = pane.locator('[aria-label="Message agent"]')
+  await input.click()
+  await page.keyboard.type("ping")
+  await pane.getByRole("button", { name: "Send message" }).click()
+  await pane.locator("[data-yaade-agent-timeline]").waitFor({
     state: "visible",
     timeout: 30_000,
   })

@@ -1,5 +1,5 @@
 import type { AgentDriver, AgentDriverContext, AgentDriverDetection, AgentDriverDetectionContext, AgentMcpServer, AgentTerminalHandle, AgentThreadConnection, OpenAgentThreadRequest } from "@yaade/agent-driver"
-import { AgentCapabilities, AgentConnectionId, UnsequencedAgentEvent, type AgentCommandEnvelope, type AgentCommandResult, type AgentConfigurationOption, type AgentEvent, type AgentInputPart } from "@yaade/agent-protocol"
+import { AgentCapabilities, AgentConfigurationOption, AgentConnectionId, UnsequencedAgentEvent, type AgentCommandEnvelope, type AgentCommandResult, type AgentEvent, type AgentInputPart } from "@yaade/agent-protocol"
 import { Schema } from "effect"
 import { fileURLToPath } from "node:url"
 import { basename, isAbsolute } from "node:path"
@@ -76,7 +76,7 @@ export class AcpAgentDriver implements AgentDriver {
         ? decodeSession(await rpc.request("session/new", { cwd, mcpServers }), true)
         : await openExisting(rpc, request.mode.type, request.mode.providerSessionId, cwd, mcpServers, negotiated)
       const providerSessionId = text(session.sessionId) || (request.mode.type === "new" ? "" : request.mode.providerSessionId)
-      const configOptions = configuration(session)
+      const configOptions = await enrichConfiguration(rpc, configuration(session), this.profile.listAvailableModelsMethod)
       const capabilities = capabilityMap(initialized.agentCapabilities, configOptions.length > 0, this.profile.allowImageContent === true)
       return new AcpConnection(rpc, events, providerSessionId, capabilities, configOptions, context.clock, client, context.attachments, negotiated.close, capabilities.input.images === "native")
     } catch (error) {
@@ -120,14 +120,15 @@ function acpMcpServer(server: AgentMcpServer): Json {
 
 class AcpConnection implements AgentThreadConnection {
   readonly binding
-  readonly configuration: ReadonlyArray<AgentConfigurationOption>
+  private config: ReadonlyArray<AgentConfigurationOption>
   private closed = false
   private nativeClosed = false
   private readonly commandIds = new Set<string>()
   constructor(private readonly rpc: JsonLineRpc, private readonly queue: AsyncQueue<UnsequencedAgentEvent>, providerSessionId: string, readonly capabilities: AgentThreadConnection["capabilities"], configuration: ReadonlyArray<AgentConfigurationOption>, private readonly clock: AgentDriverContext["clock"], private readonly client: AcpClient, private readonly attachments: AgentDriverContext["attachments"], private readonly nativeClose: boolean, private readonly allowImageContent: boolean) {
-    this.configuration = configuration
+    this.config = configuration
     this.binding = { connectionId: Schema.decodeUnknownSync(AgentConnectionId)(`acp:${crypto.randomUUID()}`), ...(providerSessionId ? { providerSessionId: providerSessionId as never } : {}) }
   }
+  get configuration(): ReadonlyArray<AgentConfigurationOption> { return this.config }
   events(signal?: AbortSignal): AsyncIterable<UnsequencedAgentEvent> { return this.queue.iterate(signal) }
   async close(reason?: string): Promise<void> {
     if (this.closed) return
@@ -164,12 +165,33 @@ class AcpConnection implements AgentThreadConnection {
             return { status: "rejected", commandId: command.commandId, error: { code: "acp.action", message: "Unknown ACP action or permission option", retryable: false } }
           }
           break
-        case "configuration.set": decodeJsonObject(await this.rpc.request("session/set_config_option", { sessionId, configId: command.command.optionId, value: command.command.value }), "session/set_config_option response"); break
+        case "configuration.set": {
+          const response = decodeJsonObject(
+            await this.rpc.request("session/set_config_option", {
+              sessionId,
+              configId: command.command.optionId,
+              value: command.command.value,
+            }),
+            "session/set_config_option response",
+          )
+          const refreshed = configuration(response)
+          this.config = refreshed.length > 0
+            ? refreshed
+            : applyConfigurationValue(this.config, command.command.optionId, command.command.value)
+          this.emit({ type: "configuration.updated", configuration: this.config })
+          break
+        }
         case "thread.close": await this.closeNative(); break
       }
       this.commandIds.add(command.commandId)
       return { status: "accepted", commandId: command.commandId }
     } catch (error) { return { status: "rejected", commandId: command.commandId, error: { code: "acp.request", message: String(error), retryable: true } } }
+  }
+  private emit(event: AgentEvent): void {
+    this.queue.push(Schema.decodeUnknownSync(UnsequencedAgentEvent)({
+      occurredAt: this.clock.now().toISOString(),
+      event,
+    }))
   }
 }
 
@@ -483,13 +505,99 @@ function configuration(session: Json): ReadonlyArray<AgentConfigurationOption> {
             : null
     if (!value) return []
     const category = configurationCategory(text(option.category))
-    return [{
+    return [Schema.decodeUnknownSync(AgentConfigurationOption)({
       id,
       category,
       label: text(option.name) || id,
       ...(text(option.description) ? { description: text(option.description) } : {}),
       value,
-    }]
+    })]
+  })
+}
+
+async function enrichConfiguration(
+  rpc: JsonLineRpc,
+  base: ReadonlyArray<AgentConfigurationOption>,
+  method: string | undefined,
+): Promise<ReadonlyArray<AgentConfigurationOption>> {
+  if (!method) return base
+  try {
+    const result = decodeJsonObject(await rpc.request(method, {}), `${method} response`)
+    const models = array(result.models).map(asObject).flatMap(model => {
+      const value = text(model.value) || text(model.id)
+      if (!value) return []
+      return [{
+        value,
+        label: text(model.name) || text(model.displayName) || text(model.label) || value,
+        ...(text(model.description) ? { description: text(model.description) } : {}),
+      }]
+    })
+    if (!models.length) return base
+    return mergeModelChoices(base, models)
+  } catch {
+    return base
+  }
+}
+
+function mergeModelChoices(
+  base: ReadonlyArray<AgentConfigurationOption>,
+  models: ReadonlyArray<{ value: string; label: string; description?: string }>,
+): ReadonlyArray<AgentConfigurationOption> {
+  const byValue = new Map<string, { value: string; label: string; description?: string }>()
+  for (const model of models) byValue.set(model.value, model)
+  const existing = base.find(option => option.id === "model")
+  if (existing?.value.type === "enum") {
+    for (const choice of existing.value.choices) {
+      if (!byValue.has(choice.value)) byValue.set(choice.value, choice)
+    }
+  }
+  const choices = [...byValue.values()]
+  if (!choices.length) return base
+  const current = existing?.value.type === "enum" && byValue.has(existing.value.current)
+    ? existing.value.current
+    : choices[0]!.value
+  const modelOption = Schema.decodeUnknownSync(AgentConfigurationOption)({
+    id: "model",
+    category: "model",
+    label: existing?.label || "Model",
+    ...(existing?.description ? { description: existing.description } : {}),
+    value: { type: "enum", current, choices },
+  })
+  return [modelOption, ...base.filter(option => option.id !== "model")]
+}
+
+function applyConfigurationValue(
+  options: ReadonlyArray<AgentConfigurationOption>,
+  optionId: string,
+  value: unknown,
+): ReadonlyArray<AgentConfigurationOption> {
+  return options.map(option => {
+    if (option.id !== optionId) return option
+    if (option.value.type === "enum" && typeof value === "string") {
+      return Schema.decodeUnknownSync(AgentConfigurationOption)({
+        ...option,
+        value: { ...option.value, current: value },
+      })
+    }
+    if (option.value.type === "boolean" && typeof value === "boolean") {
+      return Schema.decodeUnknownSync(AgentConfigurationOption)({
+        ...option,
+        value: { ...option.value, current: value },
+      })
+    }
+    if (option.value.type === "number" && typeof value === "number" && Number.isFinite(value)) {
+      return Schema.decodeUnknownSync(AgentConfigurationOption)({
+        ...option,
+        value: { ...option.value, current: value },
+      })
+    }
+    if (option.value.type === "string" && typeof value === "string") {
+      return Schema.decodeUnknownSync(AgentConfigurationOption)({
+        ...option,
+        value: { ...option.value, current: value },
+      })
+    }
+    return option
   })
 }
 

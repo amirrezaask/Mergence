@@ -220,6 +220,26 @@ export {
   type AgentChatCallbacks,
   type AgentComposerAttachment,
 } from "./agent-chat/AgentChatView.js"
+export {
+  ChatComposer,
+  DraftHeroHeadline,
+  ProviderModelPicker,
+  TraitsPicker,
+  shouldRenderTraitsControls,
+  ComposerPromptEditor,
+  ComposerControl,
+  ComposerPrimaryActions,
+  buildProviderInstanceEntries,
+  catalogProviderForDriver,
+  defaultSelectionForInstances,
+  getCatalogModels,
+  getDefaultModelSlug,
+  type ChatComposerProps,
+  type ChatComposerSubmitPayload,
+  type ProviderInstanceEntry,
+  type ProviderOptionSelection,
+  type YaadeDriverDescriptor,
+} from "./agent-chat/composer/index.js"
 export { Toaster } from "./components/ui/sonner.js"
 export {
   ConfirmDialogHost,

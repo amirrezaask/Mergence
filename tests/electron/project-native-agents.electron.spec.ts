@@ -1,10 +1,14 @@
 import { expect, test } from "@playwright/test"
 import { expectListRows } from "../helpers/list.js"
-import { expectLocatorContainsText } from "../shell/assert.js"
+import {
+  expectLocatorContainsText,
+  expectLocatorCount,
+  expectLocatorVisible,
+} from "../shell/assert.js"
 import { execCommand, launchJet, waitForTerminalText } from "./_launch.js"
 
 test.describe("project native agents", () => {
-  test("lists exact drivers and runs a protocol-backed mock thread", async () => {
+  test("opens composer with model picker and runs a protocol-backed mock thread", async () => {
     const { app, page } = await launchJet({
       projectPage: true,
       withTerminal: false,
@@ -18,20 +22,47 @@ test.describe("project native agents", () => {
       )
       await surface.waitFor({ state: "visible", timeout: 15_000 })
       await surface
-        .getByText("Start an agent thread")
+        .locator("[data-yaade-agent-composer]")
         .waitFor({ state: "visible", timeout: 15_000 })
-      await expectListRows(page, {
-        panel: "native-agent-drivers",
-        minItems: 1,
-        needle: "Canonical Mock Driver",
-      })
+      await expectLocatorVisible(
+        surface.locator("[data-yaade-native-agent-sidebar]"),
+      )
+      await expectLocatorCount(
+        surface.getByText("Start an agent thread"),
+        0,
+      )
+      await expectLocatorVisible(
+        surface.locator('[data-chat-provider-model-picker="true"]'),
+      )
+      await expectLocatorVisible(surface.getByText("What should we work on?"))
 
-      await surface
-        .locator('[data-yaade-native-agent-driver="mock:canonical"]')
-        .click()
-      await surface
-        .locator('[aria-label="Message agent"]')
-        .waitFor({ state: "visible", timeout: 15_000 })
+      await surface.locator('[data-chat-provider-model-picker="true"]').click()
+      const picker = page.locator("[data-model-picker-content]")
+      await picker.waitFor({ state: "visible", timeout: 10_000 })
+      const mockSidebar = picker.locator('[data-model-picker-provider="mock"]')
+      if ((await mockSidebar.count()) > 0) await mockSidebar.click()
+      await expectListRows(page, {
+        panel: "composer-models",
+        minItems: 1,
+        needle: "Mock",
+      })
+      await picker.locator('[data-model-slug="mock-fast"]').click()
+
+      await expectLocatorVisible(
+        surface.locator('[data-chat-traits-picker="true"]'),
+        { timeout: 5_000 },
+      )
+
+      const input = surface.locator('[aria-label="Message agent"]')
+      await input.click()
+      await page.keyboard.type("Show the native flow")
+      await surface.locator("[data-chat-composer-send]").click()
+
+      await expectLocatorContainsText(
+        surface.locator("[data-yaade-agent-timeline]"),
+        "Hello from mock.",
+        { timeout: 20_000 },
+      )
 
       const runtimeState = await page.evaluate(async () => {
         const sessionId = window.__yaadeAgent?.getState().sessionId
@@ -42,9 +73,10 @@ test.describe("project native agents", () => {
           sessionId,
           driverId: String(threads[0]?.state.driverId ?? ""),
           cwdUri: String(threads[0]?.state.cwdUri ?? ""),
+          threadId: String(threads[0]?.state.id ?? ""),
         }
       })
-      expect(runtimeState.driverId).toBe("mock:canonical")
+      expect(runtimeState.driverId).toMatch(/mock/)
       expect(runtimeState.cwdUri).toMatch(/\/sample-workspace$/)
       const route = await page.evaluate(() => ({
         view: new URL(location.href).searchParams.get("view"),
@@ -53,21 +85,29 @@ test.describe("project native agents", () => {
       expect(route.view).toBe("native-agents")
       expect(route.sessionId).toBe(runtimeState.sessionId)
 
-      await surface.locator('[aria-label="Message agent"]').fill("Show the native flow")
-      await surface.getByRole("button", { name: "Send message" }).click()
+      await expectListRows(page, {
+        panel: "native-agent-threads",
+        minItems: 1,
+        needle: "mock",
+      })
+
+      await surface.locator("[data-yaade-native-agent-new]").click()
+      await expectLocatorVisible(surface.getByText("What should we work on?"), {
+        timeout: 10_000,
+      })
+      await expectLocatorVisible(
+        surface.locator('[data-chat-provider-model-picker="true"]'),
+      )
+
+      // Resume the durable thread from the sidebar.
+      await surface
+        .locator(`[data-yaade-native-agent-thread="${runtimeState.threadId}"]`)
+        .click()
       await expectLocatorContainsText(
         surface.locator("[data-yaade-agent-timeline]"),
         "Hello from mock.",
-        { timeout: 15_000 },
       )
 
-      await surface.locator("[data-yaade-native-agent-new]").click()
-      await expectListRows(page, {
-        panel: "native-agent-drivers",
-        minItems: 1,
-        needle: "Canonical Mock Driver",
-      })
-      await page.keyboard.press("Escape")
       await page.locator('[data-yaade-project-tab="terminals"]').click()
       const terminal = page.locator("[data-yaade-terminal-panel]")
       await terminal.waitFor({ state: "visible", timeout: 15_000 })
@@ -99,6 +139,12 @@ test.describe("project native agents", () => {
 
       await page.reload()
       await surface.waitFor({ state: "visible", timeout: 15_000 })
+      await expectLocatorVisible(
+        surface.locator("[data-yaade-native-agent-sidebar]"),
+      )
+      await surface
+        .locator(`[data-yaade-native-agent-thread="${runtimeState.threadId}"]`)
+        .click()
       await expectLocatorContainsText(
         surface.locator("[data-yaade-agent-timeline]"),
         "Hello from mock.",
@@ -113,6 +159,9 @@ test.describe("project native agents", () => {
       await waitForTerminalText(page, "native-pty-alive")
 
       await page.locator('[data-yaade-project-tab="native-agents"]').click()
+      await surface
+        .locator(`[data-yaade-native-agent-thread="${runtimeState.threadId}"]`)
+        .click()
       await surface.locator("[data-yaade-native-agent-close]").click()
       await expect
         .poll(async () =>
@@ -126,9 +175,9 @@ test.describe("project native agents", () => {
 
       await surface.locator("[data-yaade-native-agent-delete]").click()
       await page.getByRole("button", { name: "Delete thread" }).click()
-      await surface
-        .getByText("Start an agent thread")
-        .waitFor({ state: "visible", timeout: 15_000 })
+      await expectLocatorVisible(surface.getByText("What should we work on?"), {
+        timeout: 10_000,
+      })
       await expect
         .poll(async () =>
           page.evaluate(async sessionId =>

@@ -13,6 +13,8 @@ export type AcpDriverProfile = {
     readonly loginRemedy?: string
   }
   readonly vendorElicitationMethods?: ReadonlyArray<string>
+  /** Vendor RPC that returns the full model catalog after session open. */
+  readonly listAvailableModelsMethod?: string
   readonly allowImageContent?: boolean
 }
 
@@ -51,6 +53,7 @@ export function cursorAcpProfile(command = "agent"): AcpDriverProfile {
       loginRemedy: "Run agent login",
     },
     vendorElicitationMethods: ["cursor/ask_question"],
+    listAvailableModelsMethod: "cursor/list_available_models",
     allowImageContent: true,
   }
 }

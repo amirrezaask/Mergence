@@ -165,6 +165,19 @@ Do not synthesize permission semantics from labels. The adapter may add a
 canonical decision (`allow-once`, `reject-always`, and so on) for display, but
 the response must round-trip the native opaque option ID.
 
+### Model discovery
+
+Models are negotiated as `AgentConfigurationOption` entries with
+`category: "model"` during `openThread`, then refreshed via
+`configuration.updated` after `configuration.set`. Drivers must load the
+provider's full picker catalog — not a hardcoded subset:
+
+| Driver | Catalog source |
+| --- | --- |
+| Cursor (`cursor:acp`) | Session `configOptions`, enriched by vendor `cursor/list_available_models` |
+| Codex (`codex:app-server`) | Paginated `model/list` (`includeHidden: false`) |
+| Claude (`claude:agent-sdk`) | `initialize` / system `init` `models[]`, with `current` from the active `model` field |
+
 ## Bounds and failure behavior
 
 Every new driver must define and test bounds for:

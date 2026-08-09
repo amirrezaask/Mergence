@@ -72,6 +72,36 @@ describe("Codex app-server driver", () => {
     } catch (error) { throw error }
   })
 
+  it("loads the full model catalog from model/list and emits configuration.updated", async () => {
+    const driver = new CodexAppServerDriver({ command: process.execPath, args: ["--import", tsxLoader, mock] })
+    const connection = await within(driver.openThread(context(), { mode: { type: "new" }, cwdUri: "file:///tmp" }), "open model thread")
+    assert.equal(connection.capabilities.configuration.dynamicOptions, "native")
+    const model = connection.configuration?.find(option => option.id === "model")
+    assert.ok(model)
+    assert.equal(model?.value.type, "enum")
+    if (!model || model.value.type !== "enum") throw new Error("expected Codex model enum")
+    assert.deepEqual(model.value.choices.map(choice => choice.value).sort(), [
+      "mock-model",
+      "mock-model-deep",
+      "mock-model-fast",
+    ])
+    assert.equal(model.value.current, "mock-model")
+    assert.equal((await within(connection.send(command("set-model", {
+      type: "configuration.set",
+      optionId: "model",
+      value: "mock-model-deep",
+    })), "set model")).status, "accepted")
+    const iterator = connection.events()[Symbol.asyncIterator]()
+    const next = await within(iterator.next(), "configuration.updated")
+    assert.equal(next.done, false)
+    if (next.done || next.value.event.type !== "configuration.updated") throw new Error("missing configuration.updated")
+    const updated = next.value.event.configuration.find(option => option.id === "model")
+    assert.ok(updated && updated.value.type === "enum")
+    if (!updated || updated.value.type !== "enum") throw new Error("expected updated model enum")
+    assert.equal(updated.value.current, "mock-model-deep")
+    await connection.close("user")
+  })
+
   it("returns the exact permission option through the native request id", async () => {
     try {
     const driver = new CodexAppServerDriver({ command: process.execPath, args: ["--import", tsxLoader, mock] })

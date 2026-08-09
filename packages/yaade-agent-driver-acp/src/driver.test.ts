@@ -4,7 +4,7 @@ import path from "node:path"
 import test from "node:test"
 import { fileURLToPath } from "node:url"
 import type { AgentDriverContext, AgentMcpServer, AgentSpawnedProcess, AgentThreadConnection } from "@yaade/agent-driver"
-import { AgentCommandEnvelope, AgentAttachment, ProviderSessionId, type UnsequencedAgentEvent } from "@yaade/agent-protocol"
+import { AgentCommandEnvelope, AgentAttachment, AgentConfigurationOption, ProviderSessionId, type UnsequencedAgentEvent } from "@yaade/agent-protocol"
 import { runAgentDriverConformanceSuite } from "@yaade/agent-testkit"
 import { Schema } from "effect"
 import { AcpAgentDriver, truncateSemanticText } from "./index.js"
@@ -165,7 +165,36 @@ test("ACP advertises negotiated dynamic configuration truthfully", async () => {
   const driver = new AcpAgentDriver(mockAcpProfile(bin, ["--scenario", "config_model"]))
   const connection = await driver.openThread(context(), { mode: { type: "new" }, cwdUri: "file:///tmp" })
   assert.equal(connection.capabilities.configuration.dynamicOptions, "native")
-  assert.ok(connection.configuration?.some(option => option.id === "model" && option.value.type === "enum"))
+  const model = connection.configuration?.find(option => option.id === "model")
+  assert.ok(model instanceof AgentConfigurationOption)
+  assert.equal(model.value.type, "enum")
+  await connection.close("user")
+})
+
+test("Cursor ACP merges cursor/list_available_models into the model enum", async () => {
+  const driver = new AcpAgentDriver(cursorFixture("--scenario", "config_model"))
+  const connection = await driver.openThread(context(), { mode: { type: "new" }, cwdUri: "file:///tmp" })
+  assert.equal(connection.capabilities.configuration.dynamicOptions, "native")
+  const model = connection.configuration?.find(option => option.id === "model")
+  assert.ok(model instanceof AgentConfigurationOption)
+  assert.equal(model.value.type, "enum")
+  if (model.value.type !== "enum") throw new Error("expected enum model option")
+  assert.deepEqual(model.value.choices.map(choice => choice.value).sort(), ["mock-auto", "mock-deep", "mock-fast"])
+  assert.equal(model.value.current, "mock-auto")
+  assert.equal((await connection.send(command("cursor-model", {
+    type: "configuration.set",
+    optionId: "model",
+    value: "mock-deep",
+  }))).status, "accepted")
+  const updated = await collectUntil(connection, event => event.event.type === "configuration.updated")
+  const event = updated.find(entry => entry.event.type === "configuration.updated")
+  assert.ok(event && event.event.type === "configuration.updated")
+  if (!event || event.event.type !== "configuration.updated") throw new Error("missing configuration.updated")
+  const next = event.event.configuration.find(option => option.id === "model")
+  assert.ok(next && next.value.type === "enum")
+  if (!next || next.value.type !== "enum") throw new Error("expected updated model enum")
+  assert.equal(next.value.current, "mock-deep")
+  assert.deepEqual(next.value.choices.map(choice => choice.value).sort(), ["mock-auto", "mock-deep", "mock-fast"])
   await connection.close("user")
 })
 
@@ -449,11 +478,17 @@ test("Cursor profile preserves exact permission, configuration, and interrupt li
   const configuration = await new AcpAgentDriver(cursorFixture("--scenario", "config_model"))
     .openThread(context(), { mode: { type: "new" }, cwdUri: "file:///tmp" })
   assert.equal(configuration.capabilities.configuration.dynamicOptions, "native")
+  const model = configuration.configuration?.find(option => option.id === "model")
+  assert.ok(model instanceof AgentConfigurationOption && model.value.type === "enum")
+  if (!model || model.value.type !== "enum") throw new Error("expected Cursor model enum")
+  assert.ok(model.value.choices.some(choice => choice.value === "mock-deep"))
   assert.equal((await configuration.send(command("cursor-config", {
     type: "configuration.set",
     optionId: "model",
     value: "mock-fast",
   }))).status, "accepted")
+  const configEvents = await collectUntil(configuration, event => event.event.type === "configuration.updated")
+  assert.ok(configEvents.some(event => event.event.type === "configuration.updated"))
   await configuration.close("user")
 
   const interrupted = await new AcpAgentDriver(cursorFixture("--scenario", "cancel_coop"))

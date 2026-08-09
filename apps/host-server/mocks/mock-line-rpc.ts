@@ -123,6 +123,58 @@ function main(): void {
         break
       }
 
+      case "model/list": {
+        if (hasId) {
+          const cursor = asString(paramsObject.cursor)
+          if (!cursor) {
+            write({
+              id,
+              result: {
+                data: [
+                  {
+                    id: "mock-model",
+                    model: "mock-model",
+                    displayName: "Mock Model",
+                    isDefault: true,
+                    hidden: false,
+                  },
+                  {
+                    id: "mock-model-fast",
+                    model: "mock-model-fast",
+                    displayName: "Mock Fast",
+                    isDefault: false,
+                    hidden: false,
+                  },
+                ],
+                nextCursor: "page-2",
+              },
+            })
+          } else {
+            write({
+              id,
+              result: {
+                data: [
+                  {
+                    id: "mock-model-deep",
+                    model: "mock-model-deep",
+                    displayName: "Mock Deep",
+                    isDefault: false,
+                    hidden: false,
+                  },
+                ],
+                nextCursor: null,
+              },
+            })
+          }
+        }
+        break
+      }
+
+      case "config/value/write": {
+        if (hasId) write({ id, result: {} })
+        break
+      }
+
       case "turn/start": {
         if (!hasId) break
         turnCount += 1

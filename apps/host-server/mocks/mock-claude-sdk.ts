@@ -63,7 +63,12 @@ function main(): void {
             initialized = true
             success(requestId, {
               commands: [{ name: "compact", description: "Compact context" }],
-              models: [{ value: "mock-sonnet", displayName: "Mock Sonnet" }],
+              models: [
+                { value: "mock-haiku", displayName: "Mock Haiku" },
+                { value: "mock-sonnet", displayName: "Mock Sonnet" },
+                { value: "mock-opus", displayName: "Mock Opus" },
+              ],
+              model: "mock-sonnet",
               account: { email: "mock@example.com" },
             })
             break
@@ -167,6 +172,11 @@ function main(): void {
           session_id: sessionId,
           model: "mock-sonnet",
           permissionMode: "default",
+          models: [
+            { value: "mock-haiku", displayName: "Mock Haiku" },
+            { value: "mock-sonnet", displayName: "Mock Sonnet" },
+            { value: "mock-opus", displayName: "Mock Opus" },
+          ],
           tools: ["Read", "Edit", "Bash"],
         })
 

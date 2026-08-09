@@ -2,6 +2,7 @@ import {
   AgentThreadSnapshot,
   AgentThreadState,
   AgentCapabilities,
+  AgentConfigurationOption,
   type AgentEventEnvelope,
   type AgentPendingAction,
   type AgentTimelineItem,
@@ -335,12 +336,15 @@ function withCommittedEnvelope(
   return AgentThreadState.make({
     ...state,
     ...changes,
-    // Effect Schema classes are nominal at runtime. Re-materialize this nested
-    // value so browser bundles that decode RPC and reduce events in separate
-    // chunks do not retain a foreign AgentCapabilities constructor.
+    // Effect Schema classes are nominal at runtime. Re-materialize nested
+    // values so browser bundles that decode RPC and reduce events in separate
+    // chunks do not retain foreign constructors.
     capabilities: AgentCapabilities.make({
       ...(changes.capabilities ?? state.capabilities),
     }),
+    configuration: (changes.configuration ?? state.configuration).map(option =>
+      AgentConfigurationOption.make({ ...option }),
+    ),
     lastSequence: envelope.sequence,
     revision: state.revision + 1,
     connectionGeneration: Math.max(
@@ -387,7 +391,9 @@ function applyValidatedEvent(
         cwdUri: event.cwdUri,
         status: "idle",
         capabilities: AgentCapabilities.make({ ...event.capabilities }),
-        configuration: event.configuration,
+        configuration: event.configuration.map(option =>
+          AgentConfigurationOption.make({ ...option }),
+        ),
         turns: [],
         itemsById: {},
         itemOrder: [],

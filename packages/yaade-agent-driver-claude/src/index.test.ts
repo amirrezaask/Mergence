@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import type { AgentDriverContext, AgentSpawnedProcess } from "@yaade/agent-driver"
-import { AgentCommandEnvelope } from "@yaade/agent-protocol"
+import { AgentCommandEnvelope, AgentConfigurationOption } from "@yaade/agent-protocol"
 import { runAgentDriverConformanceSuite } from "@yaade/agent-testkit"
 import { Schema } from "effect"
 import { ClaudeAgentSdkDriver, truncateSemanticText } from "./index.js"
@@ -14,9 +14,35 @@ class MockClaudeSdk implements AgentSpawnedProcess {
   readonly stderr: AsyncIterable<Uint8Array> = { [Symbol.asyncIterator]: async function* () { return } }
   async writeStdin(bytes: Uint8Array): Promise<void> {
     const message = JSON.parse(new TextDecoder().decode(bytes)) as Record<string, unknown>
-    if (message.type === "control_request") this.push({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: { models: [{ value: "mock-sonnet", displayName: "Mock Sonnet" }] } } })
+    const models = [
+      { value: "mock-haiku", displayName: "Mock Haiku" },
+      { value: "mock-sonnet", displayName: "Mock Sonnet" },
+      { value: "mock-opus", displayName: "Mock Opus" },
+    ]
+    if (message.type === "control_request") {
+      const request = (message.request ?? {}) as Record<string, unknown>
+      if (request.subtype === "initialize") {
+        this.push({
+          type: "control_response",
+          response: {
+            subtype: "success",
+            request_id: message.request_id,
+            response: { models, model: "mock-sonnet" },
+          },
+        })
+      } else {
+        this.push({ type: "control_response", response: { subtype: "success", request_id: message.request_id, response: {} } })
+      }
+    }
     if (message.type === "user") {
-      this.push({ type: "system", subtype: "init", session_id: "mock-session", model: "mock-sonnet", permissionMode: "default" })
+      this.push({
+        type: "system",
+        subtype: "init",
+        session_id: "mock-session",
+        model: "mock-sonnet",
+        permissionMode: "default",
+        models,
+      })
       this.push({ type: "stream_event", uuid: "a1", event: { type: "content_block_start", index: 0, content_block: { type: "text" } } })
       this.push({ type: "stream_event", uuid: "a1", event: { type: "content_block_delta", index: 0, delta: { text: "mock:hello" } } })
       this.push({ type: "stream_event", uuid: "a1", event: { type: "content_block_stop", index: 0 } })
@@ -49,6 +75,34 @@ test("Claude semantic truncation is UTF-8 bounded at an emoji boundary", () => {
   const bounded = truncateSemanticText("a".repeat(65_535) + "😀")
   assert.equal(new TextEncoder().encode(bounded).byteLength, 65_535)
   assert.equal(bounded.includes("�"), false)
+})
+
+test("Claude advertises the full model catalog with the provider current model", async () => {
+  const driver = new ClaudeAgentSdkDriver()
+  const connection = await driver.openThread(context(), { mode: { type: "new" }, cwdUri: "file:///workspace" })
+  assert.equal(connection.capabilities.configuration.dynamicOptions, "native")
+  const model = connection.configuration?.find(option => option.id === "model")
+  assert.ok(model instanceof AgentConfigurationOption)
+  assert.equal(model.value.type, "enum")
+  if (model.value.type !== "enum") throw new Error("expected Claude model enum")
+  assert.deepEqual(model.value.choices.map(choice => choice.value), ["mock-haiku", "mock-sonnet", "mock-opus"])
+  assert.equal(model.value.current, "mock-sonnet")
+  assert.equal((await connection.send(Schema.decodeUnknownSync(AgentCommandEnvelope)({
+    protocolVersion: 1,
+    commandId: "set-model",
+    threadId: "t1",
+    issuedAt: "2026-01-01T00:00:00.000Z",
+    command: { type: "configuration.set", optionId: "model", value: "mock-opus" },
+  }))).status, "accepted")
+  const iterator = connection.events()[Symbol.asyncIterator]()
+  const next = await iterator.next()
+  assert.equal(next.done, false)
+  if (next.done || next.value.event.type !== "configuration.updated") throw new Error("missing configuration.updated")
+  const updated = next.value.event.configuration.find(option => option.id === "model")
+  assert.ok(updated && updated.value.type === "enum")
+  if (!updated || updated.value.type !== "enum") throw new Error("expected updated model enum")
+  assert.equal(updated.value.current, "mock-opus")
+  await connection.close("user")
 })
 
 test("Claude fixture passes the same core lifecycle suite and advertises only normalized features", async () => {

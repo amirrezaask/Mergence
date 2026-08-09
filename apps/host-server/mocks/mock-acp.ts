@@ -331,6 +331,7 @@ class MockState {
   lastSetMode: string | null = null
   lastMcpServerCount = 0
   authenticated = false
+  currentModel = "mock-auto"
 
   constructor(
     readonly args: Args,
@@ -477,18 +478,21 @@ function utf8CharLength(lead: number): number {
   return 1
 }
 
-function modelOptions(): JsonObject[] {
+const FULL_MODEL_CHOICES: JsonObject[] = [
+  { value: "mock-auto", name: "Mock Auto" },
+  { value: "mock-fast", name: "Mock Fast" },
+  { value: "mock-deep", name: "Mock Deep" },
+]
+
+function modelOptions(currentValue: string, subset = false): JsonObject[] {
   return [
     {
       id: "model",
       name: "Model",
       category: "model",
       type: "select",
-      currentValue: "mock-auto",
-      options: [
-        { value: "mock-auto", name: "Mock Auto" },
-        { value: "mock-fast", name: "Mock Fast" },
-      ],
+      currentValue,
+      options: subset ? FULL_MODEL_CHOICES.slice(0, 1) : FULL_MODEL_CHOICES,
     },
   ]
 }
@@ -514,7 +518,10 @@ async function handleRequest(
       const sessionId = state.newSession()
       const response: JsonObject = { sessionId }
       if (state.malformedSession()) delete response.sessionId
-      if (state.scenario === "config_model" || state.scenario === "config_malformed") response.configOptions = modelOptions()
+      if (state.scenario === "config_model" || state.scenario === "config_malformed") {
+        // Session advertises a subset; Cursor's list_available_models returns the full catalog.
+        response.configOptions = modelOptions(state.currentModel, true)
+      }
       if (state.scenario === "set_mode_plan") {
         response.modes = {
           currentModeId: "agent",
@@ -577,7 +584,10 @@ async function handleRequest(
 
     case "session/set_config_option":
       if (state.scenario === "config_malformed") return []
-      return { configOptions: [] }
+      if (params.configId === "model" && typeof params.value === "string") {
+        state.currentModel = params.value
+      }
+      return { configOptions: modelOptions(state.currentModel) }
 
     case "session/set_mode":
       state.lastSetMode = String(params.modeId ?? "")
@@ -585,10 +595,10 @@ async function handleRequest(
 
     case "cursor/list_available_models":
       return {
-        models: [
-          { value: "mock-auto", name: "Mock Auto", configOptions: null },
-          { value: "mock-fast", name: "Mock Fast", configOptions: null },
-        ],
+        models: FULL_MODEL_CHOICES.map(choice => ({
+          ...choice,
+          configOptions: null,
+        })),
       }
 
     default:
