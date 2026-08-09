@@ -24,18 +24,10 @@ import {
 } from "lucide-react"
 import { CreateWorktreeDialog } from "./CreateWorktreeDialog.js"
 
-export type WorktreeSwitcherTab = "editors" | "terminals" | "changes"
-
 export type WorktreeSwitcherProps = {
   projectPath: string
   homeDir: string
   defaultBranch: string
-  /** Project-page tab this picker owns. */
-  tab: WorktreeSwitcherTab
-  /** Button label (Editors / Terminals). */
-  label: string
-  /** True when this surface is showing. */
-  active?: boolean
   /** Currently open checkout label (shown on the trigger). */
   activeLabel?: string | null
   /** Absolute cwd of the open checkout (for menu checkmarks). */
@@ -53,8 +45,6 @@ export type WorktreeSwitcherProps = {
   onRemoveWorktree?: (input: { cwdPath: string; branch: string | null }) => Promise<void>
   /** Warm the session workspace when the user signals intent to open it. */
   onIntent?: () => void
-  /** Render as the compact selector beside semantic project tabs. */
-  contextual?: boolean
 }
 
 function branchLabel(wt: GitWorktree): string {
@@ -64,11 +54,11 @@ function branchLabel(wt: GitWorktree): string {
 }
 
 /** Collapse macOS `/private/var` ↔ `/var` so Main is not listed twice. */
-function checkoutPathKey(p: string): string {
+export function checkoutPathKey(p: string): string {
   return p.replace(/\/+$/, "").replace(/^\/private(\/var\/)/, "$1")
 }
 
-function sameCheckoutPath(a: string, b: string): boolean {
+export function sameCheckoutPath(a: string, b: string): boolean {
   return checkoutPathKey(a) === checkoutPathKey(b)
 }
 
@@ -76,16 +66,12 @@ export function WorktreeSwitcher({
   projectPath,
   homeDir,
   defaultBranch,
-  tab,
-  label,
-  active = false,
   activeLabel,
   activeCwdPath,
   onSelectCheckout,
   onCreateWorktree,
   onRemoveWorktree,
   onIntent,
-  contextual = false,
 }: WorktreeSwitcherProps) {
   const [open, setOpen] = useState(false)
   const [createOpen, setCreateOpen] = useState(false)
@@ -189,38 +175,25 @@ export function WorktreeSwitcher({
             variant="ghost"
             size="xs"
             data-yaade-worktree-switcher=""
-            data-yaade-worktree-switcher-for={tab}
-            data-yaade-project-tab={contextual ? undefined : tab}
-            data-yaade-context-selector={contextual ? tab : undefined}
-            aria-label={contextual ? `${label} worktree` : label}
+            aria-label="Worktree"
             aria-expanded={open}
             disabled={busy}
             onPointerEnter={onIntent}
             onFocus={onIntent}
             className={cn(
-              "relative gap-1 border border-transparent text-xs text-muted-foreground hover:text-foreground",
-              contextual
-                ? "h-7 max-w-48 bg-secondary/60 px-2 text-foreground"
-                : "h-[calc(100%-1px)] gap-0.5 px-1.5 py-0 after:absolute after:inset-x-0 after:bottom-0.5 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
-              (open || active) && "text-foreground",
-              active && !contextual && "after:opacity-100",
+              "h-7 max-w-48 gap-1 border border-transparent bg-secondary/60 px-2 text-xs text-foreground hover:text-foreground",
+              open && "text-foreground",
             )}
           >
             <GitBranchIcon className="size-3.5" aria-hidden />
-            <span className="truncate">
-              {contextual ? (activeLabel ?? "Main") : label}
-            </span>
-            {!contextual && active && activeLabel ? (
-              <span className="hidden max-w-[7rem] truncate font-normal text-foreground/80 sm:inline">· {activeLabel}</span>
-            ) : null}
+            <span className="truncate">{activeLabel ?? "Main"}</span>
             <ChevronDownIcon className="size-2.5 opacity-70" aria-hidden />
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          align="start"
+          align="end"
           className="w-72 p-0"
           data-yaade-worktree-switcher-menu=""
-          data-yaade-worktree-switcher-menu-for={tab}
           onOpenAutoFocus={e => {
             e.preventDefault()
             const root = e.currentTarget as HTMLElement

@@ -246,7 +246,7 @@ export function projectRouteUrl(
   const params = new URLSearchParams()
   if (route.view !== "changes") params.set("view", route.view)
   if (route.workspaceId) params.set("s", route.workspaceId)
-  if (route.checkoutKey && route.view === "changes") {
+  if (route.checkoutKey && route.checkoutKey !== "main") {
     params.set("checkout", route.checkoutKey)
   }
   if (route.agentRunId && route.view === "agents") {

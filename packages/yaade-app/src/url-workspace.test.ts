@@ -120,6 +120,14 @@ describe("url-workspace", () => {
       }),
       "/dev/yaade?view=agents&s=ses-1&agent=run-1",
     )
+    assert.equal(
+      projectRouteUrl("/dev/yaade", {
+        view: "terminals",
+        workspaceId: "ses-1",
+        checkoutKey: "wt-key",
+      }),
+      "/dev/yaade?view=terminals&s=ses-1&checkout=wt-key",
+    )
     assert.deepEqual(
       projectRouteFromSearch("?view=changes&checkout=wt-key"),
       {
