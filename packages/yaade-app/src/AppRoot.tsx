@@ -40,7 +40,10 @@ import {
   urlPathForKnownProject,
   urlPathForProjectRoot,
   workspaceDocumentTitle,
+  projectRouteFromSearch,
+  projectRouteUrl,
 } from "./url-workspace.js"
+import { openServerProject } from "./server-projects.js"
 
 type HqCounts = { projects: number; agents: number; attention: number; unread: number }
 type PendingAgentLaunch = HqAgentLaunchIntent
@@ -60,6 +63,7 @@ type BootState =
       project: KnownProject
       sessionId: string | null
       session: ProjectSession | null
+      routeError?: string | null
     }
 
 type SystemInfo = {
@@ -83,18 +87,7 @@ function projectPathForHome(rootPath: string, homeDir: string): string {
 }
 
 async function registerProject(rootPath: string): Promise<KnownProject> {
-  const response = await fetch("/api/v1/projects", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", Accept: "application/json" },
-    body: JSON.stringify({ rootPath }),
-  })
-  const body = (await response.json()) as KnownProject & {
-    error?: { message?: string }
-  }
-  if (!response.ok) {
-    throw new Error(body.error?.message ?? `Could not open project (${response.status})`)
-  }
-  return body
+  return (await openServerProject(rootPath)).project
 }
 
 async function loadKnownProject(projectId: string): Promise<KnownProject> {
@@ -208,6 +201,7 @@ export function AppRoot() {
   const [pendingAgentFocusTabId, setPendingAgentFocusTabId] = useState<
     string | null
   >(null)
+  const [openProjectOnHq, setOpenProjectOnHq] = useState(false)
 
   const readRoute = useCallback(() => setRouteEpoch(value => value + 1), [])
 
@@ -232,7 +226,8 @@ export function AppRoot() {
         if (!homeDir) homeDir = (await window.yaade?.getHomeDir?.()) ?? ""
         const machineHostname = systemInfo?.machineHostname ?? "local"
         let pathname = location.pathname
-        const requestedSessionId = sessionIdFromSearch()
+        const requestedRoute = projectRouteFromSearch()
+        const requestedSessionId = requestedRoute.workspaceId
 
         // Old home-session links used `/`; HQ owns `/` now.
         if (isHqPathname(pathname) && requestedSessionId) {
@@ -267,7 +262,7 @@ export function AppRoot() {
         }
         document.title = workspaceDocumentTitle(project.rootPath, homeDir)
 
-        const sessionId = sessionIdFromSearch()
+        const sessionId = requestedRoute.workspaceId
         if (!sessionId) {
           if (!cancelled) {
             setBoot({
@@ -277,6 +272,7 @@ export function AppRoot() {
               project,
               sessionId: null,
               session: null,
+              routeError: null,
             })
           }
           return
@@ -292,7 +288,6 @@ export function AppRoot() {
             canonicalProjectPath(session.projectPath) !==
             canonicalProjectPath(project.rootPath)
           ) {
-            replaceSessionUrl(pathname, null)
             setBoot({
               status: "project",
               homeDir,
@@ -300,6 +295,7 @@ export function AppRoot() {
               project,
               sessionId: null,
               session: null,
+              routeError: "This workspace is unavailable or was archived. Select a worktree to recover it.",
             })
             return
           }
@@ -310,10 +306,10 @@ export function AppRoot() {
             project,
             sessionId,
             session,
+            routeError: null,
           })
         } catch (error) {
           if (cancelled) return
-          replaceSessionUrl(pathname, null)
           setBoot({
             status: "project",
             homeDir,
@@ -321,9 +317,13 @@ export function AppRoot() {
             project,
             sessionId: null,
             session: null,
+            routeError:
+              error instanceof Error
+                ? error.message
+                : "This workspace is unavailable.",
           })
           console.warn(
-            "Failed to load session; showing project page:",
+            "Failed to load deep-linked workspace:",
             error instanceof Error ? error.message : error,
           )
         }
@@ -398,10 +398,46 @@ export function AppRoot() {
         { id: agent.projectId, rootPath: agent.projectPath },
         boot.homeDir,
       )
-      pushSessionUrl(pathname, agent.projectSessionId)
+      pushProjectUrl(
+        projectRouteUrl(pathname, {
+          view: "agents",
+          workspaceId: agent.projectSessionId,
+          agentRunId:
+            "runId" in agent && typeof agent.runId === "string"
+              ? agent.runId
+              : agent.sessionId,
+        }),
+      )
       readRoute()
     },
     [boot, readRoute],
+  )
+
+  const agentHref = useCallback(
+    (agent: HqAgentSummary) => {
+      if (boot.status !== "hq" && boot.status !== "project") return "/"
+      const pathname = projectUrl(
+        { id: agent.projectId, rootPath: agent.projectPath },
+        boot.homeDir,
+      )
+      return projectRouteUrl(pathname, {
+        view: "agents",
+        workspaceId: agent.projectSessionId,
+        agentRunId:
+          "runId" in agent && typeof agent.runId === "string"
+            ? agent.runId
+            : agent.sessionId,
+      })
+    },
+    [boot],
+  )
+
+  const openProjectPath = useCallback(
+    async (rootPath: string) => {
+      const project = await registerProject(rootPath)
+      openKnownProject(project)
+    },
+    [openKnownProject],
   )
 
   const launchAgentFromHq = useCallback(
@@ -481,9 +517,10 @@ export function AppRoot() {
             <div className="flex gap-2">
               <Button onClick={() => window.location.reload()}>Retry</Button>
               <Button variant="outline" onClick={() => {
+                setOpenProjectOnHq(true)
                 pushProjectUrl("/")
                 readRoute()
-              }}>Go to HQ</Button>
+              }}>Open Project</Button>
             </div>
           </CardContent>
         </Card>
@@ -499,6 +536,9 @@ export function AppRoot() {
         onOpenProject={openKnownProject}
         onOpenWorkspace={openAgentWorkspace}
         onOpenRegisteredProject={openKnownProject}
+        onOpenProjectPath={openProjectPath}
+        agentHref={agentHref}
+        initialOpenProject={openProjectOnHq}
         onLaunchAgent={launchAgentFromHq}
         onCountsChange={setHqCounts}
       />
@@ -513,6 +553,7 @@ export function AppRoot() {
       homeDir={boot.homeDir}
       machineHostname={boot.machineHostname}
       session={boot.session}
+      routeError={boot.routeError}
       agentLaunchIntent={
         pendingAgentLaunch?.projectId === boot.project.id
           ? pendingAgentLaunch
@@ -524,7 +565,9 @@ export function AppRoot() {
           current?.id === intentId ? null : current,
         )
       }}
-      initialAgentFocusTabId={pendingAgentFocusTabId}
+      initialAgentFocusTabId={
+        pendingAgentFocusTabId ?? projectRouteFromSearch().agentRunId
+      }
       onInitialAgentFocusHandled={() => setPendingAgentFocusTabId(null)}
       onOpenSession={openSession}
       onClearSession={backToProject}
@@ -533,7 +576,6 @@ export function AppRoot() {
         pushProjectUrl("/")
         readRoute()
       }}
-      listSessions={() => listProjectSessions(boot.project.rootPath)}
     />
   )
 }

@@ -134,6 +134,28 @@ test.describe("single-binary web server", () => {
     }
   })
 
+  test("exposes the authoritative agent provider registry over host RPC", async () => {
+    const { app, page } = await launchJet({ projectPage: true })
+    try {
+      const providers = await page.evaluate(async () => window.yaade!.agents!.listProviders(true))
+      expect(providers).toHaveLength(5)
+      expect(providers.map(provider => provider.provider).sort()).toEqual([
+        "claude",
+        "codex",
+        "cursor",
+        "grok",
+        "opencode",
+      ])
+      for (const provider of providers) {
+        expect(provider.binary).not.toBe("")
+        expect(typeof provider.available).toBe("boolean")
+        expect(provider.error === null || typeof provider.error === "string").toBeTruthy()
+      }
+    } finally {
+      await app.close()
+    }
+  })
+
   test("supports atomic 16 MiB text-file writes while JSON RPC stays capped", async () => {
     const { app, page } = await launchJet({
       projectPage: true,

@@ -6,6 +6,8 @@ import {
   joinProjectPath,
   projectBreadcrumbs,
   projectRootFromLocation,
+  projectRouteFromSearch,
+  projectRouteUrl,
   resolveHomeRelativePath,
   knownProjectIdFromPathname,
   urlPathForKnownProject,
@@ -97,5 +99,43 @@ describe("url-workspace", () => {
   it("joins project paths", () => {
     assert.equal(joinProjectPath("/Users/me/dev", "yaade"), "/Users/me/dev/yaade")
     assert.equal(joinProjectPath("/", "tmp"), "/tmp")
+  })
+
+  it("defaults bare project routes to Changes and preserves legacy terminal links", () => {
+    assert.deepEqual(projectRouteFromSearch(""), {
+      view: "changes",
+      workspaceId: null,
+      checkoutKey: null,
+      agentRunId: null,
+    })
+    assert.equal(projectRouteFromSearch("?s=ses-1").view, "terminals")
+  })
+
+  it("round-trips deep-linked workspaces, checkouts, and agent runs", () => {
+    assert.equal(
+      projectRouteUrl("/dev/yaade", {
+        view: "agents",
+        workspaceId: "ses-1",
+        agentRunId: "run-1",
+      }),
+      "/dev/yaade?view=agents&s=ses-1&agent=run-1",
+    )
+    assert.equal(
+      projectRouteUrl("/dev/yaade", {
+        view: "terminals",
+        workspaceId: "ses-1",
+        checkoutKey: "wt-key",
+      }),
+      "/dev/yaade?view=terminals&s=ses-1&checkout=wt-key",
+    )
+    assert.deepEqual(
+      projectRouteFromSearch("?view=changes&checkout=wt-key"),
+      {
+        view: "changes",
+        workspaceId: null,
+        checkoutKey: "wt-key",
+        agentRunId: null,
+      },
+    )
   })
 })

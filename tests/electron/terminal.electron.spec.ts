@@ -20,6 +20,7 @@ import {
   openMuxTerminal,
   readTerminalText,
   showTerminal,
+  waitForMux,
 } from "./_launch.js"
 
 const ptyAvailable = hasPtySpawn()
@@ -216,7 +217,7 @@ test.describe("electron terminal", () => {
   })
 
   test("sends fitted geometry immediately after PTY creation", async () => {
-    const { app, page } = await launchJet({ withTerminal: false })
+    const { app, page } = await launchJet({ projectPage: true })
     try {
       await page.evaluate(() => {
         const terminal = window.yaade?.terminal
@@ -246,6 +247,12 @@ test.describe("electron terminal", () => {
         ).__yaadeCreateCalls = createCalls
       })
 
+      await page.evaluate(async () => {
+        await window.__yaadeAgent!.createProjectSession!({
+          title: "Geometry session",
+        })
+      })
+      await waitForMux(page)
       await openMuxTerminal(page)
 
       await expect
@@ -258,8 +265,18 @@ test.describe("electron terminal", () => {
                     cols: number
                     rows: number
                   }>
+                  __yaadeCreateCalls?: Array<{
+                    cols?: number
+                    rows?: number
+                  }>
                 }
-              ).__yaadeResizeCalls?.at(-1) ?? null,
+              ).__yaadeResizeCalls?.at(-1) ??
+              (
+                window as unknown as {
+                  __yaadeCreateCalls?: Array<{ cols?: number; rows?: number }>
+                }
+              ).__yaadeCreateCalls?.at(-1) ??
+              null,
           ),
         )
         .toEqual(
@@ -268,25 +285,29 @@ test.describe("electron terminal", () => {
             rows: expect.any(Number),
           }),
         )
-      const geometry = await page.evaluate(
-        () =>
-          (
-            window as unknown as {
-              __yaadeResizeCalls?: Array<{ cols: number; rows: number }>
-            }
-          ).__yaadeResizeCalls?.at(-1),
-      )
+      const geometry = await page.evaluate(() => {
+        const state = window as unknown as {
+          __yaadeResizeCalls?: Array<{ cols: number; rows: number }>
+          __yaadeCreateCalls?: Array<{ cols?: number; rows?: number }>
+        }
+        return state.__yaadeResizeCalls?.at(-1) ?? state.__yaadeCreateCalls?.at(-1)
+      })
       expect(geometry!.cols).toBeGreaterThan(80)
       expect(geometry!.rows).toBeGreaterThan(24)
-      const initialGeometry = await page.evaluate(
-        () =>
-          (
-            window as unknown as {
-              __yaadeCreateCalls?: Array<{ cols?: number; rows?: number }>
-            }
-          ).__yaadeCreateCalls?.at(-1),
+      const calls = await page.evaluate(() => {
+        const state = window as unknown as {
+          __yaadeResizeCalls?: Array<{ cols: number; rows: number }>
+          __yaadeCreateCalls?: Array<{ cols?: number; rows?: number }>
+        }
+        return {
+          initial: state.__yaadeCreateCalls?.at(-1),
+          resized: state.__yaadeResizeCalls?.at(-1),
+        }
+      })
+      expect(calls.initial).toEqual(
+        expect.objectContaining({ cols: geometry!.cols, rows: geometry!.rows }),
       )
-      expect(initialGeometry).toEqual(geometry)
+      if (calls.resized) expect(calls.resized).toEqual(calls.initial)
     } finally {
       await app.close()
     }
@@ -834,8 +855,9 @@ test.describe("electron terminal", () => {
         return viewport != null && viewport.scrollHeight > viewport.clientHeight * 2
       }, null, { timeout: 15_000 })
 
-      const samples = await page.locator("[data-yaade-terminal-panel] .xterm-viewport").evaluate(async viewport => {
+      const scroll = await page.locator("[data-yaade-terminal-panel] .xterm-viewport").evaluate(async viewport => {
         viewport.scrollTop = viewport.scrollHeight
+        const before = viewport.scrollTop
         viewport.dispatchEvent(new WheelEvent("wheel", { deltaY: -640, bubbles: true, cancelable: true }))
         const values: number[] = []
         for (let frame = 0; frame < 60; frame++) {
@@ -843,17 +865,16 @@ test.describe("electron terminal", () => {
           values.push(viewport.scrollTop)
           if (viewport.dataset.jetScrollActive === "false" && frame > 2) break
         }
-        return values
+        return { before, values }
       })
+      const samples = scroll.values
       const moving = samples.filter((value, index) => index === 0 || value !== samples[index - 1])
       expect(moving.length).toBeGreaterThanOrEqual(1)
       if (samples.at(-1) === samples[0]) {
-        const jumped = await page.locator("[data-yaade-terminal-panel] .xterm-viewport").evaluate(viewport => {
-          const before = viewport.scrollTop
-          viewport.scrollTop = Math.max(0, before - 120)
-          return viewport.scrollTop !== before
-        })
-        expect(jumped).toBe(true)
+        // A large wheel delta can complete before the first 32 ms sample.
+        // Compare against the pre-wheel position instead of attempting a
+        // second jump that cannot move when RAD already reached scrollTop 0.
+        expect(samples[0]).toBeLessThan(scroll.before)
       } else {
         expect(samples.at(-1)).not.toBe(samples[0])
       }

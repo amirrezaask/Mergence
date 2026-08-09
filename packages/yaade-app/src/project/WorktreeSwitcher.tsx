@@ -20,21 +20,14 @@ import {
   ChevronDownIcon,
   GitBranchIcon,
   PlusIcon,
+  Trash2Icon,
 } from "lucide-react"
 import { CreateWorktreeDialog } from "./CreateWorktreeDialog.js"
-
-export type WorktreeSwitcherTab = "editors" | "terminals" | "changes"
 
 export type WorktreeSwitcherProps = {
   projectPath: string
   homeDir: string
   defaultBranch: string
-  /** Project-page tab this picker owns. */
-  tab: WorktreeSwitcherTab
-  /** Button label (Editors / Terminals). */
-  label: string
-  /** True when this surface is showing. */
-  active?: boolean
   /** Currently open checkout label (shown on the trigger). */
   activeLabel?: string | null
   /** Absolute cwd of the open checkout (for menu checkmarks). */
@@ -49,6 +42,7 @@ export type WorktreeSwitcherProps = {
     branch: string
     baseRef?: string
   }) => Promise<void>
+  onRemoveWorktree?: (input: { cwdPath: string; branch: string | null }) => Promise<void>
   /** Warm the session workspace when the user signals intent to open it. */
   onIntent?: () => void
 }
@@ -60,11 +54,11 @@ function branchLabel(wt: GitWorktree): string {
 }
 
 /** Collapse macOS `/private/var` ↔ `/var` so Main is not listed twice. */
-function checkoutPathKey(p: string): string {
+export function checkoutPathKey(p: string): string {
   return p.replace(/\/+$/, "").replace(/^\/private(\/var\/)/, "$1")
 }
 
-function sameCheckoutPath(a: string, b: string): boolean {
+export function sameCheckoutPath(a: string, b: string): boolean {
   return checkoutPathKey(a) === checkoutPathKey(b)
 }
 
@@ -72,13 +66,11 @@ export function WorktreeSwitcher({
   projectPath,
   homeDir,
   defaultBranch,
-  tab,
-  label,
-  active = false,
   activeLabel,
   activeCwdPath,
   onSelectCheckout,
   onCreateWorktree,
+  onRemoveWorktree,
   onIntent,
 }: WorktreeSwitcherProps) {
   const [open, setOpen] = useState(false)
@@ -99,6 +91,9 @@ export function WorktreeSwitcher({
         !sameCheckoutPath(wt.path, projectPath),
     )
   }, [projectPath, worktrees])
+  const activeWorktree = linked.find(
+    worktree => activeCwdPath && sameCheckoutPath(activeCwdPath, worktree.path),
+  )
 
   useEffect(() => {
     if (!open) return
@@ -180,35 +175,25 @@ export function WorktreeSwitcher({
             variant="ghost"
             size="xs"
             data-yaade-worktree-switcher=""
-            data-yaade-worktree-switcher-for={tab}
-            data-yaade-project-tab={tab}
-            aria-label={label}
+            aria-label="Worktree"
             aria-expanded={open}
             disabled={busy}
             onPointerEnter={onIntent}
             onFocus={onIntent}
             className={cn(
-              "relative h-[calc(100%-1px)] gap-0.5 border border-transparent px-1.5 py-0 text-xs text-muted-foreground",
-              "hover:text-foreground",
-              "after:absolute after:inset-x-0 after:bottom-0.5 after:h-0.5 after:bg-foreground after:opacity-0 after:transition-opacity",
-              (open || active) && "text-foreground",
-              active && "after:opacity-100",
+              "h-7 max-w-48 gap-1 border border-transparent bg-secondary/60 px-2 text-xs text-foreground hover:text-foreground",
+              open && "text-foreground",
             )}
           >
-            {label}
-            {active && activeLabel ? (
-              <span className="hidden max-w-[7rem] truncate font-normal text-foreground/80 sm:inline">
-                · {activeLabel}
-              </span>
-            ) : null}
+            <GitBranchIcon className="size-3.5" aria-hidden />
+            <span className="truncate">{activeLabel ?? "Main"}</span>
             <ChevronDownIcon className="size-2.5 opacity-70" aria-hidden />
           </Button>
         </PopoverTrigger>
         <PopoverContent
-          align="start"
+          align="end"
           className="w-72 p-0"
           data-yaade-worktree-switcher-menu=""
-          data-yaade-worktree-switcher-menu-for={tab}
           onOpenAutoFocus={e => {
             e.preventDefault()
             const root = e.currentTarget as HTMLElement
@@ -319,6 +304,26 @@ export function WorktreeSwitcher({
                       <PlusIcon className="size-3.5 shrink-0" />
                       <span>Create worktree…</span>
                     </CommandItem>
+                    {onRemoveWorktree && activeWorktree ? (
+                      <CommandItem
+                        value={`remove ${branchLabel(activeWorktree)} worktree`}
+                        data-yaade-worktree-remove={branchLabel(activeWorktree)}
+                        disabled={busy}
+                        onSelect={() => {
+                          setBusy(true)
+                          void onRemoveWorktree({
+                            cwdPath: activeWorktree.path,
+                            branch: activeWorktree.branch
+                              ? activeWorktree.branch.replace(/^refs\/heads\//, "")
+                              : null,
+                          }).then(() => setOpen(false)).finally(() => setBusy(false))
+                        }}
+                        className="gap-2 text-destructive"
+                      >
+                        <Trash2Icon className="size-3.5 shrink-0" />
+                        <span>Remove current worktree…</span>
+                      </CommandItem>
+                    ) : null}
                   </CommandGroup>
                 </>
               )}

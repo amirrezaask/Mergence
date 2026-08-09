@@ -34,6 +34,8 @@ type LaunchWebOptions = {
   env?: Record<string, string>
   userDataDir?: string
   launchWithoutWorkspace?: boolean
+  /** Allow AppRoot to stop at its actionable route error screen. */
+  expectBootError?: boolean
   /** Browser pathname to open (e.g. `/dev/consultation`). Defaults to the launch project's canonical route. */
   startPath?: string
   /**
@@ -299,14 +301,21 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   const startPath = options.startPath ?? defaultStartPath
   const startUrl = `${url}${startPath.startsWith("/") ? startPath : `/${startPath}`}`
   await browserPage.goto(startUrl, { waitUntil: "domcontentloaded" })
-  await browserPage.waitForFunction(() => window.__yaadeAgent != null, null, { timeout: 30_000 })
-  await browserPage.evaluate(() => window.__yaadeAgent!.waitForReady())
-  if (!options.launchWithoutWorkspace) {
-    await browserPage.waitForFunction(
-      () => (window.__yaadeAgent?.listWorkspaces().length ?? 0) > 0,
-      null,
-      { timeout: 30_000 },
-    )
+  if (options.expectBootError) {
+    await browserPage.waitForSelector('[data-yaade-boot="error"]', {
+      state: "visible",
+      timeout: 30_000,
+    })
+  } else {
+    await browserPage.waitForFunction(() => window.__yaadeAgent != null, null, { timeout: 30_000 })
+    await browserPage.evaluate(() => window.__yaadeAgent!.waitForReady())
+    if (!options.launchWithoutWorkspace) {
+      await browserPage.waitForFunction(
+        () => (window.__yaadeAgent?.listWorkspaces().length ?? 0) > 0,
+        null,
+        { timeout: 30_000 },
+      )
+    }
   }
 
   return {

@@ -12,7 +12,7 @@ async function locationHref(page: {
 }
 
 test.describe("session routing", () => {
-  test("a session opens embedded mux and resumes from Overview", async () => {
+  test("a canonical workspace opens Terminals and resumes after visiting Changes", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
@@ -68,22 +68,23 @@ test.describe("session routing", () => {
       expect(state.route).toBe("session")
       expect(state.sessionId).toMatch(/^ses-/)
 
-      // Overview is still reachable without a Workspace tab.
-      await page.locator("[data-yaade-project-tab='overview']").click()
+      // Changes is the landing surface and does not keep a workspace in the URL.
+      await page.locator("[data-yaade-project-tab='changes']").click()
       await expect
         .poll(
           async () =>
-            page.locator("[data-yaade-project-panel='overview']").evaluate(el => {
+            page.locator("[data-yaade-project-panel='changes']").evaluate(el => {
               return !el.classList.contains("invisible")
             }),
           { timeout: 5_000 },
         )
         .toBe(true)
+      await expect
+        .poll(async () => new URL(await locationHref(page)).searchParams.get("s"))
+        .toBeNull()
 
-      await page
-        .locator(`[data-yaade-project-session="${createdSessionId}"]`)
-        .getByRole("button", { name: "Resume" })
-        .click()
+      await page.locator("[data-yaade-project-tab='terminals']").click()
+      await waitForMux(page)
       await expect
         .poll(
           async () =>
@@ -93,6 +94,9 @@ test.describe("session routing", () => {
           { timeout: 5_000 },
         )
         .toBe(true)
+      await expect
+        .poll(async () => new URL(await locationHref(page)).searchParams.get("s"))
+        .toBe(createdSessionId)
 
       await page.evaluate(async () => {
         await window.__yaadeAgent!.backToProject?.()

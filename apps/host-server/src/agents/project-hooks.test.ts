@@ -54,4 +54,32 @@ describe("installProjectHooksForProvider", () => {
     assert.equal(opencode.length, 1)
     assert.match(fs.readFileSync(opencode[0]!, "utf8"), /YAADE_INGEST_URL/)
   })
+
+  it("preserves user hook entries and refuses to replace malformed JSON", () => {
+    const root = tempProject()
+    const dataDir = path.join(root, "data")
+    fs.mkdirSync(path.join(root, ".codex"), { recursive: true })
+    const file = path.join(root, ".codex", "hooks.json")
+    fs.writeFileSync(file, JSON.stringify({
+      custom: { keep: true },
+      hooks: { Stop: [{ matcher: "user", hooks: [{ command: "user-hook" }] }] },
+    }))
+
+    installProjectHooksForProvider("codex", root, dataDir)
+    installProjectHooksForProvider("codex", root, dataDir)
+    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      custom: { keep: boolean }
+      hooks: { Stop: unknown[] }
+    }
+    assert.equal(parsed.custom.keep, true)
+    assert.equal(parsed.hooks.Stop.filter(entry => JSON.stringify(entry).includes("user-hook")).length, 1)
+    assert.equal(parsed.hooks.Stop.filter(entry => JSON.stringify(entry).includes("yaade-hook-forward")).length, 1)
+
+    fs.writeFileSync(file, "{ malformed")
+    assert.throws(
+      () => installProjectHooksForProvider("codex", root, dataDir),
+      /JSON/,
+    )
+    assert.equal(fs.readFileSync(file, "utf8"), "{ malformed")
+  })
 })

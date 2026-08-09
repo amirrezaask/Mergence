@@ -9,6 +9,7 @@ import {
   gitCommitFileContents,
   gitCommitFiles,
   gitHistory,
+  gitHistoryPage,
 } from "./git.js"
 
 describe("gitCommitFileContents", () => {
@@ -24,6 +25,8 @@ describe("gitCommitFileContents", () => {
     run(["init"])
     run(["config", "user.email", "t@t"])
     run(["config", "user.name", "t"])
+    run(["config", "gc.auto", "0"])
+    run(["config", "maintenance.auto", "false"])
     fs.writeFileSync(path.join(root, "a.txt"), "one\n")
     run(["add", "."])
     run(["commit", "-m", "first"])
@@ -64,5 +67,30 @@ describe("gitCommitFileContents", () => {
   test("history lists the commit", async () => {
     const commits = await gitHistory(rootUri, 5)
     assert.ok(commits.some(c => c.hash === hash))
+  })
+
+  test("history pages remain pinned to their initial HEAD", async () => {
+    for (let index = 0; index < 251; index += 1) {
+      fs.writeFileSync(path.join(root, "page.txt"), `${index}\n`)
+      execFileSync("git", ["add", "page.txt"], { cwd: root })
+      execFileSync("git", ["commit", "-m", `page ${index}`], { cwd: root })
+    }
+
+    const first = await gitHistoryPage(rootUri, undefined, 100)
+    assert.equal(first.commits.length, 100)
+    assert.ok(first.nextCursor)
+    const snapshotHead = first.snapshotHead
+
+    fs.writeFileSync(path.join(root, "page.txt"), "new head\n")
+    execFileSync("git", ["add", "page.txt"], { cwd: root })
+    execFileSync("git", ["commit", "-m", "new head"], { cwd: root })
+
+    const second = await gitHistoryPage(rootUri, first.nextCursor, 100)
+    const third = await gitHistoryPage(rootUri, second.nextCursor ?? undefined, 100)
+    const hashes = [...first.commits, ...second.commits, ...third.commits].map(commit => commit.hash)
+    assert.equal(new Set(hashes).size, hashes.length)
+    assert.equal(second.snapshotHead, snapshotHead)
+    assert.equal(third.snapshotHead, snapshotHead)
+    assert.ok(third.commits.some(commit => commit.subject === "first"))
   })
 })

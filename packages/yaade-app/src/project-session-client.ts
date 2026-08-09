@@ -83,30 +83,19 @@ export async function openCheckoutSession(input: {
   worktreeBranch?: string | null
   worktreePath?: string | null
 }): Promise<ProjectSession> {
-  const sessions = await listProjectSessions(input.rootPath)
-  const match = sessions
-    .filter(s => !s.archivedAt && s.cwdPath === input.cwdPath)
-    .sort((a, b) => Date.parse(b.updatedAt) - Date.parse(a.updatedAt))[0]
-  if (match) return loadProjectSession(match.id)
-
-  const isMain = input.cwdPath === input.rootPath
-  return createProjectSession({
-    rootPath: input.rootPath,
-    title:
-      input.title ??
-      (input.worktreeBranch?.trim()
-        ? input.worktreeBranch.trim()
-        : isMain
-          ? "Main"
-          : "Session"),
-    ...(isMain
-      ? {}
-      : {
-          cwdPath: input.cwdPath,
-          worktreeBranch: input.worktreeBranch ?? null,
-          worktreePath: input.worktreePath ?? input.cwdPath,
-        }),
+  const raw = await requestJson<ProjectSession>("/api/v1/project-sessions/open-checkout", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      rootPath: input.rootPath,
+      cwdPath: input.cwdPath,
+      checkoutKey: input.cwdPath === input.rootPath ? "main" : undefined,
+      title: input.title,
+      worktreeBranch: input.worktreeBranch ?? null,
+      worktreePath: input.worktreePath ?? (input.cwdPath === input.rootPath ? null : input.cwdPath),
+    }),
   })
+  return normalizeSession(raw)
 }
 
 export async function saveProjectSessionPayload(

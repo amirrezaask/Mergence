@@ -13,7 +13,7 @@ import {
 } from "./_launch.js"
 
 test.describe("mux shell", () => {
-  test("boots with an empty pane picker and no in-app tab strip", async () => {
+  test("boots the Terminals surface without an in-app tab strip", async () => {
     const { app, page } = await launchJet({ withTerminal: false })
     try {
       await waitForMux(page)
@@ -25,20 +25,48 @@ test.describe("mux shell", () => {
         .poll(async () => page.locator("[data-yaade-mux-tab]").count())
         .toBe(0)
       await expectSelectorVisible(page, "[data-yaade-mux-window]")
-      await expectSelectorVisible(page, "[data-yaade-mux-empty-panes]")
       await expect
         .poll(async () => page.locator("[data-yaade-terminal-panel]").count())
-        .toBe(0)
+        .toBe(1)
       await expect
         .poll(async () => page.locator("[data-yaade-mux-pane]").count())
+        .toBe(1)
+    } finally {
+      await app.close()
+    }
+  })
+
+  test("Terminals surface renders only shell panes", async () => {
+    const { app, page } = await launchJet()
+    try {
+      await waitForMux(page)
+      await execCommand(page, "mux.openGit")
+      await page.evaluate(() =>
+        window.__yaadeAgent!.openFile("untitled:TerminalsSurface.ts"),
+      )
+
+      const surface = page.locator(
+        '[data-yaade-project-surface="terminals"]',
+      )
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-project-surface="terminals"]',
+      )
+      await expect
+        .poll(async () => surface.locator('[data-yaade-mux-pane-kind="terminal"]').count())
+        .toBe(1)
+      await expect
+        .poll(async () => surface.locator('[data-yaade-mux-pane-kind="git"]').count())
         .toBe(0)
-      // Known agent CLI shortcuts on the empty picker.
-      for (const id of ["codex", "claude", "opencode", "cursor", "grok"]) {
-        await expectSelectorVisible(
-          page,
-          `[data-yaade-mux-empty-action="agent-${id}"]`,
-        )
-      }
+      await expect
+        .poll(async () => surface.locator('[data-yaade-mux-pane-kind="editor"]').count())
+        .toBe(0)
+      await expect
+        .poll(async () => surface.locator("[data-yaade-git-root]").count())
+        .toBe(0)
+      await expect
+        .poll(async () => surface.locator("[data-yaade-monaco-editor]").count())
+        .toBe(0)
     } finally {
       await app.close()
     }
@@ -265,7 +293,10 @@ test.describe("mux tiling", () => {
         })
         .toBeGreaterThanOrEqual(2)
       await expectSelectorVisible(page, "[data-yaade-mux-pane-kind=git]")
-      await expectSelectorVisible(page, "[data-yaade-git-workspace]")
+      await expectSelectorVisible(
+        page,
+        "[data-yaade-mux-pane-kind=git] [data-yaade-git-workspace]",
+      )
       // Terminal pane remains; git is an additional split.
       await expectSelectorVisible(page, "[data-yaade-terminal-panel]")
     } finally {
@@ -298,7 +329,10 @@ test.describe("mux tiling", () => {
       await expectSelectorVisible(page, "[data-yaade-mux-pane-kind=git]", {
         timeout: 15_000,
       })
-      await expectSelectorVisible(page, "[data-yaade-git-workspace]")
+      await expectSelectorVisible(
+        page,
+        "[data-yaade-mux-pane-kind=git] [data-yaade-git-workspace]",
+      )
       await expectSelectorVisible(page, "[data-yaade-terminal-panel]")
     } finally {
       await app.close()
@@ -619,7 +653,7 @@ test.describe("mux tiling", () => {
     }
   })
 
-  test("closing the last pane shows the empty picker without recreating a terminal", async () => {
+  test("closing the last pane keeps the Terminals surface ready", async () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
@@ -636,15 +670,7 @@ test.describe("mux tiling", () => {
       await expectSelectorVisible(page, "[data-yaade-confirm=accept]")
       await page.locator("[data-yaade-confirm=accept]").click()
 
-      await expectSelectorVisible(page, "[data-yaade-mux-empty-panes]")
-      await expect
-        .poll(async () => page.locator("[data-yaade-mux-pane]").count())
-        .toBe(0)
-      await expect
-        .poll(async () => page.locator("[data-yaade-terminal-panel]").count())
-        .toBe(0)
-
-      await page.locator('[data-yaade-mux-empty-action="terminal"]').click()
+      // The dedicated Terminals surface maintains one usable shell.
       await expectSelectorVisible(page, "[data-yaade-terminal-panel]")
       await expect
         .poll(async () => page.locator("[data-yaade-mux-pane]").count())
@@ -1001,7 +1027,10 @@ test.describe("mux drag dock", () => {
         page,
         `[data-yaade-mux-pane="${termId}"][data-yaade-mux-pane-kind=terminal]`,
       )
-      await expectSelectorVisible(page, "[data-yaade-git-workspace]")
+      await expectSelectorVisible(
+        page,
+        "[data-yaade-mux-pane-kind=git] [data-yaade-git-workspace]",
+      )
     } finally {
       await app.close()
     }

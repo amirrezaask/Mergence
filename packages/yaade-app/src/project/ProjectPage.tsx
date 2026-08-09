@@ -10,13 +10,14 @@ import {
 import type {
   HqAgentSummary,
   ProjectSession,
-  ProjectSessionSummary,
 } from "@yaade/rpc"
-import { pathToFileUri, type GitCommit } from "@yaade/shared"
+import { pathToFileUri } from "@yaade/shared"
+import { isTerminalTabId, terminalTabId, type AgentRunInfo } from "@yaade/workspace"
 import {
   AppShell,
   cn,
 } from "@yaade/ui/project"
+import { ConfirmDialogHost, requestConfirm } from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
 import {
   Button,
@@ -26,7 +27,7 @@ import {
 } from "@yaade/ui/primitives"
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import { NotificationBell } from "@yaade/ui/notifications"
-import { House, SettingsIcon } from "lucide-react"
+import { ChevronsUpDown, FolderKanban, House, SettingsIcon } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
 import { useSystemSignals } from "../system-signals/SystemSignalsProvider.js"
@@ -36,28 +37,34 @@ import type {
   MuxLaunchRequest,
   MuxSurface,
 } from "../mux/MuxApp.js"
-import { workspaceDocumentTitle } from "../url-workspace.js"
+import {
+  projectRouteFromSearch,
+  pushProjectRoute,
+  type ProjectView,
+  workspaceDocumentTitle,
+} from "../url-workspace.js"
 import {
   createProjectSession,
+  deleteProjectSession,
+  listProjectSessions,
   openCheckoutSession,
 } from "../project-session-client.js"
+import {
+  loadProjectSurfaceState,
+  saveProjectSurfaceState,
+  type ProjectSurfaceSelection,
+} from "../project-surface-state-client.js"
 import {
   clearHqAgentLaunch,
   peekHqAgentLaunch,
 } from "./hq-agent-launch.js"
 import { AgentSwitcher } from "./AgentSwitcher.js"
-import { ProjectOverview } from "./ProjectOverview.js"
-import { ProjectPathSwitcher } from "./ProjectPathSwitcher.js"
-import { WorktreeSwitcher } from "./WorktreeSwitcher.js"
+import { OpenProjectOverlay } from "./OpenProjectOverlay.js"
+import { sameCheckoutPath, WorktreeSwitcher } from "./WorktreeSwitcher.js"
 import { isAccessibleHqAgent } from "../hq/hq-model.js"
 
 const GitWorkspace = lazy(() =>
   import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
-)
-const CommitChangesDialog = lazy(() =>
-  import("@yaade/ui/commit-changes").then(m => ({
-    default: m.CommitChangesDialog,
-  })),
 )
 const AgentCliPickerOverlay = lazy(() =>
   import("@yaade/ui/agent-picker").then(m => ({
@@ -92,26 +99,19 @@ export type ProjectPageProps = {
   onAgentLaunchIntentHandled?: (intentId: string) => void
   /** Focus a specific agent leaf when opening from HQ agent list. */
   initialAgentFocusTabId?: string | null
+  routeError?: string | null
   onInitialAgentFocusHandled?: () => void
   onOpenSession: (sessionId: string) => Promise<void>
   /** Clear the active session (leave surface view, keep project chrome). */
   onClearSession?: () => void
   onNavigateProject: (absolutePath: string) => void
   onOpenHq: () => void
-  listSessions: () => Promise<ProjectSessionSummary[]>
 }
 
-type ProjectView =
-  | "overview"
-  | "history"
-  | "agents"
-  | "editors"
-  | "terminals"
-  | "changes"
-
-type ChangesCheckout = {
+type ActiveCheckout = {
   cwdPath: string
   label: string
+  checkoutKey: string
 }
 
 function isSurfaceView(view: ProjectView): view is MuxSurface {
@@ -122,24 +122,31 @@ function surfaceForView(view: ProjectView): MuxSurface | null {
   return isSurfaceView(view) ? view : null
 }
 
-function checkoutLabel(
-  session: ProjectSession | null,
-  projectPath: string,
-): string | null {
-  if (!session) return null
-  return (
-    session.worktreeBranch ??
-    (session.cwdPath === projectPath ? "Main" : session.title)
-  )
+function mainCheckout(projectPath: string): ActiveCheckout {
+  return { cwdPath: projectPath, label: "Main", checkoutKey: "main" }
 }
 
-function changesCheckoutLabel(
-  checkout: ChangesCheckout | null,
+function checkoutFromPaths(
   projectPath: string,
-): string | null {
-  if (!checkout) return null
-  if (checkout.cwdPath === projectPath) return "Main"
-  return checkout.label
+  cwdPath: string,
+  label?: string | null,
+  checkoutKey?: string | null,
+): ActiveCheckout {
+  if (sameCheckoutPath(cwdPath, projectPath)) return mainCheckout(projectPath)
+  return {
+    cwdPath,
+    label: label?.trim() || cwdPath,
+    checkoutKey: checkoutKey?.trim() || cwdPath,
+  }
+}
+
+function checkoutRouteKey(checkout: ActiveCheckout): string | null {
+  return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
+}
+
+function agentFocusTabId(identity: string | null): string | null {
+  if (!identity) return null
+  return isTerminalTabId(identity) ? identity : terminalTabId(identity)
 }
 
 export function ProjectPage({
@@ -152,12 +159,12 @@ export function ProjectPage({
   agentLaunchIntent = null,
   onAgentLaunchIntentHandled,
   initialAgentFocusTabId = null,
+  routeError = null,
   onInitialAgentFocusHandled,
   onOpenSession,
   onClearSession,
   onNavigateProject,
   onOpenHq,
-  listSessions,
 }: ProjectPageProps) {
   const notifications = useSystemSignals()
   const hq = useHqOverview()
@@ -168,18 +175,25 @@ export function ProjectPage({
     resetAppearanceSettings,
   } = useAppearanceSettings()
   const [view, setView] = useState<ProjectView>(
-    session ? "terminals" : "overview",
+    () => projectRouteFromSearch().view,
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [historyMounted, setHistoryMounted] = useState(false)
-  const [changesMounted, setChangesMounted] = useState(false)
-  const [changesCheckout, setChangesCheckout] = useState<ChangesCheckout | null>(
-    null,
+  const [openProjectOpen, setOpenProjectOpen] = useState(false)
+  const [surfaceSelections, setSurfaceSelections] = useState<
+    Partial<Record<Exclude<ProjectView, "history">, ProjectSurfaceSelection>>
+  >({})
+  const [historicalRun, setHistoricalRun] = useState<AgentRunInfo | null>(null)
+  const [agentLookupComplete, setAgentLookupComplete] = useState(false)
+  const [agentLookupMissing, setAgentLookupMissing] = useState(false)
+  const [historyMounted, setHistoryMounted] = useState(
+    () => projectRouteFromSearch().view === "history",
   )
-  const [selectedCommit, setSelectedCommit] = useState<GitCommit | null>(null)
+  const [activeCheckout, setActiveCheckout] = useState<ActiveCheckout>(() =>
+    mainCheckout(projectPath),
+  )
   const [defaultBranch, setDefaultBranch] = useState("main")
   const [focusAgentTabId, setFocusAgentTabId] = useState<string | null>(
-    initialAgentFocusTabId,
+    agentFocusTabId(initialAgentFocusTabId),
   )
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
   // Seed from the module queue so StrictMode remounts still see the HQ intent.
@@ -196,7 +210,11 @@ export function ProjectPage({
   )
   const launchSequenceRef = useRef(0)
   const preferredSurfaceRef = useRef<MuxSurface | null>(
-    session ? "terminals" : null,
+    (() => {
+      if (!session) return null
+      const initialView = projectRouteFromSearch().view
+      return isSurfaceView(initialView) ? initialView : "terminals"
+    })(),
   )
   const rootUri = useMemo(() => pathToFileUri(projectPath), [projectPath])
   const title = workspaceDocumentTitle(projectPath, homeDir)
@@ -206,34 +224,31 @@ export function ProjectPage({
       (hq.snapshot?.agents ?? []).filter(
         agent =>
           (agent.projectId === projectId || agent.projectPath === projectPath) &&
-          isAccessibleHqAgent(agent),
+          isAccessibleHqAgent(agent) &&
+          sameCheckoutPath(agent.cwdPath, activeCheckout.cwdPath),
       ),
-    [hq.snapshot?.agents, projectId, projectPath],
+    [activeCheckout.cwdPath, hq.snapshot?.agents, projectId, projectPath],
   )
 
   const activeAgent = useMemo(
     () =>
       focusAgentTabId
-        ? (projectAgents.find(a => a.sessionId === focusAgentTabId) ?? null)
+        ? (projectAgents.find(
+            a =>
+              a.sessionId === focusAgentTabId ||
+              agentFocusTabId(a.sessionId) === focusAgentTabId,
+          ) ?? null)
         : null,
     [focusAgentTabId, projectAgents],
   )
-
-  useEffect(() => {
-    if (!focusAgentTabId) return
-    if (projectAgents.some(agent => agent.sessionId === focusAgentTabId)) return
-    setFocusAgentTabId(null)
-  }, [focusAgentTabId, projectAgents])
 
   useEffect(() => {
     document.title = title
   }, [title])
 
   useEffect(() => {
-    setSelectedCommit(null)
     setDefaultBranch("main")
-    setChangesCheckout(null)
-    setChangesMounted(false)
+    setActiveCheckout(mainCheckout(projectPath))
   }, [projectPath])
 
   useEffect(() => {
@@ -251,27 +266,201 @@ export function ProjectPage({
     }
   }, [rootUri])
 
-  // Opening / restoring a session shows the preferred surface (default Terminals).
+  useEffect(() => {
+    let cancelled = false
+    void Promise.all([
+      loadProjectSurfaceState(projectId),
+      listProjectSessions(projectPath),
+    ]).then(([rows, sessions]) => {
+      if (cancelled) return
+      const validWorkspaceIds = new Set(
+        sessions.filter(item => !item.archivedAt).map(item => item.id),
+      )
+      const next: Partial<
+        Record<Exclude<ProjectView, "history">, ProjectSurfaceSelection>
+      > = {}
+      for (const row of rows) {
+        if (row.surface === "changes") {
+          const selected = sessions.find(
+            item =>
+              !item.archivedAt &&
+              (item.checkoutKey === row.state.checkoutKey ||
+                item.cwdPath === row.state.checkoutPath),
+          )
+          next.changes = selected
+            ? {
+                checkoutKey: selected.checkoutKey,
+                checkoutPath: selected.cwdPath,
+              }
+            : { checkoutKey: "main", checkoutPath: projectPath }
+          continue
+        }
+        next[row.surface] = {
+          ...row.state,
+          workspaceId:
+            row.state.workspaceId && validWorkspaceIds.has(row.state.workspaceId)
+              ? row.state.workspaceId
+              : null,
+        }
+      }
+      setSurfaceSelections(next)
+
+      const route = projectRouteFromSearch()
+      const routeCheckout = route.checkoutKey
+        ? sessions.find(
+            item =>
+              !item.archivedAt &&
+              (item.checkoutKey === route.checkoutKey ||
+                item.cwdPath === route.checkoutKey),
+          )
+        : null
+      if (routeCheckout) {
+        setActiveCheckout(
+          checkoutFromPaths(
+            projectPath,
+            routeCheckout.cwdPath,
+            routeCheckout.worktreeBranch ?? routeCheckout.title,
+            routeCheckout.checkoutKey,
+          ),
+        )
+        return
+      }
+      if (route.checkoutKey === "main") {
+        setActiveCheckout(mainCheckout(projectPath))
+        return
+      }
+
+      const savedCheckout =
+        next.changes?.checkoutPath ??
+        next.editors?.checkoutPath ??
+        next.terminals?.checkoutPath ??
+        next.agents?.checkoutPath
+      if (savedCheckout) {
+        const summary = sessions.find(item => item.cwdPath === savedCheckout)
+        setActiveCheckout(
+          checkoutFromPaths(
+            projectPath,
+            savedCheckout,
+            summary?.worktreeBranch ?? summary?.title,
+            summary?.checkoutKey ??
+              next.changes?.checkoutKey ??
+              next.editors?.checkoutKey ??
+              next.terminals?.checkoutKey ??
+              next.agents?.checkoutKey,
+          ),
+        )
+      }
+    }).catch(() => {
+      /* project remains usable with Main defaults */
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [projectId, projectPath])
+
+  useEffect(() => {
+    const runId = projectRouteFromSearch().agentRunId
+    if (!runId) {
+      setHistoricalRun(null)
+      setAgentLookupComplete(false)
+      setAgentLookupMissing(false)
+      return
+    }
+    let cancelled = false
+    void window.yaade?.agents?.get(runId).then(run => {
+      if (cancelled) return
+      setHistoricalRun(
+        run && run.processState !== "running" && run.processState !== "starting"
+          ? run
+          : null,
+      )
+      setAgentLookupMissing(run == null)
+      setAgentLookupComplete(true)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [initialAgentFocusTabId])
+
+  // Opening / restoring a workspace keeps the selected surface. Missing telemetry
+  // must not clear a just-launched agent while HQ reconciliation catches up.
   useEffect(() => {
     if (session) {
       const preferred = preferredSurfaceRef.current ?? "terminals"
       setView(current =>
-        current === "overview" || current === "history" ? preferred : current,
+        current === "history" || current === "changes" ? preferred : current,
       )
+      const checkout = checkoutFromPaths(
+        projectPath,
+        session.cwdPath,
+        session.worktreeBranch ?? session.title,
+        session.checkoutKey,
+      )
+      setActiveCheckout(checkout)
+      const selection = {
+        workspaceId: session.id,
+        checkoutKey: checkout.checkoutKey,
+        checkoutPath: checkout.cwdPath,
+      }
+      setSurfaceSelections(current => ({
+        ...current,
+        [preferred]: {
+          ...current[preferred],
+          ...selection,
+        },
+        changes: {
+          checkoutKey: checkout.checkoutKey,
+          checkoutPath: checkout.cwdPath,
+        },
+      }))
+      void saveProjectSurfaceState(projectId, preferred, selection)
+      void saveProjectSurfaceState(projectId, "changes", {
+        checkoutKey: checkout.checkoutKey,
+        checkoutPath: checkout.cwdPath,
+      })
     } else {
       preferredSurfaceRef.current = null
-      setFocusAgentTabId(null)
-      setView(current => (isSurfaceView(current) ? "overview" : current))
     }
-  }, [session?.id]) // eslint-disable-line react-hooks/exhaustive-deps -- session identity only
+  }, [projectId, projectPath, session?.id]) // eslint-disable-line react-hooks/exhaustive-deps -- session identity only
 
   useEffect(() => {
     if (!initialAgentFocusTabId) return
     preferredSurfaceRef.current = "agents"
-    setFocusAgentTabId(initialAgentFocusTabId)
+    setFocusAgentTabId(agentFocusTabId(initialAgentFocusTabId))
     setView("agents")
     onInitialAgentFocusHandled?.()
   }, [initialAgentFocusTabId, onInitialAgentFocusHandled])
+
+  const persistCheckout = useCallback(
+    (checkout: ActiveCheckout, workspaceId?: string | null) => {
+      const selection = {
+        workspaceId: workspaceId ?? null,
+        checkoutKey: checkout.checkoutKey,
+        checkoutPath: checkout.cwdPath,
+      }
+      setSurfaceSelections(current => ({
+        ...current,
+        changes: {
+          checkoutKey: checkout.checkoutKey,
+          checkoutPath: checkout.cwdPath,
+        },
+        agents: { ...current.agents, ...selection, runId: current.agents?.runId },
+        editors: { ...current.editors, ...selection },
+        terminals: { ...current.terminals, ...selection },
+      }))
+      void saveProjectSurfaceState(projectId, "changes", {
+        checkoutKey: checkout.checkoutKey,
+        checkoutPath: checkout.cwdPath,
+      })
+      for (const surface of ["agents", "editors", "terminals"] as const) {
+        void saveProjectSurfaceState(projectId, surface, {
+          ...selection,
+          runId: surface === "agents" ? focusAgentTabId : undefined,
+        })
+      }
+    },
+    [focusAgentTabId, projectId],
+  )
 
   const openCheckoutForSurface = useCallback(
     async (
@@ -293,24 +482,51 @@ export function ProjectPage({
         worktreePath: input.worktreePath,
       })
       await muxReady
+      const checkout = checkoutFromPaths(
+        projectPath,
+        next.cwdPath,
+        next.worktreeBranch ?? input.title ?? next.title,
+        next.checkoutKey,
+      )
+      setActiveCheckout(checkout)
       setView(surface)
       await onOpenSession(next.id)
+      persistCheckout(checkout, next.id)
+      pushProjectRoute(location.pathname, {
+        view: surface,
+        workspaceId: next.id,
+        checkoutKey: checkoutRouteKey(checkout),
+        agentRunId: surface === "agents" ? focusAgentTabId : null,
+      })
     },
-    [onOpenSession, projectPath],
+    [focusAgentTabId, onOpenSession, persistCheckout, projectPath],
   )
 
   const handleSelectCheckout = useCallback(
-    async (
-      surface: "editors" | "terminals",
-      input: {
-        cwdPath: string
-        title?: string
-        worktreeBranch?: string | null
-        worktreePath?: string | null
-      },
-    ) => {
+    async (input: {
+      cwdPath: string
+      title?: string
+      worktreeBranch?: string | null
+      worktreePath?: string | null
+    }) => {
+      const checkout = checkoutFromPaths(
+        projectPath,
+        input.cwdPath,
+        input.worktreeBranch ?? input.title,
+        sameCheckoutPath(input.cwdPath, projectPath) ? "main" : input.cwdPath,
+      )
+      setActiveCheckout(checkout)
+      persistCheckout(checkout, session?.id)
       try {
-        await openCheckoutForSurface(surface, input)
+        if (isSurfaceView(view)) {
+          await openCheckoutForSurface(view, input)
+          return
+        }
+        pushProjectRoute(location.pathname, {
+          view,
+          checkoutKey: checkoutRouteKey(checkout),
+          agentRunId: null,
+        })
       } catch (error) {
         showYaadeToast(
           error instanceof Error ? error.message : "Could not open the workspace.",
@@ -318,17 +534,18 @@ export function ProjectPage({
         )
       }
     },
-    [openCheckoutForSurface],
+    [
+      openCheckoutForSurface,
+      persistCheckout,
+      projectPath,
+      session,
+      view,
+    ],
   )
 
   const handleCreateWorktree = useCallback(
-    async (
-      surface: "editors" | "terminals",
-      input: { branch: string; baseRef?: string },
-    ) => {
-      preferredSurfaceRef.current = surface
+    async (input: { branch: string; baseRef?: string }) => {
       try {
-        const muxReady = preloadMuxApp()
         const created = await createProjectSession({
           rootPath: projectPath,
           title: input.branch,
@@ -337,9 +554,31 @@ export function ProjectPage({
             baseRef: input.baseRef,
           },
         })
-        await muxReady
-        setView(surface)
-        await onOpenSession(created.id)
+        const checkout = checkoutFromPaths(
+          projectPath,
+          created.cwdPath,
+          created.worktreeBranch ?? created.title,
+          created.checkoutKey,
+        )
+        setActiveCheckout(checkout)
+        persistCheckout(checkout, created.id)
+        if (isSurfaceView(view)) {
+          preferredSurfaceRef.current = view
+          await preloadMuxApp()
+          setView(view)
+          await onOpenSession(created.id)
+          pushProjectRoute(location.pathname, {
+            view,
+            workspaceId: created.id,
+            checkoutKey: checkoutRouteKey(checkout),
+            agentRunId: view === "agents" ? focusAgentTabId : null,
+          })
+          return
+        }
+        pushProjectRoute(location.pathname, {
+          view,
+          checkoutKey: checkoutRouteKey(checkout),
+        })
       } catch (error) {
         showYaadeToast(
           error instanceof Error
@@ -349,19 +588,52 @@ export function ProjectPage({
         )
       }
     },
-    [onOpenSession, projectPath],
+    [focusAgentTabId, onOpenSession, persistCheckout, projectPath, view],
   )
 
   const handleSelectAgent = useCallback(
     async (agent: HqAgentSummary) => {
       preferredSurfaceRef.current = "agents"
-      setFocusAgentTabId(agent.sessionId)
+      setFocusAgentTabId(agentFocusTabId(agent.sessionId))
       const muxReady = preloadMuxApp()
       await muxReady
+      const checkout = checkoutFromPaths(
+        projectPath,
+        agent.cwdPath,
+        agent.worktreeBranch,
+        sameCheckoutPath(agent.cwdPath, projectPath) ? "main" : agent.cwdPath,
+      )
+      setActiveCheckout(checkout)
       setView("agents")
       await onOpenSession(agent.projectSessionId)
+      const runId =
+        "runId" in agent && typeof agent.runId === "string"
+          ? agent.runId
+          : agent.sessionId
+      persistCheckout(checkout, agent.projectSessionId)
+      setSurfaceSelections(current => ({
+        ...current,
+        agents: {
+          workspaceId: agent.projectSessionId,
+          checkoutKey: checkout.checkoutKey,
+          checkoutPath: checkout.cwdPath,
+          runId,
+        },
+      }))
+      void saveProjectSurfaceState(projectId, "agents", {
+        workspaceId: agent.projectSessionId,
+        checkoutKey: checkout.checkoutKey,
+        checkoutPath: checkout.cwdPath,
+        runId,
+      })
+      pushProjectRoute(location.pathname, {
+        view: "agents",
+        workspaceId: agent.projectSessionId,
+        checkoutKey: checkoutRouteKey(checkout),
+        agentRunId: runId,
+      })
     },
-    [onOpenSession],
+    [onOpenSession, persistCheckout, projectId, projectPath],
   )
 
   const handleLaunchAction = useCallback(
@@ -380,13 +652,17 @@ export function ProjectPage({
             : "terminals"
       preferredSurfaceRef.current = surface
       try {
-        if (session) {
+        if (session && sameCheckoutPath(session.cwdPath, activeCheckout.cwdPath)) {
           setView(surface)
           return
         }
         await openCheckoutForSurface(surface, {
-          cwdPath: projectPath,
-          title: "Main",
+          cwdPath: activeCheckout.cwdPath,
+          title: activeCheckout.label,
+          worktreeBranch:
+            activeCheckout.checkoutKey === "main" ? null : activeCheckout.label,
+          worktreePath:
+            activeCheckout.checkoutKey === "main" ? null : activeCheckout.cwdPath,
         })
       } catch (error) {
         setLaunchRequest(current => (current?.id === request.id ? null : current))
@@ -396,11 +672,14 @@ export function ProjectPage({
         )
       }
     },
-    [openCheckoutForSurface, projectPath, session],
+    [activeCheckout, openCheckoutForSurface, session],
   )
 
   const handleLaunchRequestHandled = useCallback(
-    (requestId: string, result?: { agentTabId?: string | null }) => {
+    (
+      requestId: string,
+      result?: { agentTabId?: string | null; agentRunId?: string | null },
+    ) => {
       clearHqAgentLaunch(requestId)
       setLaunchRequest(current => (current?.id === requestId ? null : current))
       onAgentLaunchIntentHandled?.(requestId)
@@ -408,9 +687,23 @@ export function ProjectPage({
         setFocusAgentTabId(result.agentTabId)
         setView("agents")
         preferredSurfaceRef.current = "agents"
+        const selection = {
+          workspaceId: session?.id ?? null,
+          checkoutKey: activeCheckout.checkoutKey,
+          checkoutPath: activeCheckout.cwdPath,
+          runId: result.agentRunId ?? result.agentTabId,
+        }
+        setSurfaceSelections(current => ({ ...current, agents: selection }))
+        void saveProjectSurfaceState(projectId, "agents", selection)
+        pushProjectRoute(location.pathname, {
+          view: "agents",
+          workspaceId: session?.id ?? null,
+          checkoutKey: checkoutRouteKey(activeCheckout),
+          agentRunId: result.agentRunId ?? result.agentTabId,
+        })
       }
     },
-    [onAgentLaunchIntentHandled],
+    [activeCheckout, onAgentLaunchIntentHandled, projectId, session],
   )
 
   // HQ launch intents must survive StrictMode remounts. Keep the stable intent
@@ -430,15 +723,19 @@ export function ProjectPage({
       action: { kind: "agent", driverId: intent.driverId },
     })
 
-    if (session) {
+    if (session && sameCheckoutPath(session.cwdPath, activeCheckout.cwdPath)) {
       setView("agents")
       return
     }
 
     let cancelled = false
     void openCheckoutForSurface("agents", {
-      cwdPath: projectPath,
-      title: "Main",
+      cwdPath: activeCheckout.cwdPath,
+      title: activeCheckout.label,
+      worktreeBranch:
+        activeCheckout.checkoutKey === "main" ? null : activeCheckout.label,
+      worktreePath:
+        activeCheckout.checkoutKey === "main" ? null : activeCheckout.cwdPath,
     }).catch(error => {
       if (cancelled) return
       clearHqAgentLaunch(intent.id)
@@ -457,98 +754,87 @@ export function ProjectPage({
       cancelled = true
     }
   }, [
+    activeCheckout,
     agentLaunchIntent,
     onAgentLaunchIntentHandled,
     openCheckoutForSurface,
     projectId,
-    projectPath,
     session,
   ])
 
-  const handleResumeSession = useCallback(
-    async (sessionId: string) => {
-      preferredSurfaceRef.current = "terminals"
-      const muxReady = preloadMuxApp()
-      await muxReady
-      setView("terminals")
-      await onOpenSession(sessionId)
-    },
-    [onOpenSession],
-  )
-
-  const handleSelectChangesCheckout = useCallback(
-    async (input: {
-      cwdPath: string
-      title?: string
-      worktreeBranch?: string | null
-      worktreePath?: string | null
-    }) => {
-      setChangesCheckout({
-        cwdPath: input.cwdPath,
-        label:
-          input.worktreeBranch ??
-          input.title ??
-          (input.cwdPath === projectPath ? "Main" : input.cwdPath),
+  const handleRemoveWorktree = useCallback(
+    async (input: { cwdPath: string; branch: string | null }) => {
+      const confirmed = await requestConfirm({
+        title: `Remove ${input.branch ?? "worktree"}?`,
+        description:
+          "YAADE will first verify that no live agents, terminals, or dirty editors depend on it.",
+        confirmLabel: "Remove worktree",
+        cancelLabel: "Cancel",
+        destructive: true,
       })
-      setChangesMounted(true)
-      setView("changes")
-    },
-    [projectPath],
-  )
-
-  const handleCreateChangesWorktree = useCallback(
-    async (input: { branch: string; baseRef?: string }) => {
+      if (!confirmed) return
       try {
-        const created = await createProjectSession({
-          rootPath: projectPath,
-          title: input.branch,
-          worktree: {
-            branch: input.branch,
-            baseRef: input.baseRef,
-          },
-        })
-        setChangesCheckout({
-          cwdPath: created.cwdPath,
-          label: created.worktreeBranch ?? created.title,
-        })
-        setChangesMounted(true)
-        setView("changes")
+        const sessions = await listProjectSessions(projectPath)
+        const workspace = sessions.find(
+          item => !item.archivedAt && item.cwdPath === input.cwdPath,
+        )
+        if (!workspace) throw new Error("Canonical worktree workspace was not found")
+        await deleteProjectSession(workspace.id, { removeWorktree: true })
+        const checkout = mainCheckout(projectPath)
+        setActiveCheckout(checkout)
+        persistCheckout(checkout)
+        if (isSurfaceView(view) || session) {
+          await openCheckoutForSurface(
+            isSurfaceView(view) ? view : preferredSurfaceRef.current ?? "terminals",
+            { cwdPath: projectPath, title: "Main" },
+          )
+        } else {
+          pushProjectRoute(location.pathname, {
+            view,
+            checkoutKey: null,
+          })
+        }
       } catch (error) {
         showYaadeToast(
-          error instanceof Error
-            ? error.message
-            : "Could not create the worktree.",
+          error instanceof Error ? error.message : "Could not remove worktree",
           { variant: "destructive" },
         )
+        throw error
       }
     },
-    [projectPath],
+    [openCheckoutForSurface, persistCheckout, projectPath, session, view],
   )
 
-  const showHistory = useCallback(() => {
-    setHistoryMounted(true)
-    setView("history")
-  }, [])
-
-  const showChanges = useCallback(() => {
-    setChangesMounted(true)
-    if (!changesCheckout) {
-      setChangesCheckout({ cwdPath: projectPath, label: "Main" })
-    }
-    setView("changes")
-  }, [changesCheckout, projectPath])
+  const ensureCheckoutSession = useCallback(
+    async (surface: MuxSurface) => {
+      if (session && sameCheckoutPath(session.cwdPath, activeCheckout.cwdPath)) {
+        setView(surface)
+        pushProjectRoute(location.pathname, {
+          view: surface,
+          workspaceId: session.id,
+          checkoutKey: checkoutRouteKey(activeCheckout),
+          agentRunId: surface === "agents" ? focusAgentTabId : null,
+        })
+        return
+      }
+      await openCheckoutForSurface(surface, {
+        cwdPath: activeCheckout.cwdPath,
+        title: activeCheckout.label,
+        worktreeBranch:
+          activeCheckout.checkoutKey === "main" ? null : activeCheckout.label,
+        worktreePath:
+          activeCheckout.checkoutKey === "main" ? null : activeCheckout.cwdPath,
+      })
+    },
+    [activeCheckout, focusAgentTabId, openCheckoutForSurface, session],
+  )
 
   const surface = surfaceForView(view)
   const muxSurface: MuxSurface =
     surface ?? preferredSurfaceRef.current ?? "terminals"
-  const tabsValue =
-    view === "overview" || view === "history" ? view : "none"
-  const sessionCheckoutLabel = checkoutLabel(session, projectPath)
-  const changesLabel = changesCheckoutLabel(changesCheckout, projectPath)
-  const changesRootUri = useMemo(
-    () =>
-      pathToFileUri(changesCheckout?.cwdPath ?? projectPath),
-    [changesCheckout?.cwdPath, projectPath],
+  const checkoutRootUri = useMemo(
+    () => pathToFileUri(activeCheckout.cwdPath),
+    [activeCheckout.cwdPath],
   )
 
   return (
@@ -559,12 +845,31 @@ export function ProjectPage({
         data-yaade-project-path={projectPath}
       >
         <Tabs
-          value={tabsValue}
+          value={view}
           onValueChange={value => {
-            if (value === "overview" || value === "history") {
-              if (value === "history") setHistoryMounted(true)
-              setView(value)
+            const next = value as ProjectView
+            if (next === "history") setHistoryMounted(true)
+            if (isSurfaceView(next)) {
+              preferredSurfaceRef.current = next
+              const saved = surfaceSelections[next]
+              if (next === "agents") {
+                setFocusAgentTabId(agentFocusTabId(saved?.runId ?? null))
+              }
+              void ensureCheckoutSession(next).catch(error => {
+                showYaadeToast(
+                  error instanceof Error ? error.message : "Workspace unavailable",
+                  { variant: "destructive" },
+                )
+              })
+              return
             }
+            setView(next)
+            pushProjectRoute(location.pathname, {
+              view: next,
+              workspaceId: null,
+              checkoutKey: checkoutRouteKey(activeCheckout),
+              agentRunId: null,
+            })
           }}
           className="flex min-h-0 flex-1 flex-col"
         >
@@ -580,34 +885,62 @@ export function ProjectPage({
             >
               <House />
             </Button>
-            <ProjectPathSwitcher
-              projectPath={projectPath}
-              homeDir={homeDir}
-              onNavigate={onNavigateProject}
-            />
-            <div className="flex h-7 shrink-0 items-center rounded-md border border-border bg-secondary/60 p-0.5">
-              <TabsList variant="line" className="h-6 gap-0 p-0">
+            <Button
+              variant="ghost"
+              size="xs"
+              className="max-w-56 justify-start"
+              aria-label="Switch project"
+              data-yaade-project-switcher=""
+              onClick={() => setOpenProjectOpen(true)}
+            >
+              <FolderKanban data-icon="inline-start" />
+              <span className="truncate font-semibold">{projectName}</span>
+              <ChevronsUpDown className="size-3 opacity-60" aria-hidden />
+            </Button>
+            <div className="flex h-8 shrink-0 items-center gap-1.5">
+              <TabsList className="h-7 gap-0.5 rounded-md bg-secondary/60 p-0.5">
                 <TabsTrigger
-                  value="overview"
-                  data-yaade-project-tab="overview"
-                  className="px-2 text-xs"
+                  value="changes"
+                  data-yaade-project-tab="changes"
+                  className="w-[4.5rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
                 >
-                  Overview
+                  Changes
+                </TabsTrigger>
+                <TabsTrigger
+                  value="agents"
+                  data-yaade-project-tab="agents"
+                  className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
+                >
+                  Agents
+                </TabsTrigger>
+                <TabsTrigger
+                  value="editors"
+                  data-yaade-project-tab="editors"
+                  className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
+                >
+                  Editors
+                </TabsTrigger>
+                <TabsTrigger
+                  value="terminals"
+                  data-yaade-project-tab="terminals"
+                  className="w-[5rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
+                >
+                  Terminals
                 </TabsTrigger>
                 <TabsTrigger
                   value="history"
                   data-yaade-project-tab="history"
-                  className="px-2 text-xs"
+                  className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
                 >
                   History
                 </TabsTrigger>
               </TabsList>
-              <AgentSwitcher
+              {view === "agents" ? <AgentSwitcher
                 agents={projectAgents}
                 loading={hq.loading && !hq.snapshot}
                 error={hq.error}
                 active={view === "agents"}
-                activeAgentTabId={focusAgentTabId}
+                activeAgentTabId={activeAgent?.sessionId ?? focusAgentTabId}
                 activeLabel={activeAgent?.title ?? null}
                 onIntent={() => {
                   void preloadMuxApp()
@@ -618,63 +951,21 @@ export function ProjectPage({
                 }}
                 onSelectAgent={handleSelectAgent}
                 onLaunchAgent={() => setAgentPickerOpen(true)}
-              />
-              <WorktreeSwitcher
-                tab="editors"
-                label="Editors"
-                projectPath={projectPath}
-                homeDir={homeDir}
-                defaultBranch={defaultBranch}
-                active={view === "editors" && session != null}
-                activeLabel={
-                  view === "editors" ? sessionCheckoutLabel : null
-                }
-                activeCwdPath={
-                  view === "editors" ? (session?.cwdPath ?? null) : null
-                }
-                onIntent={() => void preloadMuxApp()}
-                onSelectCheckout={input =>
-                  handleSelectCheckout("editors", input)
-                }
-                onCreateWorktree={input =>
-                  handleCreateWorktree("editors", input)
-                }
-              />
-              <WorktreeSwitcher
-                tab="terminals"
-                label="Terminals"
-                projectPath={projectPath}
-                homeDir={homeDir}
-                defaultBranch={defaultBranch}
-                active={view === "terminals" && session != null}
-                activeLabel={
-                  view === "terminals" ? sessionCheckoutLabel : null
-                }
-                activeCwdPath={
-                  view === "terminals" ? (session?.cwdPath ?? null) : null
-                }
-                onIntent={() => void preloadMuxApp()}
-                onSelectCheckout={input =>
-                  handleSelectCheckout("terminals", input)
-                }
-                onCreateWorktree={input =>
-                  handleCreateWorktree("terminals", input)
-                }
-              />
-              <WorktreeSwitcher
-                tab="changes"
-                label="Changes"
-                projectPath={projectPath}
-                homeDir={homeDir}
-                defaultBranch={defaultBranch}
-                active={view === "changes"}
-                activeLabel={view === "changes" ? changesLabel : null}
-                activeCwdPath={changesCheckout?.cwdPath ?? null}
-                onSelectCheckout={handleSelectChangesCheckout}
-                onCreateWorktree={handleCreateChangesWorktree}
-              />
+                contextual
+              /> : null}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <WorktreeSwitcher
+                projectPath={projectPath}
+                homeDir={homeDir}
+                defaultBranch={defaultBranch}
+                activeLabel={activeCheckout.label}
+                activeCwdPath={activeCheckout.cwdPath}
+                onIntent={() => void preloadMuxApp()}
+                onSelectCheckout={handleSelectCheckout}
+                onCreateWorktree={handleCreateWorktree}
+                onRemoveWorktree={handleRemoveWorktree}
+              />
               <NotificationBell
                 counts={notifications.counts}
                 onClick={() => notifications.setOpen(true)}
@@ -693,27 +984,8 @@ export function ProjectPage({
             </div>
           </header>
 
-          {/* Keep mux mounted so PTYs survive Overview/History switches. */}
+          {/* Keep mux mounted so PTYs survive surface switches. */}
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            <div
-              className={cn(
-                "absolute inset-0 overflow-hidden",
-                view !== "overview" && "pointer-events-none invisible",
-              )}
-              aria-hidden={view !== "overview"}
-              data-yaade-project-panel="overview"
-            >
-              <ProjectOverview
-                projectPath={projectPath}
-                active={view === "overview"}
-                listSessions={listSessions}
-                onLaunchAction={handleLaunchAction}
-                onResumeSession={handleResumeSession}
-                onOpenCommit={setSelectedCommit}
-                onShowHistory={showHistory}
-              />
-            </div>
-
             {historyMounted ? (
               <div
                 className={cn(
@@ -734,7 +1006,8 @@ export function ProjectPage({
                   }
                 >
                   <GitWorkspace
-                    rootUri={rootUri}
+                    key={`history:${activeCheckout.cwdPath}`}
+                    rootUri={checkoutRootUri}
                     theme={activeTheme}
                     initialView="history"
                     unifiedHistory
@@ -744,7 +1017,7 @@ export function ProjectPage({
               </div>
             ) : null}
 
-            {changesMounted ? (
+            {view === "changes" ? (
               <div
                 className={cn(
                   "absolute inset-0 overflow-hidden",
@@ -764,8 +1037,8 @@ export function ProjectPage({
                   }
                 >
                   <GitWorkspace
-                    key={changesCheckout?.cwdPath ?? projectPath}
-                    rootUri={changesRootUri}
+                    key={`changes:${activeCheckout.cwdPath}`}
+                    rootUri={checkoutRootUri}
                     theme={activeTheme}
                     initialView="changes"
                     onOpenFile={() => undefined}
@@ -774,26 +1047,7 @@ export function ProjectPage({
               </div>
             ) : null}
 
-            {view === "changes" && !changesMounted ? (
-              <div
-                className="absolute inset-0 grid place-items-center overflow-hidden"
-                data-yaade-project-panel="changes"
-              >
-                <div className="max-w-sm px-4 text-center text-sm text-muted-foreground">
-                  <p>Pick a worktree from Changes to review its diff.</p>
-                  <Button
-                    className="mt-3"
-                    variant="secondary"
-                    size="sm"
-                    onClick={showChanges}
-                  >
-                    Open Main changes
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            {session ? (
+            {session && !(view === "agents" && (historicalRun || agentLookupMissing)) ? (
               <div
                 className={cn(
                   "absolute inset-0 overflow-hidden",
@@ -832,13 +1086,47 @@ export function ProjectPage({
               </div>
             ) : null}
 
+            {view === "agents" && historicalRun ? (
+              <div
+                className="absolute inset-0 grid place-items-center overflow-auto p-6"
+                data-yaade-project-panel="agents"
+                data-yaade-agent-history={historicalRun.runId}
+              >
+                <div className="w-full max-w-lg rounded-md border border-border bg-card p-5">
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
+                    Historical agent run
+                  </p>
+                  <h2 className="mt-1 text-lg font-semibold">{historicalRun.title}</h2>
+                  <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
+                    <dt className="text-muted-foreground">Provider</dt>
+                    <dd className="capitalize">{historicalRun.provider}</dd>
+                    <dt className="text-muted-foreground">Worktree</dt>
+                    <dd className="truncate font-mono">{historicalRun.checkoutKey}</dd>
+                    <dt className="text-muted-foreground">Status</dt>
+                    <dd>{historicalRun.endReason ?? historicalRun.processState}</dd>
+                    <dt className="text-muted-foreground">Ended</dt>
+                    <dd>{historicalRun.endedAt ? new Date(historicalRun.endedAt).toLocaleString() : "Host restarted"}</dd>
+                  </dl>
+                  <p className="mt-4 text-xs text-muted-foreground">
+                    Terminal transcripts are intentionally not retained in HQ activity.
+                  </p>
+                </div>
+              </div>
+            ) : null}
+
+            {view === "agents" && agentLookupMissing && agentLookupComplete && projectRouteFromSearch().agentRunId ? (
+              <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground" data-yaade-agent-not-found="">
+                This agent run was not found.
+              </div>
+            ) : null}
+
             {view === "agents" && !session ? (
               <div
                 className="absolute inset-0 grid place-items-center overflow-hidden"
                 data-yaade-project-panel="agents"
               >
                 <div className="max-w-sm px-4 text-center text-sm text-muted-foreground">
-                  <p>Select a running agent from the Agents menu, or launch one.</p>
+                  <p>{routeError ?? "Select a running agent from the Agents menu, or launch one."}</p>
                   <Button
                     className="mt-3"
                     variant="secondary"
@@ -857,9 +1145,9 @@ export function ProjectPage({
                 data-yaade-project-panel={view}
               >
                 <p className="max-w-sm px-4 text-center text-sm text-muted-foreground">
-                  {view === "editors"
-                    ? "Pick a worktree from Editors to open files."
-                    : "Pick a worktree from Terminals to open a shell."}
+                  {routeError ?? (view === "editors"
+                    ? "Opening the selected worktree for files…"
+                    : "Opening the selected worktree for a shell…")}
                 </p>
               </div>
             ) : null}
@@ -880,6 +1168,15 @@ export function ProjectPage({
         </Suspense>
       ) : null}
 
+      <OpenProjectOverlay
+        open={openProjectOpen}
+        onOpenChange={setOpenProjectOpen}
+        homeDir={homeDir}
+        projects={hq.snapshot?.projects ?? []}
+        onOpenProject={project => onNavigateProject(project.rootPath)}
+        onOpenPath={async rootPath => onNavigateProject(rootPath)}
+      />
+
       {agentPickerOpen ? (
         <Suspense fallback={null}>
           <AgentCliPickerOverlay
@@ -893,22 +1190,8 @@ export function ProjectPage({
         </Suspense>
       ) : null}
 
-      {selectedCommit ? (
-        <Suspense fallback={null}>
-          <CommitChangesDialog
-            open
-            onOpenChange={open => {
-              if (!open) setSelectedCommit(null)
-            }}
-            rootUri={rootUri}
-            hash={selectedCommit.hash}
-            theme={activeTheme}
-            commit={selectedCommit}
-          />
-        </Suspense>
-      ) : null}
-
       {!session ? <Toaster position="bottom-right" /> : null}
+      {!session ? <ConfirmDialogHost /> : null}
     </AppShell>
   )
 }

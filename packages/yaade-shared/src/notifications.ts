@@ -53,6 +53,8 @@ export interface AppNotification {
 
   projectId: string | null
   sessionId: string | null
+  /** Durable YAADE agent-run identity when this notification belongs to a run. */
+  runId?: string | null
 
   /** Denormalized for search / UI without joins. */
   projectName: string | null
@@ -198,6 +200,7 @@ export type NotificationStreamEvent =
 
 export interface BindNotificationSessionRequest {
   sessionId: string
+  runId?: string | null
   projectId: string | null
   projectName?: string | null
   sessionTitle?: string | null

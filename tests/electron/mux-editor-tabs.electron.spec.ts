@@ -85,6 +85,18 @@ test.describe("mux editor tabs", () => {
           editors: { mountedCount: 1, activeDirty: false },
           fsReads: { totalCount: 1, errorCount: 0 },
         })
+      await expect
+        .poll(
+          () =>
+            page.evaluate(() =>
+              window.__yaadeAgent!
+                .getEditorDiagnostics()
+                .models.entries.find(entry => entry.uri.endsWith("/src/index.ts"))
+                ?.lspOwnerCount,
+            ),
+          { timeout: 10_000 },
+        )
+        .toBe(1)
       const snapshot = await page.evaluate(() => {
         const value = window.__yaadeAgent!.getEditorDiagnostics()
         return { value, serialized: JSON.stringify(value) }

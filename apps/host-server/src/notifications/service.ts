@@ -36,6 +36,7 @@ const MAX_LIMIT = 200
 
 export type SessionBinding = {
   sessionId: string
+  runId?: string | null
   projectId: string | null
   projectName: string | null
   sessionTitle: string | null
@@ -151,9 +152,10 @@ export class NotificationService {
     this.db
       .prepare(
         `INSERT INTO notification_session_bindings(
-           session_id, project_id, project_name, session_title, provider, pty_id, updated_at
-         ) VALUES(?,?,?,?,?,?,?)
+           session_id, run_id, project_id, project_name, session_title, provider, pty_id, updated_at
+         ) VALUES(?,?,?,?,?,?,?,?)
          ON CONFLICT(session_id) DO UPDATE SET
+           run_id=COALESCE(excluded.run_id, notification_session_bindings.run_id),
            project_id=COALESCE(excluded.project_id, notification_session_bindings.project_id),
            project_name=COALESCE(excluded.project_name, notification_session_bindings.project_name),
            session_title=COALESCE(excluded.session_title, notification_session_bindings.session_title),
@@ -163,6 +165,7 @@ export class NotificationService {
       )
       .run(
         binding.sessionId,
+        binding.runId ?? (binding.sessionId.startsWith("run-") ? binding.sessionId : null),
         binding.projectId,
         binding.projectName,
         binding.sessionTitle,
@@ -174,7 +177,8 @@ export class NotificationService {
     this.db
       .prepare(
         `UPDATE app_notifications
-            SET project_id=COALESCE(project_id, ?),
+            SET run_id=COALESCE(run_id, ?),
+                project_id=COALESCE(project_id, ?),
                 project_name=COALESCE(project_name, ?),
                 session_title=COALESCE(session_title, ?),
                 provider=COALESCE(provider, ?),
@@ -184,6 +188,7 @@ export class NotificationService {
               OR session_title IS NULL OR provider IS NULL)`,
       )
       .run(
+        binding.runId ?? (binding.sessionId.startsWith("run-") ? binding.sessionId : null),
         binding.projectId,
         binding.projectName,
         binding.sessionTitle,
@@ -196,12 +201,13 @@ export class NotificationService {
   bindingForSession(sessionId: string): SessionBinding | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, project_id, project_name, session_title, provider, pty_id
+        `SELECT session_id, run_id, project_id, project_name, session_title, provider, pty_id
          FROM notification_session_bindings WHERE session_id=?`,
       )
       .get(sessionId) as
       | {
           session_id: string
+          run_id: string | null
           project_id: string | null
           project_name: string | null
           session_title: string | null
@@ -212,6 +218,7 @@ export class NotificationService {
     if (!row) return null
     return {
       sessionId: row.session_id,
+      runId: row.run_id,
       projectId: row.project_id,
       projectName: row.project_name,
       sessionTitle: row.session_title,
@@ -223,12 +230,13 @@ export class NotificationService {
   bindingForPty(ptyId: string): SessionBinding | null {
     const row = this.db
       .prepare(
-        `SELECT session_id, project_id, project_name, session_title, provider, pty_id
+        `SELECT session_id, run_id, project_id, project_name, session_title, provider, pty_id
          FROM notification_session_bindings WHERE pty_id=?`,
       )
       .get(ptyId) as
       | {
           session_id: string
+          run_id: string | null
           project_id: string | null
           project_name: string | null
           session_title: string | null
@@ -239,6 +247,7 @@ export class NotificationService {
     if (!row) return null
     return {
       sessionId: row.session_id,
+      runId: row.run_id,
       projectId: row.project_id,
       projectName: row.project_name,
       sessionTitle: row.session_title,

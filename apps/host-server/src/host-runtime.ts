@@ -24,7 +24,10 @@ import {
 } from "./notifications/index.js"
 import {
   AgentTelemetryService,
+  AgentRunService,
   listQueuedHooks,
+  markQueuedHookRetry,
+  consumeHookQueueDiscardCount,
   removeQueuedHook,
   type AgentSnapshotStreamEvent,
 } from "./agents/index.js"
@@ -50,6 +53,8 @@ export type HostRuntime = {
   agents: AgentTelemetryService
   /** Durable interactive control plane; separate from CLI telemetry above. */
   agentRuntime: AgentThreadRuntime
+  agentRuns: AgentRunService
+  hookQueueTimer: ReturnType<typeof setInterval>
 }
 
 const ATTACHMENT_RETENTION_INTERVAL_MS = 24 * 60 * 60 * 1_000
@@ -91,7 +96,20 @@ export function createRuntime(
   const emitAgent = (streamEvent: AgentSnapshotStreamEvent) => {
     events.emit("agents:event", [streamEvent])
   }
-  const agents = new AgentTelemetryService(db.raw(), notifications, emitAgent)
+  let agentRuns: AgentRunService | null = null
+  const agents = new AgentTelemetryService(
+    db.raw(),
+    notifications,
+    emitAgent,
+    event => {
+      const run = agentRuns?.onTelemetry(event)
+      return !run || run.processState === "starting" || run.processState === "running"
+    },
+  )
+  const runService = new AgentRunService(db.raw(), streamEvent => {
+    events.emit("agents:event", [streamEvent])
+  })
+  agentRuns = runService
 
   let runtimeRef: HostRuntime | undefined
   const agentRuntime = new AgentThreadRuntime({
@@ -140,12 +158,17 @@ export function createRuntime(
       const ptyId = String(args[0] ?? "")
       terminalOscBuffers.delete(ptyId)
       const exitCode = typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0)
-      handleTerminalExit(notifications, agents, ptyId, exitCode)
+      handleTerminalExit(notifications, agents, agentRuns, ptyId, exitCode)
     }
   })
 
   const workspace = new WorkspaceHost()
   const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? ""
+  const hookQueueTimer = setInterval(
+    () => drainHookQueue(agents, notifications, config.dataDir),
+    5_000,
+  )
+  hookQueueTimer.unref?.()
   const runtime: HostRuntime = {
     config,
     events,
@@ -159,6 +182,8 @@ export function createRuntime(
     notifications,
     agents,
     agentRuntime,
+    agentRuns: runService,
+    hookQueueTimer,
   }
   runtimeRef = runtime
   const pruneAttachments = (): void => {
@@ -179,12 +204,16 @@ export function createRuntime(
     /* Launch target validation remains authoritative; HQ can still load. */
   }
   // Drain offline hook queue from previous host downtime.
-  drainHookQueue(agents, config.dataDir)
+  drainHookQueue(agents, notifications, config.dataDir)
 
   return runtime
 }
 
-function drainHookQueue(agents: AgentTelemetryService, dataDir: string): void {
+function drainHookQueue(
+  agents: AgentTelemetryService,
+  notifications: NotificationService,
+  dataDir: string,
+): void {
   for (const item of listQueuedHooks(dataDir)) {
     const provider = asAgentProvider(item.meta.provider)
     if (!provider || !item.meta.sessionId) {
@@ -197,9 +226,20 @@ function drainHookQueue(agents: AgentTelemetryService, dataDir: string): void {
         sessionId: item.meta.sessionId,
       })
       removeQueuedHook(item.file)
-    } catch {
-      /* leave for next startup */
+    } catch (error) {
+      markQueuedHookRetry(item.file, error)
     }
+  }
+  const discarded = consumeHookQueueDiscardCount()
+  if (discarded > 0) {
+    notifications.ingest({
+      source: "system",
+      type: "failed",
+      severity: "warning",
+      title: "Discarded invalid agent hook events",
+      message: `${discarded} corrupt, expired, or over-limit queued event${discarded === 1 ? " was" : "s were"} removed.`,
+      eventId: `hook-queue-discard:${new Date().toISOString().slice(0, 10)}`,
+    })
   }
 }
 
@@ -257,9 +297,22 @@ function handleTerminalOsc(
 function handleTerminalExit(
   notifications: NotificationService,
   agents: AgentTelemetryService,
+  agentRuns: AgentRunService | null,
   ptyId: string,
   exitCode: number,
 ): void {
+  const durableRun = agentRuns?.onPtyExit(ptyId, exitCode, exitCode === 0)
+  if (durableRun) {
+    agents.onProcessExited({
+      provider: durableRun.provider,
+      sessionId: durableRun.runId,
+      processId: ptyId,
+      exitCode,
+      expectedExit: exitCode === 0,
+      projectId: durableRun.projectId,
+    })
+    return
+  }
   const binding = notifications.bindingForPty(ptyId)
   const provider = asAgentProvider(binding?.provider ?? null)
   if (provider && binding?.sessionId) {
@@ -315,5 +368,6 @@ export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
   attachmentRetentionTimers.delete(runtime)
   await runtime.agentRuntime.shutdown()
   runtime.workspace.stopAll()
+  clearInterval(runtime.hookQueueTimer)
   runtime.terminal.stopAll()
 }

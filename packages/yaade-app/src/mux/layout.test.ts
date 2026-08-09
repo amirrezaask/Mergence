@@ -165,6 +165,24 @@ describe("project surface helpers", () => {
         .sort(),
       ["yaade:terminal:s1", "yaade:terminal:s2"],
     )
+    assert.deepEqual(
+      leaves.map(leaf => leaf.panelId.id).sort(),
+      listTerminalLeaves(tree).map(leaf => leaf.panelId.id).sort(),
+    )
+  })
+
+  it("buildTerminalOnlyDisplayTree can exclude agent-backed terminals", () => {
+    const tree = emptyMuxTree()
+    const shell = placePtyInTree(tree, "yaade:terminal:shell", null)
+    placePtyInTree(tree, "yaade:terminal:agent", shell, "right")
+    const display = buildTerminalOnlyDisplayTree(
+      tree,
+      tabId => tabId !== "yaade:terminal:agent",
+    )
+    assert.deepEqual(
+      listTerminalLeaves(display).map(leaf => leaf.ptyTabId),
+      ["yaade:terminal:shell"],
+    )
   })
 
   it("listEditorBufferTabIds unions buffers across editor groups", () => {

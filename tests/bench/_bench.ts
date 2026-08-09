@@ -64,6 +64,7 @@ export function assertBudget(result: BenchResult): void {
 export function logBenchResult(result: BenchResult): void {
   console.log(
     `[bench] ${result.name} median=${result.median.toFixed(1)}ms ` +
-      `p95=${result.p95.toFixed(1)}ms p99=${result.p99.toFixed(1)}ms`,
+      `p95=${result.p95.toFixed(1)}ms p99=${result.p99.toFixed(1)}ms ` +
+      `samples=${JSON.stringify(result.samples.map(sample => Number(sample.toFixed(1))))}`,
   )
 }

@@ -49,6 +49,9 @@ export class HqProjectSummary extends Schema.Class<HqProjectSummary>(
 export class HqAgentSummary extends Schema.Class<HqAgentSummary>(
   "HqAgentSummary",
 )({
+  /** Durable OS-process lifetime. Legacy rows decode with an empty id. */
+  runId: Schema.optionalWith(Schema.String, { default: () => "" }),
+  generation: Schema.optionalWith(Schema.Number, { default: () => 0 }),
   sessionId: Schema.String,
   ptyId: Schema.String,
   projectId: Schema.String,
@@ -62,7 +65,7 @@ export class HqAgentSummary extends Schema.Class<HqAgentSummary>(
   title: Schema.String,
   status: HqAgentStatus,
   activity: Schema.String,
-  telemetry: Schema.Literal("connected", "pending"),
+  telemetry: Schema.Literal("connected", "pending", "degraded", "process_only"),
   startedAt: Schema.NullOr(Schema.String),
   lastActivityAt: Schema.NullOr(Schema.String),
   runtimeMs: Schema.Number,

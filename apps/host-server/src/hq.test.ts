@@ -122,7 +122,7 @@ describe("HQ aggregation", () => {
     assert.equal(connecting?.telemetry, "pending")
     assert.equal(connecting?.activity, "Telemetry connecting")
     const alphaHealth = snapshot.projects.find(project => project.id === alphaProject.id)
-    assert.equal(alphaHealth?.sessionCount, 2)
+    assert.equal(alphaHealth?.sessionCount, 1)
     assert.equal(alphaHealth?.liveAgentCount, 1)
     assert.equal(alphaHealth?.attentionCount, 1)
     assert.equal(alphaHealth?.unreadCount, 1)

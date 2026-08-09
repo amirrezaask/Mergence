@@ -208,15 +208,16 @@ export function emptyMuxTree(): YaadePanelTree {
  */
 export function buildTerminalOnlyDisplayTree(
   source: YaadePanelTree,
+  include: (tabId: string) => boolean = () => true,
 ): YaadePanelTree {
-  const terminals = listTerminalLeaves(source)
-  const { tree, editorPanel } = YaadePanelTree.editorOnlyLayout()
-  if (terminals.length === 0) return tree
-
-  tree.setView(editorPanel, paneView(terminals[0]!.ptyTabId))
-  let focus = editorPanel
-  for (let i = 1; i < terminals.length; i++) {
-    focus = placeMuxLeafInTree(tree, terminals[i]!.ptyTabId, focus, "right")
+  const tree = source.clone()
+  const visiblePanels = new Set(
+    listTerminalLeaves(source)
+      .filter(leaf => include(leaf.ptyTabId))
+      .map(leaf => leaf.panelId.id),
+  )
+  for (const panelId of getAllLeafPanels(source)) {
+    if (!visiblePanels.has(panelId.id)) tree.closePanel(panelId)
   }
   return tree
 }

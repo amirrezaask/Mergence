@@ -154,6 +154,9 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const [summary, setSummary] = useState<GitRepositorySummary>(EMPTY_SUMMARY)
   const [branches, setBranches] = useState<string[]>([])
   const [history, setHistory] = useState<GitCommit[]>([])
+  const [historyCursor, setHistoryCursor] = useState<string | null>(null)
+  const [historyLoading, setHistoryLoading] = useState(false)
+  const [historyError, setHistoryError] = useState<string | null>(null)
   const [view, setView] = useState<GitView>(
     unifiedHistory ? "history" : initialView,
   )
@@ -177,11 +180,45 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const [containerWidth, setContainerWidth] = useState(0)
   const rootRef = useRef<HTMLElement>(null)
   const diffRequest = useRef(0)
+  const historyRequest = useRef(0)
   const narrow = containerWidth > 0 && containerWidth < 560
+
+  const loadHistoryPage = useCallback(async (cursor: string | null, reset = false) => {
+    if (!rootUri || !api) return
+    const request = ++historyRequest.current
+    setHistoryLoading(true)
+    if (reset) {
+      setHistory([])
+      setHistoryCursor(null)
+      setHistoryError(null)
+    }
+    try {
+      const page = await api.historyPage(rootUri, cursor ?? undefined, 100)
+      if (request !== historyRequest.current) return
+      setHistory(current => reset ? page.commits : appendHistoryCommits(current, page.commits))
+      setHistoryCursor(page.nextCursor)
+      setHistoryError(null)
+    } catch (error) {
+      if (request === historyRequest.current) setHistoryError(errorMessage(error))
+    } finally {
+      if (request === historyRequest.current) setHistoryLoading(false)
+    }
+  }, [api, rootUri])
+
+  useEffect(() => {
+    // Invalidate a late page from the previously selected worktree before its
+    // refresh can paint into this one.
+    historyRequest.current += 1
+    setHistory([])
+    setHistoryCursor(null)
+    setHistoryError(null)
+  }, [rootUri])
 
   const refresh = useCallback(async () => {
     if (!rootUri || !api) {
       setIsRepo(false)
+      setHistory([])
+      setHistoryCursor(null)
       setLoading(false)
       return
     }
@@ -190,18 +227,17 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       const repository = await api.isRepo(rootUri)
       setIsRepo(repository)
       if (!repository) return
-      const [nextEntries, nextSummary, nextBranches, nextHistory, nextNumstat] = await Promise.all([
+      const [nextEntries, nextSummary, nextBranches, nextNumstat] = await Promise.all([
         api.status(rootUri),
         api.summary(rootUri),
         api.branches(rootUri),
-        api.history(rootUri, 60).catch(() => []),
         api.numstat(rootUri).catch(() => [] as GitNumstatEntry[]),
       ])
       setEntries(nextEntries)
       setSummary(nextSummary)
       setBranches(nextBranches)
-      setHistory(nextHistory)
       setNumstat(Object.fromEntries(nextNumstat.map(stat => [stat.path, stat])))
+      void loadHistoryPage(null, true)
       onBranchChange?.(nextSummary.branch)
       setSelected(current => {
         if (current) {
@@ -224,7 +260,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     } finally {
       setLoading(false)
     }
-  }, [api, onBranchChange, rootUri])
+  }, [api, loadHistoryPage, onBranchChange, rootUri])
 
   useEffect(() => {
     void refresh()
@@ -488,6 +524,13 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       selectedHash={dialogCommit?.hash ?? selectedCommit}
       includeWorkingTree={unifiedHistory}
       dirtyCount={dirtyCount}
+      hasNextPage={historyCursor !== null}
+      loading={historyLoading}
+      error={historyError}
+      onLoadMore={() => {
+        if (historyCursor) void loadHistoryPage(historyCursor)
+      }}
+      onRetry={() => void loadHistoryPage(historyCursor, history.length === 0)}
       onSelect={hash => {
         if (hash === GIT_WORKING_TREE_ID) {
           setSelectedCommit(GIT_WORKING_TREE_ID)
@@ -1430,6 +1473,11 @@ function HistoryList(props: {
   onSelect: (hash: string) => void
   includeWorkingTree?: boolean
   dirtyCount?: number
+  hasNextPage: boolean
+  loading: boolean
+  error: string | null
+  onLoadMore: () => void
+  onRetry: () => void
 }) {
   const {
     commits,
@@ -1437,6 +1485,11 @@ function HistoryList(props: {
     onSelect,
     includeWorkingTree = false,
     dirtyCount = 0,
+    hasNextPage,
+    loading,
+    error,
+    onLoadMore,
+    onRetry,
   } = props
   const rowCount = commits.length + (includeWorkingTree ? 1 : 0)
   const scrollRef = useRef<HTMLDivElement>(null)
@@ -1446,13 +1499,26 @@ function HistoryList(props: {
     estimateSize: () => 54,
     overscan: 10,
   })
+  const virtualItems = virtualizer.getVirtualItems()
+  const lastVisibleIndex = virtualItems.at(-1)?.index ?? -1
+
+  useEffect(() => {
+    if (!hasNextPage || loading || lastVisibleIndex < rowCount - 20) return
+    onLoadMore()
+  }, [hasNextPage, lastVisibleIndex, loading, onLoadMore, rowCount])
+
   return (
     <div ref={scrollRef} data-yaade-list-panel="git-history" className="min-h-0 flex-1 overflow-auto p-2">
-      {rowCount === 0 ? (
-        <CenteredEmpty title="No commit history" description="Commits will appear here once this repository has history." />
+      {rowCount === 0 && loading ? (
+        <CenteredStatus label="Loading commit history…" />
+      ) : rowCount === 0 ? (
+        <div className="flex h-full min-h-0 flex-col">
+          <CenteredEmpty title="No commit history" description="Commits will appear here once this repository has history." />
+          {error ? <HistoryRetry error={error} onRetry={onRetry} /> : null}
+        </div>
       ) : (
         <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
-          {virtualizer.getVirtualItems().map(item => {
+          {virtualItems.map(item => {
             if (includeWorkingTree && item.index === 0) {
               const active = selectedHash === GIT_WORKING_TREE_ID
               return (
@@ -1520,10 +1586,36 @@ function HistoryList(props: {
               </Button>
             )
           })}
+          {error ? <HistoryRetry error={error} onRetry={onRetry} /> : null}
+          {loading ? (
+            <div className="absolute right-3 bottom-2 flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-3xs text-muted-foreground shadow-sm">
+              <Spinner /> Loading more commits…
+            </div>
+          ) : null}
         </div>
       )}
     </div>
   )
+}
+
+function HistoryRetry({ error, onRetry }: { error: string; onRetry: () => void }) {
+  return (
+    <div className="flex items-center justify-between gap-3 border-t border-border/35 px-3 py-2 text-3xs text-muted-foreground">
+      <span className="min-w-0 truncate" title={error}>Could not load more commits: {error}</span>
+      <Button type="button" variant="outline" size="xs" onClick={onRetry}>Retry</Button>
+    </div>
+  )
+}
+
+function appendHistoryCommits(current: GitCommit[], next: GitCommit[]): GitCommit[] {
+  if (next.length === 0) return current
+  const known = new Set(current.map(commit => commit.hash))
+  const appended = next.filter(commit => {
+    if (known.has(commit.hash)) return false
+    known.add(commit.hash)
+    return true
+  })
+  return appended.length === 0 ? current : [...current, ...appended]
 }
 
 function CenteredStatus({ label }: { label: string }) {
