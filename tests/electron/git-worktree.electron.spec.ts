@@ -119,7 +119,7 @@ test.describe("per-surface worktrees", () => {
       })
 
       const switcher = page.locator(
-        '[data-yaade-app-header] [data-yaade-worktree-switcher]',
+        '[data-yaade-git-toolbar] [data-yaade-worktree-switcher]',
       )
       await switcher.waitFor({ state: "visible" })
       await expect
@@ -134,7 +134,7 @@ test.describe("per-surface worktrees", () => {
           page.evaluate(
             () =>
               document.querySelectorAll(
-                "[data-yaade-app-header] [data-yaade-worktree-switcher]",
+                "[data-yaade-git-toolbar] [data-yaade-worktree-switcher]",
               ).length,
           ),
         )

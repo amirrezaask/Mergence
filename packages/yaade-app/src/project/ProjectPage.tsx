@@ -27,7 +27,17 @@ import {
 } from "@yaade/ui/primitives"
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import { NotificationBell } from "@yaade/ui/notifications"
-import { ChevronsUpDown, FolderKanban, House, SettingsIcon } from "lucide-react"
+import {
+  Bot,
+  Code2,
+  ChevronsUpDown,
+  FileDiff,
+  FolderKanban,
+  History,
+  House,
+  SettingsIcon,
+  SquareTerminal,
+} from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
 import { useSystemSignals } from "../system-signals/SystemSignalsProvider.js"
@@ -154,6 +164,100 @@ function checkoutFromPaths(
 
 function checkoutRouteKey(checkout: ActiveCheckout): string | null {
   return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
+}
+
+type ProjectNavigationDockProps = {
+  projectName: string
+  notifications: ReturnType<typeof useSystemSignals>
+  onOpenHq: () => void
+  onOpenProject: () => void
+  onOpenSettings: () => void
+}
+
+function ProjectNavigationDock({
+  projectName,
+  notifications,
+  onOpenHq,
+  onOpenProject,
+  onOpenSettings,
+}: ProjectNavigationDockProps) {
+  const tabs = [
+    { value: "changes", label: "Changes", icon: FileDiff },
+    { value: "agents", label: "Agents", icon: Bot },
+    { value: "editors", label: "Editors", icon: Code2 },
+    { value: "terminals", label: "Terminals", icon: SquareTerminal },
+    { value: "history", label: "History", icon: History },
+  ] as const
+
+  return (
+    <nav
+      aria-label="Project navigation"
+      className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"
+      data-yaade-project-dock=""
+    >
+      <div className="pointer-events-auto flex max-w-full items-center gap-2 overflow-x-auto px-3 pb-3 pt-2 [scrollbar-width:none] sm:px-4 sm:pb-4 [&::-webkit-scrollbar]:hidden">
+        <div
+          className="yaade-project-dock-surface flex min-w-max items-center gap-1 p-1.5"
+          data-yaade-project-nav=""
+        >
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Open HQ"
+            onClick={onOpenHq}
+            className="rounded-xl"
+          >
+            <House />
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="max-w-52 justify-start gap-1.5 rounded-xl px-2.5 sm:max-w-64"
+            aria-label="Switch project"
+            data-yaade-project-switcher=""
+            onClick={onOpenProject}
+          >
+            <FolderKanban data-icon="inline-start" />
+            <span className="truncate font-semibold">{projectName}</span>
+            <ChevronsUpDown className="size-3 shrink-0 opacity-60" aria-hidden />
+          </Button>
+          <TabsList className="h-10 gap-0.5 rounded-xl bg-transparent p-0">
+            {tabs.map(({ value, label, icon: Icon }) => (
+              <TabsTrigger
+                key={value}
+                value={value}
+                aria-label={label}
+                data-yaade-project-tab={value}
+                className="h-10 gap-1.5 rounded-xl px-2.5 text-xs after:hidden data-[state=active]:bg-accent/80 data-[state=active]:shadow-sm sm:px-3"
+              >
+                <Icon className="size-4" aria-hidden />
+                <span className="hidden sm:inline">{label}</span>
+              </TabsTrigger>
+            ))}
+          </TabsList>
+        </div>
+
+        <div className="yaade-project-dock-surface flex min-w-max items-center gap-1 p-1.5">
+          <NotificationBell
+            counts={notifications.counts}
+            onClick={() => notifications.setOpen(true)}
+            className="size-9 rounded-xl"
+          />
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label="Settings"
+            onPointerEnter={() => void preloadSettingsOverlay()}
+            onFocus={() => void preloadSettingsOverlay()}
+            onClick={onOpenSettings}
+            className="rounded-xl"
+          >
+            <SettingsIcon />
+          </Button>
+        </div>
+      </div>
+    </nav>
+  )
 }
 
 function agentFocusTabId(identity: string | null): string | null {
@@ -814,7 +918,7 @@ export function ProjectPage({
   return (
     <AppShell>
       <div
-        className="flex h-full min-h-0 w-full flex-col bg-background"
+        className="relative flex h-full min-h-0 w-full flex-col bg-background"
         data-yaade-shell="project"
         data-yaade-project-path={projectPath}
       >
@@ -847,100 +951,6 @@ export function ProjectPage({
           }}
           className="flex min-h-0 flex-1 flex-col"
         >
-          <header
-            className="flex h-11 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3 sm:px-4"
-            data-yaade-app-header=""
-          >
-            <Button
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Open HQ"
-              onClick={onOpenHq}
-            >
-              <House />
-            </Button>
-            <Button
-              variant="ghost"
-              size="xs"
-              className="max-w-56 justify-start"
-              aria-label="Switch project"
-              data-yaade-project-switcher=""
-              onClick={() => setOpenProjectOpen(true)}
-            >
-              <FolderKanban data-icon="inline-start" />
-              <span className="truncate font-semibold">{projectName}</span>
-              <ChevronsUpDown className="size-3 opacity-60" aria-hidden />
-            </Button>
-            <div className="flex h-8 shrink-0 items-center gap-1.5">
-              <TabsList className="h-7 gap-0.5 rounded-md bg-secondary/60 p-0.5">
-                <TabsTrigger
-                  value="changes"
-                  data-yaade-project-tab="changes"
-                  className="w-[4.5rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
-                >
-                  Changes
-                </TabsTrigger>
-                <TabsTrigger
-                  value="agents"
-                  data-yaade-project-tab="agents"
-                  className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
-                >
-                  Agents
-                </TabsTrigger>
-                <TabsTrigger
-                  value="editors"
-                  data-yaade-project-tab="editors"
-                  className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
-                >
-                  Editors
-                </TabsTrigger>
-                <TabsTrigger
-                  value="terminals"
-                  data-yaade-project-tab="terminals"
-                  className="w-[5rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
-                >
-                  Terminals
-                </TabsTrigger>
-                <TabsTrigger
-                  value="history"
-                  data-yaade-project-tab="history"
-                  className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
-                >
-                  History
-                </TabsTrigger>
-              </TabsList>
-            </div>
-            <div className="ml-auto flex shrink-0 items-center gap-0.5">
-              {view === "changes" || view === "history" ? (
-                <CheckoutPicker
-                  projectPath={projectPath}
-                  homeDir={homeDir}
-                  defaultBranch={defaultBranch}
-                  activeLabel={activeCheckout.label}
-                  activeCwdPath={activeCheckout.cwdPath}
-                  onSelectCheckout={handleSelectCheckout}
-                  onCreateWorktree={handleCreateWorktree}
-                  onRemoveWorktree={handleRemoveWorktree}
-                />
-              ) : null}
-              <NotificationBell
-                counts={notifications.counts}
-                onClick={() => notifications.setOpen(true)}
-                className="size-6"
-              />
-              <Button
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Settings"
-                onPointerEnter={() => void preloadSettingsOverlay()}
-                onFocus={() => void preloadSettingsOverlay()}
-                onClick={() => setSettingsOpen(true)}
-              >
-                <SettingsIcon />
-              </Button>
-            </div>
-          </header>
-
           {/* Keep mux mounted so PTYs survive surface switches. */}
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {historyMounted ? (
@@ -968,6 +978,19 @@ export function ProjectPage({
                     theme={activeTheme}
                     initialView="history"
                     unifiedHistory
+                    toolbarStart={
+                      <CheckoutPicker
+                        projectPath={projectPath}
+                        homeDir={homeDir}
+                        defaultBranch={defaultBranch}
+                        activeLabel={activeCheckout.label}
+                        activeCwdPath={activeCheckout.cwdPath}
+                        onSelectCheckout={handleSelectCheckout}
+                        onCreateWorktree={handleCreateWorktree}
+                        onRemoveWorktree={handleRemoveWorktree}
+                        triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
+                      />
+                    }
                     onOpenFile={() => undefined}
                   />
                 </Suspense>
@@ -998,6 +1021,19 @@ export function ProjectPage({
                     rootUri={checkoutRootUri}
                     theme={activeTheme}
                     initialView="changes"
+                    toolbarStart={
+                      <CheckoutPicker
+                        projectPath={projectPath}
+                        homeDir={homeDir}
+                        defaultBranch={defaultBranch}
+                        activeLabel={activeCheckout.label}
+                        activeCwdPath={activeCheckout.cwdPath}
+                        onSelectCheckout={handleSelectCheckout}
+                        onCreateWorktree={handleCreateWorktree}
+                        onRemoveWorktree={handleRemoveWorktree}
+                        triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
+                      />
+                    }
                     onOpenFile={() => undefined}
                   />
                 </Suspense>
@@ -1144,6 +1180,14 @@ export function ProjectPage({
               </div>
             ) : null}
           </div>
+
+          <ProjectNavigationDock
+            projectName={projectName}
+            notifications={notifications}
+            onOpenHq={onOpenHq}
+            onOpenProject={() => setOpenProjectOpen(true)}
+            onOpenSettings={() => setSettingsOpen(true)}
+          />
         </Tabs>
       </div>
 

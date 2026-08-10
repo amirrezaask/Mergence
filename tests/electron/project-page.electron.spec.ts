@@ -45,10 +45,20 @@ test.describe("project page", () => {
       await expect
         .poll(async () =>
           (await page
-            .locator('[data-yaade-app-header] [data-yaade-worktree-switcher]')
+            .locator('[data-yaade-git-toolbar] [data-yaade-worktree-switcher]')
             .textContent()) ?? "",
         )
         .toContain("Main")
+      const dock = page.locator('[data-yaade-project-dock]')
+      await dock.waitFor({ state: "visible" })
+      expect(
+        await page.locator('[data-yaade-shell="project"] [data-yaade-app-header]').count(),
+      ).toBe(0)
+      const dockBox = await dock.boundingBox()
+      const viewport = page.viewportSize()
+      expect(dockBox).not.toBeNull()
+      expect(viewport).not.toBeNull()
+      expect(dockBox!.y + dockBox!.height).toBeGreaterThan(viewport!.height - 48)
       expect(await page.evaluate(() => location.search)).toBe("")
 
       const projects = await page.evaluate(async () => {
@@ -143,6 +153,9 @@ test.describe("project page", () => {
     try {
       await waitForProjectPage(page)
       await page.locator('[data-yaade-project-tab="history"]').click()
+      expect(
+        await page.locator('[data-yaade-git-toolbar] [data-yaade-git-commit-trigger]').count(),
+      ).toBe(0)
       await page
         .locator('[data-yaade-list-panel="git-history"] [data-yaade-git-working-tree]')
         .waitFor({ state: "visible", timeout: 15_000 })

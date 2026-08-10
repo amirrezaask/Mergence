@@ -7,6 +7,7 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
+  type ReactNode,
 } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import type {
@@ -117,6 +118,8 @@ type GitWorkspaceProps = {
    * “Current changes” status row. Commit clicks open CommitChangesDialog.
    */
   unifiedHistory?: boolean
+  /** Project chrome rendered beside the commit action in the git toolbar. */
+  toolbarStart?: ReactNode
 }
 
 type DiffContents = {
@@ -146,6 +149,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     fontSize = 13,
     initialView = "changes",
     unifiedHistory = false,
+    toolbarStart,
   } = props
   const api = window.yaade?.git
   const fsApi = window.yaade?.fs
@@ -589,6 +593,8 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         summary={summary}
         stagedCount={stagedCount}
         pendingAction={pendingAction}
+        toolbarStart={toolbarStart}
+        hideCommit={unifiedHistory}
         onCommit={commit}
         onRemoteAction={action => {
           if (!rootUri || !api) return
@@ -708,6 +714,8 @@ function GitToolbar(props: {
   summary: GitRepositorySummary
   stagedCount: number
   pendingAction: string | null
+  toolbarStart?: ReactNode
+  hideCommit?: boolean
   onCommit: (summary: string, body: string) => Promise<boolean>
   onRemoteAction: (action: "fetch" | "pull" | "push") => void
   onRefresh: () => void
@@ -717,6 +725,8 @@ function GitToolbar(props: {
     summary,
     stagedCount,
     pendingAction,
+    toolbarStart,
+    hideCommit = false,
     onCommit,
     onRemoteAction,
     onRefresh,
@@ -728,14 +738,17 @@ function GitToolbar(props: {
       className="flex h-7 shrink-0 items-center justify-end gap-2 border-b border-border bg-card px-2"
     >
       <div className="flex shrink-0 items-center gap-1">
-        <GitCommitDialog
-          key={repositoryKey}
-          branch={summary.branch}
-          stagedCount={stagedCount}
-          busy={busy}
-          committing={pendingAction === "Commit"}
-          onCommit={onCommit}
-        />
+        {toolbarStart}
+        {hideCommit ? null : (
+          <GitCommitDialog
+            key={repositoryKey}
+            branch={summary.branch}
+            stagedCount={stagedCount}
+            busy={busy}
+            committing={pendingAction === "Commit"}
+            onCommit={onCommit}
+          />
+        )}
         {pendingAction ? (
           <span role="status" className="hidden items-center gap-1.5 text-2xs text-muted-foreground sm:flex">
             <Spinner />
