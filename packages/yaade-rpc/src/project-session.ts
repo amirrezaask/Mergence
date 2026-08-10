@@ -21,14 +21,6 @@ export type ProjectSessionLeaf = WorkspaceSessionLeafType
 export const ProjectSessionEditorFile = WorkspaceSessionEditorFile
 export type ProjectSessionEditorFile = WorkspaceSessionEditorFileType
 
-/** Persisted agent-chat pane metadata. Conversation content remains runtime-owned. */
-export const ProjectSessionAgentChatPane = Schema.Struct({
-  agentThreadId: Schema.String,
-})
-export type ProjectSessionAgentChatPane = Schema.Schema.Type<
-  typeof ProjectSessionAgentChatPane
->
-
 export const EMPTY_PROJECT_SESSION_LAYOUT: ProjectSessionLayout = {
   ...EMPTY_WORKSPACE_SESSION_LAYOUT,
 }
@@ -46,9 +38,6 @@ export const ProjectSessionPayload = Schema.Struct({
   ),
   editorViewStates: Schema.optional(
     Schema.Record({ key: Schema.String, value: Schema.Unknown }),
-  ),
-  agentChatPanes: Schema.optional(
-    Schema.Record({ key: Schema.String, value: ProjectSessionAgentChatPane }),
   ),
 })
 export type ProjectSessionPayload = Schema.Schema.Type<typeof ProjectSessionPayload>
@@ -197,15 +186,6 @@ export function tryDecodeProjectSessionPayload(
       editorViewStates[key] = value
     }
   }
-  let agentChatPanes: Record<string, ProjectSessionAgentChatPane> | undefined
-  if (body.version === 2 && body.agentChatPanes && typeof body.agentChatPanes === "object") {
-    agentChatPanes = {}
-    for (const [key, value] of Object.entries(body.agentChatPanes as Record<string, unknown>)) {
-      if (!key || !value || typeof value !== "object") continue
-      const agentThreadId = asNonEmptyString((value as Record<string, unknown>).agentThreadId)
-      if (agentThreadId) agentChatPanes[key] = { agentThreadId }
-    }
-  }
   return {
     version: 2,
     layout,
@@ -216,9 +196,6 @@ export function tryDecodeProjectSessionPayload(
       : {}),
     ...(editorViewStates && Object.keys(editorViewStates).length > 0
       ? { editorViewStates }
-      : {}),
-    ...(agentChatPanes && Object.keys(agentChatPanes).length > 0
-      ? { agentChatPanes }
       : {}),
   }
 }

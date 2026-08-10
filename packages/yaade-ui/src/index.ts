@@ -25,6 +25,11 @@ export {
 } from "./tabs/registry.js"
 export { AppShell } from "./shell/AppShell.js"
 export {
+  InstanceSidebar,
+  type InstanceSidebarItem,
+  type InstanceSidebarProps,
+} from "./shell/InstanceSidebar.js"
+export {
   TerminalSessionModal,
   formatSessionHeaderTitle,
   SessionTerminalWorkspace,
@@ -205,41 +210,6 @@ export { cn } from "./lib/utils.js"
 export { formatKeyBinding } from "./lib/format-key.js"
 export { TooltipProvider } from "./components/ui/tooltip.js"
 export { MessageScroller } from "./components/ui/message-scroller.js"
-export {
-  AgentChatView,
-  Turn,
-  TimelineItemRenderer,
-  Tool,
-  Permission,
-  Elicitation,
-  Reasoning,
-  Plan,
-  Composer,
-  Status,
-  type AgentChatViewProps,
-  type AgentChatCallbacks,
-  type AgentComposerAttachment,
-} from "./agent-chat/AgentChatView.js"
-export {
-  ChatComposer,
-  DraftHeroHeadline,
-  ProviderModelPicker,
-  TraitsPicker,
-  shouldRenderTraitsControls,
-  ComposerPromptEditor,
-  ComposerControl,
-  ComposerPrimaryActions,
-  buildProviderInstanceEntries,
-  catalogProviderForDriver,
-  defaultSelectionForInstances,
-  getCatalogModels,
-  getDefaultModelSlug,
-  type ChatComposerProps,
-  type ChatComposerSubmitPayload,
-  type ProviderInstanceEntry,
-  type ProviderOptionSelection,
-  type YaadeDriverDescriptor,
-} from "./agent-chat/composer/index.js"
 export { Toaster } from "./components/ui/sonner.js"
 export {
   ConfirmDialogHost,

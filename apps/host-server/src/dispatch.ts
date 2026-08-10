@@ -39,9 +39,6 @@ import {
   PayloadTooLargeError,
   ResolvedLanguageServerTarget,
   TextFileWriteOptions,
-  AgentRuntimeCreateRequest,
-  AgentRuntimeAttachmentUpload,
-  AgentRuntimeCommandEnvelope,
   UnknownChannelError,
   unknownChannel,
   type HostRpcError,
@@ -145,9 +142,6 @@ async function dispatchImpl(
   if (channel.startsWith("agents:")) {
     return handleAgents(runtime, channel, args, clientId)
   }
-  if (channel.startsWith("agentRuntime:")) {
-    return handleAgentRuntime(runtime, channel, args)
-  }
   if (channel.startsWith("notifications:")) {
     return handleNotifications(runtime, channel, args)
   }
@@ -162,111 +156,6 @@ async function dispatchImpl(
   if (channel.startsWith("perf:")) return handlePerf(runtime, channel, args)
 
   throw new Error(`unknown host channel: ${channel}`)
-}
-
-async function handleAgentRuntime(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-): Promise<unknown> {
-  const agents = runtime.agentRuntime
-  switch (channel) {
-    case "agentRuntime:createThread": {
-      const input = Schema.decodeUnknownSync(AgentRuntimeCreateRequest)(args[0])
-      const projectSession = runtime.db.getProjectSession(input.projectSessionId)
-      if (!projectSession) throw new Error("project session not found")
-      await assertAllowedUri(input.cwdUri, [projectSession.cwdPath], fileUriToPath)
-      return agents.create(input)
-    }
-    case "agentRuntime:listThreads":
-      return agents.list(
-        typeof args[0] === "string" && args[0] ? args[0] : undefined,
-      )
-    case "agentRuntime:listProviders":
-      return agents.listProviders()
-    case "agentRuntime:listDrivers": {
-      const cwdUri = str(args[0], "cwdUri")
-      await assertAllowedUri(cwdUri, runtime.config.allowedRoots, fileUriToPath)
-      return agents.listDrivers(cwdUri)
-    }
-    case "agentRuntime:uploadAttachment": {
-      const input = Schema.decodeUnknownSync(AgentRuntimeAttachmentUpload)(args[0])
-      const snapshot = agents.getSnapshot(input.threadId)
-      if (!snapshot) throw new Error("agent thread not found")
-      const session = runtime.db.getProjectSession(String(snapshot.state.projectSessionId))
-      if (!session) throw new Error("project session not found")
-      const mediaType = input.mediaType
-      if (
-        snapshot.state.capabilities.input.uploadedFiles === "unsupported" ||
-        snapshot.state.capabilities.input.uploadedFiles === "unknown" ||
-        (mediaType.startsWith("image/") && (
-          snapshot.state.capabilities.input.images === "unsupported" ||
-          snapshot.state.capabilities.input.images === "unknown"
-        ))
-      ) {
-        throw new Error("the selected agent does not support this attachment")
-      }
-      const { storeAgentAttachment } = await import("./agent-runtime/attachments.js")
-      return storeAgentAttachment(runtime.db.raw(), runtime.config.dataDir, input)
-    }
-    case "agentRuntime:getSnapshot":
-      return agents.getSnapshot(str(args[0], "threadId"))
-    case "agentRuntime:getConnectionState":
-      return agents.getConnectionState(str(args[0], "threadId"))
-    case "agentRuntime:recoverThread": {
-      const threadId = str(args[0], "threadId")
-      const rawAfter = Number(args[1] ?? 0)
-      if (!Number.isFinite(rawAfter)) throw new Error("invalid afterSequence")
-      const afterSequence = Math.max(0, Math.trunc(rawAfter))
-      return {
-        snapshot: agents.getSnapshot(threadId),
-        events: agents.listEvents(threadId, afterSequence),
-      }
-    }
-    case "agentRuntime:sendCommand": {
-      const command = Schema.decodeUnknownSync(AgentRuntimeCommandEnvelope)(args[0])
-      const snapshot = agents.getSnapshot(command.threadId)
-      if (!snapshot) throw new Error("agent thread not found")
-      if (command.command.type === "turn.submit") {
-        const session = runtime.db.getProjectSession(String(snapshot.state.projectSessionId))
-        if (!session) throw new Error("project session not found")
-        const { resolveAgentAttachment } = await import("./agent-runtime/attachments.js")
-        for (const part of command.command.input) {
-          if (part.type === "workspace-resource") {
-            if (
-              snapshot.state.capabilities.input.workspaceFiles === "unsupported" ||
-              snapshot.state.capabilities.input.workspaceFiles === "unknown"
-            ) throw new Error("the selected agent does not support workspace files")
-            await assertAllowedUri(part.uri, [session.cwdPath], fileUriToPath)
-          } else if (part.type === "attachment") {
-            await resolveAgentAttachment(
-              runtime.db.raw(),
-              runtime.config.dataDir,
-              String(command.threadId),
-              part.attachmentId,
-            )
-          }
-        }
-      }
-      return agents.sendCommand(command)
-    }
-    case "agentRuntime:closeThread": {
-      const threadId = str(args[0], "threadId")
-      if (!agents.getSnapshot(threadId)) throw new Error("agent thread not found")
-      return agents.close(threadId)
-    }
-    case "agentRuntime:deleteThread": {
-      const threadId = str(args[0], "threadId")
-      const snapshot = agents.getSnapshot(threadId)
-      if (!snapshot) return false
-      if (snapshot.state.status !== "closed") await agents.close(threadId)
-      const { deleteAgentAttachmentsForThread } = await import("./agent-runtime/attachments.js")
-      await deleteAgentAttachmentsForThread(runtime.db.raw(), runtime.config.dataDir, threadId)
-      return agents.delete(threadId)
-    }
-    default:
-      throw new Error(`unknown agent runtime channel: ${channel}`)
-  }
 }
 
 function handleNotifications(

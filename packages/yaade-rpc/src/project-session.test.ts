@@ -26,19 +26,12 @@ describe("project session editor view states", () => {
     })
   })
 
-  it("migrates v1 layouts to v2 and persists only chat thread references", () => {
+  it("migrates v1 layouts to v2", () => {
     const migrated = tryDecodeProjectSessionPayload({
       version: 1,
       layout: { tree: { root: null }, focusedPaneId: null, zoomedPaneId: null },
       sessions: [],
     })
     assert.equal(migrated?.version, 2)
-    const decoded = tryDecodeProjectSessionPayload({
-      ...migrated,
-      agentChatPanes: {
-        "chat-1": { agentThreadId: "thread-1", timeline: [{ text: "must drop" }] },
-      },
-    })
-    assert.deepEqual(decoded?.agentChatPanes, { "chat-1": { agentThreadId: "thread-1" } })
   })
 })

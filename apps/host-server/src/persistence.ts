@@ -27,8 +27,6 @@ import {
   fileUriToPath,
   pathToFileUri,
 } from "@yaade/shared"
-import { ensureAgentThreadSchema } from "./agent-runtime/schema.js"
-
 export type Project = {
   id: string
   name: string
@@ -167,7 +165,6 @@ export class ProjectDatabase {
     this.ensureWorkspaceSessionSchema()
     this.ensureProjectSessionSchema()
     this.ensureEditorRecoverySchema()
-    ensureAgentThreadSchema(this.db)
     this.backfillProjectsFromProjectSessions()
   }
 
@@ -619,7 +616,7 @@ export class ProjectDatabase {
   }): { surface: string; state: Record<string, unknown>; revision: number; updatedAt: string } {
     if (!this.project(input.projectId)) throw new Error("project not found")
     if (
-      !["changes", "agents", "native-agents", "editors", "terminals"].includes(
+      !["changes", "agents", "editors", "terminals"].includes(
         input.surface,
       )
     ) {
@@ -1339,7 +1336,6 @@ export class ProjectDatabase {
       ...(payload.editorViewStates
         ? { editorViewStates: payload.editorViewStates }
         : {}),
-      ...(payload.agentChatPanes ? { agentChatPanes: payload.agentChatPanes } : {}),
     }
   }
 

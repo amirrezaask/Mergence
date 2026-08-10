@@ -1,7 +1,6 @@
 export type ProjectSurface =
   | "changes"
   | "agents"
-  | "native-agents"
   | "editors"
   | "terminals"
 

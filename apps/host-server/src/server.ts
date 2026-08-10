@@ -1592,46 +1592,6 @@ function validateRpcPaths(
 }
 
 function validateRpcPathsOrThrow(config: HostConfig, channel: string, args: unknown[]): void {
-  if (channel.startsWith("agentRuntime:")) {
-    const first = args[0]
-    if (channel === "agentRuntime:createThread") {
-      const cwdUri =
-        first && typeof first === "object" && "cwdUri" in first
-          ? Reflect.get(first, "cwdUri")
-          : undefined
-      if (
-        typeof cwdUri !== "string" ||
-        !pathAllowed(uriOrPath(cwdUri), config.allowedRoots)
-      ) {
-        throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS")
-      }
-    }
-    if (
-      channel === "agentRuntime:sendCommand" &&
-      first &&
-      typeof first === "object"
-    ) {
-      const command = Reflect.get(first, "command")
-      const input =
-        command && typeof command === "object" && Reflect.get(command, "type") === "turn.submit"
-          ? Reflect.get(command, "input")
-          : undefined
-      if (Array.isArray(input)) {
-        for (const part of input) {
-          if (!part || typeof part !== "object") continue
-          if (Reflect.get(part, "type") !== "workspace-resource") continue
-          const uri = Reflect.get(part, "uri")
-          if (
-            typeof uri !== "string" ||
-            !pathAllowed(uriOrPath(uri), config.allowedRoots)
-          ) {
-            throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS")
-          }
-        }
-      }
-    }
-    return
-  }
   if (channel.startsWith("agents:")) {
     const first = args[0]
     if (first && typeof first === "object") {

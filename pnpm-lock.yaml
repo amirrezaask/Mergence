@@ -53,27 +53,6 @@ importers:
       '@effect/platform-node':
         specifier: 0.99.0
         version: 0.99.0(@effect/cluster@0.51.0(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.73.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.47.0(@effect/experimental@0.58.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/workflow@0.12.5(@effect/experimental@0.58.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.73.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(@effect/rpc@0.73.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/sql@0.47.0(@effect/experimental@0.58.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1))(effect@3.22.1)
-      '@yaade/agent-driver':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-driver
-      '@yaade/agent-driver-acp':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-driver-acp
-      '@yaade/agent-driver-claude':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-driver-claude
-      '@yaade/agent-driver-codex':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-driver-codex
-      '@yaade/agent-driver-mock':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-driver-mock
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-protocol
-      '@yaade/agent-runtime':
-        specifier: workspace:*
-        version: link:../../packages/yaade-agent-runtime
       '@yaade/agents':
         specifier: workspace:*
         version: link:../../packages/yaade-agents
@@ -152,139 +131,6 @@ importers:
         specifier: ^6.3.5
         version: 6.4.3(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
 
-  packages/yaade-agent-driver:
-    dependencies:
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-    devDependencies:
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-driver-acp:
-    dependencies:
-      '@yaade/agent-driver':
-        specifier: workspace:*
-        version: link:../yaade-agent-driver
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@types/node':
-        specifier: ^22.20.0
-        version: 22.20.0
-      '@yaade/agent-testkit':
-        specifier: workspace:*
-        version: link:../yaade-agent-testkit
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-driver-claude:
-    dependencies:
-      '@yaade/agent-driver':
-        specifier: workspace:*
-        version: link:../yaade-agent-driver
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@types/node':
-        specifier: ^22.20.0
-        version: 22.20.0
-      '@yaade/agent-testkit':
-        specifier: workspace:*
-        version: link:../yaade-agent-testkit
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-driver-codex:
-    dependencies:
-      '@yaade/agent-driver':
-        specifier: workspace:*
-        version: link:../yaade-agent-driver
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@types/node':
-        specifier: ^22.20.0
-        version: 22.20.0
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-driver-mock:
-    dependencies:
-      '@yaade/agent-driver':
-        specifier: workspace:*
-        version: link:../yaade-agent-driver
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      '@yaade/agent-testkit':
-        specifier: workspace:*
-        version: link:../yaade-agent-testkit
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-protocol:
-    dependencies:
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-    devDependencies:
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-runtime:
-    dependencies:
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-    devDependencies:
-      effect:
-        specifier: 3.22.1
-        version: 3.22.1
-      tsx:
-        specifier: ^4.23.0
-        version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
   packages/yaade-agent-telemetry:
     dependencies:
       '@yaade/shared':
@@ -294,19 +140,6 @@ importers:
       tsx:
         specifier: ^4.23.0
         version: 4.23.0
-      typescript:
-        specifier: ^7.0.2
-        version: 7.0.2
-
-  packages/yaade-agent-testkit:
-    dependencies:
-      '@yaade/agent-driver':
-        specifier: workspace:*
-        version: link:../yaade-agent-driver
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-    devDependencies:
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -338,12 +171,6 @@ importers:
       '@effect/rpc':
         specifier: 0.73.0
         version: 0.73.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
-      '@yaade/agent-runtime':
-        specifier: workspace:*
-        version: link:../yaade-agent-runtime
       '@yaade/agents':
         specifier: workspace:*
         version: link:../yaade-agents
@@ -564,9 +391,6 @@ importers:
 
   packages/yaade-rpc:
     dependencies:
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
       effect:
         specifier: ^3.22.1
         version: 3.22.1
@@ -658,9 +482,6 @@ importers:
       '@xterm/xterm':
         specifier: ^5.5.0
         version: 5.5.0
-      '@yaade/agent-protocol':
-        specifier: workspace:*
-        version: link:../yaade-agent-protocol
       '@yaade/agents':
         specifier: workspace:*
         version: link:../yaade-agents
@@ -739,6 +560,9 @@ importers:
       vaul:
         specifier: ^1.1.2
         version: 1.1.2(@types/react-dom@19.2.3(@types/react@19.2.17))(@types/react@19.2.17)(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      zustand:
+        specifier: ^5.0.3
+        version: 5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7))
     devDependencies:
       '@types/react':
         specifier: ^19.1.8
@@ -5374,6 +5198,24 @@ packages:
   zip-stream@6.0.1:
     resolution: {integrity: sha512-zK7YHHz4ZXpW89AHXUPbQVGKI7uvkd3hzusTdotCg1UxyaVtg0zFJSTfW/Dq5f7OBBVnq6cZIaC8Ti4hb6dtCA==}
     engines: {node: '>= 14'}
+
+  zustand@5.0.14:
+    resolution: {integrity: sha512-/8tAspM5LMPr28b3fwLYrtdj77ECpfZviaP75CMTnwO8ISyaE4GDIG/9rDDYq/cH9D2Xw2A2RXglLInmVBQB/g==}
+    engines: {node: '>=12.20.0'}
+    peerDependencies:
+      '@types/react': '>=18.0.0'
+      immer: '>=9.0.6'
+      react: '>=18.0.0'
+      use-sync-external-store: '>=1.2.0'
+    peerDependenciesMeta:
+      '@types/react':
+        optional: true
+      immer:
+        optional: true
+      react:
+        optional: true
+      use-sync-external-store:
+        optional: true
 
   zwitch@2.0.4:
     resolution: {integrity: sha512-bXE4cR/kVZhKZX/RjPEflHaKVhUVl85noU3v6b8apfQEc1x4A+zBxjZ4lN8LqGd6WZ3dl98pY4o717VFmoPp+A==}
@@ -10389,5 +10231,11 @@ snapshots:
       archiver-utils: 5.0.2
       compress-commons: 6.0.2
       readable-stream: 4.7.0
+
+  zustand@5.0.14(@types/react@19.2.17)(react@19.2.7)(use-sync-external-store@1.6.0(react@19.2.7)):
+    optionalDependencies:
+      '@types/react': 19.2.17
+      react: 19.2.7
+      use-sync-external-store: 1.6.0(react@19.2.7)
 
   zwitch@2.0.4: {}

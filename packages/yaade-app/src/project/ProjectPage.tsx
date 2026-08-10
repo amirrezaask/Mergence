@@ -58,10 +58,8 @@ import {
   clearHqAgentLaunch,
   peekHqAgentLaunch,
 } from "./hq-agent-launch.js"
-import { AgentSwitcher } from "./AgentSwitcher.js"
 import { OpenProjectOverlay } from "./OpenProjectOverlay.js"
 import { sameCheckoutPath, WorktreeSwitcher } from "./WorktreeSwitcher.js"
-import { isAccessibleHqAgent } from "../hq/hq-model.js"
 
 const GitWorkspace = lazy(() =>
   import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
@@ -117,7 +115,6 @@ type ActiveCheckout = {
 function isSurfaceView(view: ProjectView): view is MuxSurface {
   return (
     view === "agents" ||
-    view === "native-agents" ||
     view === "editors" ||
     view === "terminals"
   )
@@ -224,29 +221,6 @@ export function ProjectPage({
   const rootUri = useMemo(() => pathToFileUri(projectPath), [projectPath])
   const title = workspaceDocumentTitle(projectPath, homeDir)
 
-  const projectAgents = useMemo(
-    () =>
-      (hq.snapshot?.agents ?? []).filter(
-        agent =>
-          (agent.projectId === projectId || agent.projectPath === projectPath) &&
-          isAccessibleHqAgent(agent) &&
-          sameCheckoutPath(agent.cwdPath, activeCheckout.cwdPath),
-      ),
-    [activeCheckout.cwdPath, hq.snapshot?.agents, projectId, projectPath],
-  )
-
-  const activeAgent = useMemo(
-    () =>
-      focusAgentTabId
-        ? (projectAgents.find(
-            a =>
-              a.sessionId === focusAgentTabId ||
-              agentFocusTabId(a.sessionId) === focusAgentTabId,
-          ) ?? null)
-        : null,
-    [focusAgentTabId, projectAgents],
-  )
-
   useEffect(() => {
     document.title = title
   }, [title])
@@ -339,7 +313,6 @@ export function ProjectPage({
         next.changes?.checkoutPath ??
         next.editors?.checkoutPath ??
         next.terminals?.checkoutPath ??
-        next["native-agents"]?.checkoutPath ??
         next.agents?.checkoutPath
       if (savedCheckout) {
         const summary = sessions.find(item => item.cwdPath === savedCheckout)
@@ -352,7 +325,6 @@ export function ProjectPage({
               next.changes?.checkoutKey ??
               next.editors?.checkoutKey ??
               next.terminals?.checkoutKey ??
-              next["native-agents"]?.checkoutKey ??
               next.agents?.checkoutKey,
           ),
         )
@@ -452,7 +424,6 @@ export function ProjectPage({
           checkoutPath: checkout.cwdPath,
         },
         agents: { ...current.agents, ...selection, runId: current.agents?.runId },
-        "native-agents": { ...current["native-agents"], ...selection },
         editors: { ...current.editors, ...selection },
         terminals: { ...current.terminals, ...selection },
       }))
@@ -462,7 +433,6 @@ export function ProjectPage({
       })
       for (const surface of [
         "agents",
-        "native-agents",
         "editors",
         "terminals",
       ] as const) {
@@ -927,13 +897,6 @@ export function ProjectPage({
                   Agents
                 </TabsTrigger>
                 <TabsTrigger
-                  value="native-agents"
-                  data-yaade-project-tab="native-agents"
-                  className="w-[7.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
-                >
-                  Agents (native)
-                </TabsTrigger>
-                <TabsTrigger
                   value="editors"
                   data-yaade-project-tab="editors"
                   className="w-[4.25rem] flex-none px-2 text-xs after:inset-y-1 after:right-auto after:bottom-auto after:left-0 after:h-auto after:w-0.5 data-[state=active]:after:opacity-100"
@@ -955,24 +918,6 @@ export function ProjectPage({
                   History
                 </TabsTrigger>
               </TabsList>
-              {view === "agents" ? <AgentSwitcher
-                agents={projectAgents}
-                loading={hq.loading && !hq.snapshot}
-                error={hq.error}
-                active={view === "agents"}
-                activeAgentTabId={activeAgent?.sessionId ?? focusAgentTabId}
-                activeLabel={activeAgent?.title ?? null}
-                onIntent={() => {
-                  void preloadMuxApp()
-                  void hq.refresh()
-                }}
-                onOpenChange={open => {
-                  if (open) void hq.refresh()
-                }}
-                onSelectAgent={handleSelectAgent}
-                onLaunchAgent={() => setAgentPickerOpen(true)}
-                contextual
-              /> : null}
             </div>
             <div className="ml-auto flex shrink-0 items-center gap-0.5">
               <WorktreeSwitcher
@@ -1099,12 +1044,37 @@ export function ProjectPage({
                       muxSurface === "agents" ? focusAgentTabId : null
                     }
                     onBackToProject={onClearSession}
-                    onOpenNativeAgents={() => {
-                      void ensureCheckoutSession("native-agents").catch(error => {
+                    onLaunchAgent={() => setAgentPickerOpen(true)}
+                    onSelectAgentTab={tabId => {
+                      preferredSurfaceRef.current = "agents"
+                      setFocusAgentTabId(tabId)
+                      const runId = tabId.startsWith("yaade:terminal:")
+                        ? tabId.slice("yaade:terminal:".length)
+                        : tabId
+                      pushProjectRoute(location.pathname, {
+                        view: "agents",
+                        workspaceId: session?.id ?? null,
+                        checkoutKey: checkoutRouteKey(activeCheckout),
+                        agentRunId: runId,
+                      })
+                    }}
+                    onRequestSurface={next => {
+                      if (next === "changes") {
+                        setHistoryMounted(false)
+                        setView("changes")
+                        pushProjectRoute(location.pathname, {
+                          view: "changes",
+                          workspaceId: session?.id ?? null,
+                          checkoutKey: checkoutRouteKey(activeCheckout),
+                          agentRunId: null,
+                        })
+                        return
+                      }
+                      void ensureCheckoutSession(next).catch(error => {
                         showYaadeToast(
                           error instanceof Error
                             ? error.message
-                            : "Native agents are unavailable.",
+                            : "Workspace unavailable",
                           { variant: "destructive" },
                         )
                       })
@@ -1156,7 +1126,7 @@ export function ProjectPage({
                 data-yaade-project-panel="agents"
               >
                 <div className="max-w-sm px-4 text-center text-sm text-muted-foreground">
-                  <p>{routeError ?? "Select a running agent from the Agents menu, or launch one."}</p>
+                  <p>{routeError ?? "Select a running agent from the sidebar, or launch one."}</p>
                   <Button
                     className="mt-3"
                     variant="secondary"

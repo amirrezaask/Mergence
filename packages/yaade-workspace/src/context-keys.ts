@@ -19,7 +19,6 @@ export type KeymapContext = {
   outputFocus: boolean
   terminalFocus: boolean
   listFocus: boolean
-  agentChatFocus: boolean
 }
 
 const MODIFIERS = new Set(["Mod", "Cmd", "Ctrl", "Alt", "Shift"])

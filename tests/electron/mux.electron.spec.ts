@@ -13,7 +13,7 @@ import {
 } from "./_launch.js"
 
 test.describe("mux shell", () => {
-  test("boots the Terminals surface without an in-app tab strip", async () => {
+  test("boots the Terminals surface with an instance sidebar", async () => {
     const { app, page } = await launchJet({ withTerminal: false })
     try {
       await waitForMux(page)
@@ -24,13 +24,31 @@ test.describe("mux shell", () => {
       await expect
         .poll(async () => page.locator("[data-yaade-mux-tab]").count())
         .toBe(0)
-      await expectSelectorVisible(page, "[data-yaade-mux-window]")
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-instance-sidebar="terminals"]',
+      )
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-list-panel="project-terminals"]',
+      )
+      await page
+        .locator(
+          '[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]',
+        )
+        .click()
       await expect
         .poll(async () => page.locator("[data-yaade-terminal-panel]").count())
         .toBe(1)
       await expect
-        .poll(async () => page.locator("[data-yaade-mux-pane]").count())
-        .toBe(1)
+        .poll(async () =>
+          page
+            .locator(
+              '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+            )
+            .count(),
+        )
+        .toBeGreaterThanOrEqual(1)
     } finally {
       await app.close()
     }
@@ -40,10 +58,6 @@ test.describe("mux shell", () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-      await execCommand(page, "mux.openGit")
-      await page.evaluate(() =>
-        window.__yaadeAgent!.openFile("untitled:TerminalsSurface.ts"),
-      )
 
       const surface = page.locator(
         '[data-yaade-project-surface="terminals"]',
@@ -51,6 +65,10 @@ test.describe("mux shell", () => {
       await expectSelectorVisible(
         page,
         '[data-yaade-project-surface="terminals"]',
+      )
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-instance-sidebar="terminals"]',
       )
       await expect
         .poll(async () => surface.locator('[data-yaade-mux-pane-kind="terminal"]').count())
@@ -72,16 +90,10 @@ test.describe("mux shell", () => {
     }
   })
 
-  test("context menus open on pane chrome and terminal", async () => {
+  test("context menu opens on the focused terminal", async () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-
-      await page.locator("[data-yaade-mux-pane-drag]").first().click({
-        button: "right",
-      })
-      await expectSelectorVisible(page, "[data-yaade-mux-pane-context-menu]")
-      await page.keyboard.press("Escape")
 
       await page.locator("[data-yaade-terminal-panel]").first().click({
         button: "right",
@@ -97,19 +109,16 @@ test.describe("mux shell", () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
+      const sidebarItems = page.locator(
+        '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+      )
       for (let expected = 2; expected <= 6; expected += 1) {
-        await execCommand(page, "mux.splitRight")
-        await expect
-          .poll(async () => page.locator("[data-yaade-mux-pane-kind=terminal]").count(), {
-            timeout: 15_000,
-          })
-          .toBe(expected)
+        await execCommand(page, "terminal.new")
+        await expect.poll(async () => sidebarItems.count(), { timeout: 15_000 }).toBe(expected)
       }
 
-      await execCommand(page, "mux.splitRight")
-      await expect
-        .poll(async () => page.locator("[data-yaade-mux-pane-kind=terminal]").count())
-        .toBe(6)
+      await execCommand(page, "terminal.new")
+      await expect.poll(async () => sidebarItems.count()).toBe(6)
       await expectLocatorVisible(
         page.getByText("Terminal pane limit reached (6). Close a terminal or use another session."),
       )
@@ -663,18 +672,35 @@ test.describe("mux tiling", () => {
 
       await page.locator("[data-yaade-terminal-panel]").first().click()
       await page.keyboard.type("echo yaade-last-pane")
-      await expectSelectorVisible(page, "[data-yaade-mux-close-pane]")
-      await page.locator("[data-yaade-mux-close-pane]").first().click()
+      const tabId = await page
+        .locator(
+          '[data-yaade-list-panel="project-terminals"] [data-yaade-instance-sidebar-item]',
+        )
+        .first()
+        .getAttribute("data-yaade-instance-sidebar-item")
+      expect(tabId).toBeTruthy()
+      await page.locator(`[data-yaade-instance-sidebar-close="${tabId}"]`).click()
+      await page.getByRole("button", { name: "Close Pane" }).click()
 
-      // Typing marks the shell as used → confirm before dispose.
-      await expectSelectorVisible(page, "[data-yaade-confirm=accept]")
-      await page.locator("[data-yaade-confirm=accept]").click()
-
-      // The dedicated Terminals surface maintains one usable shell.
-      await expectSelectorVisible(page, "[data-yaade-terminal-panel]")
+      // Empty terminals surface keeps New available.
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]',
+      )
       await expect
-        .poll(async () => page.locator("[data-yaade-mux-pane]").count())
-        .toBe(1)
+        .poll(async () =>
+          page
+            .locator(
+              '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+            )
+            .count(),
+        )
+        .toBe(0)
+      await page
+        .locator('[data-yaade-project-surface="terminals"]')
+        .getByRole("button", { name: "New terminal" })
+        .click()
+      await expectSelectorVisible(page, "[data-yaade-terminal-panel]")
     } finally {
       await app.close()
     }

@@ -13,7 +13,6 @@ export const MUX_TOOL_KINDS = [
   "callHierarchy",
   "typeHierarchy",
   "lspOutput",
-  "agentChat",
 ] as const
 
 export type MuxToolKind = (typeof MUX_TOOL_KINDS)[number]
@@ -48,7 +47,6 @@ export const MUX_TOOL_PANES: readonly MuxToolPaneDefinition[] = [
     label: "Type Hierarchy",
   },
   { kind: "lspOutput", tabId: "yaade:tool:lsp-output", label: "LSP Output" },
-  { kind: "agentChat", tabId: "yaade:tool:agent-chat", label: "Agent Chat" },
 ]
 
 const toolById = new Map(MUX_TOOL_PANES.map(tool => [tool.tabId, tool]))

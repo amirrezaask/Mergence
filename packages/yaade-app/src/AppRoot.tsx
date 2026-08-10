@@ -149,7 +149,6 @@ function basicAgentBridge(input: {
       shellView: "home",
       sessionLayout: "sidebar",
       sessionMode: null,
-      agentChatEnabled: false,
       route: input.route,
       sessionId: null,
       sessionCwd: null,

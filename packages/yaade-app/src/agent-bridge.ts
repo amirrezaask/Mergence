@@ -35,8 +35,6 @@ export type JetAgentState = {
   shellView: "home" | "workspace"
   sessionLayout: "sidebar"
   sessionMode: "agent" | "terminal" | "editor" | "git" | "todos" | null
-  /** Always false — in-app native agent chat removed; CLI PTY only. */
-  agentChatEnabled: boolean
   /** Current SPA route: HQ, project landing, or session workspace. */
   route: "hq" | "project" | "session"
   sessionId: string | null
@@ -141,7 +139,6 @@ export type AgentBridgeContext = {
   searchReady?: boolean
   sessionMode?: "agent" | "terminal" | "editor" | "git" | "todos" | null
   sessionLayout?: "sidebar"
-  agentChatEnabled?: boolean
   route?: "hq" | "project" | "session"
   sessionId?: string | null
   sessionCwd?: string | null
@@ -217,7 +214,6 @@ export function createAgentBridge(ctx: () => AgentBridgeContext): YaadeAgentAPI 
         shellView: "home",
         sessionLayout: "sidebar",
         sessionMode: current.sessionMode ?? null,
-        agentChatEnabled: current.agentChatEnabled ?? false,
         route: current.route ?? "session",
         sessionId: current.sessionId ?? null,
         sessionCwd: current.sessionCwd ?? null,

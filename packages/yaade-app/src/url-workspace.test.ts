@@ -114,10 +114,10 @@ describe("url-workspace", () => {
   it("round-trips deep-linked workspaces, checkouts, and agent runs", () => {
     assert.equal(
       projectRouteUrl("/dev/yaade", {
-        view: "native-agents",
-        workspaceId: "ses-native",
+        view: "editors",
+        workspaceId: "ses-editors",
       }),
-      "/dev/yaade?view=native-agents&s=ses-native",
+      "/dev/yaade?view=editors&s=ses-editors",
     )
     assert.equal(
       projectRouteUrl("/dev/yaade", {

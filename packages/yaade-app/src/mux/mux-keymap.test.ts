@@ -35,7 +35,6 @@ const terminalContext: KeymapContext = {
   outputFocus: false,
   terminalFocus: true,
   listFocus: false,
-  agentChatFocus: false,
 }
 
 function keyEvent(init: {

@@ -216,7 +216,7 @@ export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise
   throw new Error("waitForMux: timed out waiting for project page or mux shell")
 }
 
-/** Open a terminal pane from the empty-state picker (or no-op if one exists). */
+/** Open a terminal pane from the instance sidebar / empty CTA (or no-op if one exists). */
 export async function openMuxTerminal(
   page: ShellDriver,
   timeoutMs = 15_000,
@@ -224,12 +224,32 @@ export async function openMuxTerminal(
   const deadline = Date.now() + timeoutMs
   const terminal = page.locator("[data-yaade-terminal-panel]")
   const emptyTile = page.locator('[data-yaade-mux-empty-action="terminal"]')
+  const sidebarNew = page.locator(
+    '[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]',
+  )
+  const emptyCta = page
+    .locator('[data-yaade-project-surface="terminals"]')
+    .getByRole("button", { name: "New terminal" })
   while (Date.now() < deadline) {
     // Restored sessions can hydrate their terminal after waitForMux resolves.
     // Do not wait exclusively for the empty picker in that transition window.
     if ((await terminal.count()) > 0) return
     if ((await emptyTile.count()) > 0) {
       await emptyTile.click()
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
+    if ((await sidebarNew.count()) > 0) {
+      await sidebarNew.click()
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
+    if ((await emptyCta.count()) > 0) {
+      await emptyCta.click()
       await page.waitForSelector("[data-yaade-terminal-panel]", {
         timeout: Math.max(1_000, deadline - Date.now()),
       })

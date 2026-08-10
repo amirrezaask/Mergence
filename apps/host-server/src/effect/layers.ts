@@ -92,10 +92,6 @@ export function makeHostLayers(
           Effect.runSync(PubSub.publish(pubsub, event))
         },
       })
-      yield* Effect.promise(() => runtime.agentRuntime.restore())
-      yield* Effect.addFinalizer(() =>
-        Effect.promise(() => runtime.agentRuntime.shutdown()),
-      )
       return runtime
     }),
   )

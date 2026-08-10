@@ -52,7 +52,6 @@ const baseCtx: KeymapContext = {
   outputFocus: false,
   terminalFocus: false,
   listFocus: false,
-  agentChatFocus: false,
 }
 
 describe("keyEventMatchesBindingPart", () => {

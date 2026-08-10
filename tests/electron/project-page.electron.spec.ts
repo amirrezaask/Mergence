@@ -25,13 +25,12 @@ test.describe("project page", () => {
     try {
       await waitForProjectPage(page)
       const tabs = page.locator("[data-yaade-project-tab]")
-      await expect.poll(() => tabs.count()).toBe(6)
+      await expect.poll(() => tabs.count()).toBe(5)
       expect(
         await tabs.evaluateAll(items => items.map(item => item.textContent?.trim())),
       ).toEqual([
         "Changes",
         "Agents",
-        "Agents (native)",
         "Editors",
         "Terminals",
         "History",
@@ -60,19 +59,14 @@ test.describe("project page", () => {
 
       await expect
         .poll(() =>
-          page
-            .locator('[data-yaade-project-tab="native-agents"]')
-            .getAttribute("aria-selected"),
+          page.locator('[data-yaade-project-tab="native-agents"]').count(),
         )
-        .toBe("false")
-      const standardWidths = await page
-        .locator(
-          '[data-yaade-project-tab]:not([data-yaade-project-tab="native-agents"])',
+        .toBe(0)
+      await expect
+        .poll(() =>
+          page.locator('[data-yaade-project-tab="agents"]').count(),
         )
-        .evaluateAll(items =>
-          items.map(item => Math.round(item.getBoundingClientRect().width)),
-        )
-      expect(Math.max(...standardWidths) - Math.min(...standardWidths)).toBeLessThan(16)
+        .toBe(1)
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

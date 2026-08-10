@@ -71,7 +71,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/home/session-header-labels.test.ts src/home/todos/project-todos-repository.test.ts src/notifications/group-by-time.test.ts src/home/sidebar/grouping/grouping.test.ts src/home/sidebar/filter-sessions.test.ts src/home/sidebar/project-monogram.test.ts src/mux/process-identity.test.ts src/agent-chat/composer/contracts/model.test.ts"
+    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/home/session-header-labels.test.ts src/home/todos/project-todos-repository.test.ts src/notifications/group-by-time.test.ts src/home/sidebar/grouping/grouping.test.ts src/home/sidebar/filter-sessions.test.ts src/home/sidebar/project-monogram.test.ts src/mux/process-identity.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -98,7 +98,6 @@
     "@xterm/addon-webgl": "0.18.0",
     "@xterm/xterm": "^5.5.0",
     "@yaade/agents": "workspace:*",
-    "@yaade/agent-protocol": "workspace:*",
     "@yaade/lsp": "workspace:*",
     "@yaade/monaco": "workspace:*",
     "@yaade/panels": "workspace:*",

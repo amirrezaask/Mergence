@@ -1,5 +1,4 @@
 export * from "./errors.js"
-export * from "./agent-runtime.js"
 export * from "./editor-recovery.js"
 export * from "./host.js"
 export * from "./lsp.js"

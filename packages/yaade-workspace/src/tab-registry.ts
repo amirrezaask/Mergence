@@ -8,7 +8,6 @@ export type KnownTabKind =
   | "terminal"
   | "terminal-explorer"
   | "agent-explorer"
-  | "agent-chat"
   | "search"
   | "problems"
   | "references"
