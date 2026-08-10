@@ -13,6 +13,7 @@ export type LspConnection = {
   id: string
   rootUri: string
   projectRootUri: string
+  processCwdUri?: string
   languageIds: readonly string[]
   transportUrl: string
   descriptorId: string
@@ -31,7 +32,7 @@ type LspApi = {
 }
 
 function targetKey(target: ResolvedLanguageServerTarget): string {
-  return `${target.serverId}\0${target.projectRootUri}`
+  return `${target.serverId}\0${target.projectRootUri}\0${target.processCwdUri ?? ""}`
 }
 
 function connectionFromResult(result: LspStartResult): LspConnection {
@@ -39,6 +40,7 @@ function connectionFromResult(result: LspStartResult): LspConnection {
     id: result.id,
     rootUri: result.target.workspaceRootUri,
     projectRootUri: result.target.projectRootUri,
+    processCwdUri: result.target.processCwdUri,
     languageIds: result.target.languageIds,
     transportUrl: result.transportUrl,
     descriptorId: result.target.serverId,
@@ -82,9 +84,13 @@ export class LanguageServerManager {
     }) ?? null
   }
 
-  async ensureServerForFile(file: WorkspaceFile, workspaceRootUri: string): Promise<LspConnection | null> {
+  async ensureServerForFile(
+    file: WorkspaceFile,
+    workspaceRootUri: string,
+    processCwdUri?: string,
+  ): Promise<LspConnection | null> {
     if (this.disposed) return null
-    const target = await this.resolveTarget(file, workspaceRootUri)
+    const target = await this.resolveTarget(file, workspaceRootUri, processCwdUri)
     if (!target || this.disposed) return null
     const key = targetKey(target)
     this.targets.set(key, target)
@@ -207,9 +213,10 @@ export class LanguageServerManager {
   private async resolveTarget(
     file: WorkspaceFile,
     workspaceRootUri: string,
+    processCwdUri?: string,
   ): Promise<ResolvedLanguageServerTarget | null> {
     const directory = parentDir(fileUriToPath(file.uri))
-    const cacheKey = `${file.languageId}\0${workspaceRootUri}\0${directory}`
+    const cacheKey = `${file.languageId}\0${workspaceRootUri}\0${processCwdUri ?? ""}\0${directory}`
     if (this.resolutionCache.has(cacheKey)) return this.resolutionCache.get(cacheKey) ?? null
     const pending = this.pendingResolutions.get(cacheKey)
     if (pending) return pending
@@ -217,6 +224,7 @@ export class LanguageServerManager {
       languageId: file.languageId,
       fileUri: file.uri,
       workspaceRootUri,
+      ...(processCwdUri ? { processCwdUri } : {}),
     }).then(target => {
       if (!this.disposed) this.resolutionCache.set(cacheKey, target)
       return target
@@ -252,7 +260,7 @@ export class LanguageServerManager {
       event.sessionId &&
       event.transportUrl
     ) {
-      const key = `${event.serverId}\0${event.projectRootUri}`
+      const key = `${event.serverId}\0${event.projectRootUri}\0${event.target?.processCwdUri ?? ""}`
       const target = event.target ?? this.targets.get(key)
       if (target) {
         this.targets.set(key, target)

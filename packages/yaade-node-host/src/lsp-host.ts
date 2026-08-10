@@ -40,8 +40,12 @@ type LspHostOptions = {
   readonly restartBaseDelayMs?: number
 }
 
-function connectionKey(serverId: string, projectRootUri: string): string {
-  return `${serverId}\0${projectRootUri}`
+function connectionKey(
+  serverId: string,
+  projectRootUri: string,
+  processCwdUri?: string,
+): string {
+  return `${serverId}\0${projectRootUri}\0${processCwdUri ?? ""}`
 }
 
 function isWithinPath(candidate: string, root: string): boolean {
@@ -187,6 +191,12 @@ export class LspHost {
       uriToPath(request.fileUri),
       [...this.options.allowedRoots],
     )
+    if (request.processCwdUri) {
+      await assertAllowedPath(
+        uriToPath(request.processCwdUri),
+        [...this.options.allowedRoots],
+      )
+    }
     if (!isWithinPath(filePath, workspacePath)) return null
 
     const candidates = this.catalog.definitions.filter(
@@ -204,10 +214,20 @@ export class LspHost {
         workspacePath,
       )
       if (!projectRootPath) continue
-      return this.target(definition, pathToUri(projectRootPath), request.workspaceRootUri)
+      return this.target(
+        definition,
+        pathToUri(projectRootPath),
+        request.workspaceRootUri,
+        request.processCwdUri,
+      )
     }
     return fallback
-      ? this.target(fallback, pathToUri(workspacePath), request.workspaceRootUri)
+      ? this.target(
+          fallback,
+          pathToUri(workspacePath),
+          request.workspaceRootUri,
+          request.processCwdUri,
+        )
       : null
   }
 
@@ -222,9 +242,18 @@ export class LspHost {
     }
     const definition = this.definition(target.serverId)
     const effectiveTarget = definition?.enabled
-      ? this.target(definition, target.projectRootUri, target.workspaceRootUri)
+      ? this.target(
+          definition,
+          target.projectRootUri,
+          target.workspaceRootUri,
+          target.processCwdUri,
+        )
       : target
-    const key = connectionKey(effectiveTarget.serverId, effectiveTarget.projectRootUri)
+    const key = connectionKey(
+      effectiveTarget.serverId,
+      effectiveTarget.projectRootUri,
+      effectiveTarget.processCwdUri,
+    )
     const active = this.activeByKey.get(key)
     if (active) {
       return LspStartResult.make({
@@ -347,6 +376,7 @@ export class LspHost {
               definition,
               active.target.projectRootUri,
               active.target.workspaceRootUri,
+              active.target.processCwdUri,
             ),
           }
           this.activeByKey.set(active.key, updated)
@@ -376,6 +406,7 @@ export class LspHost {
         definition,
         active.target.projectRootUri,
         active.target.workspaceRootUri,
+        active.target.processCwdUri,
       )
       this.retryAttempts.delete(active.key)
       this.scheduleRestart(target, 0)
@@ -415,11 +446,13 @@ export class LspHost {
     definition: LanguageServerDefinition,
     projectRootUri: string,
     workspaceRootUri: string,
+    processCwdUri?: string,
   ): ResolvedLanguageServerTarget {
     return ResolvedLanguageServerTarget.make({
       serverId: definition.id,
       projectRootUri,
       workspaceRootUri,
+      ...(processCwdUri ? { processCwdUri } : {}),
       languageIds: definition.languages,
       initializationOptions: definition.initializationOptions,
       settings: definition.settings,
@@ -477,7 +510,7 @@ export class LspHost {
       target,
     }))
     const started = await this.bridge.start({
-      rootUri: target.projectRootUri,
+      rootUri: target.processCwdUri ?? target.projectRootUri,
       serverId: target.serverId,
       definition,
     })
@@ -565,7 +598,11 @@ export class LspHost {
   }
 
   private scheduleRestart(target: ResolvedLanguageServerTarget, explicitDelay?: number): void {
-    const key = connectionKey(target.serverId, target.projectRootUri)
+    const key = connectionKey(
+      target.serverId,
+      target.projectRootUri,
+      target.processCwdUri,
+    )
     if (this.disposed || this.retryTimers.has(key)) return
     const attempt = (this.retryAttempts.get(key) ?? 0) + 1
     if (attempt > MAX_RESTART_ATTEMPTS) return

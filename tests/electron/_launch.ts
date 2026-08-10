@@ -104,7 +104,7 @@ export async function waitForHq(
   await page.waitForSelector('[data-yaade-shell="hq"]', {
     timeout: timeoutMs,
   })
-  await page.waitForSelector('[data-yaade-list-panel="hq-projects"]', {
+  await page.waitForSelector('[data-yaade-list-panel="hq-agents"]', {
     timeout: Math.min(timeoutMs, 10_000),
   })
   await page.evaluate(() => window.__yaadeAgent?.waitForReady())

@@ -557,6 +557,10 @@ export type MuxAppProps = {
   embedded?: boolean
   /** Project-page tab surface — filters what mux shows. */
   surface?: MuxSurface | null
+  /** Additional editor workspace root; session cwd remains unchanged. */
+  editorWorkspacePath?: string
+  /** Surface chrome supplied by the project page. */
+  editorToolbar?: ReactNode
   /** Agent leaf tab id (`yaade:terminal:…`) for the Agents surface. */
   focusAgentTabId?: string | null
   /** One-shot action requested by the project cockpit after session hydration. */
@@ -603,6 +607,8 @@ export function MuxApp({
   onRequestSurface,
   embedded = false,
   surface = null,
+  editorWorkspacePath,
+  editorToolbar,
   focusAgentTabId = null,
   launchRequest = null,
   onLaunchRequestHandled,
@@ -946,6 +952,17 @@ export function MuxApp({
         })
   }, [editorRuntimeNeeded, sessionId, windows, workspace])
 
+  useEffect(() => {
+    if (!layoutReady || surface !== "editors" || !editorWorkspacePath) return
+    if (normalizeAbsPath(editorWorkspacePath) === normalizeAbsPath(sessionCwdPath)) return
+    void workspace.addFolder(editorWorkspacePath).catch(error => {
+      showYaadeToast(
+        error instanceof Error ? error.message : "Could not open editor checkout",
+        { variant: "destructive" },
+      )
+    })
+  }, [editorWorkspacePath, layoutReady, sessionCwdPath, surface, workspace])
+
   const buildServerPayload = useCallback((): ProjectSessionPayload | null => {
     if (!sessionIdRef.current) return null
     const editorViewStates = snapshotEditorViewStates(sessionIdRef.current)
@@ -1036,6 +1053,9 @@ export function MuxApp({
   }, [])
 
   const cwdUri = useCallback((): string => {
+    if (surface === "editors" && editorWorkspacePath) {
+      return pathToFileUri(editorWorkspacePath)
+    }
     if (sessionRootPathRef.current) {
       return pathToFileUri(sessionRootPathRef.current)
     }
@@ -1045,7 +1065,7 @@ export function MuxApp({
       workspace.folders[0]?.root.uri ??
       (homeDirRef.current ? pathToFileUri(homeDirRef.current) : "")
     )
-  }, [workspace])
+  }, [editorWorkspacePath, surface, workspace])
 
   const paneTitle = useCallback(
     (tabId: string): string => {
@@ -2047,16 +2067,18 @@ export function MuxApp({
   )
 
   const knownDropWorkspacePaths = useMemo(() => {
-    const roots = [sessionCwdPath, sessionProjectPath]
+    const roots = [sessionCwdPath, sessionProjectPath, editorWorkspacePath]
       .map(p => normalizeAbsPath(p))
-      .filter(Boolean)
+      .filter((p): p is string => Boolean(p))
     return [...new Set(roots)]
-  }, [sessionCwdPath, sessionProjectPath])
+  }, [editorWorkspacePath, sessionCwdPath, sessionProjectPath])
 
   useFileDrop({
     fs: jetPlatformFS(),
     knownWorkspacePaths: knownDropWorkspacePaths,
-    activeWorkspacePath: normalizeAbsPath(sessionCwdPath),
+    activeWorkspacePath: normalizeAbsPath(
+      surface === "editors" ? editorWorkspacePath ?? sessionCwdPath : sessionCwdPath,
+    ),
     normalizePath: normalizeAbsPath,
     openWorkspace: path => openBrowserProjectTab(path),
     // Mux is single-project; still open dropped files outside the root.
@@ -4893,62 +4915,47 @@ export function MuxApp({
                   ref={dockSurfaceRef}
                   className="absolute inset-0 flex min-h-0 flex-col overflow-hidden rounded-lg border border-border bg-card"
                   data-yaade-project-surface="editors"
+                  data-yaade-editor-workspace-path={editorWorkspacePath ?? sessionCwdPath}
                 >
+                  <div className="flex h-7 shrink-0 items-center gap-1 border-b border-border bg-secondary/30 px-1">
                   {surfaceEditorBuffers.length > 0 && editorsActiveTabId ? (
-                    <>
-                      <div className="flex h-7 shrink-0 items-center border-b border-border bg-secondary/30 px-1">
-                        <ModalEditorTabBar
-                          buffers={surfaceEditorBuffers}
-                          activeTabId={editorsActiveTabId}
-                          onActivateBuffer={tabId => {
-                            setEditorsActiveTabId(tabId)
-                            if (!activeWindow) return
-                            const panelId = findPanelWithTab(
-                              activeWindow.tree,
-                              tabId,
-                            )
-                            if (panelId) {
-                              activateEditorTab(activeWindow.id, panelId, tabId)
-                            }
-                          }}
-                          onCloseBuffer={tabId => {
-                            if (!activeWindow) return
-                            const panelId = findPanelWithTab(
-                              activeWindow.tree,
-                              tabId,
-                            )
-                            if (panelId) {
-                              void closeEditorTab(
-                                activeWindow.id,
-                                panelId,
-                                tabId,
-                              )
-                            }
-                          }}
-                          className="min-h-0 w-full"
-                        />
-                      </div>
-                      <div className="min-h-0 flex-1 overflow-hidden">
-                        {(() => {
-                          const panelId =
-                            findPanelWithTab(
-                              activeWindow!.tree,
-                              editorsActiveTabId,
-                            ) ??
-                            listPaneLeaves(activeWindow!.tree).find(
-                              l => l.kind === "editor",
-                            )?.panelId
-                          if (!panelId) return null
-                          return renderEditor(
-                            editorsActiveTabId,
-                            panelId,
-                            true,
-                          )
-                        })()}
-                      </div>
-                    </>
+                    <ModalEditorTabBar
+                      buffers={surfaceEditorBuffers}
+                      activeTabId={editorsActiveTabId}
+                      onActivateBuffer={tabId => {
+                        setEditorsActiveTabId(tabId)
+                        if (!activeWindow) return
+                        const panelId = findPanelWithTab(activeWindow.tree, tabId)
+                        if (panelId) activateEditorTab(activeWindow.id, panelId, tabId)
+                      }}
+                      onCloseBuffer={tabId => {
+                        if (!activeWindow) return
+                        const panelId = findPanelWithTab(activeWindow.tree, tabId)
+                        if (panelId) void closeEditorTab(activeWindow.id, panelId, tabId)
+                      }}
+                      className="min-h-0 min-w-0 flex-1"
+                    />
                   ) : (
-                    <div className="grid h-full place-items-center gap-3 px-4 text-center">
+                    <div className="min-w-0 flex-1" />
+                  )}
+                  {editorToolbar ? (
+                    <div className="ml-auto shrink-0">{editorToolbar}</div>
+                  ) : null}
+                  </div>
+                  {surfaceEditorBuffers.length > 0 && editorsActiveTabId ? (
+                    <div className="min-h-0 flex-1 overflow-hidden">
+                      {(() => {
+                        const panelId =
+                          findPanelWithTab(activeWindow!.tree, editorsActiveTabId) ??
+                          listPaneLeaves(activeWindow!.tree).find(
+                            l => l.kind === "editor",
+                          )?.panelId
+                        if (!panelId) return null
+                        return renderEditor(editorsActiveTabId, panelId, true)
+                      })()}
+                    </div>
+                  ) : (
+                    <div className="grid min-h-0 flex-1 place-items-center gap-3 px-4 text-center">
                       <p className="text-sm text-muted-foreground">
                         No open editors in this worktree.
                       </p>
@@ -5262,7 +5269,11 @@ export function MuxApp({
           onSaveAsOpenChange={open => {
             if (!open) setSaveAsUri(null)
           }}
-          saveAsRootPath={sessionCwdPath}
+          saveAsRootPath={
+            surface === "editors"
+              ? editorWorkspacePath ?? sessionCwdPath
+              : sessionCwdPath
+          }
           onSaveAsTarget={completeSaveAs}
           />
         </Suspense>
@@ -5309,6 +5320,11 @@ export function MuxApp({
         <Suspense fallback={null}>
           <MuxLspHost
             workspace={workspace}
+            processCwdUri={pathToFileUri(
+              surface === "editors"
+                ? editorWorkspacePath ?? sessionCwdPath
+                : sessionCwdPath,
+            )}
             applyWorkspaceEditTransaction={applyLspWorkspaceEditTransaction}
             onOpenFile={(uri, _path, line, column) => {
               openEditorInFocusedRef.current({ uri, line, column })

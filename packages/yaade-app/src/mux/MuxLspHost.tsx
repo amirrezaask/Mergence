@@ -36,6 +36,7 @@ export function MuxLspHost(props: {
   ) => void
   onReady: (lifecycle: MuxLspController | null) => void
   applyWorkspaceEditTransaction?: JetLspWorkspaceDeps["applyWorkspaceEditTransaction"]
+  processCwdUri?: string
 }) {
   const {
     resolveLspClient,
@@ -46,6 +47,7 @@ export function MuxLspHost(props: {
     lspStatus,
   } = useLspLifecycle(props.workspace, props.onOpenFile, {
     applyWorkspaceEditTransaction: props.applyWorkspaceEditTransaction,
+    processCwdUri: props.processCwdUri,
   })
   const statusRef = useRef(lspStatus)
   statusRef.current = lspStatus

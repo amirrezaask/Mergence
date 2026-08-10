@@ -548,10 +548,8 @@ export function AppRoot() {
     return (
       <HqPage
         homeDir={boot.homeDir}
-        machineHostname={boot.machineHostname}
         onOpenProject={openKnownProject}
         onOpenWorkspace={openAgentWorkspace}
-        onOpenRegisteredProject={openKnownProject}
         onOpenProjectPath={openProjectPath}
         agentHref={agentHref}
         initialOpenProject={openProjectOnHq}

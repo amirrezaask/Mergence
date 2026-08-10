@@ -1034,7 +1034,7 @@ if (controlPath) {
   }
 }
 
-captureEvent("started", { generation });
+captureEvent("started", { generation, cwd: process.cwd() });
 
 const controlTimer = setInterval(() => {
   try {

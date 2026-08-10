@@ -88,7 +88,7 @@ async function seedAgent(
 }
 
 test.describe("YAADE HQ", () => {
-  test("opens projects from a compact anchored switcher", async () => {
+  test("adds a project from the live agents toolbar", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-hq-project-switcher-"))
     const home = path.join(root, "home")
     const alpha = path.join(home, "alpha")
@@ -103,6 +103,9 @@ test.describe("YAADE HQ", () => {
       hq: true,
     })
     try {
+      expect(await page.locator('[data-yaade-hq-summary=""]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-hq-column="projects"]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-hq-column="agents"]').count()).toBe(1)
       await page.evaluate(async roots => {
         for (const rootPath of roots) {
           const response = await fetch("/api/v1/projects/open", {
@@ -115,17 +118,12 @@ test.describe("YAADE HQ", () => {
         window.dispatchEvent(new Event("yaade:agent-signal"))
       }, [alpha, beta])
 
-      await page.locator('[data-yaade-project-switcher=""]').click()
+      await page.getByRole("button", { name: "Add project" }).click()
       await page
         .locator('[data-yaade-project-switcher-menu=""]')
         .waitFor({ state: "visible" })
       expect(await page.locator('[data-slot="dialog-overlay"]').count()).toBe(0)
-      await expectListRows(page, {
-        panel: "project-switcher",
-        minItems: 2,
-        needle: "alpha",
-        noResultsText: "No matching projects.",
-      })
+      expect(await page.locator('[data-yaade-open-project-item]').count()).toBe(0)
 
       const search = page.locator('[data-yaade-project-switcher-search=""]')
       await search.fill("~/beta")
@@ -133,7 +131,7 @@ test.describe("YAADE HQ", () => {
         panel: "project-switcher",
         minItems: 1,
         needle: beta,
-        noResultsText: "No matching projects.",
+        noResultsText: "Path does not exist or is not a directory.",
       })
       await search.press("Enter")
       await waitForProjectPage(page)
@@ -222,68 +220,6 @@ test.describe("YAADE HQ", () => {
       const restored = await page.evaluate(runId => window.yaade!.agents!.get(runId), agent.runId)
       expect(restored?.ptyId).toBe(agent.ptyId)
       expect(restored?.processState).toBe("running")
-    } finally {
-      await app.close()
-      fs.rmSync(root, { recursive: true, force: true })
-    }
-  })
-
-  test("moves ended runs from Live agents to virtualized Recent activity", async () => {
-    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-hq-activity-"))
-    const home = path.join(root, "home")
-    const project = path.join(home, "activity")
-    fs.mkdirSync(project, { recursive: true })
-    const bin = installFakeProviders(root)
-    const { app, page } = await launchJet({
-      homeDir: home,
-      startPath: "/",
-      launchWithoutWorkspace: true,
-      hq: true,
-      env: {
-        JET_ALLOWED_ROOTS: root,
-        PATH: `${bin}${path.delimiter}${process.env.PATH ?? ""}`,
-      },
-    })
-    try {
-      const agent = await seedAgent(page, {
-        rootPath: project,
-        title: "Claude Activity",
-        provider: "claude",
-      })
-      await expect
-        .poll(() => page.locator(`[data-yaade-hq-agent="${agent.runId}"]`).count())
-        .toBe(1)
-      await page.evaluate(
-        async run => {
-          await window.yaade!.agents!.stop(run)
-        },
-        { runId: agent.runId, generation: agent.generation },
-      )
-      await expect
-        .poll(() => page.locator(`[data-yaade-hq-agent="${agent.runId}"]`).count())
-        .toBe(0)
-      await expectListRows(page, {
-        panel: "hq-agent-activity",
-        minItems: 1,
-        needle: "Claude Activity",
-        noResultsText: "No completed agent runs",
-      })
-      const activity = page.locator(
-        `[data-yaade-agent-activity="${agent.runId}"]`,
-      )
-      await expect.poll(() => activity.count()).toBe(1)
-      const renderedRows = await page
-        .locator('[data-yaade-list-panel="hq-agent-activity"] [data-yaade-list-item]')
-        .count()
-      expect(renderedRows).toBeLessThanOrEqual(30)
-
-      await activity.click()
-      await waitForProjectPage(page)
-      await page.locator(`[data-yaade-instance-sidebar-item="${agent.runId}"]`)
-        .waitFor({ state: "visible", timeout: 10_000 })
-      await expect
-        .poll(() => page.locator("[data-yaade-terminal-panel]").count())
-        .toBe(0)
     } finally {
       await app.close()
       fs.rmSync(root, { recursive: true, force: true })

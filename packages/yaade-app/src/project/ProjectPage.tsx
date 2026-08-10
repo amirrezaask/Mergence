@@ -302,6 +302,9 @@ export function ProjectPage({
   const [activeCheckout, setActiveCheckout] = useState<ActiveCheckout>(() =>
     mainCheckout(projectPath),
   )
+  const [editorCheckout, setEditorCheckout] = useState<ActiveCheckout>(() =>
+    mainCheckout(projectPath),
+  )
   const [defaultBranch, setDefaultBranch] = useState("main")
   const [focusAgentTabId, setFocusAgentTabId] = useState<string | null>(
     agentFocusTabId(initialAgentFocusTabId),
@@ -357,6 +360,7 @@ export function ProjectPage({
   useEffect(() => {
     setDefaultBranch("main")
     setActiveCheckout(mainCheckout(projectPath))
+    setEditorCheckout(mainCheckout(projectPath))
   }, [projectPath])
 
   useEffect(() => {
@@ -416,6 +420,21 @@ export function ProjectPage({
       setSurfaceSelections(next)
 
       const route = projectRouteFromSearch()
+      const savedEditor = next.editors
+      const editorPath =
+        route.view === "editors" && route.checkoutKey === "main"
+          ? projectPath
+          : route.view === "editors" && route.checkoutKey?.startsWith("/")
+            ? route.checkoutKey
+            : savedEditor?.checkoutPath ?? projectPath
+      setEditorCheckout(
+        checkoutFromPaths(
+          projectPath,
+          editorPath,
+          checkoutLabelForPath(projectPath, editorPath),
+          route.view === "editors" ? route.checkoutKey : savedEditor?.checkoutKey,
+        ),
+      )
       if (route.checkoutKey && route.checkoutKey !== "main") {
         const fromSurface = next.changes?.checkoutPath
         const cwdPath =
@@ -529,6 +548,22 @@ export function ProjectPage({
     [projectId],
   )
 
+  const persistEditorCheckout = useCallback(
+    (checkout: ActiveCheckout) => {
+      const selection = {
+        checkoutKey: checkout.checkoutKey,
+        checkoutPath: checkout.cwdPath,
+      }
+      setEditorCheckout(checkout)
+      setSurfaceSelections(current => ({
+        ...current,
+        editors: { ...current.editors, ...selection },
+      }))
+      void saveProjectSurfaceState(projectId, "editors", selection)
+    },
+    [projectId],
+  )
+
   const ensureProjectSession = useCallback(async () => {
     if (session) return session
     const next = await openCheckoutSession({ rootPath: projectPath, title: "Main" })
@@ -580,6 +615,39 @@ export function ProjectPage({
       })
     },
     [focusAgentTabId, persistChangesCheckout, projectPath, session, view],
+  )
+
+  const handleSelectEditorCheckout = useCallback(
+    async (input: CheckoutSelection) => {
+      const checkout = checkoutFromPaths(
+        projectPath,
+        input.cwdPath,
+        input.title,
+        input.checkoutKey,
+      )
+      persistEditorCheckout(checkout)
+      pushProjectRoute(location.pathname, {
+        view: "editors",
+        workspaceId: session?.id ?? null,
+        checkoutKey: checkoutRouteKey(checkout),
+        agentRunId: null,
+      })
+    },
+    [persistEditorCheckout, projectPath, session],
+  )
+
+  const handleCreateEditorWorktree = useCallback(
+    async (input: { branch: string; baseRef?: string }): Promise<CheckoutSelection> => {
+      const created = await createProjectSession({
+        rootPath: projectPath,
+        title: "Main",
+        worktree: input,
+      })
+      const wt = created.createdWorktree
+      if (!wt) throw new Error("Worktree was not created")
+      return selectionFromPaths(projectPath, wt.path, wt.branch, wt.branch)
+    },
+    [projectPath],
   )
 
   const handleCreateWorktree = useCallback(
@@ -895,6 +963,41 @@ export function ProjectPage({
     [persistChangesCheckout, projectPath, session, view],
   )
 
+  const handleRemoveEditorWorktree = useCallback(
+    async (input: { cwdPath: string; branch: string | null }) => {
+      const confirmed = await requestConfirm({
+        title: `Remove ${input.branch ?? "worktree"}?`,
+        description:
+          "YAADE will first verify that no live agents or terminals depend on it.",
+        confirmLabel: "Remove worktree",
+        cancelLabel: "Cancel",
+        destructive: true,
+      })
+      if (!confirmed) return
+      try {
+        await removeProjectWorktree({
+          rootPath: projectPath,
+          worktreePath: input.cwdPath,
+        })
+        const checkout = mainCheckout(projectPath)
+        persistEditorCheckout(checkout)
+        pushProjectRoute(location.pathname, {
+          view: "editors",
+          workspaceId: session?.id ?? null,
+          checkoutKey: null,
+          agentRunId: null,
+        })
+      } catch (error) {
+        showYaadeToast(
+          error instanceof Error ? error.message : "Could not remove worktree",
+          { variant: "destructive" },
+        )
+        throw error
+      }
+    },
+    [persistEditorCheckout, projectPath, session],
+  )
+
   const ensureCheckoutSession = useCallback(
     async (surface: MuxSurface) => {
       await openSurface(surface)
@@ -1073,6 +1176,20 @@ export function ProjectPage({
                     machineHostname={machineHostname}
                     embedded
                     surface="editors"
+                    editorWorkspacePath={editorCheckout.cwdPath}
+                    editorToolbar={
+                      <CheckoutPicker
+                        projectPath={projectPath}
+                        homeDir={homeDir}
+                        defaultBranch={defaultBranch}
+                        activeLabel={editorCheckout.label}
+                        activeCwdPath={editorCheckout.cwdPath}
+                        onSelectCheckout={handleSelectEditorCheckout}
+                        onCreateWorktree={handleCreateEditorWorktree}
+                        onRemoveWorktree={handleRemoveEditorWorktree}
+                        triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
+                      />
+                    }
                     focusAgentTabId={null}
                     onBackToProject={onClearSession}
                     onLaunchAgent={() => setAgentPickerOpen(true)}

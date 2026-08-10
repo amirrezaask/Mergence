@@ -120,6 +120,44 @@ describe("LanguageServerManager", () => {
     assert.equal(lifecycleListenerDisposed, true)
   })
 
+  it("keeps language-server connections separate when the process cwd changes", async () => {
+    const processCwds: string[] = []
+    let starts = 0
+    const manager = new LanguageServerManager({
+      async resolve(request) {
+        processCwds.push(request.processCwdUri ?? "")
+        return {
+          ...target("typescript-language-server"),
+          processCwdUri: request.processCwdUri,
+        }
+      },
+      async start(value) {
+        starts += 1
+        return {
+          id: `ts-${starts}`,
+          transportUrl: `/ws/lsp/ts-${starts}`,
+          target: value,
+        }
+      },
+      async stop() {},
+      async listDefinitions() {
+        return [definition("typescript-language-server", ["typescript"])]
+      },
+    })
+    const document = file(pathToFileUri("/work/project/index.ts"), "typescript")
+    const mainCwd = pathToFileUri("/work/project")
+    const worktreeCwd = pathToFileUri("/work/worktree")
+
+    const main = await manager.ensureServerForFile(document, workspaceRootUri, mainCwd)
+    const worktree = await manager.ensureServerForFile(document, workspaceRootUri, worktreeCwd)
+
+    assert.equal(starts, 2)
+    assert.deepEqual(processCwds, [mainCwd, worktreeCwd])
+    assert.notEqual(main?.id, worktree?.id)
+    assert.equal(main?.projectRootUri, worktree?.projectRootUri)
+    await manager.stopAll()
+  })
+
   it("stops a deferred host start that resolves after teardown", async () => {
     const resolved = target("typescript-language-server")
     const deferred: { resolve(value: LspStartResult): void } = {

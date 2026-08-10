@@ -9,21 +9,13 @@ import {
 import type { HqAgentSummary, HqProjectSummary } from "@yaade/rpc"
 import { pathToFileUri } from "@yaade/shared"
 import type { AgentCliDriver } from "@yaade/ui/agent-picker"
-import { AgentActivityList, ConfirmDialogHost, requestConfirm } from "@yaade/ui"
-import type { AgentRunInfo } from "@yaade/workspace"
+import { ConfirmDialogHost, requestConfirm } from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
-import { NotificationBell } from "@yaade/ui/notifications"
 import {
   Alert,
   AlertDescription,
   Badge,
   Button,
-  Card,
-  CardAction,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
   ContextMenu,
   ContextMenuContent,
   ContextMenuItem,
@@ -36,11 +28,6 @@ import {
   EmptyMedia,
   EmptyTitle,
   Input,
-  Item,
-  ItemContent,
-  ItemDescription,
-  ItemGroup,
-  ItemTitle,
   Select,
   SelectContent,
   SelectGroup,
@@ -48,7 +35,6 @@ import {
   SelectTrigger,
   SelectValue,
   Skeleton,
-  Spinner,
   Table,
   TableBody,
   TableCell,
@@ -58,24 +44,13 @@ import {
   Tabs,
   TabsList,
   TabsTrigger,
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
 } from "@yaade/ui/primitives"
 import {
-  Activity,
   AlertTriangle,
-  ArrowRight,
   Bot,
-  CircleDot,
-  FolderKanban,
   FolderOpen,
   Plus,
-  RefreshCw,
   Search,
-  Settings,
-  Trash2,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
@@ -86,7 +61,6 @@ import {
 import { useSystemSignals } from "../system-signals/SystemSignalsProvider.js"
 import { filterHqAgents, type HqAgentFilter } from "./hq-model.js"
 import { OpenProjectOverlay } from "../project/OpenProjectOverlay.js"
-import { projectRouteUrl, urlPathForKnownProject } from "../url-workspace.js"
 
 const AgentCliPickerOverlay = lazy(() =>
   import("@yaade/ui/agent-picker").then(module => ({
@@ -107,10 +81,8 @@ export type KnownProject = {
 
 export type HqPageProps = {
   homeDir: string
-  machineHostname: string
   onOpenProject: (project: Pick<HqProjectSummary, "id" | "rootPath">) => void
   onOpenWorkspace: (agent: HqAgentSummary) => void
-  onOpenRegisteredProject: (project: KnownProject) => void
   onOpenProjectPath: (rootPath: string) => Promise<void>
   agentHref: (agent: HqAgentSummary) => string
   initialOpenProject?: boolean
@@ -128,17 +100,6 @@ export type HqPageProps = {
 }
 
 type BadgeVariant = "default" | "secondary" | "destructive" | "outline"
-
-function relativeTime(value: string | null): string {
-  if (!value) return "No activity"
-  const delta = Math.max(0, Date.now() - new Date(value).getTime())
-  const minutes = Math.floor(delta / 60_000)
-  if (minutes < 1) return "Just now"
-  if (minutes < 60) return `${minutes}m ago`
-  const hours = Math.floor(minutes / 60)
-  if (hours < 24) return `${hours}h ago`
-  return `${Math.floor(hours / 24)}d ago`
-}
 
 function formatRuntime(ms: number): string {
   const minutes = Math.floor(Math.max(0, ms) / 60_000)
@@ -165,10 +126,8 @@ function statusVariant(agent: HqAgentSummary): BadgeVariant {
 
 export function HqPage({
   homeDir,
-  machineHostname,
   onOpenProject,
   onOpenWorkspace,
-  onOpenRegisteredProject,
   onOpenProjectPath,
   agentHref,
   initialOpenProject = false,
@@ -185,10 +144,6 @@ export function HqPage({
   const [query, setQuery] = useState("")
   const [projectId, setProjectId] = useState("")
   const [filter, setFilter] = useState<HqAgentFilter>("all")
-  const [activityProvider, setActivityProvider] = useState("")
-  const [activityRuns, setActivityRuns] = useState<AgentRunInfo[]>([])
-  const [activityCursor, setActivityCursor] = useState<string | null>(null)
-  const [activityLoading, setActivityLoading] = useState(false)
   const [launchPickerOpen, setLaunchPickerOpen] = useState(false)
   const [selectedLaunchRootUri, setSelectedLaunchRootUri] = useState<string | null>(null)
   const [openProjectOpen, setOpenProjectOpen] = useState(initialOpenProject)
@@ -216,13 +171,6 @@ export function HqPage({
   )
   const attentionCount =
     snapshot?.agents.filter(agent => agent.attention).length ?? 0
-  const workingCount =
-    snapshot?.agents.filter(
-      agent => agent.status === "working" || agent.status === "running_tool",
-    ).length ?? 0
-  const availableProjectCount =
-    snapshot?.projects.filter(project => project.availability === "available")
-      .length ?? 0
   const launchProjects = useMemo(
     () =>
       (snapshot?.projects ?? [])
@@ -250,61 +198,6 @@ export function HqPage({
     setSelectedLaunchRootUri(null)
   }, [])
 
-  const loadActivity = useCallback(
-    async (reset = false) => {
-      const api = window.yaade?.agents
-      if (!api || activityLoading) return
-      setActivityLoading(true)
-      try {
-        const page = await api.listActivity({
-          limit: 100,
-          ...(reset ? {} : activityCursor ? { cursor: activityCursor } : {}),
-          ...(projectId ? { projectId } : {}),
-        })
-        setActivityRuns(current => {
-          const next = reset ? page.runs : [...current, ...page.runs]
-          return [...new Map(next.map(run => [run.runId, run])).values()]
-        })
-        setActivityCursor(page.nextCursor)
-      } finally {
-        setActivityLoading(false)
-      }
-    },
-    [activityCursor, activityLoading, projectId],
-  )
-
-  useEffect(() => {
-    setActivityRuns([])
-    setActivityCursor(null)
-    void loadActivity(true)
-    const off = window.yaade?.agents?.onEvent(event => {
-      if (event.type === "agents.run" && event.kind === "run.ended") {
-        void loadActivity(true)
-      }
-    })
-    return () => off?.()
-    // Re-run only when the server-side project filter changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [projectId])
-
-  const filteredActivityRuns = useMemo(
-    () =>
-      activityProvider
-        ? activityRuns.filter(run => run.provider === activityProvider)
-        : activityRuns,
-    [activityProvider, activityRuns],
-  )
-
-  const activityHref = useCallback(
-    (run: AgentRunInfo) =>
-      projectRouteUrl(urlPathForKnownProject(run.projectId), {
-        view: "agents",
-        workspaceId: null,
-        agentRunId: run.runId,
-      }),
-    [],
-  )
-
   useEffect(() => {
     onCountsChange?.({
       projects: snapshot?.projects.length ?? 0,
@@ -320,13 +213,6 @@ export function HqPage({
     snapshot?.agents.length,
     snapshot?.projects.length,
   ])
-
-  const forgetProject = async (project: HqProjectSummary) => {
-    await fetch(`/api/v1/projects/${encodeURIComponent(project.id)}`, {
-      method: "DELETE",
-    })
-    await overview.refresh()
-  }
 
   const killAgent = useCallback(
     async (agent: HqAgentSummary) => {
@@ -379,92 +265,10 @@ export function HqPage({
   }
 
   return (
-    <TooltipProvider>
-      <div
-        className="flex h-full min-h-0 flex-col bg-background text-foreground"
-        data-yaade-shell="hq"
-      >
-        <header
-          className="flex h-11 shrink-0 items-center gap-2 overflow-x-auto border-b border-border px-3 sm:px-4"
-          data-yaade-app-header=""
-        >
-          <div className="flex min-w-0 items-center gap-2">
-            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-primary/12 text-primary">
-              <Bot aria-hidden />
-            </span>
-            <div className="flex min-w-0 items-baseline gap-1.5 text-sm">
-              <span className="font-semibold">YAADE</span>
-              <span className="text-xs text-muted-foreground">HQ</span>
-            </div>
-            <Badge
-              variant={overview.error ? "destructive" : "outline"}
-              className="hidden h-6 max-w-64 gap-1 px-1.5 text-xs sm:inline-flex"
-            >
-              <CircleDot aria-hidden />
-              <span className="truncate font-mono">
-                {snapshot?.machineHostname ?? machineHostname}
-              </span>
-            </Badge>
-          </div>
-          <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            <OpenProjectOverlay
-              open={openProjectOpen}
-              onOpenChange={setOpenProjectOpen}
-              homeDir={homeDir}
-              projects={snapshot?.projects ?? []}
-              onOpenProject={project => onOpenRegisteredProject(project)}
-              onOpenPath={onOpenProjectPath}
-              side="bottom"
-              align="end"
-              trigger={
-                <Button
-                  size="xs"
-                  variant="ghost"
-                  aria-label="Open project"
-                  data-yaade-project-switcher=""
-                >
-                  <FolderOpen data-icon="inline-start" />
-                  <span className="hidden sm:inline">Open Project</span>
-                </Button>
-              }
-            />
-            <NotificationBell
-              counts={notifications.counts}
-              onClick={() => notifications.setOpen(true)}
-              className="size-6"
-            />
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Refresh HQ"
-                  disabled={overview.refreshing}
-                  onClick={() => void overview.refresh()}
-                >
-                  {overview.refreshing ? <Spinner /> : <RefreshCw />}
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Refresh system snapshot</TooltipContent>
-            </Tooltip>
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  size="icon-xs"
-                  variant="ghost"
-                  aria-label="Settings"
-                  onPointerEnter={() => void import("@yaade/ui/settings")}
-                  onFocus={() => void import("@yaade/ui/settings")}
-                  onClick={() => setSettingsOpen(true)}
-                >
-                  <Settings />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent>Settings</TooltipContent>
-            </Tooltip>
-          </div>
-        </header>
-
+    <div
+      className="flex h-full min-h-0 flex-col bg-background text-foreground"
+      data-yaade-shell="hq"
+    >
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
             {overview.error ? (
@@ -486,45 +290,7 @@ export function HqPage({
               </Alert>
             ) : null}
 
-            <section
-              aria-label="System overview"
-              className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4"
-              data-yaade-hq-summary=""
-            >
-              <SummaryCard
-                title="Needs attention"
-                value={Math.max(
-                  attentionCount,
-                  notifications.counts.actionRequired,
-                )}
-                description="Waiting, permission, or failed"
-                icon={AlertTriangle}
-                statId="attention"
-              />
-              <SummaryCard
-                title="Live agents"
-                value={snapshot?.agents.length ?? 0}
-                description={`${workingCount} actively working`}
-                icon={Bot}
-                statId="live-agents"
-              />
-              <SummaryCard
-                title="Known projects"
-                value={snapshot?.projects.length ?? 0}
-                description={`${availableProjectCount} available`}
-                icon={FolderKanban}
-                statId="projects"
-              />
-              <SummaryCard
-                title="Unread"
-                value={notifications.counts.totalUnread}
-                description={`${notifications.counts.errors} errors`}
-                icon={Activity}
-                statId="unread"
-              />
-            </section>
-
-            <div className="grid min-w-0 gap-3 lg:grid-cols-[minmax(0,1.65fr)_minmax(20rem,0.65fr)] lg:items-start">
+            <div className="min-w-0">
               <section
                 className="min-w-0 p-3 sm:p-4"
                 aria-labelledby="hq-live-agents-heading"
@@ -552,6 +318,27 @@ export function HqPage({
                       <Plus data-icon="inline-start" />
                       Launch
                     </Button>
+                    <OpenProjectOverlay
+                      open={openProjectOpen}
+                      onOpenChange={setOpenProjectOpen}
+                      homeDir={homeDir}
+                      projects={[]}
+                      onOpenProject={() => undefined}
+                      onOpenPath={onOpenProjectPath}
+                      side="bottom"
+                      align="end"
+                      trigger={
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          aria-label="Add project"
+                          data-yaade-project-switcher=""
+                        >
+                          <FolderOpen data-icon="inline-start" />
+                          Add project
+                        </Button>
+                      }
+                    />
                     <Badge variant="secondary">
                       {agents.length} of {snapshot?.agents.length ?? 0}
                     </Badge>
@@ -627,58 +414,7 @@ export function HqPage({
                   />
                 </div>
               </section>
-
-              <ProjectShortcuts
-                projects={snapshot?.projects ?? []}
-                onOpen={onOpenProject}
-                onLaunch={project =>
-                  openLaunchPicker(pathToFileUri(project.rootPath))
-                }
-                onForget={project => void forgetProject(project)}
-              />
             </div>
-
-            <section
-              className="min-w-0 p-3 sm:p-4"
-              aria-labelledby="hq-recent-activity-heading"
-              data-yaade-island=""
-            >
-              <div className="mb-3 flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 id="hq-recent-activity-heading" className="text-base font-semibold">
-                    Recent activity
-                  </h2>
-                  <p className="mt-0.5 text-xs text-muted-foreground">
-                    Ended agent runs remain available without terminal transcripts.
-                  </p>
-                </div>
-                <Select
-                  value={activityProvider || "__all__"}
-                  onValueChange={value =>
-                    setActivityProvider(value === "__all__" ? "" : value)
-                  }
-                >
-                  <SelectTrigger className="w-44" aria-label="Filter activity by provider">
-                    <SelectValue placeholder="All providers" />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value="__all__">All providers</SelectItem>
-                    {(["claude", "codex", "cursor", "opencode", "grok"] as const).map(provider => (
-                      <SelectItem key={provider} value={provider} className="capitalize">
-                        {provider}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-              <AgentActivityList
-                runs={filteredActivityRuns}
-                loading={activityLoading}
-                hasMore={activityCursor != null}
-                onLoadMore={() => void loadActivity(false)}
-                hrefForRun={activityHref}
-              />
-            </section>
           </div>
         </main>
 
@@ -725,47 +461,7 @@ export function HqPage({
         ) : null}
 
         <ConfirmDialogHost />
-      </div>
-    </TooltipProvider>
-  )
-}
-
-function SummaryCard({
-  title,
-  value,
-  description,
-  icon: Icon,
-  statId,
-}: {
-  title: string
-  value: number
-  description: string
-  icon: typeof Activity
-  statId: string
-}) {
-  return (
-    <Card
-      className="gap-2 border-border bg-card py-3"
-      data-yaade-hq-stat={statId}
-    >
-      <CardHeader className="gap-1 px-3">
-        <CardTitle className="text-sm font-medium">{title}</CardTitle>
-        <CardDescription>{description}</CardDescription>
-        <CardAction>
-          <span className="flex size-7 items-center justify-center rounded-md bg-secondary text-muted-foreground">
-            <Icon className="size-3.5" aria-hidden />
-          </span>
-        </CardAction>
-      </CardHeader>
-      <CardContent className="px-3">
-        <p
-          className="text-xl font-semibold tabular-nums"
-          data-yaade-hq-stat-value=""
-        >
-          {value}
-        </p>
-      </CardContent>
-    </Card>
+    </div>
   )
 }
 
@@ -948,163 +644,6 @@ function AgentTable({
   )
 }
 
-function ProjectShortcuts({
-  projects,
-  onOpen,
-  onLaunch,
-  onForget,
-}: {
-  projects: readonly HqProjectSummary[]
-  onOpen: (project: Pick<HqProjectSummary, "id" | "rootPath">) => void
-  onLaunch: (project: HqProjectSummary) => void
-  onForget: (project: HqProjectSummary) => void
-}) {
-  return (
-    <section
-      className="min-w-0 p-3 sm:p-4"
-      aria-labelledby="hq-projects-heading"
-      data-yaade-hq-column="projects"
-      data-yaade-island=""
-    >
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h2 id="hq-projects-heading" className="text-base font-semibold">
-            Projects
-          </h2>
-          <p className="mt-0.5 text-xs text-muted-foreground">
-            Open a workspace or launch an agent.
-          </p>
-        </div>
-        <div>
-          <Badge variant="secondary">{projects.length}</Badge>
-        </div>
-      </div>
-      {projects.length === 0 ? (
-        <div data-yaade-list-panel="hq-projects">
-          <Empty className="min-h-56 border-0 bg-secondary/50">
-            <EmptyHeader>
-              <EmptyMedia variant="icon">
-                <FolderKanban />
-              </EmptyMedia>
-              <EmptyTitle>No known projects</EmptyTitle>
-              <EmptyDescription>
-                Open a project to add it to this host.
-              </EmptyDescription>
-            </EmptyHeader>
-          </Empty>
-        </div>
-      ) : (
-        <ItemGroup
-          className="gap-0.5"
-          data-yaade-list-panel="hq-projects"
-        >
-          {projects.map(project => {
-            const available = project.availability === "available"
-            return (
-              <Item
-                key={project.id}
-                size="sm"
-                className="min-w-0 flex-nowrap data-[available=true]:cursor-pointer data-[available=true]:hover:bg-accent"
-                role={available ? "link" : undefined}
-                aria-label={available ? `Open ${project.name}` : undefined}
-                tabIndex={available ? 0 : undefined}
-                data-available={available}
-                data-yaade-list-item
-                data-yaade-hq-project={project.id}
-                onClick={available ? () => onOpen(project) : undefined}
-                onKeyDown={
-                  available
-                    ? event => {
-                        if (
-                          event.target !== event.currentTarget ||
-                          event.key !== "Enter"
-                        ) {
-                          return
-                        }
-                        event.preventDefault()
-                        onOpen(project)
-                      }
-                    : undefined
-                }
-              >
-                <FolderKanban className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                <ItemContent>
-                  <ItemTitle className="flex items-center gap-2">
-                    <span className="truncate">{project.name}</span>
-                    {!available ? (
-                      <Badge variant="destructive" className="shrink-0 capitalize">
-                        {project.availability}
-                      </Badge>
-                    ) : null}
-                  </ItemTitle>
-                  <ItemDescription className="truncate font-mono text-xs">
-                    {project.rootPath}
-                  </ItemDescription>
-                  <ItemDescription className="flex flex-wrap items-center gap-x-2 text-xs">
-                    <span>{project.sessionCount} sessions</span>
-                    <span>{project.liveAgentCount} live</span>
-                    <span>{relativeTime(project.lastActivityAt)}</span>
-                  </ItemDescription>
-                  {project.attentionCount > 0 || project.unreadCount > 0 ? (
-                    <div className="flex flex-wrap gap-1 pt-0.5">
-                      {project.attentionCount > 0 ? (
-                        <Badge variant="destructive">
-                          {project.attentionCount} attention
-                        </Badge>
-                      ) : null}
-                      {project.unreadCount > 0 ? (
-                        <Badge>{project.unreadCount} unread</Badge>
-                      ) : null}
-                    </div>
-                  ) : null}
-                </ItemContent>
-                {available ? (
-                  <div className="flex shrink-0 items-center gap-1">
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <Button
-                          size="icon-sm"
-                          variant="ghost"
-                          aria-label={`Launch agent in ${project.name}`}
-                          onClick={event => {
-                            event.stopPropagation()
-                            onLaunch(project)
-                          }}
-                        >
-                          <Bot />
-                        </Button>
-                      </TooltipTrigger>
-                      <TooltipContent>Launch agent</TooltipContent>
-                    </Tooltip>
-                    <ArrowRight className="size-4 shrink-0 text-muted-foreground" aria-hidden />
-                  </div>
-                ) : (
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <Button
-                        size="icon-sm"
-                        variant="ghost"
-                        aria-label={`Forget ${project.name}`}
-                        onClick={event => {
-                          event.stopPropagation()
-                          onForget(project)
-                        }}
-                      >
-                        <Trash2 />
-                      </Button>
-                    </TooltipTrigger>
-                    <TooltipContent>Forget project</TooltipContent>
-                  </Tooltip>
-                )}
-              </Item>
-            )
-          })}
-        </ItemGroup>
-      )}
-    </section>
-  )
-}
-
 function HqSkeleton() {
   return (
     <div
@@ -1113,20 +652,8 @@ function HqSkeleton() {
       role="status"
     >
       <span className="sr-only">Loading HQ…</span>
-      <div className="flex h-11 items-center gap-3 border-b px-4" data-yaade-app-header="">
-        <Skeleton className="size-5" />
-        <Skeleton className="h-4 w-28" />
-      </div>
       <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-4 p-4 sm:p-5 lg:p-6">
-        <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-          {[0, 1, 2, 3].map(index => (
-            <Skeleton key={index} className="h-32" />
-          ))}
-        </div>
-        <div className="grid min-w-0 gap-3 xl:grid-cols-[minmax(0,1.65fr)_minmax(20rem,0.65fr)]">
-          <Skeleton className="h-96" />
-          <Skeleton className="h-80" />
-        </div>
+        <Skeleton className="h-96" />
       </div>
     </div>
   )

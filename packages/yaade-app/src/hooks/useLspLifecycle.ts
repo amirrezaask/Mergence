@@ -15,6 +15,7 @@ import {
 
 export type UseLspLifecycleOptions = {
   applyWorkspaceEditTransaction?: JetLspWorkspaceDeps["applyWorkspaceEditTransaction"]
+  processCwdUri?: string
 }
 
 type LspRuntime = {
@@ -63,6 +64,7 @@ export function useLspLifecycle(
   )
   applyWorkspaceEditTransactionRef.current =
     options.applyWorkspaceEditTransaction
+  const processCwdUri = options.processCwdUri
 
   useEffect(() => {
     lspRuntimeUsers += 1
@@ -173,13 +175,17 @@ export function useLspLifecycle(
       if (!rootUri) return null
       const path = isUntitledUri(fileUri) ? "" : fileUriToPath(fileUri)
       const file = workspace.fileForUri(fileUri) ?? workspace.createWorkspaceFile(fileUri, path)
-      const connection = await manager.ensureServerForFile(file, rootUri)
+      const connection = await manager.ensureServerForFile(
+        file,
+        rootUri,
+        processCwdUri,
+      )
       if (!connection) return null
       const client = await pool.getOrCreateClient(connection)
       await router.route(fileUri, file.languageId, manager.listConnections())
       return client
     },
-    [ensureRuntime, workspace],
+    [ensureRuntime, processCwdUri, workspace],
   )
 
   const ensureLspForFile = useCallback(
@@ -201,7 +207,11 @@ export function useLspLifecycle(
       const path = fileUriToPath(fileUri)
       const file = workspace.fileForUri(fileUri) ?? workspace.createWorkspaceFile(fileUri, path)
       try {
-        const connection = await manager.ensureServerForFile(file, rootUri)
+        const connection = await manager.ensureServerForFile(
+          file,
+          rootUri,
+          processCwdUri,
+        )
         if (!connection) {
           const spawnError = manager.consumeLastSpawnError()
           if (spawnError && manager.isLanguageSupported(file.languageId)) {
@@ -231,7 +241,7 @@ export function useLspLifecycle(
         setLspStatus("disconnected")
       }
     },
-    [bumpLspRevision, ensureRuntime, workspace],
+    [bumpLspRevision, ensureRuntime, processCwdUri, workspace],
   )
 
   const ensureLspForFileDeduped = useCallback((fileUri: string): Promise<void> => {
@@ -279,6 +289,25 @@ export function useLspLifecycle(
     },
     [bumpLspRevision],
   )
+
+  const stopAllLspServers = useCallback(async () => {
+    const runtime = runtimeRef.current
+    if (!runtime?.manager) return
+    const stoppedIds = await runtime.manager.stopAll()
+    for (const id of stoppedIds) {
+      runtime.router.releaseConnection(id)
+      runtime.pool.releaseConnection(id)
+    }
+    setLspStatus("idle")
+    bumpLspRevision()
+  }, [bumpLspRevision])
+
+  const previousProcessCwdUriRef = useRef(processCwdUri)
+  useEffect(() => {
+    if (previousProcessCwdUriRef.current === processCwdUri) return
+    previousProcessCwdUriRef.current = processCwdUri
+    void stopAllLspServers()
+  }, [processCwdUri, stopAllLspServers])
 
   useEffect(() => {
     const subscription = workspace.manager.onDidChangeFolders.event(folders => {
@@ -351,6 +380,7 @@ export function useLspLifecycle(
     cancelLspProgress,
     handleLspAttachFailed,
     stopLspServersForRoot,
+    stopAllLspServers,
     lspStatus,
     setLspStatus,
   }

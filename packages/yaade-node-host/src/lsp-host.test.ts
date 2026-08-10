@@ -52,11 +52,12 @@ function writeConfig(
   }))
 }
 
-function resolveRequest(target: Fixture): LspResolveRequest {
+function resolveRequest(target: Fixture, processCwdPath?: string): LspResolveRequest {
   return LspResolveRequest.make({
     languageId: "acme",
     fileUri: pathToFileUri(target.file),
     workspaceRootUri: pathToFileUri(target.workspace),
+    ...(processCwdPath ? { processCwdUri: pathToFileUri(processCwdPath) } : {}),
   })
 }
 
@@ -100,6 +101,27 @@ describe("LspHost", () => {
       host.invalidateForFile(pathToFileUri(path.join(target.project, "acme.json")))
       assert.equal((await host.resolve(resolveRequest(target)))?.projectRootUri, pathToFileUri(fs.realpathSync(target.project)))
       assert.equal(host.diagnosticsForTests().rootProbeCount, 2)
+    } finally {
+      host.dispose()
+      fs.rmSync(path.dirname(target.home), { recursive: true, force: true })
+    }
+  })
+
+  it("uses the resolved process cwd for the spawned language server", async () => {
+    const target = fixture()
+    writeConfig(target, { args: ["-e", "setInterval(() => {}, 1_000)"] })
+    const host = await LspHost.create({
+      homeDir: target.home,
+      allowedRoots: [target.workspace],
+      watchConfig: false,
+    })
+    try {
+      const resolved = await host.resolve(resolveRequest(target, target.project))
+      assert.equal(resolved?.processCwdUri, pathToFileUri(target.project))
+      assert.ok(resolved)
+      const started = await host.start(resolved)
+      assert.equal(host.getSession(started.id)?.rootUri, pathToFileUri(target.project))
+      await host.stop(started.id)
     } finally {
       host.dispose()
       fs.rmSync(path.dirname(target.home), { recursive: true, force: true })

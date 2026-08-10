@@ -4,6 +4,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { expectListRows } from "../helpers/list.js"
+import { createMockLspHarness } from "../../apps/host-server/mocks/mock-lsp-harness.js"
 import { launchJet, waitForProjectPage } from "./_launch.js"
 
 test.describe("project page", () => {
@@ -151,6 +152,73 @@ test.describe("project page", () => {
         .toBe(1)
     } finally {
       await app.close()
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("Editors chooses a worktree, keeps dirty buffers, and retargets LSP cwd", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-editor-worktree-"))
+    const project = path.join(home, "repo")
+    const worktree = path.join(home, "feature")
+    const mock = createMockLspHarness()
+    fs.mkdirSync(path.join(project, "src"), { recursive: true })
+    fs.writeFileSync(path.join(project, "src", "index.ts"), "export const value = 1\n")
+    execSync(
+      "git init && git config user.email t@t && git config user.name tester && git add . && git commit -m seed && git worktree add -b feature ../feature HEAD",
+      { cwd: project, stdio: "ignore" },
+    )
+
+    const { app, page } = await launchJet({
+      projectPage: true,
+      launchWithoutWorkspace: true,
+      homeDir: home,
+      startPath: "/repo",
+      env: mock.env,
+    })
+    try {
+      await waitForProjectPage(page)
+      await page.locator('[data-yaade-project-tab="editors"]').click()
+      const panel = page.locator('[data-yaade-project-panel="editors"]')
+      await panel.locator('[data-yaade-worktree-switcher=""]').waitFor({
+        state: "visible",
+      })
+
+      await page.evaluate(() => window.__yaadeAgent!.openFile("src/index.ts"))
+      await page.evaluate(() => window.__yaadeAgent!.waitForEditor())
+      await mock.waitForStartCount(1, 15_000)
+      const firstStart = mock.events("started").at(-1)
+      expect((firstStart?.details as { cwd?: string } | undefined)?.cwd).toBe(
+        fs.realpathSync(project),
+      )
+
+      await page.locator("[data-yaade-monaco-editor] textarea.inputarea").fill(" ")
+      await expect
+        .poll(() => page.evaluate(() => window.__yaadeAgent!.getState().activeEditorDirty))
+        .toBe(true)
+
+      await panel.locator('[data-yaade-worktree-switcher=""]').click()
+      await panel.locator('[data-yaade-worktree-item="feature"]').click()
+      await expect
+        .poll(() => panel.locator('[data-yaade-worktree-switcher=""]').textContent())
+        .toContain("feature")
+      await expect
+        .poll(() => panel.locator('[data-yaade-editor-workspace-path]').getAttribute("data-yaade-editor-workspace-path"))
+        .toBe(fs.realpathSync(worktree))
+      await expect
+        .poll(() => page.evaluate(() => window.__yaadeAgent!.getState().activeEditorDirty))
+        .toBe(true)
+      await expect
+        .poll(() => page.evaluate(() => window.__yaadeAgent!.getState().sessionCwd))
+        .toBe(fs.realpathSync(project))
+
+      await mock.waitForStartCount(2, 15_000)
+      const starts = mock.events("started")
+      expect((starts.at(-1)?.details as { cwd?: string } | undefined)?.cwd).toBe(
+        fs.realpathSync(worktree),
+      )
+    } finally {
+      await app.close()
+      mock.dispose()
       fs.rmSync(home, { recursive: true, force: true })
     }
   })

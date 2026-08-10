@@ -28,6 +28,8 @@ export class ResolvedLanguageServerTarget extends Schema.Class<ResolvedLanguageS
   serverId: Schema.String,
   projectRootUri: Schema.String,
   workspaceRootUri: Schema.String,
+  /** Directory used as the language-server process cwd. */
+  processCwdUri: Schema.optional(Schema.String),
   languageIds: StringArray,
   initializationOptions: Schema.optional(Schema.Unknown),
   settings: Schema.optional(Schema.Unknown),
@@ -38,6 +40,8 @@ export class LspResolveRequest extends Schema.Class<LspResolveRequest>("LspResol
   languageId: Schema.String,
   fileUri: Schema.String,
   workspaceRootUri: Schema.String,
+  /** Optional process cwd; protocol workspaceRootUri remains authoritative. */
+  processCwdUri: Schema.optional(Schema.String),
 }) {}
 
 export class LspStartResult extends Schema.Class<LspStartResult>("LspStartResult")({
