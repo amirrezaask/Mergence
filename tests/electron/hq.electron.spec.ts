@@ -88,6 +88,62 @@ async function seedAgent(
 }
 
 test.describe("YAADE HQ", () => {
+  test("opens projects from a compact anchored switcher", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-hq-project-switcher-"))
+    const home = path.join(root, "home")
+    const alpha = path.join(home, "alpha")
+    const beta = path.join(home, "beta")
+    fs.mkdirSync(alpha, { recursive: true })
+    fs.mkdirSync(beta, { recursive: true })
+
+    const { app, page } = await launchJet({
+      homeDir: home,
+      startPath: "/",
+      launchWithoutWorkspace: true,
+      hq: true,
+    })
+    try {
+      await page.evaluate(async roots => {
+        for (const rootPath of roots) {
+          const response = await fetch("/api/v1/projects/open", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ rootPath }),
+          })
+          if (!response.ok) throw new Error(await response.text())
+        }
+        window.dispatchEvent(new Event("yaade:agent-signal"))
+      }, [alpha, beta])
+
+      await page.locator('[data-yaade-project-switcher=""]').click()
+      await page
+        .locator('[data-yaade-project-switcher-menu=""]')
+        .waitFor({ state: "visible" })
+      expect(await page.locator('[data-slot="dialog-overlay"]').count()).toBe(0)
+      await expectListRows(page, {
+        panel: "project-switcher",
+        minItems: 2,
+        needle: "alpha",
+        noResultsText: "No matching projects.",
+      })
+
+      const search = page.locator('[data-yaade-project-switcher-search=""]')
+      await search.fill("~/beta")
+      await expectListRows(page, {
+        panel: "project-switcher",
+        minItems: 1,
+        needle: beta,
+        noResultsText: "No matching projects.",
+      })
+      await search.press("Enter")
+      await waitForProjectPage(page)
+      expect(await page.evaluate(() => location.pathname)).toBe("/beta")
+    } finally {
+      await app.close()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   test("uses authoritative live runs and direct agent anchors", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-hq-runs-"))
     const home = path.join(root, "home")

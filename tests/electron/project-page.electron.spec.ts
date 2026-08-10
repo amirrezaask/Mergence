@@ -7,6 +7,76 @@ import { expectListRows } from "../helpers/list.js"
 import { launchJet, waitForProjectPage } from "./_launch.js"
 
 test.describe("project page", () => {
+  test("project dock uses an anchored switcher for known projects and paths", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-switcher-"))
+    const project = path.join(home, "repo")
+    const other = path.join(home, "other")
+    fs.mkdirSync(project, { recursive: true })
+    fs.mkdirSync(other, { recursive: true })
+    fs.writeFileSync(path.join(project, "README.md"), "repo\n")
+    fs.writeFileSync(path.join(other, "README.md"), "other\n")
+
+    const { app, page } = await launchJet({
+      projectPage: true,
+      launchWithoutWorkspace: true,
+      homeDir: home,
+      startPath: "/repo",
+    })
+    try {
+      await waitForProjectPage(page)
+      await page.evaluate(async rootPath => {
+        const response = await fetch("/api/v1/projects/open", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ rootPath }),
+        })
+        if (!response.ok) throw new Error(await response.text())
+        window.dispatchEvent(new Event("yaade:agent-signal"))
+      }, other)
+
+      await page.locator('[data-yaade-project-switcher=""]').click()
+      await page
+        .locator('[data-yaade-project-switcher-menu=""]')
+        .waitFor({ state: "visible" })
+      expect(await page.locator('[data-slot="dialog-overlay"]').count()).toBe(0)
+      await expectListRows(page, {
+        panel: "project-switcher",
+        minItems: 2,
+        needle: "repo",
+        noResultsText: "No matching projects.",
+      })
+
+      const search = page.locator('[data-yaade-project-switcher-search=""]')
+      await search.fill("other")
+      await expectListRows(page, {
+        panel: "project-switcher",
+        minItems: 1,
+        needle: "other",
+        noResultsText: "No matching projects.",
+      })
+      await search.press("Enter")
+      await expect.poll(() => page.evaluate(() => location.pathname)).toBe("/other")
+
+      await page.locator('[data-yaade-project-switcher=""]').click()
+      await page
+        .locator('[data-yaade-project-switcher-search=""]')
+        .fill("~/repo")
+      await expectListRows(page, {
+        panel: "project-switcher",
+        minItems: 1,
+        needle: path.join(home, "repo"),
+        noResultsText: "No matching projects.",
+      })
+      await page.locator('[data-yaade-project-switcher-search=""]').press("Escape")
+      await expect
+        .poll(() => page.locator('[data-yaade-project-switcher-menu=""]').count())
+        .toBe(0)
+    } finally {
+      await app.close()
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+
   test("a bare project URL registers the directory and lands on Changes/Main", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-route-"))
     const project = path.join(home, "repo")

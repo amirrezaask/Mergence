@@ -6,6 +6,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactElement,
 } from "react"
 import type {
   HqAgentSummary,
@@ -173,18 +174,16 @@ function checkoutRouteKey(checkout: ActiveCheckout): string | null {
 }
 
 type ProjectNavigationDockProps = {
-  projectName: string
+  projectSwitcher: ReactElement
   notifications: ReturnType<typeof useSystemSignals>
   onOpenHq: () => void
-  onOpenProject: () => void
   onOpenSettings: () => void
 }
 
 function ProjectNavigationDock({
-  projectName,
+  projectSwitcher,
   notifications,
   onOpenHq,
-  onOpenProject,
   onOpenSettings,
 }: ProjectNavigationDockProps) {
   const tabs = [
@@ -215,18 +214,7 @@ function ProjectNavigationDock({
           >
             <House />
           </Button>
-          <Button
-            variant="ghost"
-            size="sm"
-            className="max-w-52 justify-start gap-1.5 rounded-xl px-2.5 sm:max-w-64"
-            aria-label="Switch project"
-            data-yaade-project-switcher=""
-            onClick={onOpenProject}
-          >
-            <FolderKanban data-icon="inline-start" />
-            <span className="truncate font-semibold">{projectName}</span>
-            <ChevronsUpDown className="size-3 shrink-0 opacity-60" aria-hidden />
-          </Button>
+          {projectSwitcher}
           <TabsList className="h-10 gap-0.5 rounded-xl bg-transparent p-0">
             {tabs.map(({ value, label, icon: Icon }) => (
               <TabsTrigger
@@ -1220,10 +1208,37 @@ export function ProjectPage({
           </div>
 
           <ProjectNavigationDock
-            projectName={projectName}
+            projectSwitcher={
+              <OpenProjectOverlay
+                open={openProjectOpen}
+                onOpenChange={setOpenProjectOpen}
+                homeDir={homeDir}
+                projects={hq.snapshot?.projects ?? []}
+                selectedRootPath={projectPath}
+                onOpenProject={project => onNavigateProject(project.rootPath)}
+                onOpenPath={async rootPath => onNavigateProject(rootPath)}
+                side="top"
+                align="start"
+                trigger={
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="max-w-52 justify-start gap-1.5 rounded-xl px-2.5 sm:max-w-64"
+                    aria-label="Switch project"
+                    data-yaade-project-switcher=""
+                  >
+                    <FolderKanban data-icon="inline-start" />
+                    <span className="truncate font-semibold">{projectName}</span>
+                    <ChevronsUpDown
+                      className="size-3 shrink-0 opacity-60"
+                      aria-hidden
+                    />
+                  </Button>
+                }
+              />
+            }
             notifications={notifications}
             onOpenHq={onOpenHq}
-            onOpenProject={() => setOpenProjectOpen(true)}
             onOpenSettings={() => setSettingsOpen(true)}
           />
         </Tabs>
@@ -1241,15 +1256,6 @@ export function ProjectPage({
           />
         </Suspense>
       ) : null}
-
-      <OpenProjectOverlay
-        open={openProjectOpen}
-        onOpenChange={setOpenProjectOpen}
-        homeDir={homeDir}
-        projects={hq.snapshot?.projects ?? []}
-        onOpenProject={project => onNavigateProject(project.rootPath)}
-        onOpenPath={async rootPath => onNavigateProject(rootPath)}
-      />
 
       {agentPickerOpen ? (
         <Suspense fallback={null}>

@@ -407,14 +407,27 @@ export function HqPage({
             </Badge>
           </div>
           <div className="ml-auto flex shrink-0 items-center gap-0.5">
-            <Button
-              size="xs"
-              variant="ghost"
-              onClick={() => setOpenProjectOpen(true)}
-            >
-              <FolderOpen data-icon="inline-start" />
-              <span className="hidden sm:inline">Open Project</span>
-            </Button>
+            <OpenProjectOverlay
+              open={openProjectOpen}
+              onOpenChange={setOpenProjectOpen}
+              homeDir={homeDir}
+              projects={snapshot?.projects ?? []}
+              onOpenProject={project => onOpenRegisteredProject(project)}
+              onOpenPath={onOpenProjectPath}
+              side="bottom"
+              align="end"
+              trigger={
+                <Button
+                  size="xs"
+                  variant="ghost"
+                  aria-label="Open project"
+                  data-yaade-project-switcher=""
+                >
+                  <FolderOpen data-icon="inline-start" />
+                  <span className="hidden sm:inline">Open Project</span>
+                </Button>
+              }
+            />
             <NotificationBell
               counts={notifications.counts}
               onClick={() => notifications.setOpen(true)}
@@ -668,15 +681,6 @@ export function HqPage({
             </section>
           </div>
         </main>
-
-        <OpenProjectOverlay
-          open={openProjectOpen}
-          onOpenChange={setOpenProjectOpen}
-          homeDir={homeDir}
-          projects={snapshot?.projects ?? []}
-          onOpenProject={project => onOpenRegisteredProject(project)}
-          onOpenPath={onOpenProjectPath}
-        />
 
         {launchPickerOpen ? (
           <Suspense fallback={null}>
