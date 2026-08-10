@@ -64,10 +64,14 @@ function contrastRatio(foreground: string, background: string): number {
 const themeIds = [
   "default-dark",
   "default-light",
+  "catppuccin-mocha",
+  "catppuccin-macchiato",
+  "catppuccin-frappe",
+  "catppuccin-latte",
 ]
 
 describe("bundled Yaade themes", () => {
-  it("registers only the Default light and dark themes", () => {
+  it("registers Default and Catppuccin themes", () => {
     assert.equal(defaultThemeId, "default-dark")
     assert.deepEqual(
       bundledThemeList.map(theme => theme.id),
@@ -88,7 +92,8 @@ describe("bundled Yaade themes", () => {
     assert.equal(defaultThemeIdForScheme("light"), "default-light")
     assert.equal(siblingThemeForScheme("default-dark", "light").id, "default-light")
     assert.equal(siblingThemeForScheme("default-light", "dark").id, "default-dark")
-    assert.equal(siblingThemeForScheme("catppuccin-mocha", "light").id, "default-light")
+    assert.equal(siblingThemeForScheme("catppuccin-mocha", "light").id, "catppuccin-latte")
+    assert.equal(siblingThemeForScheme("catppuccin-latte", "dark").id, "catppuccin-mocha")
     assert.equal(siblingThemeForScheme("tokyonight-night", "light").id, "default-light")
   })
 

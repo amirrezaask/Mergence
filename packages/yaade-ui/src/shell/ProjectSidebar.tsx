@@ -1,5 +1,5 @@
 import type { ReactNode } from "react"
-import { Activity, Folder, FolderPlus } from "lucide-react"
+import { Activity, Folder, FolderPlus, Settings } from "lucide-react"
 import { Button } from "../components/ui/button.js"
 import {
   Sidebar,
@@ -28,6 +28,7 @@ export type ProjectSidebarProps = {
   projects: readonly ProjectSidebarProject[]
   activeProjectId?: string | null
   onSelectProject: (project: ProjectSidebarProject) => void
+  onOpenSettings: () => void
   renderAddProject: (compact: boolean) => ReactNode
   loading?: boolean
   error?: string | null
@@ -44,6 +45,7 @@ export function ProjectSidebar({
   projects,
   activeProjectId = null,
   onSelectProject,
+  onOpenSettings,
   renderAddProject,
   loading = false,
   error = null,
@@ -73,6 +75,18 @@ export function ProjectSidebar({
             aria-label="Toggle HQ sidebar"
             data-yaade-project-sidebar-toggle=""
           />
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0"
+            aria-label="Open settings"
+            title="Settings"
+            onClick={onOpenSettings}
+            data-yaade-project-sidebar-settings=""
+          >
+            <Settings />
+          </Button>
           <div className="min-w-0 flex-1 px-1 group-data-[collapsible=icon]:hidden">
             <span className="block truncate text-xs font-semibold">YAADE HQ</span>
             <span className="block truncate text-3xs text-sidebar-foreground/60">

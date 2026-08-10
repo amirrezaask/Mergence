@@ -155,9 +155,8 @@ import {
 } from "./place-pane.js"
 import { MuxWindowView } from "./MuxWindowView.js"
 import {
-  MuxTerminalLayer,
-  useMuxPaneBoxes,
-  useMuxTerminalSlotBoxes,
+  MuxTerminalGeometryLayer,
+  useMuxPaneBoxesSync,
 } from "./MuxTerminalLayer.js"
 import { cwdUriFromTerminalTitle } from "./cwd-from-title.js"
 import {
@@ -668,6 +667,12 @@ export function MuxApp({
   const boundAgentPtysRef = useRef(new Set<string>())
   const [activeWindowId, setActiveWindowId] = useState<string | null>(null)
   const [lastCwdUri, setLastCwdUri] = useState<string | null>(null)
+
+  useEffect(() => {
+    const openSettings = () => setSettingsOpen(true)
+    window.addEventListener("yaade:open-settings", openSettings)
+    return () => window.removeEventListener("yaade:open-settings", openSettings)
+  }, [])
 
   useEffect(() => {
     for (const liveWindow of windows) {
@@ -3846,17 +3851,22 @@ export function MuxApp({
     })
   }, [allPtyIds, paneTitle, sessionProjectPath, terminalSessionsRevision])
 
-  const paneBoxes = useMuxPaneBoxes(
+  const paneMeasureIds = useMemo(
+    () =>
+      surface === "running" || surface === "editors"
+        ? []
+        : activeWindow?.zoomedPaneId
+          ? [activeWindow.zoomedPaneId]
+          : activeLeaves.map(leaf => leaf.ptyTabId),
+    [activeLeaves, activeWindow?.zoomedPaneId, surface],
+  )
+  useMuxPaneBoxesSync(
     workspaceSurfaceRef,
     dockSurfaceRef,
-    surface === "running" || surface === "editors"
-      ? []
-      : activeWindow?.zoomedPaneId
-        ? [activeWindow.zoomedPaneId]
-        : activeLeaves.map(leaf => leaf.ptyTabId),
+    paneMeasureIds,
     layoutEpoch,
+    paneBoxesRef,
   )
-  paneBoxesRef.current = paneBoxes
 
   const slotMeasureIds = useMemo(() => {
     if (surface === "running") {
@@ -3875,12 +3885,7 @@ export function MuxApp({
     surface,
   ])
 
-  const slotBoxes = useMuxTerminalSlotBoxes(
-    workspaceSurfaceRef,
-    dockSurfaceRef,
-    slotMeasureIds,
-    `${layoutEpoch}:${surface ?? "full"}:${focusAgentTabId ?? ""}`,
-  )
+  const terminalGeometryEpoch = `${layoutEpoch}:${surface ?? "full"}:${focusAgentTabId ?? ""}`
 
   // Touch LRU when focus changes so background windows stay warm briefly.
   useEffect(() => {
@@ -5065,9 +5070,12 @@ export function MuxApp({
                   </div>
                 </div>
               )}
-              <MuxTerminalLayer
-                ptyTabIds={mountedPtyIds}
-                boxes={slotBoxes}
+              <MuxTerminalGeometryLayer
+                containerRef={workspaceSurfaceRef}
+                dockRef={dockSurfaceRef}
+                measureIds={slotMeasureIds}
+                mountedPtyIds={mountedPtyIds}
+                layoutEpoch={terminalGeometryEpoch}
                 focusedPtyTabId={focusedPtyTabId}
                 renderTerminal={renderTerminal}
               />

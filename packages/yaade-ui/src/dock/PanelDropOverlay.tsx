@@ -28,9 +28,16 @@ import {
   type SiteRect,
 } from "./panel-drop-zones.js"
 
-function useElementSize(ref: React.RefObject<HTMLDivElement | null>): { w: number; h: number } {
+function useElementSize(
+  ref: React.RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+): { w: number; h: number } {
   const [size, setSize] = useState({ w: 0, h: 0 })
   useEffect(() => {
+    if (!enabled) {
+      setSize({ w: 0, h: 0 })
+      return
+    }
     const el = ref.current
     if (!el) return
     const ro = new ResizeObserver(entries => {
@@ -42,7 +49,7 @@ function useElementSize(ref: React.RefObject<HTMLDivElement | null>): { w: numbe
     const r = el.getBoundingClientRect()
     setSize({ w: r.width, h: r.height })
     return () => ro.disconnect()
-  }, [ref])
+  }, [enabled, ref])
   return size
 }
 
@@ -218,17 +225,17 @@ export function PanelDropOverlay({
   const drag = usePanelDrag()
   const dropHot = useDropHot()
   const containerRef = useRef<HTMLDivElement>(null)
-  const size = useElementSize(containerRef)
-  const fontSize = useFontSize(containerRef)
-
   const tabDrag = drag.tabSource
   const active = tabDrag != null
+  // ResizeObserver only while a tab drag is active — idle N-pane docks pay zero measure cost.
+  const size = useElementSize(containerRef, active)
+  const fontSize = useFontSize(containerRef)
   const samePanel =
     tabDrag?.panelId != null && tabDrag.panelId.id === panelId.id
 
   const sites = useMemo(
-    () => computeDropSites(size.w, size.h, fontSize),
-    [size.w, size.h, fontSize],
+    () => (active ? computeDropSites(size.w, size.h, fontSize) : []),
+    [active, size.w, size.h, fontSize],
   )
   const effectiveSites = samePanel ? sites.filter(s => s.id !== "center") : sites
 

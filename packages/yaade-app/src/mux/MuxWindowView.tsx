@@ -200,6 +200,7 @@ function GitPaneBody(props: {
   rootUri: string | null
   theme: YaadeTheme
   fontSize?: number
+  active?: boolean
   onOpenFile?: (path: string, line?: number) => void
 }) {
   const rootPath = props.rootUri ? fileUriToPath(props.rootUri) : undefined
@@ -238,6 +239,7 @@ function GitPaneBody(props: {
             rootUri={props.rootUri}
             theme={props.theme}
             fontSize={props.fontSize}
+            active={props.active ?? true}
             onOpenFile={path => props.onOpenFile?.(path)}
           />
         </Suspense>
@@ -331,6 +333,7 @@ export function MuxWindowView(props: MuxWindowViewProps) {
             rootUri={gitRootForTab(tabId)}
             theme={theme}
             fontSize={fontSize}
+            active={focused}
             onOpenFile={(path, line) => onOpenFile?.(panelId, path, line)}
           />
         ) : kind === "terminal" ? (

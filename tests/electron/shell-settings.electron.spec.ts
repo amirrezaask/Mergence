@@ -131,11 +131,15 @@ test.describe("shell settings", () => {
     try {
       await page.evaluate(() => localStorage.clear())
       await page.evaluate(async () => window.__yaadeAgent!.waitForReady())
-      await openSettings(page)
+      await expectLocatorVisible(
+        page.locator("[data-yaade-project-sidebar-settings]"),
+      )
+      await page.locator("[data-yaade-project-sidebar-settings]").click()
+      await expectLocatorVisible(page.locator("[data-yaade-settings-overlay]"))
       await page
         .locator("[data-yaade-settings-category='appearance']")
         .click()
-      await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 2)
+      await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 6)
       await expectLocatorCount(page.locator("[data-yaade-color-mode-option]"), 3)
       await expectLocatorCount(page.locator("[data-yaade-preferred-editor]"), 2)
 
@@ -168,6 +172,11 @@ test.describe("shell settings", () => {
         .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
         .toBe("default-light")
 
+      await page.locator("[data-yaade-theme-option='catppuccin-mocha']").click()
+      await expect
+        .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
+        .toBe("catppuccin-mocha")
+
       await page.getByRole("radio", { name: "Auto color mode" }).click()
       await expect
         .poll(() =>
@@ -176,6 +185,9 @@ test.describe("shell settings", () => {
             return value ? JSON.parse(value).colorSchemeMode : null
           }),
         )
+        .toBe("system")
+      await expect
+        .poll(() => page.evaluate(() => localStorage.getItem("jet-color-scheme")))
         .toBe("system")
       await page.emulateMedia({ colorScheme: "light" })
       await expect
@@ -187,11 +199,11 @@ test.describe("shell settings", () => {
         .toBe(false)
       await expect
         .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
-        .toBe("default-light")
+        .toBe("catppuccin-latte")
       await expect
         .poll(() =>
           page
-            .locator("[data-yaade-theme-option='default-light']")
+            .locator("[data-yaade-theme-option='catppuccin-latte']")
             .getAttribute("aria-pressed"),
         )
         .toBe("true")
@@ -209,11 +221,11 @@ test.describe("shell settings", () => {
         .toBe(true)
       await expect
         .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
-        .toBe("default-dark")
+        .toBe("catppuccin-mocha")
       await expect
         .poll(() =>
           page
-            .locator("[data-yaade-theme-option='default-dark']")
+            .locator("[data-yaade-theme-option='catppuccin-mocha']")
             .getAttribute("aria-pressed"),
         )
         .toBe("true")

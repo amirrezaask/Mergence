@@ -2,6 +2,7 @@ import {
   memo,
   useLayoutEffect,
   useState,
+  type MutableRefObject,
   type ReactNode,
   type RefObject,
 } from "react"
@@ -11,6 +12,26 @@ export type MuxTerminalSlotBox = {
   left: number
   width: number
   height: number
+}
+
+function boxesEqual(
+  previous: Map<string, MuxTerminalSlotBox>,
+  next: Map<string, MuxTerminalSlotBox>,
+): boolean {
+  if (previous.size !== next.size) return false
+  for (const [id, box] of next) {
+    const old = previous.get(id)
+    if (
+      !old ||
+      old.top !== box.top ||
+      old.left !== box.left ||
+      old.width !== box.width ||
+      old.height !== box.height
+    ) {
+      return false
+    }
+  }
+  return true
 }
 
 function slotSelector(ptyTabId: string): string {
@@ -31,22 +52,22 @@ function paneSelector(tabId: string): string {
 }
 
 /**
- * Measure every visible mux leaf for geometric keyboard focus. Unlike terminal
- * slots, pane shells exist for editor, Git, and persistent tool leaves too.
+ * Measure every visible mux leaf for geometric keyboard focus. Writes into
+ * `boxesRef` only — never React state — so split/resize cannot re-render MuxApp.
  */
-export function useMuxPaneBoxes(
+export function useMuxPaneBoxesSync(
   containerRef: RefObject<HTMLElement | null>,
   dockRef: RefObject<HTMLElement | null>,
   tabIds: string[],
   layoutEpoch: string | number,
-): Map<string, MuxTerminalSlotBox> {
-  const [boxes, setBoxes] = useState(() => new Map<string, MuxTerminalSlotBox>())
+  boxesRef: MutableRefObject<Map<string, MuxTerminalSlotBox>>,
+): void {
   const idKey = tabIds.join("\0")
 
   useLayoutEffect(() => {
     const container = containerRef.current
     if (!container) {
-      setBoxes(new Map())
+      boxesRef.current = new Map()
       return
     }
 
@@ -66,26 +87,9 @@ export function useMuxPaneBoxes(
           height: Math.round(rect.height),
         })
       }
-      setBoxes(previous => {
-        if (previous.size === next.size) {
-          let unchanged = true
-          for (const [id, box] of next) {
-            const old = previous.get(id)
-            if (
-              !old ||
-              old.top !== box.top ||
-              old.left !== box.left ||
-              old.width !== box.width ||
-              old.height !== box.height
-            ) {
-              unchanged = false
-              break
-            }
-          }
-          if (unchanged) return previous
-        }
-        return next
-      })
+      if (!boxesEqual(boxesRef.current, next)) {
+        boxesRef.current = next
+      }
     }
     const sync = () => {
       if (raf) cancelAnimationFrame(raf)
@@ -119,9 +123,7 @@ export function useMuxPaneBoxes(
       mutationObserver?.disconnect()
       window.removeEventListener("resize", sync)
     }
-  }, [containerRef, dockRef, idKey, layoutEpoch, tabIds])
-
-  return boxes
+  }, [boxesRef, containerRef, dockRef, idKey, layoutEpoch, tabIds])
 }
 
 /**
@@ -277,5 +279,38 @@ export const MuxTerminalLayer = memo(function MuxTerminalLayer(props: {
         )
       })}
     </div>
+  )
+})
+
+/**
+ * Owns terminal slot geometry state below MuxApp so RO/MO updates re-render
+ * only this layer (not the full session chrome).
+ */
+export const MuxTerminalGeometryLayer = memo(function MuxTerminalGeometryLayer(props: {
+  containerRef: RefObject<HTMLElement | null>
+  dockRef: RefObject<HTMLElement | null>
+  measureIds: string[]
+  mountedPtyIds: string[]
+  layoutEpoch: string | number
+  focusedPtyTabId: string | null
+  renderTerminal: (
+    ptyTabId: string,
+    focused: boolean,
+    slotVisible: boolean,
+  ) => ReactNode
+}) {
+  const boxes = useMuxTerminalSlotBoxes(
+    props.containerRef,
+    props.dockRef,
+    props.measureIds,
+    props.layoutEpoch,
+  )
+  return (
+    <MuxTerminalLayer
+      ptyTabIds={props.mountedPtyIds}
+      boxes={boxes}
+      focusedPtyTabId={props.focusedPtyTabId}
+      renderTerminal={props.renderTerminal}
+    />
   )
 })

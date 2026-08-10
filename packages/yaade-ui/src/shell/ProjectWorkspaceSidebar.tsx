@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { ChevronRight, Circle, GitBranch, House, Plus, X } from "lucide-react"
+import { ChevronRight, Circle, GitBranch, House, Plus, Settings, X } from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
@@ -57,6 +57,7 @@ export type ProjectWorkspaceSidebarProps = {
   onNewGitWorktree: () => void
   processes: readonly ProjectWorkspaceSidebarProcess[]
   onOpenHq: () => void
+  onOpenSettings: () => void
   /** Single Running launcher (+ shell & agent providers). */
   launcher?: ReactNode
   loading?: boolean
@@ -256,6 +257,7 @@ export function ProjectWorkspaceSidebar({
   onNewGitWorktree,
   processes,
   onOpenHq,
+  onOpenSettings,
   launcher,
   loading,
   error,
@@ -285,6 +287,18 @@ export function ProjectWorkspaceSidebar({
             onClick={onOpenHq}
           >
             <House />
+          </Button>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            className="shrink-0"
+            aria-label="Open settings"
+            title="Settings"
+            onClick={onOpenSettings}
+            data-yaade-project-sidebar-settings=""
+          >
+            <Settings />
           </Button>
         </div>
         <div className="min-w-0">

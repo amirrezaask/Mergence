@@ -128,7 +128,10 @@ function PanelSplitNode<TView>({
       orientation={orientation}
       defaultLayout={defaultLayout}
       className="h-full w-full"
-      onLayoutChanged={layout => {
+      onLayoutChanged={(layout, meta) => {
+        // Library already defers pointer-drag commits until release; skip
+        // mount/constraint recomputes so MuxApp does not clone the tree.
+        if (!meta.isUserInteraction) return
         const nextRatios = children.map(
           (_, index) => (layout[splitPanelDomId(path, index)] ?? ratios[index]! * 100) / 100,
         )

@@ -81,6 +81,8 @@ import { requestConfirm } from "@/components/ConfirmDialogHost.js"
 import { showYaadeToast } from "@/toast.js"
 import { SessionHeaderChromePortal } from "./session-header-chrome.js"
 import { SidebarShell } from "../shell/SidebarShell.js"
+import { PierreDiffPool } from "./pierre-diff-pool.js"
+
 const CommitChangesDialog = lazy(() =>
   import("./CommitChangesDialog.js").then(module => ({
     default: module.CommitChangesDialog,
@@ -179,6 +181,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   )
   const [dialogCommit, setDialogCommit] = useState<GitCommit | null>(null)
   const [workingTreeDialogOpen, setWorkingTreeDialogOpen] = useState(false)
+  const [commitDialogOpen, setCommitDialogOpen] = useState(false)
   const [mobileDetail, setMobileDetail] = useState(false)
   const [hunks, setHunks] = useState<DiffHunk[] | null>(null)
   const [hunksLoading, setHunksLoading] = useState(false)
@@ -187,6 +190,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const diffRequest = useRef(0)
   const historyRequest = useRef(0)
   const refreshInFlight = useRef(false)
+  const pollFingerprint = useRef<string | null>(null)
   const narrow = containerWidth > 0 && containerWidth < 560
 
   const loadHistoryPage = useCallback(async (cursor: string | null, reset = false) => {
@@ -201,6 +205,13 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     try {
       const page = await api.historyPage(rootUri, cursor ?? undefined, 100)
       if (request !== historyRequest.current) return
+      if (reset && page.commits[0] && pollFingerprint.current) {
+        const parts = pollFingerprint.current.split("\0")
+        if (parts.length >= 6) {
+          parts[4] = page.commits[0].hash
+          pollFingerprint.current = parts.join("\0")
+        }
+      }
       setHistory(current => reset ? page.commits : appendHistoryCommits(current, page.commits))
       setHistoryCursor(page.nextCursor)
       setHistoryError(null)
@@ -245,6 +256,19 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       setSummary(nextSummary)
       setBranches(nextBranches)
       setNumstat(Object.fromEntries(nextNumstat.map(stat => [stat.path, stat])))
+      pollFingerprint.current = [
+        nextSummary.branch ?? "",
+        nextSummary.upstream ?? "",
+        String(nextSummary.ahead),
+        String(nextSummary.behind),
+        "", // tip filled after history page; force tip reload below
+        nextEntries
+          .map(
+            entry =>
+              `${entry.path}:${entry.status}:${entry.indexStatus ?? ""}:${entry.worktreeStatus ?? ""}:${entry.staged ? 1 : 0}:${entry.unstaged ? 1 : 0}`,
+          )
+          .join("|"),
+      ].join("\0")
       void loadHistoryPage(null, true)
       onBranchChange?.(nextSummary.branch)
       setSelected(current => {
@@ -275,10 +299,48 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     void refresh()
   }, [refresh])
 
+  /** Cheap history poll: full refresh only when tip/summary/status fingerprint changes. */
+  const pollHistory = useCallback(async () => {
+    if (!rootUri || !api || refreshInFlight.current) return
+    try {
+      const [nextSummary, nextEntries, tipPage] = await Promise.all([
+        api.summary(rootUri),
+        api.status(rootUri),
+        api.historyPage(rootUri, undefined, 1),
+      ])
+      const tip = tipPage.commits[0]?.hash ?? ""
+      const statusSig = nextEntries
+        .map(
+          entry =>
+            `${entry.path}:${entry.status}:${entry.indexStatus ?? ""}:${entry.worktreeStatus ?? ""}:${entry.staged ? 1 : 0}:${entry.unstaged ? 1 : 0}`,
+        )
+        .join("|")
+      const nextKey = [
+        nextSummary.branch ?? "",
+        nextSummary.upstream ?? "",
+        String(nextSummary.ahead),
+        String(nextSummary.behind),
+        tip,
+        statusSig,
+      ].join("\0")
+      if (pollFingerprint.current === nextKey) return
+      const prevTip = pollFingerprint.current?.split("\0")[4] ?? null
+      pollFingerprint.current = nextKey
+      setSummary(nextSummary)
+      setEntries(nextEntries)
+      onBranchChange?.(nextSummary.branch)
+      if (prevTip !== tip) {
+        void loadHistoryPage(null, true)
+      }
+    } catch {
+      /* ignore transient poll errors */
+    }
+  }, [api, loadHistoryPage, onBranchChange, rootUri])
+
   useEffect(() => {
     if (!active || view !== "history") return
     const refreshIfVisible = () => {
-      if (document.visibilityState === "visible") void refresh()
+      if (document.visibilityState === "visible") void pollHistory()
     }
     const interval = window.setInterval(refreshIfVisible, 2_000)
     document.addEventListener("visibilitychange", refreshIfVisible)
@@ -286,10 +348,25 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       window.clearInterval(interval)
       document.removeEventListener("visibilitychange", refreshIfVisible)
     }
-  }, [active, refresh, view])
+  }, [active, pollHistory, view])
+
+  const selectedDiffKey = useMemo(() => {
+    if (!selected) return null
+    const entry = entries.find(item => item.path === selected.path)
+    if (!entry) return `${selected.path}:${selected.staged ? 1 : 0}`
+    return [
+      selected.path,
+      selected.staged ? 1 : 0,
+      entry.status,
+      entry.indexStatus ?? "",
+      entry.worktreeStatus ?? "",
+      entry.staged ? 1 : 0,
+      entry.unstaged ? 1 : 0,
+    ].join("\0")
+  }, [entries, selected])
 
   useEffect(() => {
-    if (!rootUri || !api || !fsApi || !selected) {
+    if (!rootUri || !api || !fsApi || !selected || !selectedDiffKey) {
       setDiffContents(null)
       setHunks(null)
       return
@@ -313,7 +390,9 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       .finally(() => {
         if (request === diffRequest.current) setDiffLoading(false)
       })
-  }, [api, fsApi, rootUri, selected, entries])
+    // entries looked up inside; selectedDiffKey is the stable invalidation signal
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [api, fsApi, rootUri, selected, selectedDiffKey])
 
   useEffect(() => {
     const el = rootRef.current
@@ -594,6 +673,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-transparent"
       aria-label="Git workspace"
     >
+      <PierreDiffPool>
       <SessionHeaderChromePortal active>
         <GitPaneHeaderControls
           view={view}
@@ -612,6 +692,8 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         summary={summary}
         stagedCount={stagedCount}
         pendingAction={pendingAction}
+        commitDialogOpen={commitDialogOpen}
+        onCommitDialogOpenChange={setCommitDialogOpen}
         onCommit={commit}
         onRemoteAction={action => {
           if (!rootUri || !api) return
@@ -649,11 +731,16 @@ export function GitWorkspace(props: GitWorkspaceProps) {
             hash={GIT_WORKING_TREE_ID}
             workingTree
             onWorkingTreeChange={() => void refresh()}
+            onCommit={() => {
+              setWorkingTreeDialogOpen(false)
+              setCommitDialogOpen(true)
+            }}
             theme={theme}
             fontSize={fontSize}
           />
         </Suspense>
       ) : null}
+      </PierreDiffPool>
     </section>
   )
 }
@@ -747,6 +834,8 @@ function GitToolbar(props: {
   summary: GitRepositorySummary
   stagedCount: number
   pendingAction: string | null
+  commitDialogOpen: boolean
+  onCommitDialogOpenChange: (open: boolean) => void
   hideCommit?: boolean
   onCommit: (summary: string, body: string) => Promise<boolean>
   onRemoteAction: (action: "fetch" | "pull" | "push") => void
@@ -757,6 +846,8 @@ function GitToolbar(props: {
     summary,
     stagedCount,
     pendingAction,
+    commitDialogOpen,
+    onCommitDialogOpenChange,
     hideCommit = false,
     onCommit,
     onRemoteAction,
@@ -772,6 +863,8 @@ function GitToolbar(props: {
         {hideCommit ? null : (
           <GitCommitDialog
             key={repositoryKey}
+            open={commitDialogOpen}
+            onOpenChange={onCommitDialogOpenChange}
             branch={summary.branch}
             stagedCount={stagedCount}
             busy={busy}
@@ -817,22 +910,26 @@ function GitToolbar(props: {
 }
 
 function GitCommitDialog(props: {
+  open?: boolean
+  onOpenChange?: (open: boolean) => void
   branch: string | null
   stagedCount: number
   busy: boolean
   committing: boolean
   onCommit: (summary: string, body: string) => Promise<boolean>
 }) {
-  const { branch, stagedCount, busy, committing, onCommit } = props
-  const [open, setOpen] = useState(false)
+  const { open: controlledOpen, onOpenChange, branch, stagedCount, busy, committing, onCommit } = props
+  const [internalOpen, setInternalOpen] = useState(false)
   const [summary, setSummary] = useState("")
   const [body, setBody] = useState("")
   const summaryRef = useRef<HTMLInputElement>(null)
+  const open = controlledOpen ?? internalOpen
   const stagedLabel = `${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (!nextOpen && committing) return
-    setOpen(nextOpen)
+    if (controlledOpen === undefined) setInternalOpen(nextOpen)
+    onOpenChange?.(nextOpen)
   }
 
   const handleSubmit = async () => {
@@ -841,7 +938,7 @@ function GitCommitDialog(props: {
     if (!committed) return
     setSummary("")
     setBody("")
-    setOpen(false)
+    handleOpenChange(false)
   }
 
   return (

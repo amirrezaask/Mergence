@@ -281,19 +281,16 @@ export class WebHostTransport implements YaadeHostTransport {
   }
 
   private handleBinaryMessage(data: unknown): void {
-    let buffer: ArrayBuffer | null = null
-    if (data instanceof ArrayBuffer) buffer = data
-    else if (ArrayBuffer.isView(data)) {
-      buffer = data.buffer.slice(
-        data.byteOffset,
-        data.byteOffset + data.byteLength,
-      ) as ArrayBuffer
-    }
-    if (!buffer) {
+    // Prefer zero-copy views — decodeTerminalDataFrame accepts ArrayBufferView.
+    // Avoid TypedArray.buffer.slice() which allocated on every terminal:data frame.
+    let frame: ArrayBuffer | ArrayBufferView | null = null
+    if (data instanceof ArrayBuffer) frame = data
+    else if (ArrayBuffer.isView(data)) frame = data
+    if (!frame) {
       this.dispatch("protocol:error", "Unsupported realtime binary message")
       return
     }
-    const decoded = decodeTerminalDataFrame(buffer)
+    const decoded = decodeTerminalDataFrame(frame)
     if (!decoded) {
       this.dispatch("protocol:error", "Unsupported realtime binary message")
       return

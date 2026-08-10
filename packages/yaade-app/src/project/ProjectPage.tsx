@@ -1306,6 +1306,13 @@ export function ProjectPage({
           onNewGitWorktree={() => setWorktreeCreateOpen(true)}
           processes={runningSidebarItems}
           onOpenHq={onOpenHq}
+          onOpenSettings={() => {
+            if (session) {
+              window.dispatchEvent(new Event("yaade:open-settings"))
+            } else {
+              setSettingsOpen(true)
+            }
+          }}
           loading={processSidebar.loading}
           error={processSidebar.error}
           launcher={processLauncher}

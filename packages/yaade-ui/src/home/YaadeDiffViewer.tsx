@@ -1,12 +1,6 @@
 import { useMemo } from "react"
 import { DEFAULT_THEMES, parseDiffFromFile } from "@pierre/diffs"
-import {
-  FileDiff,
-  Virtualizer,
-  WorkerPoolContextProvider,
-} from "@pierre/diffs/react"
-// Vite resolves `?worker&url` to a built worker asset URL (requires worker.format: "es").
-import pierreWorkerUrl from "@pierre/diffs/worker/worker.js?worker&url"
+import { FileDiff, Virtualizer } from "@pierre/diffs/react"
 import type { YaadeTheme } from "@yaade/shared"
 
 import { cn } from "@/lib/utils.js"
@@ -23,28 +17,26 @@ export type YaadeDiffViewerProps = {
   className?: string
 }
 
-/** Vite-bundled Pierre Shiki worker (see https://diffs.com/docs → Worker Pool). */
-function pierreWorkerFactory(): Worker {
-  return new Worker(pierreWorkerUrl, { type: "module" })
-}
-
-const workerPoolAvailable = typeof Worker !== "undefined"
-const PIERRE_WORKER_POOL_SIZE = 2
-const PIERRE_AST_CACHE_SIZE = 16
-
-/** Cheap stable content identity for Worker Pool AST LRU. */
+/**
+ * O(1) content identity for Worker Pool AST LRU.
+ * Full FNV over multi-MiB files was a main-thread stall; length + samples suffice
+ * for cache keys (collision risk is acceptable for UI highlight cache).
+ */
 function contentCacheKey(side: "old" | "new", path: string, contents: string): string {
-  let hash = 2166136261
-  for (let i = 0; i < contents.length; i++) {
-    hash ^= contents.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-  return `${side}:${path}:${contents.length}:${(hash >>> 0).toString(36)}`
+  const len = contents.length
+  if (len === 0) return `${side}:${path}:0`
+  const head = contents.charCodeAt(0) ^ contents.charCodeAt(Math.min(63, len - 1))
+  const mid = contents.charCodeAt(len >>> 1)
+  const tail = contents.charCodeAt(len - 1)
+  return `${side}:${path}:${len}:${(head >>> 0).toString(36)}${mid.toString(36)}${tail.toString(36)}`
 }
+
+export { PierreDiffPool } from "./pierre-diff-pool.js"
 
 /**
  * Read-only git file diff via `@pierre/diffs`.
  * Callers own chrome (path/status toolbar); Pierre’s file header is disabled.
+ * Prefer wrapping ancestors in {@link PierreDiffPool}.
  *
  * Scroll + line virtualization live on `Virtualizer`; Shiki runs in the worker pool.
  */
@@ -53,19 +45,21 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
   const themeType = theme.scheme === "light" ? "light" : "dark"
 
   const fileDiff = useMemo(() => {
+    const oldKey = contentCacheKey("old", path, original)
+    const newKey = contentCacheKey("new", path, modified)
     const diff = parseDiffFromFile(
       {
         name: path,
         contents: original,
-        cacheKey: contentCacheKey("old", path, original),
+        cacheKey: oldKey,
       },
       {
         name: path,
         contents: modified,
-        cacheKey: contentCacheKey("new", path, modified),
+        cacheKey: newKey,
       },
     )
-    diff.cacheKey = `${path}:${contentCacheKey("old", path, original)}:${contentCacheKey("new", path, modified)}`
+    diff.cacheKey = `${path}:${oldKey}:${newKey}`
     return diff
   }, [path, original, modified])
 
@@ -104,35 +98,6 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
     [fontSize],
   )
 
-  const highlighterOptions = useMemo(
-    () => ({
-      theme: DEFAULT_THEMES,
-    }),
-    [],
-  )
-
-  const poolOptions = useMemo(
-    () => ({
-      workerFactory: pierreWorkerFactory,
-      poolSize: PIERRE_WORKER_POOL_SIZE,
-      totalASTLRUCacheSize: PIERRE_AST_CACHE_SIZE,
-    }),
-    [],
-  )
-
-  const diff = (
-    // Vertical scroll on Virtualizer; horizontal scroll stays on Pierre's
-    // [data-code] panes (overflow-x:hidden here so trackpad swipes aren't eaten).
-    <Virtualizer className="h-full min-h-0 w-full min-w-0 overflow-x-hidden overflow-y-auto">
-      <FileDiff
-        fileDiff={fileDiff}
-        options={options}
-        metrics={metrics}
-        className="block h-full w-full min-w-0 max-w-full"
-      />
-    </Virtualizer>
-  )
-
   return (
     <div
       data-yaade-pierre-diff=""
@@ -141,16 +106,16 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
         className,
       )}
     >
-      {workerPoolAvailable ? (
-        <WorkerPoolContextProvider
-          poolOptions={poolOptions}
-          highlighterOptions={highlighterOptions}
-        >
-          {diff}
-        </WorkerPoolContextProvider>
-      ) : (
-        diff
-      )}
+      {/* Vertical scroll on Virtualizer; horizontal scroll stays on Pierre's
+          [data-code] panes (overflow-x:hidden here so trackpad swipes aren't eaten). */}
+      <Virtualizer className="h-full min-h-0 w-full min-w-0 overflow-x-hidden overflow-y-auto">
+        <FileDiff
+          fileDiff={fileDiff}
+          options={options}
+          metrics={metrics}
+          className="block h-full w-full min-w-0 max-w-full"
+        />
+      </Virtualizer>
     </div>
   )
 }

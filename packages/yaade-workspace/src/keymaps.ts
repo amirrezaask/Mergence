@@ -47,22 +47,29 @@ function assertNoReservedChords(
 
 export class KeymapService {
   private layers: JetKeyBinding[][] = [[], [], []]
+  private cachedAll: JetKeyBinding[] | null = null
   readonly onDidChange = new Emitter<void>()
 
   registerUser(bindings: JetKeyBinding[]): void {
     assertNoReservedChords("user", bindings)
     this.layers[1] = bindings
+    this.cachedAll = null
     this.onDidChange.fire()
   }
 
   registerExtension(bindings: JetKeyBinding[]): void {
     assertNoReservedChords("extension", bindings)
     this.layers[2] = bindings
+    this.cachedAll = null
     this.onDidChange.fire()
   }
 
+  /** Stable snapshot until the next register* — safe to call per keydown. */
   allBindings(): JetKeyBinding[] {
-    return [...this.layers[2], ...this.layers[1], ...this.layers[0]]
+    if (!this.cachedAll) {
+      this.cachedAll = [...this.layers[2], ...this.layers[1], ...this.layers[0]]
+    }
+    return this.cachedAll
   }
 }
 

@@ -25,13 +25,8 @@ const FONT_SIZE_STEP = 2
 const DEFAULT_SIDEBAR_WIDTH = 300
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 480
-const LEGACY_LIGHT_THEME_IDS = new Set([
-  "catppuccin-latte",
-  "tokyonight-day",
-])
+const LEGACY_LIGHT_THEME_IDS = new Set(["tokyonight-day"])
 const LEGACY_DARK_THEME_IDS = new Set([
-  "catppuccin-mocha",
-  "catppuccin-macchiato",
   "tokyonight-night",
   "tokyonight-storm",
 ])
@@ -139,18 +134,29 @@ function loadStoredTheme(): {
   try {
     const rawTheme = localStorage.getItem(THEME_ID_STORAGE_KEY)
     const rawScheme = localStorage.getItem(COLOR_SCHEME_KEY)
-    const scheme = rawScheme === "light" ? "light" : "dark"
+    const scheme = rawScheme === "light" || rawScheme === "dark"
+      ? rawScheme
+      : preferredColorScheme()
     if (rawTheme) {
       const themeId = normalizeThemeId(rawTheme, scheme)
       return {
         themeId,
-        colorSchemeMode: getThemeById(themeId).scheme ?? scheme,
+        colorSchemeMode:
+          rawScheme === "system"
+            ? "system"
+            : (getThemeById(themeId).scheme ?? scheme),
       }
     }
     if (rawScheme === "light" || rawScheme === "dark") {
       return {
         themeId: defaultThemeIdForScheme(rawScheme),
         colorSchemeMode: rawScheme,
+      }
+    }
+    if (rawScheme === "system") {
+      return {
+        themeId: defaultThemeIdForScheme(preferredColorScheme()),
+        colorSchemeMode: "system",
       }
     }
   } catch {
@@ -247,7 +253,7 @@ function persistAppearanceSettings(settings: JetAppearanceSettings): void {
     localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(settings))
     localStorage.setItem(THEME_ID_STORAGE_KEY, settings.themeId)
     localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(settings.fontSize))
-    localStorage.setItem(COLOR_SCHEME_KEY, getThemeById(settings.themeId).scheme ?? "dark")
+    localStorage.setItem(COLOR_SCHEME_KEY, settings.colorSchemeMode)
   } catch {
     /* ignore */
   }

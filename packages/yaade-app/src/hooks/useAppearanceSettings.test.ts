@@ -8,16 +8,11 @@ import {
 } from "./useAppearanceSettings.js"
 
 describe("normalizeThemeId", () => {
-  it("migrates persisted legacy themes to their Default scheme", () => {
-    for (const id of ["catppuccin-latte", "tokyonight-day"]) {
-      assert.equal(normalizeThemeId(id), "default-light")
-    }
-    for (const id of [
-      "catppuccin-mocha",
-      "catppuccin-macchiato",
-      "tokyonight-night",
-      "tokyonight-storm",
-    ]) {
+  it("keeps Catppuccin themes and migrates removed themes", () => {
+    assert.equal(normalizeThemeId("catppuccin-latte"), "catppuccin-latte")
+    assert.equal(normalizeThemeId("catppuccin-mocha"), "catppuccin-mocha")
+    assert.equal(normalizeThemeId("tokyonight-day"), "default-light")
+    for (const id of ["tokyonight-night", "tokyonight-storm"]) {
       assert.equal(normalizeThemeId(id), "default-dark")
     }
   })

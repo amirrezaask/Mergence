@@ -18,7 +18,9 @@
           var lightLegacy = themeId === "catppuccin-latte" || themeId === "tokyonight-day"
           var scheme = raw === "light" || raw === "dark"
             ? raw
-            : themeId === "default-light" || lightLegacy ? "light" : "dark"
+            : raw === "system"
+              ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+              : themeId === "default-light" || lightLegacy ? "light" : "dark"
           if (scheme === "dark") document.documentElement.classList.add("dark")
           document.documentElement.dataset.yaadeSurface = "default"
         } catch (_) {

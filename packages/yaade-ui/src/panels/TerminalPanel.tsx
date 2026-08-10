@@ -75,6 +75,9 @@ type TerminalSession = {
   resizeQueued: boolean
   /** False before xterm disposal; every delayed measurement checks this. */
   live: boolean
+  /** Last container px used for FitAddon — skip fit when geometry unchanged. */
+  lastFitWidth: number
+  lastFitHeight: number
 }
 
 const MONO_FONT_FALLBACK = '"Commit Mono", ui-monospace, monospace'
@@ -220,15 +223,30 @@ function restoreScrollSnapshot(
 }
 
 /** Fit xterm to container. Returns true when cols/rows changed (PTY resize needed). */
-function fitWhenReady(session: TerminalSession, container: HTMLElement): boolean {
+function fitWhenReady(
+  session: TerminalSession,
+  container: HTMLElement,
+  opts?: { force?: boolean },
+): boolean {
   if (!session.live || !container.isConnected) return false
   const core = (session.term as XTerm & { _core?: { _isDisposed?: boolean } })._core
   if (!core || core._isDisposed) return false
-  if (container.clientWidth < 8 || container.clientHeight < 8) return false
+  const width = container.clientWidth
+  const height = container.clientHeight
+  if (width < 8 || height < 8) return false
+  if (
+    !opts?.force &&
+    session.lastFitWidth === width &&
+    session.lastFitHeight === height
+  ) {
+    return false
+  }
   const prevCols = session.term.cols
   const prevRows = session.term.rows
   const snapshot = captureScrollSnapshot(session.term, container)
   session.fit.fit()
+  session.lastFitWidth = width
+  session.lastFitHeight = height
   if (!cellMetricsValid(session.term)) return false
   if (session.term.cols <= 0 || session.term.rows <= 0) return false
   const changed = session.term.cols !== prevCols || session.term.rows !== prevRows
@@ -439,9 +457,9 @@ export function TerminalPanel({
     term.loadAddon(fit)
     term.open(container)
     // WebGL (Canvas fallback) — DomRenderer cannot keep up with agent TUI floods.
-    // Downgrade to Canvas when the pane is off-screen / unfocused to free GPU memory.
+    // Keep WebGL for the lifetime of a mounted panel; visibility only trims scrollback.
     const gpuRenderer = attachTerminalGpuRenderer(term)
-    gpuRenderer.setHighPerformance(visibleRef.current)
+    gpuRenderer.setHighPerformance(true)
     gpuRendererRef.current = gpuRenderer
     registerTerminalInstance(tabId, term)
     const panelEl = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
@@ -466,6 +484,8 @@ export function TerminalPanel({
       resizeInFlight: false,
       resizeQueued: false,
       live: true,
+      lastFitWidth: 0,
+      lastFitHeight: 0,
     }
     sessionRef.current = session
 
@@ -520,7 +540,11 @@ export function TerminalPanel({
         term.options.cursorBlink = cursorBlink
         changed = true
       }
-      if (changed && syncFit()) term.refresh(0, term.rows - 1)
+      if (changed) {
+        session.lastFitWidth = 0
+        session.lastFitHeight = 0
+        if (syncFit()) term.refresh(0, term.rows - 1)
+      }
     }
 
     const syncTheme = () => {
@@ -834,11 +858,10 @@ export function TerminalPanel({
     setDisplayExitCode(exitCode)
   }, [status, exitCode, sessionGeneration])
 
-  // Off-screen / LRU-evicted panes: Canvas renderer + shorter scrollback to cut GPU/RAM.
-  // Keep WebGL while the slot is on-screen even if unfocused — swapping renderers on
-  // every focus change disrupts input and TUI state.
+  // Keep WebGL for all mounted terminals — tearing WebGL↔Canvas on visibility
+  // (LRU / slot hide) caused flash and input hitch. Only trim scrollback off-slot.
   useEffect(() => {
-    gpuRendererRef.current?.setHighPerformance(visible)
+    gpuRendererRef.current?.setHighPerformance(true)
     const term = sessionRef.current?.term
     if (term) term.options.scrollback = visible ? 5_000 : 1_000
   }, [visible])

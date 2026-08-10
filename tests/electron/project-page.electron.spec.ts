@@ -305,22 +305,23 @@ test.describe("project page", () => {
         needle: "note.txt",
         noResultsText: "No files changed",
       })
-      const stageNote = page.getByRole("checkbox", { name: "Stage note.txt" })
-      await stageNote.click()
+      const changesDialog = page.locator("[data-yaade-commit-changes-dialog]")
+      await changesDialog.getByRole("button", { name: /^Stage all/ }).click()
       await expect
         .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
         .toContain("note.txt")
-      await expect(
-        page.getByRole("checkbox", { name: "Unstage note.txt" }),
-      ).toBeVisible()
-      await page.getByRole("checkbox", { name: "Unstage note.txt" }).click()
+      await expect(changesDialog.getByRole("button", { name: /^Unstage all/ })).toBeEnabled()
+      await changesDialog.getByRole("button", { name: /^Unstage all/ }).click()
       await expect
         .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
         .toBe("")
-      await page.getByRole("checkbox", { name: "Stage note.txt" }).click()
+      await changesDialog.getByRole("button", { name: /^Stage all/ }).click()
       await expect
         .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
         .toContain("note.txt")
+      await changesDialog.getByRole("button", { name: /^Commit/ }).click()
+      await page.locator("[data-yaade-git-commit-dialog]").waitFor({ state: "visible" })
+      await page.getByRole("button", { name: "Cancel" }).click()
       await page.keyboard.press("Escape")
       await page.locator("[data-yaade-commit-changes-dialog]").waitFor({
         state: "hidden",

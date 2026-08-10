@@ -289,6 +289,7 @@ export function HqPage({
     >
       <ProjectSidebar
         projects={availableProjects}
+        onOpenSettings={() => setSettingsOpen(true)}
         onSelectProject={project =>
           onOpenProject({ id: project.id, rootPath: project.rootPath })
         }

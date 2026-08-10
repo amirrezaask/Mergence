@@ -6,12 +6,13 @@ import type {
   GitStatusEntry,
   YaadeTheme,
 } from "@yaade/shared"
-import { FileDiffIcon, HistoryIcon } from "lucide-react"
+import { CircleDotIcon, FileDiffIcon, HistoryIcon } from "lucide-react"
 
 import {
   Dialog,
   DialogContent,
   DialogDescription,
+  DialogFooter,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.js"
@@ -37,6 +38,7 @@ import {
   loadWorkingTreeSnapshot,
 } from "./commit-diff.js"
 import { YaadeDiffViewer } from "./YaadeDiffViewer.js"
+import { PierreDiffPool } from "./pierre-diff-pool.js"
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -50,6 +52,7 @@ export type CommitChangesDialogProps = {
   hash: string
   workingTree?: boolean
   onWorkingTreeChange?: () => void
+  onCommit?: () => void
   theme: YaadeTheme
   fontSize?: number
   /** Optional row metadata when already known from a history list. */
@@ -58,6 +61,7 @@ export type CommitChangesDialogProps = {
 
 type DiffContents = { original: string; modified: string }
 type DiffStyle = "unified" | "split"
+const BULK_ACTION = "__bulk__"
 
 function storedDiffStyle(): DiffStyle {
   try {
@@ -86,6 +90,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     hash,
     workingTree = false,
     onWorkingTreeChange,
+    onCommit,
     theme,
     fontSize = 13,
     commit,
@@ -183,6 +188,28 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     }
   }
 
+  const runWorkingTreeBulkAction = async (action: "stage" | "unstage") => {
+    if (!api || !workingTree || workingTreePendingPath !== null) return
+    const paths = workingTreeEntries
+      .filter(entry => action === "stage" ? entry.unstaged : entry.staged)
+      .map(entry => entry.path)
+    if (paths.length === 0) return
+
+    setWorkingTreePendingPath(BULK_ACTION)
+    try {
+      await (action === "stage" ? api.stage(rootUri, paths) : api.unstage(rootUri, paths))
+      const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
+      setWorkingTreeEntries(snapshot.entries)
+      setDetail(snapshot.detail)
+      setSelectedPath(current => snapshot.detail.files.some(file => file.path === current) ? current : snapshot.detail.files[0]?.path ?? null)
+      onWorkingTreeChange?.()
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkingTreePendingPath(null)
+    }
+  }
+
   const selectedFile =
     detail?.files.find(file => file.path === selectedPath) ?? detail?.files[0] ?? null
 
@@ -231,6 +258,8 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const author = commit?.author
   const authoredAt = commit?.authoredAt
   const effectiveDiffStyle = compactLayout ? "unified" : diffStyle
+  const stagedCount = workingTreeEntries.filter(entry => entry.staged).length
+  const unstagedCount = workingTreeEntries.filter(entry => entry.unstaged).length
 
   const fileList = detail ? (
     <aside
@@ -406,47 +435,94 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
           </div>
         </DialogHeader>
 
-        <div className="flex min-h-0 flex-1 overflow-hidden">
-          {detailLoading && !detail ? (
-            <div className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
-              <Spinner /> Loading {workingTree ? "changes" : "commit"}…
-            </div>
-          ) : detailError ? (
-            <div className="flex flex-1 items-center justify-center p-6 text-sm text-destructive">
-              {detailError}
-            </div>
-          ) : !detail ? (
-            <CenteredEmpty
-              title={workingTree ? "Changes unavailable" : "Commit unavailable"}
-              description={
-                workingTree
-                  ? "Could not load the current working-tree changes."
-                  : "Could not load this commit’s changes."
-              }
-            />
-          ) : (
-            <ResizablePanelGroup
-              key={compactLayout ? "compact" : "wide"}
-              orientation={compactLayout ? "vertical" : "horizontal"}
-              className="min-h-0 flex-1 bg-transparent"
-            >
-              <ResizablePanel
-                defaultSize={compactLayout ? "34%" : "24%"}
-                minSize={compactLayout ? "128px" : "180px"}
-                maxSize={compactLayout ? "45%" : "38%"}
+        <PierreDiffPool>
+          <div className="flex min-h-0 flex-1 overflow-hidden">
+            {detailLoading && !detail ? (
+              <div className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
+                <Spinner /> Loading {workingTree ? "changes" : "commit"}…
+              </div>
+            ) : detailError ? (
+              <div className="flex flex-1 items-center justify-center p-6 text-sm text-destructive">
+                {detailError}
+              </div>
+            ) : !detail ? (
+              <CenteredEmpty
+                title={workingTree ? "Changes unavailable" : "Commit unavailable"}
+                description={
+                  workingTree
+                    ? "Could not load the current working-tree changes."
+                    : "Could not load this commit’s changes."
+                }
+              />
+            ) : (
+              <ResizablePanelGroup
+                key={compactLayout ? "compact" : "wide"}
+                orientation={compactLayout ? "vertical" : "horizontal"}
+                className="min-h-0 flex-1 bg-transparent"
               >
-                {fileList}
-              </ResizablePanel>
-              <ResizableHandle />
-              <ResizablePanel
-                defaultSize={compactLayout ? "66%" : "76%"}
-                minSize={compactLayout ? "220px" : "320px"}
+                <ResizablePanel
+                  defaultSize={compactLayout ? "34%" : "24%"}
+                  minSize={compactLayout ? "128px" : "180px"}
+                  maxSize={compactLayout ? "45%" : "38%"}
+                >
+                  {fileList}
+                </ResizablePanel>
+                <ResizableHandle />
+                <ResizablePanel
+                  defaultSize={compactLayout ? "66%" : "76%"}
+                  minSize={compactLayout ? "220px" : "320px"}
+                >
+                  {diffPane}
+                </ResizablePanel>
+              </ResizablePanelGroup>
+            )}
+          </div>
+        </PierreDiffPool>
+        {workingTree ? (
+          <DialogFooter
+            className="shrink-0 border-t border-border bg-card/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between"
+            data-yaade-working-tree-actions=""
+          >
+            <span className="font-mono text-2xs text-muted-foreground">
+              {stagedCount} staged · {unstagedCount} unstaged
+            </span>
+            <div className="flex flex-wrap items-center justify-end gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={workingTreePendingPath !== null || unstagedCount === 0}
+                aria-label={`Stage all ${unstagedCount} changed ${unstagedCount === 1 ? "file" : "files"}`}
+                data-yaade-commit-changes-stage-all=""
+                onClick={() => void runWorkingTreeBulkAction("stage")}
               >
-                {diffPane}
-              </ResizablePanel>
-            </ResizablePanelGroup>
-          )}
-        </div>
+                Stage all
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={workingTreePendingPath !== null || stagedCount === 0}
+                aria-label={`Unstage all ${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`}
+                data-yaade-commit-changes-unstage-all=""
+                onClick={() => void runWorkingTreeBulkAction("unstage")}
+              >
+                Unstage all
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                disabled={workingTreePendingPath !== null || stagedCount === 0 || !onCommit}
+                aria-label={stagedCount === 0 ? "No staged files to commit" : `Commit ${stagedCount} staged ${stagedCount === 1 ? "file" : "files"}`}
+                data-yaade-commit-changes-commit=""
+                onClick={onCommit}
+              >
+                <CircleDotIcon data-icon="inline-start" />
+                Commit
+              </Button>
+            </div>
+          </DialogFooter>
+        ) : null}
       </DialogContent>
     </Dialog>
   )
