@@ -203,8 +203,9 @@ export function emptyMuxTree(): YaadePanelTree {
 }
 
 /**
- * Display-only tree of terminal leaves for the Terminals project surface.
- * Panel ids differ from the source tree — map events back via tab id.
+ * Display-only tree of terminal leaves for the Running project surface.
+ * Includes agent-backed and shell PTYs. Panel ids match the source tree;
+ * map events back via tab id when needed.
  */
 export function buildTerminalOnlyDisplayTree(
   source: YaadePanelTree,

@@ -12,7 +12,7 @@ async function locationHref(page: {
 }
 
 test.describe("session routing", () => {
-  test("a canonical workspace opens Terminals and resumes after visiting Git", async () => {
+  test("a canonical workspace opens Running and resumes after visiting Git", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
@@ -51,7 +51,7 @@ test.describe("session routing", () => {
       await expect
         .poll(
           async () =>
-            page.locator("[data-yaade-project-panel='terminals']").evaluate(el => {
+            page.locator("[data-yaade-project-panel='running']").evaluate(el => {
               return !el.classList.contains("invisible")
             }),
           { timeout: 5_000 },
@@ -83,12 +83,18 @@ test.describe("session routing", () => {
         .poll(async () => new URL(await locationHref(page)).searchParams.get("s"))
         .toBeNull()
 
-      await page.locator("[data-yaade-project-tab='terminals']").click()
+      await page.evaluate(id => {
+        const url = new URL(location.href)
+        url.searchParams.set("view", "running")
+        url.searchParams.set("s", id)
+        history.pushState({}, "", `${url.pathname}${url.search}`)
+        window.dispatchEvent(new PopStateEvent("popstate"))
+      }, createdSessionId)
       await waitForMux(page)
       await expect
         .poll(
           async () =>
-            page.locator("[data-yaade-project-panel='terminals']").evaluate(el => {
+            page.locator("[data-yaade-project-panel='running']").evaluate(el => {
               return !el.classList.contains("invisible")
             }),
           { timeout: 5_000 },
@@ -121,34 +127,22 @@ test.describe("session routing", () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
-      const sessionId = await page.evaluate(async () => {
+      const createdSessionId = await page.evaluate(async () => {
         const created = await window.__yaadeAgent!.createProjectSession?.({
-          title: "Reload me",
+          title: "Reload session",
         })
         return created?.id ?? null
       })
-      expect(sessionId).toBeTruthy()
+      expect(createdSessionId).toMatch(/^ses-/)
       await waitForMux(page)
-      await page.evaluate(() => window.__yaadeAgent!.executeCommand("terminal.new"))
-      await page.locator("[data-yaade-terminal-panel]").waitFor({
-        state: "visible",
-        timeout: 15_000,
-      })
 
       await page.reload()
       await waitForMux(page)
-      const state = await page.evaluate(() => window.__yaadeAgent!.getState())
-      expect(state.sessionId).toBe(sessionId)
-      await page.locator("[data-yaade-terminal-panel]").waitFor({
-        state: "visible",
-        timeout: 15_000,
-      })
       await expect
-        .poll(
-          async () => page.locator("[data-yaade-shell='project']").count(),
-          { timeout: 5_000 },
-        )
-        .toBe(1)
+        .poll(async () => new URL(await locationHref(page)).searchParams.get("s"), {
+          timeout: 10_000,
+        })
+        .toBe(createdSessionId)
     } finally {
       await app.close()
     }

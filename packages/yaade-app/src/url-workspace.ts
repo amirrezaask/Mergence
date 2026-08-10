@@ -198,9 +198,8 @@ export function sessionIdFromSearch(
 
 export const PROJECT_VIEWS = [
   "changes",
-  "agents",
+  "running",
   "editors",
-  "terminals",
   "history",
 ] as const
 
@@ -210,8 +209,7 @@ export type ProjectRoute = {
   view: ProjectView
   workspaceId: string | null
   checkoutKey: string | null
-  agentRunId: string | null
-  terminalInstanceId: string | null
+  processId: string | null
 }
 
 function nonEmptyParam(params: URLSearchParams, key: string): string | null {
@@ -219,24 +217,30 @@ function nonEmptyParam(params: URLSearchParams, key: string): string | null {
   return value.length > 0 ? value : null
 }
 
-/** Parse the complete project route. Legacy `?s=` links open Terminals. */
+function normalizeProjectView(requestedView: string | null, workspaceId: string | null): ProjectView {
+  if (requestedView === "agents" || requestedView === "terminals") return "running"
+  if (PROJECT_VIEWS.includes(requestedView as ProjectView)) {
+    return requestedView as ProjectView
+  }
+  return workspaceId ? "running" : "history"
+}
+
+/** Parse the complete project route. Legacy `?s=` links open Running. */
 export function projectRouteFromSearch(
   search: string = typeof location !== "undefined" ? location.search : "",
 ): ProjectRoute {
   const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search)
   const workspaceId = nonEmptyParam(params, "s")
   const requestedView = nonEmptyParam(params, "view")
-  const view = PROJECT_VIEWS.includes(requestedView as ProjectView)
-    ? (requestedView as ProjectView)
-    : workspaceId
-      ? "terminals"
-      : "history"
+  const processId =
+    nonEmptyParam(params, "process")
+    ?? nonEmptyParam(params, "agent")
+    ?? nonEmptyParam(params, "terminal")
   return {
-    view,
+    view: normalizeProjectView(requestedView, workspaceId),
     workspaceId,
     checkoutKey: nonEmptyParam(params, "checkout"),
-    agentRunId: nonEmptyParam(params, "agent"),
-    terminalInstanceId: nonEmptyParam(params, "terminal"),
+    processId,
   }
 }
 
@@ -251,11 +255,8 @@ export function projectRouteUrl(
   if (route.checkoutKey && route.checkoutKey !== "main") {
     params.set("checkout", route.checkoutKey)
   }
-  if (route.agentRunId && route.view === "agents") {
-    params.set("agent", route.agentRunId)
-  }
-  if (route.terminalInstanceId && route.view === "terminals") {
-    params.set("terminal", route.terminalInstanceId)
+  if (route.processId && route.view === "running") {
+    params.set("process", route.processId)
   }
   const query = params.toString()
   return `${pathname || "/"}${query ? `?${query}` : ""}`

@@ -1,17 +1,17 @@
 import { expect, test } from "@playwright/test"
 import { expectSelectorVisible } from "../shell/assert.js"
-import { execCommand, launchJet, waitForMux } from "./_launch.js"
+import { launchJet, openMuxTerminal, waitForMux } from "./_launch.js"
 
 /**
- * Mux chrome smoke tests for the project Terminals surface (sidebar + single
+ * Mux chrome smoke tests for the project Running surface (sidebar + single
  * focused pane). Tiled MuxPaneChrome controls/zoom are no longer shown there.
  */
 test.describe("mux chrome", () => {
-  test("terminals surface shows instance sidebar and focused pane chrome", async () => {
+  test("Running surface shows instance sidebar and focused pane chrome", async () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="terminals"]')
+      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="running"]')
       await expectSelectorVisible(page, "[data-yaade-mux-pane-chrome]")
       await expect
         .poll(async () =>
@@ -37,12 +37,15 @@ test.describe("mux chrome", () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-      await execCommand(page, "terminal.new")
+      await page
+        .locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]')
+        .click()
+      await page.locator("[data-yaade-worktree-main]").click()
       await expect
         .poll(async () =>
           page
             .locator(
-              '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+              '[data-yaade-list-panel="mux-running"] [data-yaade-list-item]',
             )
             .count(),
         )
@@ -51,11 +54,12 @@ test.describe("mux chrome", () => {
         .poll(async () =>
           page
             .locator(
-              '[data-yaade-project-surface="terminals"] [data-yaade-mux-pane-kind="terminal"]',
+              '[data-yaade-project-surface="running"] [data-yaade-mux-pane-kind="terminal"]',
             )
             .count(),
         )
         .toBe(1)
+      await openMuxTerminal(page)
     } finally {
       await app.close()
     }

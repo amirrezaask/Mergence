@@ -216,6 +216,18 @@ export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise
   throw new Error("waitForMux: timed out waiting for project page or mux shell")
 }
 
+async function confirmTerminalCheckout(page: ShellDriver): Promise<void> {
+  const main = page.locator("[data-yaade-worktree-main]")
+  const deadline = Date.now() + 3_000
+  while (Date.now() < deadline) {
+    if ((await main.count()) > 0) {
+      await main.click()
+      return
+    }
+    await page.waitForTimeout(50)
+  }
+}
+
 /** Open a terminal pane from the instance sidebar / empty CTA (or no-op if one exists). */
 export async function openMuxTerminal(
   page: ShellDriver,
@@ -225,31 +237,49 @@ export async function openMuxTerminal(
   const terminal = page.locator("[data-yaade-terminal-panel]")
   const emptyTile = page.locator('[data-yaade-mux-empty-action="terminal"]')
   const sidebarNew = page.locator(
-    '[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]',
+    '[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]',
   )
-  const emptyCta = page
-    .locator('[data-yaade-project-surface="terminals"]')
-    .getByRole("button", { name: "New terminal" })
+  const projectNew = page.locator('[data-yaade-project-process-new="running"]')
+  const emptyCta = page.locator(
+    '[data-yaade-project-surface="running"] [data-yaade-running-empty-new-terminal], [data-yaade-project-surface="running"] button:has-text("New terminal")',
+  )
   while (Date.now() < deadline) {
     // Restored sessions can hydrate their terminal after waitForMux resolves.
     // Do not wait exclusively for the empty picker in that transition window.
     if ((await terminal.count()) > 0) return
     if ((await emptyTile.count()) > 0) {
       await emptyTile.click()
-      await page.waitForSelector("[data-yaade-terminal-panel]", {
-        timeout: Math.max(1_000, deadline - Date.now()),
-      })
-      return
-    }
-    if ((await sidebarNew.count()) > 0) {
-      await sidebarNew.click()
+      await confirmTerminalCheckout(page)
       await page.waitForSelector("[data-yaade-terminal-panel]", {
         timeout: Math.max(1_000, deadline - Date.now()),
       })
       return
     }
     if ((await emptyCta.count()) > 0) {
-      await emptyCta.click()
+      await emptyCta.first().click()
+      await confirmTerminalCheckout(page)
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
+    if ((await sidebarNew.count()) > 0) {
+      await sidebarNew.first().click()
+      await confirmTerminalCheckout(page)
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
+    if ((await projectNew.count()) > 0) {
+      await projectNew.first().click()
+      const shellProvider = page.locator('[data-yaade-agent-provider="terminal"]')
+      const providerDeadline = Date.now() + 3_000
+      while (Date.now() < providerDeadline && (await shellProvider.count()) === 0) {
+        await page.waitForTimeout(50)
+      }
+      if ((await shellProvider.count()) > 0) await shellProvider.click()
+      await confirmTerminalCheckout(page)
       await page.waitForSelector("[data-yaade-terminal-panel]", {
         timeout: Math.max(1_000, deadline - Date.now()),
       })

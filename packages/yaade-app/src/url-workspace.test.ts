@@ -101,18 +101,27 @@ describe("url-workspace", () => {
     assert.equal(joinProjectPath("/", "tmp"), "/tmp")
   })
 
-  it("defaults bare project routes to Git and preserves legacy terminal links", () => {
+  it("defaults bare project routes to Git and maps legacy agent/terminal views to running", () => {
     assert.deepEqual(projectRouteFromSearch(""), {
       view: "history",
       workspaceId: null,
       checkoutKey: null,
-      agentRunId: null,
-      terminalInstanceId: null,
+      processId: null,
     })
-    assert.equal(projectRouteFromSearch("?s=ses-1").view, "terminals")
+    assert.equal(projectRouteFromSearch("?s=ses-1").view, "running")
+    assert.equal(projectRouteFromSearch("?view=agents").view, "running")
+    assert.equal(projectRouteFromSearch("?view=terminals").view, "running")
+    assert.equal(
+      projectRouteFromSearch("?view=running&agent=run-1").processId,
+      "run-1",
+    )
+    assert.equal(
+      projectRouteFromSearch("?view=running&terminal=term-1").processId,
+      "term-1",
+    )
   })
 
-  it("round-trips deep-linked workspaces, checkouts, and agent runs", () => {
+  it("round-trips deep-linked workspaces, checkouts, and processes", () => {
     assert.equal(
       projectRouteUrl("/dev/yaade", {
         view: "editors",
@@ -122,19 +131,19 @@ describe("url-workspace", () => {
     )
     assert.equal(
       projectRouteUrl("/dev/yaade", {
-        view: "agents",
+        view: "running",
         workspaceId: "ses-1",
-        agentRunId: "run-1",
+        processId: "run-1",
       }),
-      "/dev/yaade?view=agents&s=ses-1&agent=run-1",
+      "/dev/yaade?view=running&s=ses-1&process=run-1",
     )
     assert.equal(
       projectRouteUrl("/dev/yaade", {
-        view: "terminals",
+        view: "running",
         workspaceId: "ses-1",
         checkoutKey: "wt-key",
       }),
-      "/dev/yaade?view=terminals&s=ses-1&checkout=wt-key",
+      "/dev/yaade?view=running&s=ses-1&checkout=wt-key",
     )
     assert.deepEqual(
       projectRouteFromSearch("?view=changes&checkout=wt-key"),
@@ -142,17 +151,16 @@ describe("url-workspace", () => {
         view: "changes",
         workspaceId: null,
         checkoutKey: "wt-key",
-        agentRunId: null,
-        terminalInstanceId: null,
+        processId: null,
       },
     )
     assert.equal(
       projectRouteUrl("/dev/yaade", {
-        view: "terminals",
+        view: "running",
         workspaceId: null,
-        terminalInstanceId: "terminal-1",
+        processId: "terminal-1",
       }),
-      "/dev/yaade?view=terminals&terminal=terminal-1",
+      "/dev/yaade?view=running&process=terminal-1",
     )
   })
 })

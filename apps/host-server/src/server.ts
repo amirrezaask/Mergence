@@ -1039,20 +1039,13 @@ async function handleHttp(
         return p.rootPath === rootPath
       }
     })
-    const blockingAgents = runtime.agentRuns
-      .listLive(project?.id)
-      .filter(run => {
-        try {
-          return (
-            fs.realpathSync(run.checkoutPath) === fs.realpathSync(worktreePath)
-          )
-        } catch {
-          return run.checkoutPath === worktreePath
-        }
-      })
-      .map(run => ({ kind: "agent" as const, id: run.runId, title: run.title }))
     const liveTerminalInstances = runtime.terminalInstances.listLiveForCheckout(canonicalWorktreePath)
-    const registeredTerminals = liveTerminalInstances.map(instance => ({
+    const blockingAgents = liveTerminalInstances
+      .filter(instance => instance.provider)
+      .map(instance => ({ kind: "agent" as const, id: instance.id, title: instance.title }))
+    const registeredTerminals = liveTerminalInstances
+      .filter(instance => !instance.provider)
+      .map(instance => ({
         kind: "terminal" as const,
         id: instance.id,
         title: instance.title,

@@ -10,25 +10,26 @@ import {
   waitForTerminalText,
 } from "./_launch.js"
 
-const TERMINALS_ITEMS =
-  '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]'
+const RUNNING_ITEMS =
+  '[data-yaade-list-panel="project-running"] [data-yaade-list-item]'
 
 test.describe("project instance sidebars", () => {
-  test("Terminals reconstruct from the server across navigation and reload", async () => {
+  test("Running reconstructs from the server across navigation and reload", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
-      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="terminals"]')
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
 
-      await page.locator('[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]').click()
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="terminal"]').click()
       await page.locator('[data-yaade-worktree-main]').click()
       await expectListRows(page, {
-        panel: "project-terminals",
+        panel: "project-running",
         minItems: 1,
         needle: "Main",
-        noResultsText: "No terminals yet",
+        noResultsText: "No processes yet",
       })
       const item = page.locator(
-        `${TERMINALS_ITEMS} button[data-yaade-instance-sidebar-item]`,
+        `${RUNNING_ITEMS} button[data-yaade-instance-sidebar-item]`,
       ).first()
       const instanceId = await item.getAttribute("data-yaade-instance-sidebar-item")
       expect(instanceId).toBeTruthy()
@@ -56,12 +57,12 @@ test.describe("project instance sidebars", () => {
 
       await page.reload()
       await waitForProjectPage(page)
-      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="terminals"]')
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
       await expectSelectorVisible(page, `[data-yaade-instance-sidebar-item="${instanceId}"]`)
       await waitForTerminalText(page, "yaade-server-owned-terminal")
       const after = await page.evaluate(async projectId => {
         const rows = await window.yaade!.terminal!.listInstances(projectId)
-        return rows.find(row => row.id === new URL(location.href).searchParams.get("terminal"))
+        return rows.find(row => row.id === new URL(location.href).searchParams.get("process"))
       }, before!.projectId)
       expect(after?.id).toBe(before?.id)
       expect(after?.ptyId).toBe(before?.ptyId)
@@ -72,22 +73,22 @@ test.describe("project instance sidebars", () => {
           async () =>
             page
               .locator(
-                `[data-yaade-list-panel="project-terminals"] [data-yaade-instance-sidebar-item="${instanceId}"]`,
+                `[data-yaade-list-panel="project-running"] [data-yaade-instance-sidebar-item="${instanceId}"]`,
               )
               .count(),
           { timeout: 15_000 },
         )
         .toBe(0)
       await expectLocatorContainsText(
-        page.locator('[data-yaade-list-panel="project-terminals"]'),
-        "No terminals yet",
+        page.locator('[data-yaade-list-panel="project-running"]'),
+        "No processes yet",
       )
     } finally {
       await app.close()
     }
   })
 
-  test("Agents tab keeps an instance sidebar before launch", async () => {
+  test("Running keeps an agent launcher before launch", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
@@ -95,9 +96,10 @@ test.describe("project instance sidebars", () => {
         .poll(async () => page.locator('[data-yaade-project-tab="native-agents"]').count())
         .toBe(0)
 
-      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="agents"]')
-      await page.locator('[data-yaade-project-process-new="agents"]').click()
-      await expectSelectorVisible(page, "[data-yaade-agent-launch-menu]")
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await expectSelectorVisible(page, "[data-yaade-process-launch-menu]")
+      await expectSelectorVisible(page, '[data-yaade-agent-provider="terminal"]')
       await expectSelectorVisible(page, '[data-yaade-agent-provider="codex"]')
       await page.locator('[data-yaade-agent-provider="codex"]').click()
       await expectSelectorVisible(page, "[data-yaade-worktree-main]")

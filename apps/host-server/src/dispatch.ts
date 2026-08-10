@@ -281,14 +281,22 @@ async function handleAgents(
       return runtime.agentRuns.listProviders(args[0] === true)
     case "agents:listLive": {
       const projectId = typeof args[0] === "string" && args[0] ? args[0] : undefined
-      return runtime.agentRuns.listLive(projectId)
+      return runtime.terminalInstances.listLive(projectId)
+        .filter(instance => instance.provider)
+        .map(instanceToAgentRunInfo)
     }
     case "agents:listProject":
-      return runtime.agentRuns.listProject(str(args[0], "projectId"))
-    case "agents:get":
-      return runtime.agentRuns.get(str(args[0], "runId"))
-    case "agents:getTranscript":
-      return runtime.agentRuns.transcript(str(args[0], "runId"))
+      return runtime.terminalInstances.listProject(str(args[0], "projectId"))
+        .filter(instance => instance.provider)
+        .map(instanceToAgentRunInfo)
+    case "agents:get": {
+      const instance = runtime.terminalInstances.get(str(args[0], "runId"))
+      return instance?.provider ? instanceToAgentRunInfo(instance) : runtime.agentRuns.get(str(args[0], "runId"))
+    }
+    case "agents:getTranscript": {
+      const fromInstance = runtime.terminalInstances.transcript(str(args[0], "runId"))
+      return fromInstance ?? runtime.agentRuns.transcript(str(args[0], "runId"))
+    }
     case "agents:listActivity": {
       const body = (args[0] as { limit?: number; cursor?: string; projectId?: string } | undefined) ?? {}
       return runtime.agentRuns.listActivity(body)
@@ -307,123 +315,41 @@ async function handleAgents(
       if (!body?.launchRequestId || !body.provider || !body.projectId || !body.workspaceId) {
         throw new Error("agents:launch requires launchRequestId, provider, projectId, and workspaceId")
       }
-      const provider = parseAgentProvider(body.provider)
-      if (!provider) throw new Error("invalid agent provider")
-      const workspace = runtime.db.raw().prepare(
-        `SELECT id, project_path, cwd_path FROM project_sessions
-          WHERE id=? AND archived_at IS NULL`,
-      ).get(body.workspaceId) as { id: string; project_path: string; cwd_path: string } | undefined
-      const project = runtime.db.project(body.projectId)
-      if (!project || !workspace || workspace.project_path !== project.rootPath) {
-        throw new Error("project workspace is unavailable")
-      }
-      const checkoutPathRaw =
-        typeof body.checkoutPath === "string" && body.checkoutPath.trim()
-          ? body.checkoutPath.trim()
-          : workspace.cwd_path
-      let checkoutPath: string
-      try {
-        checkoutPath = fs.realpathSync(path.resolve(checkoutPathRaw))
-      } catch {
-        throw new Error("agent checkout path is unavailable")
-      }
-      if (!pathAllowed(checkoutPath, runtime.config.allowedRoots)) {
-        throw new Error("agent checkout path outside allowed roots")
-      }
-      const title = typeof body.title === "string" && body.title.trim()
-        ? body.title.trim().slice(0, 160)
-        : `${provider.charAt(0).toUpperCase()}${provider.slice(1)} agent`
-      const checkoutKey =
-        typeof body.checkoutKey === "string" && body.checkoutKey
-          ? body.checkoutKey
-          : checkoutPath === project.rootPath
-            ? "main"
-            : checkoutPath
-      const reservation = runtime.agentRuns.reserve({
+      const instance = await createTerminalInstance(runtime, {
+        projectId: body.projectId,
+        workspaceId: body.workspaceId,
+        checkoutKey: body.checkoutKey,
+        checkoutPath: body.checkoutPath,
+        title: body.title,
+        provider: body.provider,
         launchRequestId: body.launchRequestId,
-        provider,
-        projectId: project.id,
-        workspaceId: workspace.id,
-        checkoutKey,
-        checkoutPath,
-        title,
-      })
-      if (!reservation.created) {
-        return { run: reservation.run, pty: reservation.run.ptyId ? runtime.terminal.inspect(reservation.run.ptyId) : null }
-      }
-      const run = runtime.agentRuns.begin(reservation.run.runId, reservation.run.generation)
-      if (!run) throw new Error("could not start agent run")
-      const availability = runtime.agentRuns.providerAvailable(provider)
-      if (!availability.available) {
-        runtime.agentRuns.failReservation(run.runId, run.generation, availability.error ?? "provider unavailable")
-        throw new Error(availability.error ?? `${availability.binary} is not available`)
-      }
-      let launchArgs: string[] = []
-      let launchEnv: Record<string, string> = {}
-      let telemetryError: string | null = null
-      try {
-        installProjectHooksForProvider(provider, project.rootPath, runtime.config.dataDir)
-        const driver = getCliAgentDriver(provider)
-        const origin = `http://${runtime.config.host}:${runtime.config.port}`
-        const ingestUrl = new URL("/api/v1/notifications/ingest", origin)
-        ingestUrl.searchParams.set("provider", provider)
-        ingestUrl.searchParams.set("sessionId", run.runId)
-        const installed = await driver.installHooks({
-          sessionId: run.runId,
-          projectRoot: checkoutPath,
-          ingestUrl: ingestUrl.toString(),
-          provider,
-          origin,
-        })
-        launchArgs = installed.launchArgs
-        launchEnv = installed.env
-      } catch (error) {
-        telemetryError = error instanceof Error ? error.message : String(error)
-      }
-      try {
-        const userArgs = Array.isArray(body.args)
-          ? body.args.filter((value): value is string => typeof value === "string")
-          : []
-        const created = runtime.terminal.create(pathToFileUri(checkoutPath), {
-          command: availability.binary,
-          args: [...launchArgs, ...userArgs],
-          env: launchEnv,
-        }, clientId)
-        const bound = runtime.agentRuns.bindPty(run.runId, run.generation, created.id)
-        if (!bound) throw new Error("agent process binding was rejected")
-        runtime.db.recordSession(created.id, "terminal", "running", { title: created.title })
-        runtime.notifications.bindSession({
-          sessionId: bound.runId,
-          runId: bound.runId,
-          projectId: project.id,
-          projectName: project.name,
-          sessionTitle: bound.title,
-          provider,
-          ptyId: created.id,
-        })
-        agents.onProcessStarted({
-          provider,
-          sessionId: bound.runId,
-          processId: created.id,
-          projectId: project.id,
-          cwd: checkoutPath,
-        })
-        const finalRun = telemetryError
-          ? runtime.agentRuns.markTelemetryDegraded(bound.runId, bound.generation, telemetryError)
-          : runtime.agentRuns.get(bound.runId)
-        return { run: finalRun ?? bound, pty: { id: created.id, title: created.title } }
-      } catch (error) {
-        runtime.agentRuns.failReservation(
-          run.runId,
-          run.generation,
-          error instanceof Error ? error.message : String(error),
-        )
-        throw error
+        args: body.args,
+      }, clientId)
+      return {
+        run: instanceToAgentRunInfo(instance),
+        pty: instance.ptyId
+          ? { id: instance.ptyId, title: instance.title }
+          : null,
       }
     }
     case "agents:stop": {
       const body = args[0] as { runId?: string; generation?: number }
       if (!body?.runId) throw new Error("agents:stop requires runId")
+      const instance = runtime.terminalInstances.get(body.runId)
+      if (instance) {
+        if (body.generation != null && body.generation !== instance.generation) {
+          return instanceToAgentRunInfo(instance)
+        }
+        if (instance.ptyId) {
+          runtime.terminal.dispose(instance.ptyId)
+        }
+        const closed = runtime.terminalInstances.close(
+          instance.id,
+          instance.generation,
+          "",
+        )
+        return closed?.provider ? instanceToAgentRunInfo(closed) : null
+      }
       const run = runtime.agentRuns.get(body.runId)
       if (!run) return null
       if (body.generation != null && body.generation !== run.generation) return run
@@ -437,6 +363,21 @@ async function handleAgents(
     case "agents:close": {
       const body = args[0] as { runId?: string; generation?: number }
       if (!body?.runId) throw new Error("agents:close requires runId")
+      const instance = runtime.terminalInstances.get(body.runId)
+      if (instance) {
+        if (body.generation != null && body.generation !== instance.generation) {
+          return instanceToAgentRunInfo(instance)
+        }
+        if (instance.ptyId) {
+          runtime.terminal.dispose(instance.ptyId)
+        }
+        const closed = runtime.terminalInstances.close(
+          instance.id,
+          instance.generation,
+          "",
+        )
+        return closed?.provider ? instanceToAgentRunInfo(closed) : null
+      }
       const run = runtime.agentRuns.get(body.runId)
       if (!run) return null
       if (body.generation != null && body.generation !== run.generation) return run
@@ -515,6 +456,205 @@ function parseAgentProvider(
     return value
   }
   return null
+}
+
+function instanceToAgentRunInfo(instance: import("./terminal-instances.js").TerminalInstance) {
+  if (!instance.provider) {
+    throw new Error("terminal instance is not an agent process")
+  }
+  return {
+    runId: instance.id,
+    launchRequestId: instance.launchRequestId ?? instance.id,
+    generation: instance.generation,
+    provider: instance.provider,
+    projectId: instance.projectId,
+    workspaceId: instance.workspaceId ?? "",
+    checkoutKey: instance.checkoutKey,
+    checkoutPath: instance.checkoutPath,
+    title: instance.title,
+    ptyId: instance.ptyId,
+    nativeSessionId: instance.nativeSessionId,
+    processState: instance.processState === "failed" ? "exited" as const : instance.processState,
+    activityState: instance.activityState,
+    telemetryState: instance.telemetryState,
+    createdAt: instance.createdAt,
+    startedAt: instance.startedAt,
+    lastActivityAt: instance.lastActivityAt,
+    endedAt: instance.endedAt,
+    exitCode: instance.exitCode,
+    endReason: instance.endReason,
+    telemetryError: instance.telemetryError,
+    revision: instance.revision,
+  }
+}
+
+async function createTerminalInstance(
+  runtime: HostRuntime,
+  rawBody: unknown,
+  clientId: string,
+): Promise<import("./terminal-instances.js").TerminalInstance> {
+  const body = (rawBody ?? {}) as {
+    projectId?: string
+    checkoutKey?: string
+    checkoutPath?: string
+    title?: string
+    provider?: string
+    workspaceId?: string
+    launchRequestId?: string
+    args?: string[]
+  }
+  if (!body.projectId) {
+    throw new Error("terminal:createInstance requires projectId")
+  }
+  const provider = body.provider ? parseAgentProvider(body.provider) : null
+  if (body.provider && !provider) throw new Error("invalid agent provider")
+
+  const project = runtime.db.project(body.projectId)
+  if (!project) throw new Error("project is unavailable")
+
+  let workspaceId: string | null = null
+  let checkoutPathRaw = body.checkoutPath?.trim() ?? ""
+  if (body.workspaceId) {
+    const workspace = runtime.db.raw().prepare(
+      `SELECT id, project_path, cwd_path FROM project_sessions
+        WHERE id=? AND archived_at IS NULL`,
+    ).get(body.workspaceId) as { id: string; project_path: string; cwd_path: string } | undefined
+    if (!workspace || workspace.project_path !== project.rootPath) {
+      throw new Error("project workspace is unavailable")
+    }
+    workspaceId = workspace.id
+    if (!checkoutPathRaw) checkoutPathRaw = workspace.cwd_path
+  }
+  if (!checkoutPathRaw) {
+    throw new Error("terminal:createInstance requires checkoutPath")
+  }
+
+  let checkoutPath: string
+  try {
+    checkoutPath = fs.realpathSync(path.resolve(checkoutPathRaw))
+  } catch {
+    throw new Error("terminal checkout path is unavailable")
+  }
+  if (!pathAllowed(checkoutPath, runtime.config.allowedRoots)) {
+    throw new Error("terminal checkout path outside allowed roots")
+  }
+
+  const checkoutKey =
+    body.checkoutKey?.trim() || (checkoutPath === project.rootPath ? "main" : checkoutPath)
+  const title = body.title?.trim().slice(0, 160)
+    || (provider
+      ? `${provider.charAt(0).toUpperCase()}${provider.slice(1)} agent`
+      : "Terminal")
+
+  if (body.launchRequestId) {
+    const existing = runtime.terminalInstances.byLaunchRequestId(body.launchRequestId)
+    if (existing) return existing
+  }
+
+  const instance = runtime.terminalInstances.reserve({
+    projectId: project.id,
+    workspaceId,
+    checkoutKey,
+    checkoutPath,
+    title,
+    provider,
+    launchRequestId: body.launchRequestId ?? null,
+  })
+
+  try {
+    if (!provider) {
+      const created = runtime.terminal.create(pathToFileUri(checkoutPath), null, clientId)
+      return runtime.terminalInstances.bindPty(
+        instance.id,
+        instance.generation,
+        created.id,
+        created.title,
+      ) ?? instance
+    }
+
+    const availability = runtime.agentRuns.providerAvailable(provider)
+    if (!availability.available) {
+      runtime.terminalInstances.fail(
+        instance.id,
+        instance.generation,
+        availability.error ?? "provider unavailable",
+      )
+      throw new Error(availability.error ?? `${availability.binary} is not available`)
+    }
+    const caps = getCliAgentDriver(provider).getCapabilities()
+    const processOnly =
+      !caps.sessionLifecycle && !caps.promptLifecycle && !caps.toolLifecycle && !caps.permissions
+    let launchArgs: string[] = []
+    let launchEnv: Record<string, string> = {}
+    let telemetryError: string | null = null
+    try {
+      installProjectHooksForProvider(provider, project.rootPath, runtime.config.dataDir)
+      const driver = getCliAgentDriver(provider)
+      const origin = `http://${runtime.config.host}:${runtime.config.port}`
+      const ingestUrl = new URL("/api/v1/notifications/ingest", origin)
+      ingestUrl.searchParams.set("provider", provider)
+      ingestUrl.searchParams.set("sessionId", instance.id)
+      const installed = await driver.installHooks({
+        sessionId: instance.id,
+        projectRoot: checkoutPath,
+        ingestUrl: ingestUrl.toString(),
+        provider,
+        origin,
+      })
+      launchArgs = installed.launchArgs
+      launchEnv = installed.env
+    } catch (error) {
+      telemetryError = error instanceof Error ? error.message : String(error)
+    }
+    const userArgs = Array.isArray(body.args)
+      ? body.args.filter((value): value is string => typeof value === "string")
+      : []
+    const created = runtime.terminal.create(pathToFileUri(checkoutPath), {
+      command: availability.binary,
+      args: [...launchArgs, ...userArgs],
+      env: launchEnv,
+    }, clientId)
+    const bound = runtime.terminalInstances.bindPty(
+      instance.id,
+      instance.generation,
+      created.id,
+      created.title,
+      processOnly ? "process_only" : "connecting",
+    )
+    if (!bound) throw new Error("process binding was rejected")
+    runtime.db.recordSession(created.id, "terminal", "running", { title: created.title })
+    runtime.notifications.bindSession({
+      sessionId: bound.id,
+      runId: bound.id,
+      projectId: project.id,
+      projectName: project.name,
+      sessionTitle: bound.title,
+      provider,
+      ptyId: created.id,
+    })
+    runtime.agents.onProcessStarted({
+      provider,
+      sessionId: bound.id,
+      processId: created.id,
+      projectId: project.id,
+      cwd: checkoutPath,
+    })
+    if (telemetryError) {
+      return runtime.terminalInstances.markTelemetryDegraded(
+        bound.id,
+        bound.generation,
+        telemetryError,
+      ) ?? bound
+    }
+    return bound
+  } catch (error) {
+    runtime.terminalInstances.fail(
+      instance.id,
+      instance.generation,
+      error instanceof Error ? error.message : String(error),
+    )
+    throw error
+  }
 }
 
 async function handleFs(
@@ -802,44 +942,7 @@ async function handleTerminal(
     case "terminal:getInstanceTranscript":
       return runtime.terminalInstances.transcript(str(args[0], "id"))
     case "terminal:createInstance": {
-      const body = args[0] as {
-        projectId?: string
-        checkoutKey?: string
-        checkoutPath?: string
-        title?: string
-      }
-      if (!body?.projectId || !body.checkoutPath) {
-        throw new Error("terminal:createInstance requires projectId and checkoutPath")
-      }
-      const project = runtime.db.project(body.projectId)
-      if (!project) throw new Error("project is unavailable")
-      let checkoutPath: string
-      try {
-        checkoutPath = fs.realpathSync(path.resolve(body.checkoutPath))
-      } catch {
-        throw new Error("terminal checkout path is unavailable")
-      }
-      if (!pathAllowed(checkoutPath, runtime.config.allowedRoots)) {
-        throw new Error("terminal checkout path outside allowed roots")
-      }
-      const title = body.title?.trim().slice(0, 160) || "Terminal"
-      const instance = runtime.terminalInstances.reserve({
-        projectId: project.id,
-        checkoutKey: body.checkoutKey?.trim() || (checkoutPath === project.rootPath ? "main" : checkoutPath),
-        checkoutPath,
-        title,
-      })
-      try {
-        const created = runtime.terminal.create(pathToFileUri(checkoutPath), null, clientId)
-        return runtime.terminalInstances.bindPty(instance.id, instance.generation, created.id, created.title) ?? instance
-      } catch (error) {
-        runtime.terminalInstances.fail(
-          instance.id,
-          instance.generation,
-          error instanceof Error ? error.message : String(error),
-        )
-        throw error
-      }
+      return createTerminalInstance(runtime, args[0], clientId)
     }
     case "terminal:restartInstance": {
       const body = args[0] as { id?: string; generation?: number }
@@ -849,6 +952,57 @@ async function handleTerminal(
       const restarting = runtime.terminalInstances.beginRestart(body.id, body.generation)
       if (!restarting || restarting.generation === body.generation) return restarting
       try {
+        if (restarting.provider) {
+          const availability = runtime.agentRuns.providerAvailable(restarting.provider)
+          if (!availability.available) {
+            runtime.terminalInstances.fail(
+              restarting.id,
+              restarting.generation,
+              availability.error ?? "provider unavailable",
+            )
+            throw new Error(availability.error ?? `${availability.binary} is not available`)
+          }
+          const caps = getCliAgentDriver(restarting.provider).getCapabilities()
+          const processOnly =
+            !caps.sessionLifecycle && !caps.promptLifecycle && !caps.toolLifecycle && !caps.permissions
+          let launchArgs: string[] = []
+          let launchEnv: Record<string, string> = {}
+          try {
+            installProjectHooksForProvider(
+              restarting.provider,
+              runtime.db.project(restarting.projectId)?.rootPath ?? restarting.checkoutPath,
+              runtime.config.dataDir,
+            )
+            const driver = getCliAgentDriver(restarting.provider)
+            const origin = `http://${runtime.config.host}:${runtime.config.port}`
+            const ingestUrl = new URL("/api/v1/notifications/ingest", origin)
+            ingestUrl.searchParams.set("provider", restarting.provider)
+            ingestUrl.searchParams.set("sessionId", restarting.id)
+            const installed = await driver.installHooks({
+              sessionId: restarting.id,
+              projectRoot: restarting.checkoutPath,
+              ingestUrl: ingestUrl.toString(),
+              provider: restarting.provider,
+              origin,
+            })
+            launchArgs = installed.launchArgs
+            launchEnv = installed.env
+          } catch {
+            /* restart still spawns the binary even if hooks fail */
+          }
+          const created = runtime.terminal.create(pathToFileUri(restarting.checkoutPath), {
+            command: availability.binary,
+            args: launchArgs,
+            env: launchEnv,
+          }, clientId)
+          return runtime.terminalInstances.bindPty(
+            restarting.id,
+            restarting.generation,
+            created.id,
+            created.title,
+            processOnly ? "process_only" : "connecting",
+          ) ?? restarting
+        }
         const created = runtime.terminal.create(pathToFileUri(restarting.checkoutPath), null, clientId)
         return runtime.terminalInstances.bindPty(
           restarting.id,

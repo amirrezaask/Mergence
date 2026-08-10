@@ -356,7 +356,7 @@ export function AppRoot() {
         preloadMuxApp(),
       ])
       pushProjectRoute(location.pathname, {
-        view: "editors",
+        view: "running",
         workspaceId: sessionId,
       })
       setBoot({ ...boot, sessionId, session })
@@ -410,9 +410,9 @@ export function AppRoot() {
       )
       pushProjectUrl(
         projectRouteUrl(pathname, {
-          view: "agents",
+          view: "running",
           workspaceId: null,
-          agentRunId:
+          processId:
             "runId" in agent && typeof agent.runId === "string"
               ? agent.runId
               : agent.sessionId,
@@ -431,9 +431,9 @@ export function AppRoot() {
         boot.homeDir,
       )
       return projectRouteUrl(pathname, {
-        view: "agents",
+        view: "running",
         workspaceId: null,
-        agentRunId:
+        processId:
           "runId" in agent && typeof agent.runId === "string"
             ? agent.runId
             : agent.sessionId,
@@ -581,7 +581,7 @@ export function AppRoot() {
         )
       }}
       initialAgentFocusTabId={
-        pendingAgentFocusTabId ?? projectRouteFromSearch().agentRunId
+        pendingAgentFocusTabId ?? projectRouteFromSearch().processId
       }
       onInitialAgentFocusHandled={() => setPendingAgentFocusTabId(null)}
       onOpenSession={openSession}

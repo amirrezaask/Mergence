@@ -197,9 +197,13 @@ export type JetElectronTerminal = {
   listInstances(projectId: string): Promise<TerminalInstanceInfo[]>
   createInstance(req: {
     projectId: string
-    checkoutKey: string
-    checkoutPath: string
+    checkoutKey?: string
+    checkoutPath?: string
     title?: string
+    provider?: "claude" | "codex" | "cursor" | "opencode" | "grok"
+    workspaceId?: string
+    launchRequestId?: string
+    args?: string[]
   }): Promise<TerminalInstanceInfo>
   restartInstance(req: { id: string; generation: number }): Promise<TerminalInstanceInfo | null>
   closeInstance(req: { id: string; generation: number }): Promise<TerminalInstanceInfo | null>
@@ -211,17 +215,31 @@ export type TerminalInstanceInfo = {
   id: string
   generation: number
   projectId: string
+  workspaceId: string | null
   checkoutKey: string
   checkoutPath: string
   title: string
+  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | null
+  launchRequestId: string | null
   ptyId: string | null
+  nativeSessionId: string | null
   processState: "starting" | "running" | "exited" | "failed" | "disconnected"
+  activityState:
+    | "starting"
+    | "working"
+    | "running_tool"
+    | "waiting_for_permission"
+    | "waiting_for_user"
+    | "idle"
+    | "failed"
+  telemetryState: "connecting" | "connected" | "degraded" | "process_only"
   createdAt: string
   startedAt: string | null
   lastActivityAt: string | null
   endedAt: string | null
   exitCode: number | null
   endReason: string | null
+  telemetryError: string | null
   revision: number
 }
 

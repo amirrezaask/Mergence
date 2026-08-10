@@ -19,6 +19,7 @@ import {
   type AgentRunInfo,
   type TerminalInstanceInfo,
 } from "@yaade/workspace"
+import { AgentProviderIcon } from "@yaade/ui/agent-picker"
 import {
   AppShell,
   cn,
@@ -38,13 +39,10 @@ import {
 } from "@yaade/ui/primitives"
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import {
-  Bot,
-  ChevronDown,
   ChevronsUpDown,
   FolderKanban,
   GitBranch,
   Plus,
-  SquareTerminal,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
@@ -87,12 +85,11 @@ import {
   type CheckoutSelection,
 } from "./CheckoutPicker.js"
 import {
-  AgentsProjectSurface,
-  TerminalsProjectSurface,
+  RunningProjectSurface,
 } from "./ProjectProcessSurfaces.js"
 import {
-  AgentLaunchMenu,
-  TerminalLaunchMenu,
+  ProcessLaunchMenu,
+  type ProcessLaunchSelection,
 } from "./ProjectLaunchMenus.js"
 import {
   processStatusLabel,
@@ -148,11 +145,7 @@ type ActiveCheckout = {
 }
 
 function isSurfaceView(view: ProjectView): view is MuxSurface {
-  return (
-    view === "agents" ||
-    view === "editors" ||
-    view === "terminals"
-  )
+  return view === "running" || view === "editors"
 }
 
 function surfaceForView(view: ProjectView): MuxSurface | null {
@@ -286,10 +279,10 @@ function agentFocusTabId(identity: string | null): string | null {
 }
 
 function processStatusVariant(
-  status: AgentRunInfo["processState"] | TerminalInstanceInfo["processState"],
+  status: TerminalInstanceInfo["processState"],
 ): "default" | "secondary" | "destructive" | "outline" {
   if (status === "running") return "default"
-  if (status === "starting" || status === "reserved") return "outline"
+  if (status === "starting") return "outline"
   if (status === "failed") return "destructive"
   return "secondary"
 }
@@ -343,8 +336,7 @@ export function ProjectPage({
   const [focusAgentTabId, setFocusAgentTabId] = useState<string | null>(
     agentFocusTabId(initialAgentFocusTabId),
   )
-  const [agentPickerOpen, setAgentPickerOpen] = useState(false)
-  const [terminalPickerOpen, setTerminalPickerOpen] = useState(false)
+  const [processPickerOpen, setProcessPickerOpen] = useState(false)
   // Seed from the module queue so StrictMode remounts still see the HQ intent.
   const [launchRequest, setLaunchRequest] = useState<MuxLaunchRequest | null>(
     () => {
@@ -362,7 +354,7 @@ export function ProjectPage({
     (() => {
       if (!session) return null
       const initialView = projectRouteFromSearch().view
-      return isSurfaceView(initialView) ? initialView : "terminals"
+      return isSurfaceView(initialView) ? initialView : "running"
     })(),
   )
   const rootUri = useMemo(() => pathToFileUri(projectPath), [projectPath])
@@ -376,17 +368,13 @@ export function ProjectPage({
     const route = projectRouteFromSearch()
     setView(route.view)
     if (route.view === "history") setHistoryMounted(true)
-    if (route.view === "agents") {
+    if (route.view === "running") {
       setSurfaceSelections(current => ({
         ...current,
-        agents: { ...current.agents, runId: route.agentRunId },
-      }))
-    } else if (route.view === "terminals") {
-      setSurfaceSelections(current => ({
-        ...current,
-        terminals: {
-          ...current.terminals,
-          terminalId: route.terminalInstanceId,
+        running: {
+          ...current.running,
+          processId: route.processId,
+          runId: route.processId,
         },
       }))
     }
@@ -444,12 +432,33 @@ export function ProjectPage({
           }
           continue
         }
-        next[row.surface] = {
-          ...row.state,
-          workspaceId:
-            row.state.workspaceId && validWorkspaceIds.has(row.state.workspaceId)
-              ? row.state.workspaceId
-              : null,
+        if (
+          row.surface === "running" ||
+          row.surface === "agents" ||
+          row.surface === "terminals"
+        ) {
+          const processId =
+            row.state.processId ?? row.state.runId ?? row.state.terminalId ?? null
+          next.running = {
+            ...next.running,
+            ...row.state,
+            processId,
+            runId: processId,
+            workspaceId:
+              row.state.workspaceId && validWorkspaceIds.has(row.state.workspaceId)
+                ? row.state.workspaceId
+                : null,
+          }
+          continue
+        }
+        if (row.surface === "editors") {
+          next.editors = {
+            ...row.state,
+            workspaceId:
+              row.state.workspaceId && validWorkspaceIds.has(row.state.workspaceId)
+                ? row.state.workspaceId
+                : null,
+          }
         }
       }
       setSurfaceSelections(next)
@@ -512,7 +521,7 @@ export function ProjectPage({
   }, [projectId, projectPath])
 
   useEffect(() => {
-    const runId = projectRouteFromSearch().agentRunId
+    const runId = projectRouteFromSearch().processId
     if (!runId) {
       setHistoricalRun(null)
       setAgentLookupComplete(false)
@@ -540,7 +549,7 @@ export function ProjectPage({
   // Changes checkout is independent of the session row (always Main).
   useEffect(() => {
     if (session) {
-      const preferred = preferredSurfaceRef.current ?? "terminals"
+      const preferred = preferredSurfaceRef.current ?? "running"
       setView(current =>
         current === "history" || current === "changes" ? preferred : current,
       )
@@ -560,9 +569,9 @@ export function ProjectPage({
 
   useEffect(() => {
     if (!initialAgentFocusTabId) return
-    preferredSurfaceRef.current = "agents"
+    preferredSurfaceRef.current = "running"
     setFocusAgentTabId(agentFocusTabId(initialAgentFocusTabId))
-    setView("agents")
+    setView("running")
     onInitialAgentFocusHandled?.()
   }, [initialAgentFocusTabId, onInitialAgentFocusHandled])
 
@@ -626,7 +635,7 @@ export function ProjectPage({
         view: surface,
         workspaceId: next.id,
         checkoutKey: selection.checkoutKey ?? null,
-        agentRunId: surface === "agents" ? focusAgentTabId : null,
+        processId: surface === "running" ? focusAgentTabId : null,
       })
     },
     [ensureProjectSession, focusAgentTabId, projectId, surfaceSelections],
@@ -646,7 +655,7 @@ export function ProjectPage({
         view,
         workspaceId: view === "editors" ? session?.id ?? null : null,
         checkoutKey: checkoutRouteKey(checkout),
-        agentRunId: view === "agents" ? focusAgentTabId : null,
+        processId: view === "running" ? focusAgentTabId : null,
       })
     },
     [focusAgentTabId, persistChangesCheckout, projectPath, session, view],
@@ -665,7 +674,7 @@ export function ProjectPage({
         view: "editors",
         workspaceId: session?.id ?? null,
         checkoutKey: checkoutRouteKey(checkout),
-        agentRunId: null,
+        processId: null,
       })
     },
     [persistEditorCheckout, projectPath, session],
@@ -716,7 +725,7 @@ export function ProjectPage({
         view,
         workspaceId: created.id,
         checkoutKey: checkoutRouteKey(checkout),
-        agentRunId: view === "agents" ? focusAgentTabId : null,
+        processId: view === "running" ? focusAgentTabId : null,
       })
       return selection
     },
@@ -725,11 +734,11 @@ export function ProjectPage({
 
   const handleSelectAgent = useCallback(
     async (agent: HqAgentSummary) => {
-      preferredSurfaceRef.current = "agents"
+      preferredSurfaceRef.current = "running"
       setFocusAgentTabId(agentFocusTabId(agent.sessionId))
       const muxReady = preloadMuxApp()
       await muxReady
-      setView("agents")
+      setView("running")
       await onOpenSession(agent.projectSessionId)
       const runId =
         "runId" in agent && typeof agent.runId === "string"
@@ -741,18 +750,19 @@ export function ProjectPage({
           ? "main"
           : agent.cwdPath,
         checkoutPath: agent.cwdPath,
+        processId: runId,
         runId,
       }
       setSurfaceSelections(current => ({
         ...current,
-        agents: selection,
+        running: selection,
       }))
-      void saveProjectSurfaceState(projectId, "agents", selection)
+      void saveProjectSurfaceState(projectId, "running", selection)
       pushProjectRoute(location.pathname, {
-        view: "agents",
+        view: "running",
         workspaceId: agent.projectSessionId,
         checkoutKey: selection.checkoutKey === "main" ? null : selection.checkoutKey,
-        agentRunId: runId,
+        processId: runId,
       })
     },
     [onOpenSession, projectId, projectPath],
@@ -768,10 +778,10 @@ export function ProjectPage({
       setLaunchRequest(request)
       const surface: MuxSurface =
         action.kind === "agent"
-          ? "agents"
+          ? "running"
           : action.kind === "editor"
             ? "editors"
-            : "terminals"
+            : "running"
       preferredSurfaceRef.current = surface
       try {
         await openSurface(surface)
@@ -801,7 +811,7 @@ export function ProjectPage({
       let checkoutLabel = input.checkoutLabel ?? "Main"
       let workspaceId = session?.id ?? null
 
-      preferredSurfaceRef.current = "agents"
+      preferredSurfaceRef.current = "running"
       try {
         if (input.useWorktree) {
           const branch =
@@ -829,34 +839,34 @@ export function ProjectPage({
           checkoutKey,
           checkoutPath,
         }
-        setSurfaceSelections(current => ({ ...current, agents: selection }))
-        void saveProjectSurfaceState(projectId, "agents", selection)
+        setSurfaceSelections(current => ({ ...current, running: selection }))
+        void saveProjectSurfaceState(projectId, "running", selection)
 
-        const api = window.yaade?.agents
-        if (!api || !workspaceId) throw new Error("Agent service unavailable")
-        const launched = await api.launch({
-          launchRequestId: input.requestId,
-          provider: input.driverId,
+        const api = window.yaade?.terminal
+        if (!api || !workspaceId) throw new Error("Terminal service unavailable")
+        const instance = await api.createInstance({
           projectId,
           workspaceId,
+          provider: input.driverId,
+          launchRequestId: input.requestId,
           checkoutKey,
           checkoutPath,
           title: `${input.driverId.charAt(0).toUpperCase()}${input.driverId.slice(1)} agent`,
         })
-        const runId = launched.run.runId
-        const selected = { ...selection, runId }
-        setSurfaceSelections(current => ({ ...current, agents: selected }))
-        void saveProjectSurfaceState(projectId, "agents", selected)
-        setFocusAgentTabId(agentFocusTabId(runId))
+        const processId = instance.id
+        const selected = { ...selection, processId, runId: processId }
+        setSurfaceSelections(current => ({ ...current, running: selected }))
+        void saveProjectSurfaceState(projectId, "running", selected)
+        setFocusAgentTabId(agentFocusTabId(processId))
         clearHqAgentLaunch(input.requestId)
         setLaunchRequest(null)
         onAgentLaunchIntentHandled?.(input.requestId)
-        setView("agents")
+        setView("running")
         pushProjectRoute(location.pathname, {
-          view: "agents",
+          view: "running",
           workspaceId: null,
           checkoutKey: checkoutKey === "main" ? null : checkoutKey,
-          agentRunId: runId,
+          processId,
         })
       } catch (error) {
         setLaunchRequest(current =>
@@ -887,24 +897,26 @@ export function ProjectPage({
       onAgentLaunchIntentHandled?.(requestId)
       if (result?.agentTabId) {
         setFocusAgentTabId(result.agentTabId)
-        setView("agents")
-        preferredSurfaceRef.current = "agents"
+        setView("running")
+        preferredSurfaceRef.current = "running"
+        const processId = result.agentRunId ?? result.agentTabId
         const selection = {
           workspaceId: session?.id ?? null,
           checkoutKey: launchedCheckout?.checkoutKey ?? "main",
           checkoutPath: launchedCheckout?.checkoutPath ?? projectPath,
-          runId: result.agentRunId ?? result.agentTabId,
+          processId,
+          runId: processId,
         }
-        setSurfaceSelections(current => ({ ...current, agents: selection }))
-        void saveProjectSurfaceState(projectId, "agents", selection)
+        setSurfaceSelections(current => ({ ...current, running: selection }))
+        void saveProjectSurfaceState(projectId, "running", selection)
         pushProjectRoute(location.pathname, {
-          view: "agents",
+          view: "running",
           workspaceId: session?.id ?? null,
           checkoutKey:
             launchedCheckout?.checkoutKey === "main"
               ? null
               : launchedCheckout?.checkoutKey ?? null,
-          agentRunId: result.agentRunId ?? result.agentTabId,
+          processId,
         })
       }
     },
@@ -931,8 +943,8 @@ export function ProjectPage({
         : null)
     if (!intent) return
     if (!claimHqAgentLaunch(intent.id)) {
-      preferredSurfaceRef.current = "agents"
-      setView("agents")
+      preferredSurfaceRef.current = "running"
+      setView("running")
       return
     }
 
@@ -1020,7 +1032,7 @@ export function ProjectPage({
           view: "editors",
           workspaceId: session?.id ?? null,
           checkoutKey: null,
-          agentRunId: null,
+          processId: null,
         })
       } catch (error) {
         showYaadeToast(
@@ -1049,7 +1061,7 @@ export function ProjectPage({
   const handleViewSelect = useCallback(
     (next: ProjectView) => {
       if (next === "history") setHistoryMounted(true)
-      if (next === "agents" || next === "terminals") {
+      if (next === "running") {
         preferredSurfaceRef.current = next
         setView(next)
         const saved = surfaceSelections[next]
@@ -1057,8 +1069,7 @@ export function ProjectPage({
           view: next,
           workspaceId: null,
           checkoutKey: saved?.checkoutKey ?? checkoutRouteKey(activeCheckout),
-          agentRunId: next === "agents" ? saved?.runId ?? null : null,
-          terminalInstanceId: next === "terminals" ? saved?.terminalId ?? null : null,
+          processId: saved?.processId ?? saved?.runId ?? saved?.terminalId ?? null,
         })
         return
       }
@@ -1077,51 +1088,30 @@ export function ProjectPage({
         view: next,
         workspaceId: null,
         checkoutKey: checkoutRouteKey(activeCheckout),
-        agentRunId: null,
+        processId: null,
       })
     },
     [activeCheckout, ensureCheckoutSession, surfaceSelections],
   )
 
-  const handleAgentSelect = useCallback(
-    (runId: string | null) => {
-      setSurfaceSelections(current => ({
-        ...current,
-        agents: { ...current.agents, runId },
-      }))
-      void saveProjectSurfaceState(projectId, "agents", {
-        ...surfaceSelections.agents,
-        runId,
-      })
-      preferredSurfaceRef.current = "agents"
-      setView("agents")
-      replaceProjectRoute(location.pathname, {
-        view: "agents",
-        workspaceId: null,
-        checkoutKey: surfaceSelections.agents?.checkoutKey ?? checkoutRouteKey(activeCheckout),
-        agentRunId: runId,
-      })
-    },
-    [activeCheckout, projectId, surfaceSelections.agents],
-  )
-
-  const handleTerminalSelect = useCallback(
+  const handleProcessSelect = useCallback(
     (
-      terminalId: string | null,
+      processId: string | null,
       checkout?: { checkoutKey: string; checkoutPath: string },
     ) => {
       const selection = {
-        ...surfaceSelections.terminals,
-        terminalId,
+        ...surfaceSelections.running,
+        processId,
+        runId: processId,
         checkoutKey: checkout?.checkoutKey ?? activeCheckout.checkoutKey,
         checkoutPath: checkout?.checkoutPath ?? activeCheckout.cwdPath,
       }
-      setSurfaceSelections(current => ({ ...current, terminals: selection }))
-      void saveProjectSurfaceState(projectId, "terminals", selection)
-      preferredSurfaceRef.current = "terminals"
-      setView("terminals")
+      setSurfaceSelections(current => ({ ...current, running: selection }))
+      void saveProjectSurfaceState(projectId, "running", selection)
+      preferredSurfaceRef.current = "running"
+      setView("running")
       replaceProjectRoute(location.pathname, {
-        view: "terminals",
+        view: "running",
         workspaceId: null,
         checkoutKey: checkout
           ? checkoutRouteKey(
@@ -1133,47 +1123,37 @@ export function ProjectPage({
               ),
             )
           : checkoutRouteKey(activeCheckout),
-        terminalInstanceId: terminalId,
+        processId,
       })
     },
-    [activeCheckout, projectId, projectPath, surfaceSelections.terminals],
+    [activeCheckout, projectId, projectPath, surfaceSelections.running],
   )
 
-  const activeAgentId =
-    projectRouteFromSearch().agentRunId ?? surfaceSelections.agents?.runId ?? null
-  const activeTerminalId =
-    projectRouteFromSearch().terminalInstanceId ?? surfaceSelections.terminals?.terminalId ?? null
+  const activeProcessId =
+    projectRouteFromSearch().processId ??
+    surfaceSelections.running?.processId ??
+    surfaceSelections.running?.runId ??
+    null
 
-  const agentSidebarItems = useMemo<ProjectWorkspaceSidebarProcess[]>(
+  const runningSidebarItems = useMemo<ProjectWorkspaceSidebarProcess[]>(
     () =>
-      processSidebar.agents.map(run => ({
-        id: run.runId,
-        label: run.title,
-        subtitle: `${run.checkoutKey === "main" ? "Main" : run.checkoutKey}`,
-        icon: <Bot aria-hidden />,
-        selected: activeAgentId === run.runId,
-        status: processStatusLabel(run.processState),
-        statusVariant: processStatusVariant(run.processState),
-        onSelect: () => handleAgentSelect(run.runId),
-        onClose: () => void processSidebar.closeAgent(run),
-      })),
-    [activeAgentId, handleAgentSelect, processSidebar.agents, processSidebar.closeAgent],
-  )
-
-  const terminalSidebarItems = useMemo<ProjectWorkspaceSidebarProcess[]>(
-    () =>
-      processSidebar.terminals.map(instance => ({
+      processSidebar.processes.map(instance => ({
         id: instance.id,
         label: instance.title,
         subtitle: `${instance.checkoutKey === "main" ? "Main" : instance.checkoutKey}`,
-        icon: <SquareTerminal aria-hidden />,
-        selected: activeTerminalId === instance.id,
+        icon: <AgentProviderIcon agent={instance.provider ?? "terminal"} />,
+        selected: activeProcessId === instance.id,
         status: processStatusLabel(instance.processState),
         statusVariant: processStatusVariant(instance.processState),
-        onSelect: () => handleTerminalSelect(instance.id),
-        onClose: () => void processSidebar.closeTerminal(instance),
+        onSelect: () => handleProcessSelect(instance.id),
+        onClose: () => void processSidebar.closeProcess(instance),
       })),
-    [activeTerminalId, handleTerminalSelect, processSidebar.closeTerminal, processSidebar.terminals],
+    [
+      activeProcessId,
+      handleProcessSelect,
+      processSidebar.closeProcess,
+      processSidebar.processes,
+    ],
   )
 
   const projectViews = useMemo<ProjectWorkspaceSidebarView[]>(
@@ -1183,17 +1163,6 @@ export function ProjectPage({
     [handleViewSelect, view],
   )
 
-  const createTerminal = useCallback(async () => {
-    try {
-      const id = await processSidebar.createTerminal()
-      handleTerminalSelect(id)
-    } catch (error) {
-      showYaadeToast(error instanceof Error ? error.message : "Could not create terminal", {
-        variant: "destructive",
-      })
-    }
-  }, [handleTerminalSelect, processSidebar.createTerminal])
-
   const createTerminalAtCheckout = useCallback(
     async (checkout: CheckoutSelection) => {
       try {
@@ -1201,7 +1170,7 @@ export function ProjectPage({
           checkoutKey: checkout.checkoutKey,
           checkoutPath: checkout.cwdPath,
         })
-        handleTerminalSelect(id, {
+        handleProcessSelect(id, {
           checkoutKey: checkout.checkoutKey,
           checkoutPath: checkout.cwdPath,
         })
@@ -1212,20 +1181,24 @@ export function ProjectPage({
         )
       }
     },
-    [handleTerminalSelect, processSidebar.createTerminal],
+    [handleProcessSelect, processSidebar.createTerminal],
   )
 
-  const launchAgentFromMenu = useCallback(
+  const launchFromMenu = useCallback(
     (
-      driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"],
+      selection: ProcessLaunchSelection,
       checkout: CheckoutSelection,
     ) => {
-      setAgentPickerOpen(false)
+      setProcessPickerOpen(false)
+      if (selection.kind === "terminal") {
+        void createTerminalAtCheckout(checkout)
+        return
+      }
       launchSequenceRef.current += 1
       const requestId = `launch-${Date.now()}-${launchSequenceRef.current}`
       void openAgentLaunch({
         requestId,
-        driverId,
+        driverId: selection.driver.id,
         useWorktree: false,
         checkoutPath: checkout.cwdPath,
         checkoutKey: checkout.checkoutKey,
@@ -1237,46 +1210,25 @@ export function ProjectPage({
         )
       })
     },
-    [openAgentLaunch],
+    [createTerminalAtCheckout, openAgentLaunch],
   )
 
-  const agentLauncher = (
-    <AgentLaunchMenu
+  const processLauncher = (
+    <ProcessLaunchMenu
       projectPath={projectPath}
-      open={agentPickerOpen}
-      onOpenChange={setAgentPickerOpen}
-      onLaunch={(driver, checkout) => launchAgentFromMenu(driver.id, checkout)}
+      open={processPickerOpen}
+      onOpenChange={setProcessPickerOpen}
+      onLaunch={launchFromMenu}
+      onCreateWorktree={handleCreateEditorWorktree}
       trigger={
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label="New agent"
-          data-yaade-project-process-new="agents"
-          data-yaade-instance-sidebar-new=""
+          aria-label="New process"
+          data-yaade-project-process-new="running"
         >
           <Plus />
-        </Button>
-      }
-    />
-  )
-
-  const terminalLauncher = (
-    <TerminalLaunchMenu
-      projectPath={projectPath}
-      open={terminalPickerOpen}
-      onOpenChange={setTerminalPickerOpen}
-      onSelect={createTerminalAtCheckout}
-      trigger={
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-sm"
-          aria-label="New terminal"
-          data-yaade-project-process-new="terminals"
-          data-yaade-instance-sidebar-new=""
-        >
-          <ChevronDown />
         </Button>
       }
     />
@@ -1298,17 +1250,11 @@ export function ProjectPage({
         <ProjectWorkspaceSidebar
           projectName={projectName}
           views={projectViews}
-          agents={agentSidebarItems}
-          terminals={terminalSidebarItems}
+          processes={runningSidebarItems}
           onOpenHq={onOpenHq}
-          onNewAgent={() => setAgentPickerOpen(true)}
-          onNewTerminal={() => void createTerminal()}
-          agentLoading={processSidebar.agentLoading}
-          terminalLoading={processSidebar.terminalLoading}
-          agentError={processSidebar.agentError}
-          terminalError={processSidebar.terminalError}
-          agentLauncher={agentLauncher}
-          terminalLauncher={terminalLauncher}
+          loading={processSidebar.loading}
+          error={processSidebar.error}
+          launcher={processLauncher}
           projectSwitcher={
             <OpenProjectOverlay
               open={projectSwitcherOpen}
@@ -1391,9 +1337,9 @@ export function ProjectPage({
               />
             </ProjectSurfaceSlot>
 
-            {session && view === "editors" ? (
+            {session && (view === "editors" || view === "running") ? (
               <ProjectSurfaceSlot
-                panel="editors"
+                panel={view}
                 active
                 fallback="Opening workspace…"
               >
@@ -1405,35 +1351,37 @@ export function ProjectPage({
                     homeDir={homeDir}
                     machineHostname={machineHostname}
                     embedded
-                    surface="editors"
+                    surface={view}
                     editorWorkspacePath={editorCheckout.cwdPath}
                     editorToolbar={
-                      <CheckoutPicker
-                        projectPath={projectPath}
-                        homeDir={homeDir}
-                        defaultBranch={defaultBranch}
-                        activeLabel={editorCheckout.label}
-                        activeCwdPath={editorCheckout.cwdPath}
-                        onSelectCheckout={handleSelectEditorCheckout}
-                        onCreateWorktree={handleCreateEditorWorktree}
-                        onRemoveWorktree={handleRemoveEditorWorktree}
-                        triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
-                      />
+                      view === "editors" ? (
+                        <CheckoutPicker
+                          projectPath={projectPath}
+                          homeDir={homeDir}
+                          defaultBranch={defaultBranch}
+                          activeLabel={editorCheckout.label}
+                          activeCwdPath={editorCheckout.cwdPath}
+                          onSelectCheckout={handleSelectEditorCheckout}
+                          onCreateWorktree={handleCreateEditorWorktree}
+                          onRemoveWorktree={handleRemoveEditorWorktree}
+                          triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
+                        />
+                      ) : undefined
                     }
-                    focusAgentTabId={null}
+                    focusAgentTabId={view === "running" ? focusAgentTabId : null}
                     onBackToProject={onClearSession}
-                    onLaunchAgent={() => setAgentPickerOpen(true)}
+                    onLaunchAgent={() => setProcessPickerOpen(true)}
                     onSelectAgentTab={tabId => {
-                      preferredSurfaceRef.current = "agents"
+                      preferredSurfaceRef.current = "running"
                       setFocusAgentTabId(tabId)
                       const runId = tabId.startsWith("yaade:terminal:")
                         ? tabId.slice("yaade:terminal:".length)
                         : tabId
                       pushProjectRoute(location.pathname, {
-                        view: "agents",
+                        view: "running",
                         workspaceId: session?.id ?? null,
                         checkoutKey: checkoutRouteKey(activeCheckout),
-                        agentRunId: runId,
+                        processId: runId,
                       })
                     }}
                     onRequestSurface={next => {
@@ -1444,20 +1392,21 @@ export function ProjectPage({
                           view: "history",
                           workspaceId: session?.id ?? null,
                           checkoutKey: checkoutRouteKey(activeCheckout),
-                          agentRunId: null,
+                          processId: null,
                         })
                         return
                       }
-                      if (next === "agents" || next === "terminals") {
-                        setView(next)
+                      if (next === "running") {
+                        preferredSurfaceRef.current = "running"
+                        setView("running")
                         pushProjectRoute(location.pathname, {
-                          view: next,
-                          workspaceId: null,
+                          view: "running",
+                          workspaceId: session.id,
                           checkoutKey: checkoutRouteKey(activeCheckout),
-                          agentRunId: next === "agents" ? surfaceSelections.agents?.runId ?? null : null,
-                          terminalInstanceId: next === "terminals"
-                            ? surfaceSelections.terminals?.terminalId ?? null
-                            : null,
+                          processId:
+                            surfaceSelections.running?.processId ??
+                            surfaceSelections.running?.runId ??
+                            null,
                         })
                         return
                       }
@@ -1476,32 +1425,18 @@ export function ProjectPage({
               </ProjectSurfaceSlot>
             ) : null}
 
-            {view === "agents" ? (
-              <ProjectSurfaceSlot panel="agents" active fallback="Loading agents…">
-                <AgentsProjectSurface
+            {!session && view === "running" ? (
+              <ProjectSurfaceSlot panel="running" active fallback="Loading processes…">
+                <RunningProjectSurface
                   projectId={projectId}
                   selectedId={
-                    projectRouteFromSearch().agentRunId ??
-                    surfaceSelections.agents?.runId ??
+                    projectRouteFromSearch().processId ??
+                    surfaceSelections.running?.processId ??
+                    surfaceSelections.running?.runId ??
                     null
                   }
                   theme={activeTheme}
-                  onSelect={handleAgentSelect}
-                />
-              </ProjectSurfaceSlot>
-            ) : null}
-
-            {view === "terminals" ? (
-              <ProjectSurfaceSlot panel="terminals" active fallback="Loading terminals…">
-                <TerminalsProjectSurface
-                  projectId={projectId}
-                  selectedId={
-                    projectRouteFromSearch().terminalInstanceId ??
-                    surfaceSelections.terminals?.terminalId ??
-                    null
-                  }
-                  theme={activeTheme}
-                  onSelect={handleTerminalSelect}
+                  onSelect={id => handleProcessSelect(id)}
                 />
               </ProjectSurfaceSlot>
             ) : null}

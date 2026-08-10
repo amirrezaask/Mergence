@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { ChevronDown, ChevronRight, Circle, House } from "lucide-react"
+import { ChevronRight, Circle, House } from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
@@ -11,7 +11,6 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
-  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
@@ -42,39 +41,26 @@ export type ProjectWorkspaceSidebarProps = {
   projectName: string
   projectSwitcher?: ReactNode
   views: readonly ProjectWorkspaceSidebarView[]
-  agents: readonly ProjectWorkspaceSidebarProcess[]
-  terminals: readonly ProjectWorkspaceSidebarProcess[]
+  processes: readonly ProjectWorkspaceSidebarProcess[]
   onOpenHq: () => void
-  onNewAgent: () => void
-  onNewTerminal: () => void
-  agentLauncher?: ReactNode
-  terminalLauncher?: ReactNode
-  agentLoading?: boolean
-  terminalLoading?: boolean
-  agentError?: string | null
-  terminalError?: string | null
+  /** Single Running launcher (+ shell & agent providers). */
+  launcher?: ReactNode
+  loading?: boolean
+  error?: string | null
   footer?: ReactNode
   className?: string
 }
 
 function ProcessGroup({
-  label,
   items,
-  emptyLabel,
   loading,
   error,
-  onNew,
   launcher,
-  dataGroup,
 }: {
-  label: string
   items: readonly ProjectWorkspaceSidebarProcess[]
-  emptyLabel: string
   loading?: boolean
   error?: string | null
-  onNew: () => void
   launcher?: ReactNode
-  dataGroup: "agents" | "terminals"
 }) {
   const { isMobile, setOpenMobile } = useSidebar()
   const [open, setOpen] = useState(true)
@@ -88,8 +74,7 @@ function ProcessGroup({
     <Collapsible open={open} onOpenChange={setOpen} asChild>
       <SidebarGroup
         className="gap-1 py-2 group-data-[collapsible=icon]:hidden"
-        data-yaade-project-process-group={dataGroup}
-        data-yaade-instance-sidebar={dataGroup}
+        data-yaade-project-process-group="running"
         data-state={open ? "open" : "closed"}
       >
         <CollapsibleTrigger asChild>
@@ -101,7 +86,7 @@ function ProcessGroup({
               )}
               aria-hidden
             />
-            <span>{label}</span>
+            <span>Running</span>
             <span className="ml-auto tabular-nums text-3xs text-sidebar-foreground/60">
               {items.length}
             </span>
@@ -111,25 +96,12 @@ function ProcessGroup({
           <div className="absolute top-3 right-3 z-10 group-data-[collapsible=icon]:hidden">
             {launcher}
           </div>
-        ) : (
-          <SidebarGroupAction
-            type="button"
-            aria-label={`New ${label.slice(0, -1).toLowerCase()}`}
-            onClick={event => {
-              event.stopPropagation()
-              onNew()
-            }}
-            data-yaade-project-process-new={dataGroup}
-            data-yaade-instance-sidebar-new=""
-          >
-            <ChevronDown />
-          </SidebarGroupAction>
-        )}
+        ) : null}
         <CollapsibleContent>
-          <SidebarGroupContent data-yaade-list-panel={`project-${dataGroup}`}>
+          <SidebarGroupContent data-yaade-list-panel="project-running">
             {loading || error || items.length === 0 ? (
               <div className="px-2 py-2 text-3xs text-sidebar-foreground/60">
-                {loading ? `Loading ${label.toLowerCase()}…` : error ?? emptyLabel}
+                {loading ? "Loading processes…" : error ?? "No processes yet"}
               </div>
             ) : (
               <SidebarMenu>
@@ -154,17 +126,11 @@ export function ProjectWorkspaceSidebar({
   projectName,
   projectSwitcher,
   views,
-  agents,
-  terminals,
+  processes,
   onOpenHq,
-  onNewAgent,
-  onNewTerminal,
-  agentLoading,
-  terminalLoading,
-  agentError,
-  terminalError,
-  agentLauncher,
-  terminalLauncher,
+  launcher,
+  loading,
+  error,
   footer,
   className,
 }: ProjectWorkspaceSidebarProps) {
@@ -230,24 +196,10 @@ export function ProjectWorkspaceSidebar({
         </SidebarGroup>
         <SidebarSeparator />
         <ProcessGroup
-          label="Agents"
-          items={agents}
-          emptyLabel="No agents yet"
-          loading={agentLoading}
-          error={agentError}
-          onNew={onNewAgent}
-          launcher={agentLauncher}
-          dataGroup="agents"
-        />
-        <ProcessGroup
-          label="Terminals"
-          items={terminals}
-          emptyLabel="No terminals yet"
-          loading={terminalLoading}
-          error={terminalError}
-          onNew={onNewTerminal}
-          launcher={terminalLauncher}
-          dataGroup="terminals"
+          items={processes}
+          loading={loading}
+          error={error}
+          launcher={launcher}
         />
       </SidebarContent>
 

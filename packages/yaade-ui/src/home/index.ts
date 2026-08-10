@@ -19,3 +19,4 @@ export {
   type AgentCliPickerOverlayProps,
   type AgentCliPickerProject,
 } from "./AgentCliPickerOverlay.js"
+export { AgentProviderIcon } from "./AgentProviderIcon.js"

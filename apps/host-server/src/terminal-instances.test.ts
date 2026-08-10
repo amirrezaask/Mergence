@@ -24,6 +24,7 @@ describe("TerminalInstanceService", () => {
       })
       const live = service.bindPty(reserved.id, reserved.generation, "pty-1", "zsh")
       assert.equal(live?.processState, "running")
+      assert.equal(live?.provider, null)
 
       service.onPtyExit("pty-1", 0, "first output")
       const restarting = service.beginRestart(reserved.id, reserved.generation)
@@ -76,6 +77,91 @@ describe("TerminalInstanceService", () => {
     })
   })
 
+  it("reserves provider-backed processes with workspace identity", () => {
+    withService(service => {
+      const reserved = service.reserve({
+        projectId: "project-1",
+        workspaceId: "ses-1",
+        checkoutKey: "main",
+        checkoutPath: "/tmp/project",
+        title: "Claude",
+        provider: "claude",
+        launchRequestId: "launch-1",
+      })
+      assert.equal(reserved.provider, "claude")
+      assert.equal(reserved.workspaceId, "ses-1")
+      assert.equal(reserved.activityState, "starting")
+      const again = service.reserve({
+        projectId: "project-1",
+        workspaceId: "ses-1",
+        checkoutKey: "main",
+        checkoutPath: "/tmp/project",
+        title: "Claude",
+        provider: "claude",
+        launchRequestId: "launch-1",
+      })
+      assert.equal(again.id, reserved.id)
+      const live = service.bindPty(reserved.id, 1, "pty-agent", "claude", "process_only")
+      assert.equal(live?.processState, "running")
+      assert.equal(service.listLiveForWorkspace("ses-1").length, 1)
+      service.close(reserved.id, 1, "")
+    })
+  })
+
+  it("migrates agent_runs into terminal_instances", () => {
+    const db = new DatabaseSync(":memory:")
+    db.exec(`
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
+      CREATE TABLE agent_runs(
+        run_id TEXT PRIMARY KEY,
+        launch_request_id TEXT NOT NULL,
+        generation INTEGER NOT NULL,
+        provider TEXT NOT NULL,
+        project_id TEXT NOT NULL,
+        workspace_id TEXT NOT NULL,
+        checkout_key TEXT NOT NULL,
+        checkout_path TEXT NOT NULL,
+        title TEXT NOT NULL,
+        pty_id TEXT,
+        native_session_id TEXT,
+        process_state TEXT NOT NULL,
+        activity_state TEXT NOT NULL,
+        telemetry_state TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        started_at TEXT,
+        last_activity_at TEXT,
+        ended_at TEXT,
+        exit_code INTEGER,
+        end_reason TEXT,
+        telemetry_error TEXT,
+        transcript TEXT NOT NULL DEFAULT '',
+        transcript_truncated INTEGER NOT NULL DEFAULT 0,
+        removed_at TEXT,
+        revision INTEGER NOT NULL
+      );
+      INSERT INTO agent_runs(
+        run_id,launch_request_id,generation,provider,project_id,workspace_id,
+        checkout_key,checkout_path,title,pty_id,native_session_id,process_state,
+        activity_state,telemetry_state,created_at,started_at,revision
+      ) VALUES(
+        'run-1','launch-1',1,'codex','project-1','ses-1','main','/tmp/project',
+        'Codex','pty-1',NULL,'running','working','connected',
+        '2026-08-01T00:00:00.000Z','2026-08-01T00:00:01.000Z',3
+      );
+    `)
+    try {
+      const service = new TerminalInstanceService(db, () => undefined)
+      // host restart marks live rows disconnected
+      const row = service.get("run-1")
+      assert.equal(row?.provider, "codex")
+      assert.equal(row?.workspaceId, "ses-1")
+      assert.equal(row?.title, "Codex")
+      assert.equal(row?.processState, "disconnected")
+    } finally {
+      db.close()
+    }
+  })
+
   it("backfills legacy non-agent mux leaves as disconnected instances", () => {
     const db = new DatabaseSync(":memory:")
     db.exec(`
@@ -106,6 +192,7 @@ describe("TerminalInstanceService", () => {
       assert.equal(rows[0]?.title, "Old shell")
       assert.equal(rows[0]?.processState, "disconnected")
       assert.equal(rows[0]?.ptyId, null)
+      assert.equal(rows[0]?.provider, null)
     } finally {
       db.close()
     }

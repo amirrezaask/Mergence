@@ -1,14 +1,18 @@
 export type ProjectSurface =
   | "changes"
-  | "agents"
+  | "running"
   | "editors"
+  | "agents"
   | "terminals"
 
 export type ProjectSurfaceSelection = {
   workspaceId?: string | null
   checkoutKey?: string | null
   checkoutPath?: string | null
+  processId?: string | null
+  /** @deprecated Prefer processId */
   runId?: string | null
+  /** @deprecated Prefer processId */
   terminalId?: string | null
 }
 

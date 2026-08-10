@@ -879,7 +879,7 @@ export class ProjectDatabase {
   }): { surface: string; state: Record<string, unknown>; revision: number; updatedAt: string } {
     if (!this.project(input.projectId)) throw new Error("project not found")
     if (
-      !["changes", "agents", "editors", "terminals"].includes(
+      !["changes", "running", "editors", "agents", "terminals"].includes(
         input.surface,
       )
     ) {

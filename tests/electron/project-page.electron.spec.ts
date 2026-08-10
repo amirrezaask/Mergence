@@ -110,10 +110,10 @@ test.describe("project page", () => {
       expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(1)
       expect(await page.locator('[data-yaade-project-switcher=""]').count()).toBe(1)
       expect(
-        await page.locator('[data-yaade-project-process-group="agents"]').isVisible(),
+        await page.locator('[data-yaade-project-process-group="running"]').isVisible(),
       ).toBe(true)
       expect(
-        await page.locator('[data-yaade-project-process-group="terminals"]').isVisible(),
+        await page.locator('[data-yaade-project-process-group="running"]').isVisible(),
       ).toBe(true)
       expect(await page.locator('[data-yaade-project-tab="editors"]').count()).toBe(0)
       expect(await page.locator('[data-yaade-project-tab="changes"]').count()).toBe(0)

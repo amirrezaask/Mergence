@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { expectListRows } from "../helpers/list.js"
+import { expectSelectorVisible } from "../shell/assert.js"
 import { launchJet, waitForHq, waitForProjectPage } from "./_launch.js"
 
 function installFakeProviders(root: string): string {
@@ -194,29 +195,23 @@ test.describe("YAADE HQ", () => {
       const row = page.locator(`[data-yaade-hq-agent="${agent.runId}"]`)
       await expect.poll(() => row.count()).toBe(1)
       const href = await row.getByRole("link", { name: /Codex Alpha/ }).getAttribute("href")
-      expect(href).toContain(`view=agents`)
+      expect(href).toContain(`view=running`)
       expect(href).not.toContain("s=")
-      expect(href).toContain(`agent=${encodeURIComponent(agent.runId)}`)
+      expect(href).toContain(`process=${encodeURIComponent(agent.runId)}`)
 
       await row.getByRole("link", { name: /Codex Alpha/ }).click()
       await waitForProjectPage(page)
       expect(await page.evaluate(() => location.pathname)).toBe("/alpha")
       const route = await page.evaluate(() => Object.fromEntries(new URLSearchParams(location.search)))
       expect(route).toMatchObject({
-        view: "agents",
-        agent: agent.runId,
+        view: "running",
+        process: agent.runId,
       })
       expect(route.s).toBeUndefined()
       await expect
         .poll(() => page.locator("[data-yaade-hq-agent-dialog]").count())
         .toBe(0)
-      await expect
-        .poll(() =>
-          page
-            .locator('[data-yaade-project-tab="agents"]')
-            .getAttribute("aria-selected"),
-        )
-        .toBe("true")
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
       await expect
         .poll(() =>
           page.locator(
@@ -225,13 +220,13 @@ test.describe("YAADE HQ", () => {
         )
         .toBe(1)
       await expectListRows(page, {
-        panel: "project-agents",
+        panel: "project-running",
         minItems: 1,
         needle: "Codex Alpha",
-        noResultsText: "No agents yet",
+        noResultsText: "No processes yet",
       })
       await page.locator('[data-yaade-project-tab="history"]').click()
-      await page.locator('[data-yaade-project-tab="agents"]').click()
+      await page.locator(`[data-yaade-instance-sidebar-item="${agent.runId}"]`).click()
       await page.reload()
       await waitForProjectPage(page)
       await expect

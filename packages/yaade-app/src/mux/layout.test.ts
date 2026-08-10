@@ -171,17 +171,29 @@ describe("project surface helpers", () => {
     )
   })
 
-  it("buildTerminalOnlyDisplayTree can exclude agent-backed terminals", () => {
+  it("buildTerminalOnlyDisplayTree honors include filter", () => {
     const tree = emptyMuxTree()
     const shell = placePtyInTree(tree, "yaade:terminal:shell", null)
-    placePtyInTree(tree, "yaade:terminal:agent", shell, "right")
+    placePtyInTree(tree, "yaade:terminal:other", shell, "right")
     const display = buildTerminalOnlyDisplayTree(
       tree,
-      tabId => tabId !== "yaade:terminal:agent",
+      tabId => tabId !== "yaade:terminal:other",
     )
     assert.deepEqual(
       listTerminalLeaves(display).map(leaf => leaf.ptyTabId),
       ["yaade:terminal:shell"],
+    )
+  })
+
+  it("buildTerminalOnlyDisplayTree keeps all terminal leaves by default", () => {
+    const tree = emptyMuxTree()
+    const shell = placePtyInTree(tree, "yaade:terminal:shell", null)
+    placePtyInTree(tree, "yaade:terminal:agent", shell, "right")
+    assert.deepEqual(
+      listTerminalLeaves(buildTerminalOnlyDisplayTree(tree))
+        .map(leaf => leaf.ptyTabId)
+        .sort(),
+      ["yaade:terminal:agent", "yaade:terminal:shell"],
     )
   })
 

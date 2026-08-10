@@ -26,15 +26,15 @@ test.describe("mux shell", () => {
         .toBe(0)
       await expectSelectorVisible(
         page,
-        '[data-yaade-instance-sidebar="terminals"]',
+        '[data-yaade-mux] [data-yaade-instance-sidebar="running"]',
       )
       await expectSelectorVisible(
         page,
-        '[data-yaade-list-panel="project-terminals"]',
+        '[data-yaade-list-panel="project-running"]',
       )
       await page
         .locator(
-          '[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]',
+          '[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]',
         )
         .click()
       await expect
@@ -44,7 +44,7 @@ test.describe("mux shell", () => {
         .poll(async () =>
           page
             .locator(
-              '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+              '[data-yaade-list-panel="project-running"] [data-yaade-list-item]',
             )
             .count(),
         )
@@ -60,15 +60,15 @@ test.describe("mux shell", () => {
       await waitForMux(page)
 
       const surface = page.locator(
-        '[data-yaade-project-surface="terminals"]',
+        '[data-yaade-project-surface="running"]',
       )
       await expectSelectorVisible(
         page,
-        '[data-yaade-project-surface="terminals"]',
+        '[data-yaade-project-surface="running"]',
       )
       await expectSelectorVisible(
         page,
-        '[data-yaade-instance-sidebar="terminals"]',
+        '[data-yaade-mux] [data-yaade-instance-sidebar="running"]',
       )
       await expect
         .poll(async () => surface.locator('[data-yaade-mux-pane-kind="terminal"]').count())
@@ -110,7 +110,7 @@ test.describe("mux shell", () => {
     try {
       await waitForMux(page)
       const sidebarItems = page.locator(
-        '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+        '[data-yaade-list-panel="project-running"] [data-yaade-list-item]',
       )
       for (let expected = 2; expected <= 6; expected += 1) {
         await execCommand(page, "terminal.new")
@@ -674,7 +674,7 @@ test.describe("mux tiling", () => {
       await page.keyboard.type("echo yaade-last-pane")
       const tabId = await page
         .locator(
-          '[data-yaade-list-panel="project-terminals"] [data-yaade-instance-sidebar-item]',
+          '[data-yaade-list-panel="project-running"] [data-yaade-instance-sidebar-item]',
         )
         .first()
         .getAttribute("data-yaade-instance-sidebar-item")
@@ -685,19 +685,19 @@ test.describe("mux tiling", () => {
       // Empty terminals surface keeps New available.
       await expectSelectorVisible(
         page,
-        '[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]',
+        '[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]',
       )
       await expect
         .poll(async () =>
           page
             .locator(
-              '[data-yaade-list-panel="project-terminals"] [data-yaade-list-item]',
+              '[data-yaade-list-panel="project-running"] [data-yaade-list-item]',
             )
             .count(),
         )
         .toBe(0)
       await page
-        .locator('[data-yaade-project-surface="terminals"]')
+        .locator('[data-yaade-project-surface="running"]')
         .getByRole("button", { name: "New terminal" })
         .click()
       await expectSelectorVisible(page, "[data-yaade-terminal-panel]")

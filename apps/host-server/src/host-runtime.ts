@@ -79,11 +79,16 @@ export function createRuntime(
     events.emit("agents:event", [streamEvent])
   }
   let agentRuns: AgentRunService | null = null
+  let terminalInstances: TerminalInstanceService | null = null
   const agents = new AgentTelemetryService(
     db.raw(),
     notifications,
     emitAgent,
     event => {
+      const instance = terminalInstances?.onTelemetry(event)
+      if (instance) {
+        return instance.processState === "starting" || instance.processState === "running"
+      }
       const run = agentRuns?.onTelemetry(event)
       return !run || run.processState === "starting" || run.processState === "running"
     },
@@ -92,9 +97,10 @@ export function createRuntime(
     events.emit("agents:event", [streamEvent])
   })
   agentRuns = runService
-  const terminalInstances = new TerminalInstanceService(db.raw(), streamEvent => {
+  const processInstances = new TerminalInstanceService(db.raw(), streamEvent => {
     events.emit("terminal-instances:event", [streamEvent])
   })
+  terminalInstances = processInstances
 
   terminal.setEmit((channel, args) => {
     events.emit(channel, args)
@@ -107,7 +113,7 @@ export function createRuntime(
       terminalOscBuffers.delete(ptyId)
       const exitCode = typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0)
       const replay = terminal.readOutput(ptyId)
-      terminalInstances.onPtyExit(
+      processInstances.onPtyExit(
         ptyId,
         exitCode,
         replay?.output ?? "",
@@ -118,7 +124,7 @@ export function createRuntime(
         replay?.output ?? "",
         replay?.truncated ?? false,
       )
-      handleTerminalExit(notifications, agents, agentRuns, ptyId, exitCode)
+      handleTerminalExit(notifications, agents, processInstances, agentRuns, ptyId, exitCode)
     }
   })
 
@@ -142,7 +148,7 @@ export function createRuntime(
     notifications,
     agents,
     agentRuns: runService,
-    terminalInstances,
+    terminalInstances: processInstances,
     hookQueueTimer,
   }
   try {
@@ -244,10 +250,23 @@ function handleTerminalOsc(
 function handleTerminalExit(
   notifications: NotificationService,
   agents: AgentTelemetryService,
+  terminalInstances: TerminalInstanceService | null,
   agentRuns: AgentRunService | null,
   ptyId: string,
   exitCode: number,
 ): void {
+  const durableInstance = terminalInstances?.byPtyId(ptyId)
+  if (durableInstance?.provider) {
+    agents.onProcessExited({
+      provider: durableInstance.provider,
+      sessionId: durableInstance.id,
+      processId: ptyId,
+      exitCode,
+      expectedExit: exitCode === 0,
+      projectId: durableInstance.projectId,
+    })
+    return
+  }
   const durableRun = agentRuns?.onPtyExit(ptyId, exitCode, exitCode === 0)
   if (durableRun) {
     agents.onProcessExited({

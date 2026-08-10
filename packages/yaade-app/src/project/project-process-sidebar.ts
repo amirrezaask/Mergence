@@ -1,14 +1,12 @@
 import { useCallback, useEffect, useState } from "react"
-import type { AgentRunInfo, TerminalInstanceInfo } from "@yaade/workspace"
+import type { TerminalInstanceInfo } from "@yaade/workspace"
 import { showYaadeToast } from "@yaade/ui/toast"
 
-function upsertByRevision<T extends { revision: number }>(
-  rows: readonly T[],
-  id: string,
-  next: T,
-  idOf: (row: T) => string,
-): T[] {
-  const index = rows.findIndex(row => idOf(row) === id)
+function upsertByRevision(
+  rows: readonly TerminalInstanceInfo[],
+  next: TerminalInstanceInfo,
+): TerminalInstanceInfo[] {
+  const index = rows.findIndex(row => row.id === next.id)
   if (index < 0) return [next, ...rows]
   if (rows[index]!.revision >= next.revision) return [...rows]
   const copy = [...rows]
@@ -17,7 +15,7 @@ function upsertByRevision<T extends { revision: number }>(
 }
 
 export function processStatusLabel(
-  status: AgentRunInfo["processState"] | TerminalInstanceInfo["processState"],
+  status: TerminalInstanceInfo["processState"],
 ): string {
   if (status === "running" || status === "starting") return status
   if (status === "disconnected") return "offline"
@@ -29,72 +27,39 @@ export function useProjectProcessSidebar(
   checkoutKey: string,
   checkoutPath: string,
 ) {
-  const [agents, setAgents] = useState<AgentRunInfo[]>([])
-  const [terminals, setTerminals] = useState<TerminalInstanceInfo[]>([])
-  const [agentLoading, setAgentLoading] = useState(true)
-  const [terminalLoading, setTerminalLoading] = useState(true)
-  const [agentError, setAgentError] = useState<string | null>(null)
-  const [terminalError, setTerminalError] = useState<string | null>(null)
+  const [processes, setProcesses] = useState<TerminalInstanceInfo[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
-  const refreshAgents = useCallback(async () => {
-    const api = window.yaade?.agents
-    if (!api) throw new Error("Agent service unavailable")
-    setAgents(await api.listProject(projectId))
-    setAgentError(null)
-    setAgentLoading(false)
-  }, [projectId])
-
-  const refreshTerminals = useCallback(async () => {
+  const refresh = useCallback(async () => {
     const api = window.yaade?.terminal
     if (!api) throw new Error("Terminal service unavailable")
-    setTerminals(await api.listInstances(projectId))
-    setTerminalError(null)
-    setTerminalLoading(false)
+    setProcesses(await api.listInstances(projectId))
+    setError(null)
+    setLoading(false)
   }, [projectId])
 
   useEffect(() => {
     let cancelled = false
-    setAgentLoading(true)
-    void refreshAgents().catch(reason => {
+    setLoading(true)
+    void refresh().catch(reason => {
       if (cancelled) return
-      setAgentError(reason instanceof Error ? reason.message : String(reason))
-      setAgentLoading(false)
-    })
-    const unsubscribe = window.yaade?.agents?.onEvent(event => {
-      if (event.type !== "agents.run" || !event.run || event.run.projectId !== projectId) return
-      if (event.kind === "run.ended") {
-        void refreshAgents().catch(() => undefined)
-        return
-      }
-      setAgents(current => upsertByRevision(current, event.run!.runId, event.run!, row => row.runId))
-    })
-    return () => {
-      cancelled = true
-      unsubscribe?.()
-    }
-  }, [projectId, refreshAgents])
-
-  useEffect(() => {
-    let cancelled = false
-    setTerminalLoading(true)
-    void refreshTerminals().catch(reason => {
-      if (cancelled) return
-      setTerminalError(reason instanceof Error ? reason.message : String(reason))
-      setTerminalLoading(false)
+      setError(reason instanceof Error ? reason.message : String(reason))
+      setLoading(false)
     })
     const unsubscribe = window.yaade?.terminal?.onInstanceEvent(event => {
       if (event.instance.projectId !== projectId) return
       if (event.kind === "instance.removed") {
-        setTerminals(current => current.filter(item => item.id !== event.instance.id))
+        setProcesses(current => current.filter(item => item.id !== event.instance.id))
         return
       }
-      setTerminals(current => upsertByRevision(current, event.instance.id, event.instance, row => row.id))
+      setProcesses(current => upsertByRevision(current, event.instance))
     })
     return () => {
       cancelled = true
       unsubscribe?.()
     }
-  }, [projectId, refreshTerminals])
+  }, [projectId, refresh])
 
   const createTerminal = useCallback(async (checkout?: {
     checkoutKey: string
@@ -107,41 +72,55 @@ export function useProjectProcessSidebar(
       checkoutKey: checkout?.checkoutKey ?? checkoutKey,
       checkoutPath: checkout?.checkoutPath ?? checkoutPath,
     })
-    setTerminals(current => upsertByRevision(current, instance.id, instance, row => row.id))
+    setProcesses(current => upsertByRevision(current, instance))
     return instance.id
   }, [checkoutKey, checkoutPath, projectId])
 
-  const closeAgent = useCallback(async (run: AgentRunInfo) => {
-    try {
-      await window.yaade?.agents?.close({ runId: run.runId, generation: run.generation })
-      setAgents(current => current.filter(item => item.runId !== run.runId))
-    } catch (error) {
-      showYaadeToast(error instanceof Error ? error.message : "Could not close agent", {
-        variant: "destructive",
-      })
-    }
-  }, [])
+  const createAgent = useCallback(async (input: {
+    provider: NonNullable<TerminalInstanceInfo["provider"]>
+    workspaceId: string
+    launchRequestId: string
+    checkoutKey?: string
+    checkoutPath?: string
+    title?: string
+    args?: string[]
+  }) => {
+    const api = window.yaade?.terminal
+    if (!api) throw new Error("Terminal service unavailable")
+    const instance = await api.createInstance({
+      projectId,
+      provider: input.provider,
+      workspaceId: input.workspaceId,
+      launchRequestId: input.launchRequestId,
+      checkoutKey: input.checkoutKey ?? checkoutKey,
+      checkoutPath: input.checkoutPath ?? checkoutPath,
+      title: input.title,
+      args: input.args,
+    })
+    setProcesses(current => upsertByRevision(current, instance))
+    return instance
+  }, [checkoutKey, checkoutPath, projectId])
 
-  const closeTerminal = useCallback(async (instance: TerminalInstanceInfo) => {
+  const closeProcess = useCallback(async (instance: TerminalInstanceInfo) => {
     try {
-      await window.yaade?.terminal?.closeInstance({ id: instance.id, generation: instance.generation })
-      setTerminals(current => current.filter(item => item.id !== instance.id))
+      await window.yaade?.terminal?.closeInstance({
+        id: instance.id,
+        generation: instance.generation,
+      })
+      setProcesses(current => current.filter(item => item.id !== instance.id))
     } catch (error) {
-      showYaadeToast(error instanceof Error ? error.message : "Could not close terminal", {
+      showYaadeToast(error instanceof Error ? error.message : "Could not close process", {
         variant: "destructive",
       })
     }
   }, [])
 
   return {
-    agents,
-    terminals,
-    agentLoading,
-    terminalLoading,
-    agentError,
-    terminalError,
+    processes,
+    loading,
+    error,
     createTerminal,
-    closeAgent,
-    closeTerminal,
+    createAgent,
+    closeProcess,
   }
 }

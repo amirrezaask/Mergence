@@ -1,9 +1,6 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import type { YaadeTheme } from "@yaade/shared"
-import {
-  type AgentRunInfo,
-  type TerminalInstanceInfo,
-} from "@yaade/workspace"
+import { type TerminalInstanceInfo } from "@yaade/workspace"
 import { Circle, RotateCcw } from "lucide-react"
 import { Button } from "@yaade/ui/primitives"
 import { pathToFileUri } from "@yaade/shared"
@@ -27,7 +24,7 @@ function upsertByRevision<T extends { revision: number }>(
   return copy
 }
 
-type ProcessStatus = AgentRunInfo["processState"] | TerminalInstanceInfo["processState"]
+type ProcessStatus = TerminalInstanceInfo["processState"]
 
 type ProcessSurfaceEvent<T> =
   | { kind: "upsert"; item: T }
@@ -155,7 +152,7 @@ function ProcessDetail({
   theme: YaadeTheme
   onRestart?: () => void
 }) {
-  const live = (status === "running" || status === "starting" || status === "reserved") && ptyId
+  const live = (status === "running" || status === "starting") && ptyId
   return (
     <div className="relative min-w-0 flex-1" data-yaade-process-detail={id}>
       <Suspense
@@ -173,7 +170,7 @@ function ProcessDetail({
           focused
           isActive
           existingPtyId={ptyId}
-          status={status === "reserved" ? "starting" : status}
+          status={status}
           sessionGeneration={generation}
           attachOnly
         />
@@ -200,7 +197,7 @@ function ProcessDetail({
               <p className="mt-1 text-xs text-muted-foreground">
                 {status === "disconnected"
                   ? "The host restarted, so this process can no longer be attached."
-                  : status === "reserved" || status === "starting"
+                  : status === "starting"
                     ? "Starting process…"
                   : status === "failed"
                     ? "The process could not be started."
@@ -221,71 +218,7 @@ function ProcessDetail({
   )
 }
 
-export function AgentsProjectSurface({
-  projectId,
-  selectedId,
-  theme,
-  onSelect,
-}: {
-  projectId: string
-  selectedId: string | null
-  theme: YaadeTheme
-  onSelect: (id: string | null) => void
-}) {
-  const adapter = useMemo<ProcessSurfaceAdapter<AgentRunInfo>>(
-    () => ({
-      list: async () => {
-        const api = window.yaade?.agents
-        if (!api) throw new Error("Agent service unavailable")
-        return api.listProject(projectId)
-      },
-      subscribe: onEvent =>
-        window.yaade?.agents?.onEvent(event => {
-          if (event.type !== "agents.run" || !event.run || event.run.projectId !== projectId) return
-          if (event.kind === "run.ended") {
-            onEvent({ kind: "refresh" })
-            return
-          }
-          onEvent({ kind: "upsert", item: event.run })
-        }),
-      idOf: run => run.runId,
-      getTranscript: async run => {
-        const value = await window.yaade?.agents?.getTranscript(run.runId)
-        return value?.output ?? ""
-      },
-    }),
-    [projectId],
-  )
-  const { selected, transcript, loading, error } = useProcessSurface({
-    adapter,
-    selectedId,
-    onSelect,
-  })
-
-  return (
-    <div className="flex h-full min-h-0" data-yaade-project-panel="agents">
-      {selected ? (
-        <ProcessDetail
-          id={selected.runId}
-          ptyId={selected.ptyId}
-          cwdPath={selected.checkoutPath}
-          title={selected.title}
-          status={selected.processState}
-          exitCode={selected.exitCode}
-          generation={selected.generation}
-          transcript={transcript}
-          theme={theme}
-        />
-      ) : (
-        <div className="grid min-w-0 flex-1 place-items-center text-xs text-muted-foreground">
-          {error ?? (loading ? "Loading agents…" : "Launch an agent to start working.")}
-        </div>
-      )}
-    </div>
-  )
-}
-
-export function TerminalsProjectSurface({
+export function RunningProjectSurface({
   projectId,
   selectedId,
   theme,
@@ -333,7 +266,7 @@ export function TerminalsProjectSurface({
   })
 
   return (
-    <div className="flex h-full min-h-0" data-yaade-project-panel="terminals">
+    <div className="flex h-full min-h-0" data-yaade-project-panel="running">
       {selected ? (
         <ProcessDetail
           id={selected.id}
@@ -349,7 +282,7 @@ export function TerminalsProjectSurface({
         />
       ) : (
         <div className="grid min-w-0 flex-1 place-items-center text-xs text-muted-foreground">
-          {error ?? (loading ? "Loading terminals…" : "Create a terminal in Main or a worktree.")}
+          {error ?? (loading ? "Loading processes…" : "Launch an agent or terminal to start working.")}
         </div>
       )}
     </div>

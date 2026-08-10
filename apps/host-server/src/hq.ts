@@ -151,24 +151,22 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
   const attentionBySession = runtime.notifications.attentionBySession()
   const attentionByProject = runtime.notifications.attentionByProject()
   const agents: HqAgentSummary[] = []
-  // AgentRunService is the only live source. It has a process-generation
-  // binding, unlike old layout leaves and cwd-based PTY guesses.
-  const durableRunService = (runtime as unknown as {
-    agentRuns?: { listLive: () => ReturnType<HostRuntime["agentRuns"]["listLive"]> }
-  }).agentRuns
-  for (const run of durableRunService?.listLive() ?? []) {
-    if (!run.ptyId) continue
+  // Terminal instances are the single process roster. Provider-flagged rows
+  // are agent CLIs; activity/telemetry live on the same row.
+  const liveProcesses = runtime.terminalInstances.listLive()
+  for (const run of liveProcesses) {
+    if (!run.provider || !run.ptyId) continue
     const inspected = runtime.terminal.inspect(run.ptyId)
     if (!inspected || inspected.status !== "running") continue
     const project = projectById.get(run.projectId)
-    const referencedSession = sessionById.get(run.workspaceId)
+    const referencedSession = run.workspaceId ? sessionById.get(run.workspaceId) : undefined
     const projectSession = referencedSession && !referencedSession.archivedAt
       ? referencedSession
       : sessionsByProjectPath.get(project?.rootPath ?? "")?.[0]
     if (!project || !projectSession) continue
-    const snapshot = runtime.agents.getSnapshot(run.runId)
-    const unreadCount = unreadBySession[run.runId] ?? 0
-    const attention = snapshotAttention(snapshot, attentionBySession[run.runId] ?? 0)
+    const snapshot = runtime.agents.getSnapshot(run.id)
+    const unreadCount = unreadBySession[run.id] ?? 0
+    const attention = snapshotAttention(snapshot, attentionBySession[run.id] ?? 0)
     const status = run.activityState === "working" || run.activityState === "running_tool"
       ? run.activityState
       : run.activityState === "waiting_for_permission" || run.activityState === "waiting_for_user"
@@ -182,9 +180,9 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
           ? "Running · process telemetry"
           : "Telemetry connecting"
     agents.push(HqAgentSummary.make({
-      runId: run.runId,
+      runId: run.id,
       generation: run.generation,
-      sessionId: run.runId,
+      sessionId: run.id,
       ptyId: run.ptyId,
       projectId: project.id,
       projectName: project.name,
@@ -209,9 +207,9 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
     }))
   }
 
-  // Compatibility only for databases/pages that predate agent_runs. New
-  // launches never enter this branch; it can disappear after migration rollout.
-  if (!durableRunService) {
+  // Compatibility only for databases/pages that predate the unified process
+  // roster. New launches never enter this branch.
+  if (agents.length === 0) {
     const claimedPtyIds = new Set<string>()
     for (const projectSession of sessions) {
       if (projectSession.archivedAt) continue
