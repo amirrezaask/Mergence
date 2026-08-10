@@ -398,7 +398,7 @@ body {
   background: var(--secondary);
 }
 
-/* CodeMirror autocomplete — native tooltip hidden; Jet renders Radix ContextMenu in EditorTabHost. */
+/* Code editor autocomplete — native tooltip hidden; the mux owns editor chrome. */
 
 /*
  * Monaco + Tailwind preflight isolation.

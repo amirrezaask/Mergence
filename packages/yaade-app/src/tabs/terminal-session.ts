@@ -11,6 +11,7 @@ import {
   extractAgentCliSessionIdFromLaunchArgs,
   isAgentCliProvider,
 } from "../agent-cli-launch.js"
+import type { KnownTabKind } from "@yaade/workspace"
 import {
   defaultSessionStore,
   type HydratedTerminalSession,
@@ -26,6 +27,8 @@ export type {
   HydratedTerminalSession,
   SessionNotifyKind,
 }
+
+export const TERMINAL_TAB_TYPE_ID: KnownTabKind = "terminal"
 
 export function subscribeTerminalSessions(
   listener: (tabId: string, kind: SessionNotifyKind) => void,

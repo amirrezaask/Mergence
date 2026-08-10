@@ -1,8 +1,9 @@
-import { Plus, X } from "lucide-react"
+import { Plus } from "lucide-react"
 import type { ReactNode } from "react"
 import { Button } from "../components/ui/button.js"
 import { cn } from "../lib/utils.js"
 import { SidebarShell } from "./SidebarShell.js"
+import { SidebarProcessItem } from "./SidebarProcessItem.js"
 
 export type InstanceSidebarItem = {
   id: string
@@ -71,56 +72,19 @@ export function InstanceSidebar({
       {items.length === 0 ? (
         <p className="px-2 py-3 text-3xs text-muted-foreground">{emptyLabel}</p>
       ) : (
-        items.map(item => {
+          items.map(item => {
           const selected = activeId === item.id
           return (
-            <div
+            <SidebarProcessItem
               key={item.id}
-              data-yaade-list-item=""
-              className={cn(
-                "group mb-0.5 flex w-full shrink-0 items-stretch gap-0.5 rounded-md",
-                selected && "bg-accent",
-              )}
-            >
-              <button
-                type="button"
-                data-yaade-instance-sidebar-item={item.id}
-                aria-current={selected ? "true" : undefined}
-                className={cn(
-                  "flex min-w-0 flex-1 items-center gap-2 rounded-md px-2 py-1.5 text-left transition-colors",
-                  selected
-                    ? "text-accent-foreground"
-                    : "hover:bg-accent/60",
-                )}
-                onClick={() => onSelect(item.id)}
-              >
-                {item.icon}
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-xs font-medium">
-                    {item.label}
-                  </span>
-                  {item.subtitle ? (
-                    <span className="block truncate text-3xs text-muted-foreground">
-                      {item.subtitle}
-                    </span>
-                  ) : null}
-                </span>
-              </button>
-              {selected && onClose ? (
-                <div className="flex shrink-0 items-center pr-1">
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Close ${item.label}`}
-                    data-yaade-instance-sidebar-close={item.id}
-                    onClick={() => onClose(item.id)}
-                  >
-                    <X />
-                  </Button>
-                </div>
-              ) : null}
-            </div>
+              item={{
+                ...item,
+                selected,
+                onSelect: () => onSelect(item.id),
+                onClose: onClose ? () => onClose(item.id) : undefined,
+              }}
+              variant="compact"
+            />
           )
         })
       )}

@@ -96,19 +96,11 @@ test("bench frontend cold startup and first overlay", async () => {
     expect(snapshot.nodeCount, "cold HQ DOM should stay compact").toBeLessThan(2_000)
     expect(
       snapshot.scripts.some(name =>
-        /(?:MuxApp|monaco|xterm|git-entry|HqAgentDialog|agent-picker-entry)/i.test(
+        /(?:MuxApp|monaco|xterm|git-entry|agent-picker-entry)/i.test(
           name,
         ),
       ),
       "workspace or agent-dialog implementation loaded on the cold HQ path",
-    ).toBe(false)
-    expect(
-      snapshot.scripts.some(name => name.includes("OverlayHostContent-")),
-      "overlay implementation loaded before first overlay",
-    ).toBe(false)
-    expect(
-      snapshot.scripts.some(name => name.includes("ProjectTodoBoard-")),
-      "TODO drag-and-drop loaded on the cold home path",
     ).toBe(false)
     if (snapshot.usedHeapBytes != null) {
       expect(snapshot.usedHeapBytes, "cold home JS heap exceeded 64 MiB").toBeLessThan(

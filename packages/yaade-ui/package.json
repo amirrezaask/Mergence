@@ -35,10 +35,6 @@
       "types": "./src/agent-picker-entry.ts",
       "default": "./src/agent-picker-entry.ts"
     },
-    "./markdown": {
-      "types": "./src/markdown-entry.ts",
-      "default": "./src/markdown-entry.ts"
-    },
     "./toast": {
       "types": "./src/toast-entry.ts",
       "default": "./src/toast-entry.ts"
@@ -63,15 +59,11 @@
       "types": "./src/git-entry.ts",
       "default": "./src/git-entry.ts"
     },
-    "./editor": {
-      "types": "./src/editor-entry.ts",
-      "default": "./src/editor-entry.ts"
-    },
     "./styles.css": "./src/styles/globals.css"
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/home/session-header-labels.test.ts src/home/todos/project-todos-repository.test.ts src/notifications/group-by-time.test.ts src/home/sidebar/grouping/grouping.test.ts src/home/sidebar/filter-sessions.test.ts src/home/sidebar/project-monogram.test.ts src/mux/process-identity.test.ts"
+    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",

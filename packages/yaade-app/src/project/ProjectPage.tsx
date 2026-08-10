@@ -6,12 +6,13 @@ import {
   useMemo,
   useRef,
   useState,
+  type ReactNode,
 } from "react"
 import type {
   HqAgentSummary,
   ProjectSession,
 } from "@yaade/rpc"
-import { pathToFileUri } from "@yaade/shared"
+import { pathToFileUri, type YaadeTheme } from "@yaade/shared"
 import {
   isTerminalTabId,
   terminalTabId,
@@ -38,10 +39,11 @@ import {
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import {
   Bot,
+  ChevronDown,
   ChevronsUpDown,
-  Code2,
   FolderKanban,
   GitBranch,
+  Plus,
   SquareTerminal,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
@@ -89,6 +91,10 @@ import {
   TerminalsProjectSurface,
 } from "./ProjectProcessSurfaces.js"
 import {
+  AgentLaunchMenu,
+  TerminalLaunchMenu,
+} from "./ProjectLaunchMenus.js"
+import {
   processStatusLabel,
   useProjectProcessSidebar,
 } from "./project-process-sidebar.js"
@@ -96,12 +102,6 @@ import {
 const GitWorkspace = lazy(() =>
   import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
 )
-const AgentCliPickerOverlay = lazy(() =>
-  import("@yaade/ui/agent-picker").then(m => ({
-    default: m.AgentCliPickerOverlay,
-  })),
-)
-
 function preloadSettingsOverlay() {
   return import("@yaade/ui/settings")
 }
@@ -181,6 +181,105 @@ function checkoutRouteKey(checkout: ActiveCheckout): string | null {
   return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
 }
 
+function ProjectSurfaceSlot({
+  panel,
+  active,
+  mounted = true,
+  fallback,
+  children,
+  className,
+}: {
+  panel: string
+  active: boolean
+  mounted?: boolean
+  fallback: ReactNode
+  children: ReactNode
+  className?: string
+}) {
+  if (!mounted) return null
+  return (
+    <div
+      className={cn(
+        "absolute inset-0 overflow-hidden",
+        !active && "pointer-events-none invisible",
+        className,
+      )}
+      aria-hidden={!active}
+      data-yaade-project-panel={panel}
+    >
+      <Suspense
+        fallback={
+          <div
+            className="grid h-full place-items-center text-xs text-muted-foreground"
+            role="status"
+          >
+            {fallback}
+          </div>
+        }
+      >
+        {children}
+      </Suspense>
+    </div>
+  )
+}
+
+function ProjectGitSurface({
+  view,
+  active,
+  rootUri,
+  theme,
+  projectPath,
+  homeDir,
+  defaultBranch,
+  activeCheckout,
+  onSelectCheckout,
+  onCreateWorktree,
+  onRemoveWorktree,
+}: {
+  view: "history" | "changes"
+  active: boolean
+  rootUri: string
+  theme: YaadeTheme
+  projectPath: string
+  homeDir: string
+  defaultBranch: string
+  activeCheckout: ActiveCheckout
+  onSelectCheckout: (checkout: CheckoutSelection) => void
+  onCreateWorktree: (input: {
+    branch: string
+    baseRef?: string
+  }) => Promise<CheckoutSelection | void>
+  onRemoveWorktree: (input: {
+    cwdPath: string
+    branch: string | null
+  }) => Promise<void>
+}) {
+  return (
+    <GitWorkspace
+      key={`${view}:${activeCheckout.cwdPath}`}
+      rootUri={rootUri}
+      theme={theme}
+      initialView={view}
+      unifiedHistory={view === "history"}
+      active={active}
+      toolbarStart={
+        <CheckoutPicker
+          projectPath={projectPath}
+          homeDir={homeDir}
+          defaultBranch={defaultBranch}
+          activeLabel={activeCheckout.label}
+          activeCwdPath={activeCheckout.cwdPath}
+          onSelectCheckout={onSelectCheckout}
+          onCreateWorktree={onCreateWorktree}
+          onRemoveWorktree={onRemoveWorktree}
+          triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
+        />
+      }
+      onOpenFile={() => undefined}
+    />
+  )
+}
+
 function agentFocusTabId(identity: string | null): string | null {
   if (!identity) return null
   return isTerminalTabId(identity) ? identity : terminalTabId(identity)
@@ -245,6 +344,7 @@ export function ProjectPage({
     agentFocusTabId(initialAgentFocusTabId),
   )
   const [agentPickerOpen, setAgentPickerOpen] = useState(false)
+  const [terminalPickerOpen, setTerminalPickerOpen] = useState(false)
   // Seed from the module queue so StrictMode remounts still see the HQ intent.
   const [launchRequest, setLaunchRequest] = useState<MuxLaunchRequest | null>(
     () => {
@@ -1006,12 +1106,15 @@ export function ProjectPage({
   )
 
   const handleTerminalSelect = useCallback(
-    (terminalId: string | null) => {
+    (
+      terminalId: string | null,
+      checkout?: { checkoutKey: string; checkoutPath: string },
+    ) => {
       const selection = {
         ...surfaceSelections.terminals,
         terminalId,
-        checkoutKey: activeCheckout.checkoutKey,
-        checkoutPath: activeCheckout.cwdPath,
+        checkoutKey: checkout?.checkoutKey ?? activeCheckout.checkoutKey,
+        checkoutPath: checkout?.checkoutPath ?? activeCheckout.cwdPath,
       }
       setSurfaceSelections(current => ({ ...current, terminals: selection }))
       void saveProjectSurfaceState(projectId, "terminals", selection)
@@ -1020,11 +1123,20 @@ export function ProjectPage({
       replaceProjectRoute(location.pathname, {
         view: "terminals",
         workspaceId: null,
-        checkoutKey: checkoutRouteKey(activeCheckout),
+        checkoutKey: checkout
+          ? checkoutRouteKey(
+              checkoutFromPaths(
+                projectPath,
+                checkout.checkoutPath,
+                checkout.checkoutKey === "main" ? "Main" : checkout.checkoutKey,
+                checkout.checkoutKey,
+              ),
+            )
+          : checkoutRouteKey(activeCheckout),
         terminalInstanceId: terminalId,
       })
     },
-    [activeCheckout, projectId, surfaceSelections.terminals],
+    [activeCheckout, projectId, projectPath, surfaceSelections.terminals],
   )
 
   const activeAgentId =
@@ -1066,7 +1178,6 @@ export function ProjectPage({
 
   const projectViews = useMemo<ProjectWorkspaceSidebarView[]>(
     () => [
-      { id: "editors", label: "Editors", icon: <Code2 aria-hidden />, selected: view === "editors", onSelect: () => handleViewSelect("editors") },
       { id: "history", label: "Git history", icon: <GitBranch aria-hidden />, selected: view === "history", onSelect: () => handleViewSelect("history") },
     ],
     [handleViewSelect, view],
@@ -1083,6 +1194,94 @@ export function ProjectPage({
     }
   }, [handleTerminalSelect, processSidebar.createTerminal])
 
+  const createTerminalAtCheckout = useCallback(
+    async (checkout: CheckoutSelection) => {
+      try {
+        const id = await processSidebar.createTerminal({
+          checkoutKey: checkout.checkoutKey,
+          checkoutPath: checkout.cwdPath,
+        })
+        handleTerminalSelect(id, {
+          checkoutKey: checkout.checkoutKey,
+          checkoutPath: checkout.cwdPath,
+        })
+      } catch (error) {
+        showYaadeToast(
+          error instanceof Error ? error.message : "Could not create terminal",
+          { variant: "destructive" },
+        )
+      }
+    },
+    [handleTerminalSelect, processSidebar.createTerminal],
+  )
+
+  const launchAgentFromMenu = useCallback(
+    (
+      driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"],
+      checkout: CheckoutSelection,
+    ) => {
+      setAgentPickerOpen(false)
+      launchSequenceRef.current += 1
+      const requestId = `launch-${Date.now()}-${launchSequenceRef.current}`
+      void openAgentLaunch({
+        requestId,
+        driverId,
+        useWorktree: false,
+        checkoutPath: checkout.cwdPath,
+        checkoutKey: checkout.checkoutKey,
+        checkoutLabel: checkout.title,
+      }).catch(error => {
+        showYaadeToast(
+          error instanceof Error ? error.message : "Could not launch the agent.",
+          { variant: "destructive" },
+        )
+      })
+    },
+    [openAgentLaunch],
+  )
+
+  const agentLauncher = (
+    <AgentLaunchMenu
+      projectPath={projectPath}
+      open={agentPickerOpen}
+      onOpenChange={setAgentPickerOpen}
+      onLaunch={(driver, checkout) => launchAgentFromMenu(driver.id, checkout)}
+      trigger={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="New agent"
+          data-yaade-project-process-new="agents"
+          data-yaade-instance-sidebar-new=""
+        >
+          <Plus />
+        </Button>
+      }
+    />
+  )
+
+  const terminalLauncher = (
+    <TerminalLaunchMenu
+      projectPath={projectPath}
+      open={terminalPickerOpen}
+      onOpenChange={setTerminalPickerOpen}
+      onSelect={createTerminalAtCheckout}
+      trigger={
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="New terminal"
+          data-yaade-project-process-new="terminals"
+          data-yaade-instance-sidebar-new=""
+        >
+          <ChevronDown />
+        </Button>
+      }
+    />
+  )
+
   const surface = surfaceForView(view)
   const checkoutRootUri = useMemo(
     () => pathToFileUri(activeCheckout.cwdPath),
@@ -1098,7 +1297,6 @@ export function ProjectPage({
       >
         <ProjectWorkspaceSidebar
           projectName={projectName}
-          projectPath={projectPath}
           views={projectViews}
           agents={agentSidebarItems}
           terminals={terminalSidebarItems}
@@ -1109,6 +1307,8 @@ export function ProjectPage({
           terminalLoading={processSidebar.terminalLoading}
           agentError={processSidebar.agentError}
           terminalError={processSidebar.terminalError}
+          agentLauncher={agentLauncher}
+          terminalLauncher={terminalLauncher}
           projectSwitcher={
             <OpenProjectOverlay
               open={projectSwitcherOpen}
@@ -1124,7 +1324,7 @@ export function ProjectPage({
                 <Button
                   variant="ghost"
                   size="sm"
-                  className="max-w-52 justify-start gap-1.5 px-1.5 text-left sm:max-w-64"
+                  className="w-full max-w-none justify-start gap-1.5 px-1.5 text-left group-data-[collapsible=icon]:size-8 group-data-[collapsible=icon]:p-0 group-data-[collapsible=icon]:[&>span]:hidden group-data-[collapsible=icon]:[&>svg:last-child]:hidden"
                   aria-label="Switch project"
                   title="Go to project"
                   data-yaade-project-switcher=""
@@ -1149,113 +1349,54 @@ export function ProjectPage({
           >
           {/* Keep mux mounted so PTYs survive surface switches. */}
           <div className="relative min-h-0 flex-1 overflow-hidden">
-            {historyMounted ? (
-              <div
-                className={cn(
-                  "absolute inset-0 overflow-hidden",
-                  view !== "history" && "pointer-events-none invisible",
-                )}
-                aria-hidden={view !== "history"}
-                data-yaade-project-panel="history"
-              >
-                <Suspense
-                  fallback={
-                    <div
-                      className="grid h-full place-items-center text-xs text-muted-foreground"
-                      role="status"
-                    >
-                      Loading history…
-                    </div>
-                  }
-                >
-                  <GitWorkspace
-                    key={`history:${activeCheckout.cwdPath}`}
-                    rootUri={checkoutRootUri}
-                    theme={activeTheme}
-                    initialView="history"
-                    unifiedHistory
-                    active={view === "history"}
-                    toolbarStart={
-                      <CheckoutPicker
-                        projectPath={projectPath}
-                        homeDir={homeDir}
-                        defaultBranch={defaultBranch}
-                        activeLabel={activeCheckout.label}
-                        activeCwdPath={activeCheckout.cwdPath}
-                        onSelectCheckout={handleSelectCheckout}
-                        onCreateWorktree={handleCreateWorktree}
-                        onRemoveWorktree={handleRemoveWorktree}
-                        triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
-                      />
-                    }
-                    onOpenFile={() => undefined}
-                  />
-                </Suspense>
-              </div>
-            ) : null}
+            <ProjectSurfaceSlot
+              panel="history"
+              active={view === "history"}
+              mounted={historyMounted}
+              fallback="Loading history…"
+            >
+              <ProjectGitSurface
+                view="history"
+                active={view === "history"}
+                rootUri={checkoutRootUri}
+                theme={activeTheme}
+                projectPath={projectPath}
+                homeDir={homeDir}
+                defaultBranch={defaultBranch}
+                activeCheckout={activeCheckout}
+                onSelectCheckout={handleSelectCheckout}
+                onCreateWorktree={handleCreateWorktree}
+                onRemoveWorktree={handleRemoveWorktree}
+              />
+            </ProjectSurfaceSlot>
 
-            {view === "changes" ? (
-              <div
-                className={cn(
-                  "absolute inset-0 overflow-hidden",
-                  view !== "changes" && "pointer-events-none invisible",
-                )}
-                aria-hidden={view !== "changes"}
-                data-yaade-project-panel="changes"
-              >
-                <Suspense
-                  fallback={
-                    <div
-                      className="grid h-full place-items-center text-xs text-muted-foreground"
-                      role="status"
-                    >
-                      Loading changes…
-                    </div>
-                  }
-                >
-                  <GitWorkspace
-                    key={`changes:${activeCheckout.cwdPath}`}
-                    rootUri={checkoutRootUri}
-                    theme={activeTheme}
-                    initialView="changes"
-                    toolbarStart={
-                      <CheckoutPicker
-                        projectPath={projectPath}
-                        homeDir={homeDir}
-                        defaultBranch={defaultBranch}
-                        activeLabel={activeCheckout.label}
-                        activeCwdPath={activeCheckout.cwdPath}
-                        onSelectCheckout={handleSelectCheckout}
-                        onCreateWorktree={handleCreateWorktree}
-                        onRemoveWorktree={handleRemoveWorktree}
-                        triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
-                      />
-                    }
-                    onOpenFile={() => undefined}
-                  />
-                </Suspense>
-              </div>
-            ) : null}
+            <ProjectSurfaceSlot
+              panel="changes"
+              active={view === "changes"}
+              mounted={view === "changes"}
+              fallback="Loading changes…"
+            >
+              <ProjectGitSurface
+                view="changes"
+                active
+                rootUri={checkoutRootUri}
+                theme={activeTheme}
+                projectPath={projectPath}
+                homeDir={homeDir}
+                defaultBranch={defaultBranch}
+                activeCheckout={activeCheckout}
+                onSelectCheckout={handleSelectCheckout}
+                onCreateWorktree={handleCreateWorktree}
+                onRemoveWorktree={handleRemoveWorktree}
+              />
+            </ProjectSurfaceSlot>
 
             {session && view === "editors" ? (
-              <div
-                className={cn(
-                  "absolute inset-0 overflow-hidden",
-                  view !== "editors" && "pointer-events-none invisible",
-                )}
-                aria-hidden={view !== "editors"}
-                data-yaade-project-panel="editors"
+              <ProjectSurfaceSlot
+                panel="editors"
+                active
+                fallback="Opening workspace…"
               >
-                <Suspense
-                  fallback={
-                    <div
-                      className="grid h-full place-items-center text-xs text-muted-foreground"
-                      role="status"
-                    >
-                      Opening workspace…
-                    </div>
-                  }
-                >
                   <MuxApp
                     key={session.id}
                     session={session}
@@ -1332,12 +1473,11 @@ export function ProjectPage({
                     launchRequest={launchRequest}
                     onLaunchRequestHandled={handleLaunchRequestHandled}
                   />
-                </Suspense>
-              </div>
+              </ProjectSurfaceSlot>
             ) : null}
 
             {view === "agents" ? (
-              <div className="absolute inset-0 overflow-hidden">
+              <ProjectSurfaceSlot panel="agents" active fallback="Loading agents…">
                 <AgentsProjectSurface
                   projectId={projectId}
                   selectedId={
@@ -1348,11 +1488,11 @@ export function ProjectPage({
                   theme={activeTheme}
                   onSelect={handleAgentSelect}
                 />
-              </div>
+              </ProjectSurfaceSlot>
             ) : null}
 
             {view === "terminals" ? (
-              <div className="absolute inset-0 overflow-hidden">
+              <ProjectSurfaceSlot panel="terminals" active fallback="Loading terminals…">
                 <TerminalsProjectSurface
                   projectId={projectId}
                   selectedId={
@@ -1363,20 +1503,22 @@ export function ProjectPage({
                   theme={activeTheme}
                   onSelect={handleTerminalSelect}
                 />
-              </div>
+              </ProjectSurfaceSlot>
             ) : null}
 
             {view === "editors" && !session ? (
-              <div
-                className="absolute inset-0 grid place-items-center overflow-hidden"
-                data-yaade-project-panel={view}
+              <ProjectSurfaceSlot
+                panel="editors"
+                active
+                fallback="Loading workspace…"
+                className="grid place-items-center"
               >
                 <p className="max-w-sm px-4 text-center text-sm text-muted-foreground">
                   {routeError ?? (view === "editors"
                     ? "Open a file from the project…"
                     : "Launch a terminal in Main or a worktree…")}
                 </p>
-              </div>
+              </ProjectSurfaceSlot>
             ) : null}
           </div>
 
@@ -1393,39 +1535,6 @@ export function ProjectPage({
             onSettingsChange={setAppearanceSettings}
             themes={bundledThemeList}
             onReset={resetAppearanceSettings}
-          />
-        </Suspense>
-      ) : null}
-
-      {agentPickerOpen ? (
-        <Suspense fallback={null}>
-          <AgentCliPickerOverlay
-            open={agentPickerOpen}
-            onOpenChange={setAgentPickerOpen}
-            onSelect={selection => {
-              setAgentPickerOpen(false)
-              launchSequenceRef.current += 1
-              const requestId = `launch-${Date.now()}-${launchSequenceRef.current}`
-              void openAgentLaunch({
-                requestId,
-                driverId: selection.driver.id,
-                useWorktree: selection.useWorktree,
-                worktreeName: selection.worktreeName,
-                checkoutPath: selection.checkoutPath,
-                checkoutKey: selection.checkoutKey,
-                checkoutLabel: selection.checkoutLabel,
-              }).catch(error => {
-                showYaadeToast(
-                  error instanceof Error
-                    ? error.message
-                    : "Could not launch the agent.",
-                  { variant: "destructive" },
-                )
-              })
-            }}
-            projectPath={projectPath}
-            homeDir={homeDir}
-            defaultBranch={defaultBranch}
           />
         </Suspense>
       ) : null}

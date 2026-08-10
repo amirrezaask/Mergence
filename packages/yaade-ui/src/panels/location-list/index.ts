@@ -4,7 +4,6 @@ export type { LocationListTabProps } from "./types.js"
 export { SearchLocationList } from "./SearchLocationList.js"
 export { ReferencesLocationList, DefinitionsLocationList } from "./ReferencesLocationList.js"
 export { DiagnosticsLocationList } from "./DiagnosticsLocationList.js"
-export { TaskErrorsLocationList } from "./TaskErrorsLocationList.js"
 export {
   problemsToListItems,
   searchHitToListItem,

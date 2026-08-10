@@ -1,4 +1,4 @@
-import { lazy, Suspense, useCallback, useEffect, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import type { YaadeTheme } from "@yaade/shared"
 import {
   type AgentRunInfo,
@@ -13,10 +13,6 @@ const TerminalPanel = lazy(() =>
   import("@yaade/ui/terminal").then(module => ({ default: module.TerminalPanel })),
 )
 
-function terminalStatus(status: TerminalInstanceInfo["processState"] | AgentRunInfo["processState"]): string {
-  return status === "running" || status === "starting" ? status : status === "disconnected" ? "disconnected" : "exited"
-}
-
 function upsertByRevision<T extends { revision: number }>(
   rows: readonly T[],
   id: string,
@@ -29,6 +25,111 @@ function upsertByRevision<T extends { revision: number }>(
   const copy = [...rows]
   copy[index] = next
   return copy
+}
+
+type ProcessStatus = AgentRunInfo["processState"] | TerminalInstanceInfo["processState"]
+
+type ProcessSurfaceEvent<T> =
+  | { kind: "upsert"; item: T }
+  | { kind: "remove"; id: string }
+  | { kind: "refresh" }
+
+type ProcessSurfaceAdapter<T extends { revision: number }> = {
+  list: () => Promise<readonly T[]>
+  subscribe: (onEvent: (event: ProcessSurfaceEvent<T>) => void) => (() => void) | undefined
+  idOf: (item: T) => string
+  getTranscript: (item: T) => Promise<string>
+  restart?: (item: T) => Promise<T | null>
+}
+
+function useProcessSurface<T extends { revision: number }>({
+  adapter,
+  selectedId,
+  onSelect,
+}: {
+  adapter: ProcessSurfaceAdapter<T>
+  selectedId: string | null
+  onSelect: (id: string | null) => void
+}) {
+  const [rows, setRows] = useState<T[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [transcript, setTranscript] = useState("")
+
+  const refresh = useCallback(async () => {
+    const next = await adapter.list()
+    setRows([...next])
+    setError(null)
+    setLoading(false)
+  }, [adapter])
+
+  useEffect(() => {
+    let cancelled = false
+    setLoading(true)
+    void refresh().catch(reason => {
+      if (cancelled) return
+      setError(reason instanceof Error ? reason.message : String(reason))
+      setLoading(false)
+    })
+    const unsubscribe = adapter.subscribe(event => {
+      if (event.kind === "refresh") {
+        void refresh().catch(() => undefined)
+        return
+      }
+      if (event.kind === "remove") {
+        setRows(current => current.filter(row => adapter.idOf(row) !== event.id))
+        return
+      }
+      setRows(current =>
+        upsertByRevision(current, adapter.idOf(event.item), event.item, adapter.idOf),
+      )
+    })
+    return () => {
+      cancelled = true
+      unsubscribe?.()
+    }
+  }, [adapter, refresh])
+
+  const activeId = selectedId && rows.some(row => adapter.idOf(row) === selectedId)
+    ? selectedId
+    : rows[0] ? adapter.idOf(rows[0]) : null
+
+  useEffect(() => {
+    if (activeId !== selectedId) onSelect(activeId)
+  }, [activeId, onSelect, selectedId])
+
+  const selected = rows.find(row => adapter.idOf(row) === activeId) ?? null
+
+  useEffect(() => {
+    setTranscript("")
+    if (!selected) return
+    let cancelled = false
+    void adapter.getTranscript(selected).then(value => {
+      if (!cancelled) setTranscript(value)
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [adapter, selected])
+
+  const restart = useCallback(() => {
+    if (!selected || !adapter.restart) return
+    void adapter.restart(selected)
+      .then(next => {
+        if (!next) return
+        setRows(current =>
+          upsertByRevision(current, adapter.idOf(next), next, adapter.idOf),
+        )
+      })
+      .catch(reason =>
+        showYaadeToast(
+          reason instanceof Error ? reason.message : "Could not restart process",
+          { variant: "destructive" },
+        ),
+      )
+  }, [adapter, selected])
+
+  return { selected, transcript, loading, error, restart }
 }
 
 function ProcessDetail({
@@ -47,7 +148,7 @@ function ProcessDetail({
   ptyId: string | null
   cwdPath: string
   title: string
-  status: "reserved" | "starting" | "running" | "exited" | "failed" | "disconnected"
+  status: ProcessStatus
   exitCode: number | null
   generation: number
   transcript: string
@@ -131,59 +232,35 @@ export function AgentsProjectSurface({
   theme: YaadeTheme
   onSelect: (id: string | null) => void
 }) {
-  const [runs, setRuns] = useState<AgentRunInfo[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [transcript, setTranscript] = useState("")
-
-  const refresh = useCallback(async () => {
-    const api = window.yaade?.agents
-    if (!api) throw new Error("Agent service unavailable")
-    const next = await api.listProject(projectId)
-    setRuns(next)
-    setError(null)
-    setLoading(false)
-  }, [projectId])
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    void refresh().catch(reason => {
-      if (cancelled) return
-      setError(reason instanceof Error ? reason.message : String(reason))
-      setLoading(false)
-    })
-    const unsubscribe = window.yaade?.agents?.onEvent(event => {
-      if (event.type !== "agents.run" || !event.run || event.run.projectId !== projectId) return
-      if (event.kind === "run.ended") {
-        void refresh().catch(() => undefined)
-        return
-      }
-      setRuns(current => upsertByRevision(current, event.run!.runId, event.run!, row => row.runId))
-    })
-    return () => {
-      cancelled = true
-      unsubscribe?.()
-    }
-  }, [projectId, refresh])
-
-  const activeId = selectedId && runs.some(run => run.runId === selectedId)
-    ? selectedId
-    : runs[0]?.runId ?? null
-  useEffect(() => {
-    if (activeId !== selectedId) onSelect(activeId)
-  }, [activeId, onSelect, selectedId])
-
-  const selected = runs.find(run => run.runId === activeId) ?? null
-  useEffect(() => {
-    setTranscript("")
-    if (!selected || selected.processState === "running" || selected.processState === "starting") return
-    let cancelled = false
-    void window.yaade?.agents?.getTranscript(selected.runId).then(value => {
-      if (!cancelled) setTranscript(value?.output ?? "")
-    })
-    return () => { cancelled = true }
-  }, [selected?.processState, selected?.revision, selected?.runId])
+  const adapter = useMemo<ProcessSurfaceAdapter<AgentRunInfo>>(
+    () => ({
+      list: async () => {
+        const api = window.yaade?.agents
+        if (!api) throw new Error("Agent service unavailable")
+        return api.listProject(projectId)
+      },
+      subscribe: onEvent =>
+        window.yaade?.agents?.onEvent(event => {
+          if (event.type !== "agents.run" || !event.run || event.run.projectId !== projectId) return
+          if (event.kind === "run.ended") {
+            onEvent({ kind: "refresh" })
+            return
+          }
+          onEvent({ kind: "upsert", item: event.run })
+        }),
+      idOf: run => run.runId,
+      getTranscript: async run => {
+        const value = await window.yaade?.agents?.getTranscript(run.runId)
+        return value?.output ?? ""
+      },
+    }),
+    [projectId],
+  )
+  const { selected, transcript, loading, error } = useProcessSurface({
+    adapter,
+    selectedId,
+    onSelect,
+  })
 
   return (
     <div className="flex h-full min-h-0" data-yaade-project-panel="agents">
@@ -219,69 +296,41 @@ export function TerminalsProjectSurface({
   theme: YaadeTheme
   onSelect: (id: string | null) => void
 }) {
-  const [instances, setInstances] = useState<TerminalInstanceInfo[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-  const [transcript, setTranscript] = useState("")
-
-  const refresh = useCallback(async () => {
-    const api = window.yaade?.terminal
-    if (!api) throw new Error("Terminal service unavailable")
-    const next = await api.listInstances(projectId)
-    setInstances(next)
-    setError(null)
-    setLoading(false)
-  }, [projectId])
-
-  useEffect(() => {
-    let cancelled = false
-    setLoading(true)
-    void refresh().catch(reason => {
-      if (cancelled) return
-      setError(reason instanceof Error ? reason.message : String(reason))
-      setLoading(false)
-    })
-    const unsubscribe = window.yaade?.terminal?.onInstanceEvent(event => {
-      const instance = event.instance
-      if (instance.projectId !== projectId) return
-      if (event.kind === "instance.removed") {
-        setInstances(current => current.filter(item => item.id !== instance.id))
-        return
-      }
-      setInstances(current => upsertByRevision(current, instance.id, instance, row => row.id))
-    })
-    return () => {
-      cancelled = true
-      unsubscribe?.()
-    }
-  }, [projectId, refresh])
-
-  const activeId = selectedId && instances.some(instance => instance.id === selectedId)
-    ? selectedId
-    : instances[0]?.id ?? null
-  useEffect(() => {
-    if (activeId !== selectedId) onSelect(activeId)
-  }, [activeId, onSelect, selectedId])
-
-  const selected = instances.find(instance => instance.id === activeId) ?? null
-  useEffect(() => {
-    setTranscript("")
-    if (!selected || selected.processState === "running" || selected.processState === "starting") return
-    let cancelled = false
-    void window.yaade?.terminal?.getInstanceTranscript(selected.id).then(value => {
-      if (!cancelled) setTranscript(value?.output ?? "")
-    })
-    return () => { cancelled = true }
-  }, [selected?.processState, selected?.revision, selected?.id])
-
-  const restart = useCallback(() => {
-    if (!selected) return
-    void window.yaade?.terminal?.restartInstance({ id: selected.id, generation: selected.generation })
-      .then(instance => {
-        if (instance) setInstances(current => upsertByRevision(current, instance.id, instance, row => row.id))
-      })
-      .catch(reason => showYaadeToast(reason instanceof Error ? reason.message : "Could not restart terminal", { variant: "destructive" }))
-  }, [selected])
+  const adapter = useMemo<ProcessSurfaceAdapter<TerminalInstanceInfo>>(
+    () => ({
+      list: async () => {
+        const api = window.yaade?.terminal
+        if (!api) throw new Error("Terminal service unavailable")
+        return api.listInstances(projectId)
+      },
+      subscribe: onEvent =>
+        window.yaade?.terminal?.onInstanceEvent(event => {
+          const instance = event.instance
+          if (instance.projectId !== projectId) return
+          if (event.kind === "instance.removed") {
+            onEvent({ kind: "remove", id: instance.id })
+            return
+          }
+          onEvent({ kind: "upsert", item: instance })
+        }),
+      idOf: instance => instance.id,
+      getTranscript: async instance => {
+        const value = await window.yaade?.terminal?.getInstanceTranscript(instance.id)
+        return value?.output ?? ""
+      },
+      restart: async instance => {
+        const api = window.yaade?.terminal
+        if (!api) throw new Error("Terminal service unavailable")
+        return api.restartInstance({ id: instance.id, generation: instance.generation })
+      },
+    }),
+    [projectId],
+  )
+  const { selected, transcript, loading, error, restart } = useProcessSurface({
+    adapter,
+    selectedId,
+    onSelect,
+  })
 
   return (
     <div className="flex h-full min-h-0" data-yaade-project-panel="terminals">

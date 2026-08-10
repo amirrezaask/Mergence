@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { ChevronDown, ChevronRight, Circle, House, Plus, X } from "lucide-react"
+import { ChevronDown, ChevronRight, Circle, House } from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
@@ -16,16 +16,14 @@ import {
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
-  SidebarMenuAction,
-  SidebarMenuBadge,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
   SidebarTrigger,
   useSidebar,
 } from "../components/ui/sidebar.js"
-import { Badge } from "../components/ui/badge.js"
 import { cn } from "../lib/utils.js"
+import { SidebarProcessItem, type SidebarProcessItemData } from "./SidebarProcessItem.js"
 
 export type ProjectWorkspaceSidebarView = {
   id: string
@@ -35,16 +33,9 @@ export type ProjectWorkspaceSidebarView = {
   onSelect: () => void
 }
 
-export type ProjectWorkspaceSidebarProcess = {
-  id: string
-  label: string
-  subtitle?: string
+export type ProjectWorkspaceSidebarProcess = SidebarProcessItemData & {
   icon: ReactNode
   selected: boolean
-  status?: string
-  statusVariant?: "default" | "secondary" | "destructive" | "outline"
-  onSelect: () => void
-  onClose?: () => void
 }
 
 export type ProjectWorkspaceSidebarProps = {
@@ -143,56 +134,12 @@ function ProcessGroup({
             ) : (
               <SidebarMenu>
                 {items.map(item => (
-                  <SidebarMenuItem
+                  <SidebarProcessItem
                     key={item.id}
-                    className="shrink-0"
-                    data-yaade-project-process-item={item.id}
-                    data-yaade-list-item=""
-                  >
-                    <SidebarMenuButton
-                      type="button"
-                      isActive={item.selected}
-                      tooltip={item.label}
-                      onClick={() => select(item)}
-                      className="h-auto min-h-8 py-1.5"
-                      aria-current={item.selected ? "true" : undefined}
-                      data-yaade-instance-sidebar-item={item.id}
-                    >
-                      {item.icon}
-                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
-                        <span className="truncate text-xs">{item.label}</span>
-                        {item.subtitle ? (
-                          <span className="truncate text-3xs text-sidebar-foreground/60">
-                            {item.subtitle}
-                          </span>
-                        ) : null}
-                      </span>
-                    </SidebarMenuButton>
-                    {item.status ? (
-                      <SidebarMenuBadge>
-                        <Badge
-                          variant={item.statusVariant ?? "secondary"}
-                          className="h-4 px-1 text-4xs"
-                        >
-                          {item.status}
-                        </Badge>
-                      </SidebarMenuBadge>
-                    ) : null}
-                    {item.onClose ? (
-                      <SidebarMenuAction
-                        type="button"
-                        showOnHover
-                        aria-label={`Close ${item.label}`}
-                        onClick={event => {
-                          event.stopPropagation()
-                          item.onClose?.()
-                        }}
-                        data-yaade-instance-sidebar-close={item.id}
-                      >
-                        <X />
-                      </SidebarMenuAction>
-                    ) : null}
-                  </SidebarMenuItem>
+                    item={item}
+                    variant="menu"
+                    onSelect={() => select(item)}
+                  />
                 ))}
               </SidebarMenu>
             )}

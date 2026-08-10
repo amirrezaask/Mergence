@@ -28,6 +28,13 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog.js"
+import {
+  Field,
+  FieldContent,
+  FieldDescription,
+  FieldGroup,
+  FieldLabel,
+} from "@/components/ui/field.js"
 import { Input } from "@/components/ui/input.js"
 import { ScrollArea } from "@/components/ui/scroll-area.js"
 import { Separator } from "@/components/ui/separator.js"
@@ -41,7 +48,6 @@ import {
   ToggleGroup,
   ToggleGroupItem,
 } from "@/components/ui/toggle-group.js"
-import { SettingsField } from "@/components/SettingsField.js"
 import {
   siblingThemeForScheme,
   themePreviewSwatches,
@@ -412,7 +418,7 @@ export function SettingsOverlay({
                 <section className="flex flex-col gap-6 p-5 sm:p-7">
                   <SettingsSectionHeader category="appearance" />
                   <Separator />
-                  <div className="flex flex-col">
+                  <FieldGroup className="gap-0">
                     <div className="pb-3">
                       <h3 className="text-sm font-medium text-foreground">
                         Theme
@@ -421,10 +427,18 @@ export function SettingsOverlay({
                         Choose a color palette.
                       </p>
                     </div>
-                    <SettingsField
-                      label="Color mode"
-                      detail="Auto follows your system's light or dark appearance."
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
                     >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
+                          Color mode
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Auto follows your system's light or dark appearance.
+                        </FieldDescription>
+                      </FieldContent>
                       <ToggleGroup
                         type="single"
                         variant="outline"
@@ -480,7 +494,7 @@ export function SettingsOverlay({
                           Dark
                         </ToggleGroupItem>
                       </ToggleGroup>
-                    </SettingsField>
+                    </Field>
                     <div className="grid gap-4">
                       {Array.from(
                         themes.reduce((map, theme) => {
@@ -516,13 +530,21 @@ export function SettingsOverlay({
                         </div>
                       ))}
                     </div>
-                  </div>
+                  </FieldGroup>
                   <Separator />
-                  <div className="divide-y divide-border">
-                    <SettingsField
-                      label="UI font size"
-                      htmlFor="yaade-ui-font-size"
+                  <FieldGroup className="divide-y divide-border gap-0">
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
                     >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel
+                          htmlFor="yaade-ui-font-size"
+                          className="text-sm font-medium leading-snug text-foreground"
+                        >
+                          UI font size
+                        </FieldLabel>
+                      </FieldContent>
                       <Input
                         id="yaade-ui-font-size"
                         type="number"
@@ -544,12 +566,22 @@ export function SettingsOverlay({
                         }
                         className="h-8 font-mono"
                       />
-                    </SettingsField>
-                    <SettingsField
-                      label="Monospace font"
-                      detail="Terminal, editor, and code UI. Lists monospace faces available on this system."
-                      htmlFor="yaade-mono-font"
+                    </Field>
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
                     >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel
+                          htmlFor="yaade-mono-font"
+                          className="text-sm font-medium leading-snug text-foreground"
+                        >
+                          Monospace font
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Terminal, editor, and code UI. Lists monospace faces available on this system.
+                        </FieldDescription>
+                      </FieldContent>
                       <MonoFontPicker
                         value={settings.monoFontFamily || DEFAULT_MONO_FONT_NAME}
                         onChange={family =>
@@ -558,11 +590,19 @@ export function SettingsOverlay({
                           )
                         }
                       />
-                    </SettingsField>
-                    <SettingsField
-                      label="Editor"
-                      detail="Quick open, project search, and go-to-definition open files here. Ctrl-a n always opens Neovim."
+                    </Field>
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
                     >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
+                          Editor
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Quick open, project search, and go-to-definition open files here. Ctrl-a n always opens Neovim.
+                        </FieldDescription>
+                      </FieldContent>
                       <ToggleGroup
                         type="single"
                         variant="outline"
@@ -594,8 +634,8 @@ export function SettingsOverlay({
                           Neovim
                         </ToggleGroupItem>
                       </ToggleGroup>
-                    </SettingsField>
-                  </div>
+                    </Field>
+                  </FieldGroup>
                 </section>
               </ScrollArea>
             </TabsContent>
@@ -613,7 +653,7 @@ export function SettingsOverlay({
                   >
                     <SettingsSectionHeader category="notifications" />
                     <Separator />
-                    <div className="divide-y divide-border">
+                    <FieldGroup className="divide-y divide-border gap-0">
                       {(
                         [
                           [
@@ -658,12 +698,22 @@ export function SettingsOverlay({
                           key === "soundEnabled" &&
                           !notificationPrefs.desktopEnabled
                         return (
-                          <SettingsField
+                          <Field
                             key={key}
-                            label={label}
-                            detail={detail}
-                            htmlFor={id}
+                            orientation="responsive"
+                            className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
                           >
+                            <FieldContent className="min-w-0">
+                              <FieldLabel
+                                htmlFor={id}
+                                className="text-sm font-medium leading-snug text-foreground"
+                              >
+                                {label}
+                              </FieldLabel>
+                              <FieldDescription className="mt-1 text-xs leading-relaxed">
+                                {detail}
+                              </FieldDescription>
+                            </FieldContent>
                             <div className="flex justify-start sm:justify-end">
                               <Checkbox
                                 id={id}
@@ -677,10 +727,10 @@ export function SettingsOverlay({
                                 }
                               />
                             </div>
-                          </SettingsField>
+                          </Field>
                         )
                       })}
-                    </div>
+                    </FieldGroup>
                   </section>
                 </ScrollArea>
               </TabsContent>

@@ -9,8 +9,11 @@ import {
 import type { PanelId } from "@yaade/shared"
 import { getAllLeafPanels } from "./panel-routing.js"
 import { openSessionInLayout } from "./session-layout.js"
-import { TERMINAL_TAB_TYPE_ID, registerTerminalSession } from "./tabs/terminal.tab.js"
-import { terminalCwdForTab } from "./tabs/terminal-session.js"
+import {
+  TERMINAL_TAB_TYPE_ID,
+  registerTerminalSession,
+  terminalCwdForTab,
+} from "./tabs/terminal-session.js"
 
 export type OpenTerminalTabOpts = {
   sessionKey?: string

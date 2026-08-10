@@ -10,7 +10,7 @@ import {
   popPanelTab,
   type WorkspaceService,
 } from "@yaade/workspace"
-import { TERMINAL_TAB_TYPE_ID } from "./tabs/terminal.tab.js"
+import { TERMINAL_TAB_TYPE_ID } from "./tabs/terminal-session.js"
 import { resolveTargetPanel, closePanelIfEmpty, getAllLeafPanels } from "./panel-routing.js"
 import { terminalSessionForTab } from "./tabs/terminal-session.js"
 import { isMuxToolTabId } from "./mux/tool-pane.js"

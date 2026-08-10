@@ -57,6 +57,7 @@ import {
   ContextMenuItem,
   ContextMenuSeparator,
   ContextMenuTrigger,
+  Skeleton,
 } from "@yaade/ui/primitives"
 import {
   CheckoutPicker,
@@ -4225,7 +4226,7 @@ export function MuxApp({
       return (
         <Suspense
           fallback={
-            <div className="min-h-0 flex-1 animate-pulse bg-background/10" />
+            <Skeleton className="min-h-0 flex-1 rounded-none" />
           }
         >
           <MuxEditorPane
@@ -5144,8 +5145,8 @@ export function MuxApp({
                 >
                   <div className="flex h-full min-h-0 w-full flex-col overflow-hidden rounded-lg border border-border bg-card">
                     <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-border bg-secondary/30 px-1.5">
-                      <div className="size-3 shrink-0 animate-pulse rounded-[0.2rem] bg-muted/50" />
-                      <div className="h-2.5 w-24 animate-pulse rounded bg-muted/40" />
+                      <Skeleton className="size-3 shrink-0 rounded-sm" />
+                      <Skeleton className="h-2.5 w-24 rounded-sm" />
                     </div>
                     <div className="min-h-0 flex-1" />
                   </div>

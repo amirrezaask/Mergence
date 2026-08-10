@@ -30,7 +30,7 @@ import {
   AGENT_CLI_DRIVERS,
   type AgentCliDriver,
 } from "./agent-cli-drivers.js"
-import { AgentProviderIcon } from "./sidebar/SessionStatusIndicator.js"
+import { AgentProviderIcon } from "./AgentProviderIcon.js"
 
 export type AgentCliPickerProject = {
   rootUri: string
@@ -208,7 +208,7 @@ export function AgentCliPickerOverlay({
             className="flex items-end gap-2 border-t px-4 py-3"
             data-yaade-agent-cli-project-picker=""
           >
-            <div className="min-w-0 flex-1 space-y-1.5">
+            <div className="flex min-w-0 flex-1 flex-col gap-1.5">
               <label className="text-sm font-medium" htmlFor="agent-project">
                 Project
               </label>
