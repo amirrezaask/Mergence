@@ -230,7 +230,7 @@ export function projectRouteFromSearch(
     ? (requestedView as ProjectView)
     : workspaceId
       ? "terminals"
-      : "changes"
+      : "history"
   return {
     view,
     workspaceId,
@@ -246,7 +246,7 @@ export function projectRouteUrl(
   route: Partial<ProjectRoute> & { view: ProjectView },
 ): string {
   const params = new URLSearchParams()
-  if (route.view !== "changes") params.set("view", route.view)
+  if (route.view !== "history") params.set("view", route.view)
   if (route.workspaceId) params.set("s", route.workspaceId)
   if (route.checkoutKey && route.checkoutKey !== "main") {
     params.set("checkout", route.checkoutKey)

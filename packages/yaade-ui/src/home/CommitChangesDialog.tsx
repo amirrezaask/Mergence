@@ -1,5 +1,11 @@
 import { useEffect, useRef, useState } from "react"
-import type { GitCommit, GitCommitDetail, GitCommitFile, YaadeTheme } from "@yaade/shared"
+import type {
+  GitCommit,
+  GitCommitDetail,
+  GitCommitFile,
+  GitStatusEntry,
+  YaadeTheme,
+} from "@yaade/shared"
 import { FileDiffIcon, HistoryIcon } from "lucide-react"
 
 import {
@@ -10,6 +16,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js"
 import { Button } from "@/components/ui/button.js"
+import { Checkbox } from "@/components/ui/checkbox.js"
 import {
   Empty,
   EmptyDescription,
@@ -24,7 +31,11 @@ import {
 } from "@/components/ui/resizable.js"
 import { Spinner } from "@/components/ui/spinner.js"
 import { cn } from "@/lib/utils.js"
-import { loadCommitDiffContents } from "./commit-diff.js"
+import {
+  loadCommitDiffContents,
+  loadWorkingTreeDiffContents,
+  loadWorkingTreeSnapshot,
+} from "./commit-diff.js"
 import { YaadeDiffViewer } from "./YaadeDiffViewer.js"
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
@@ -37,6 +48,7 @@ export type CommitChangesDialogProps = {
   onOpenChange: (open: boolean) => void
   rootUri: string
   hash: string
+  workingTree?: boolean
   theme: YaadeTheme
   fontSize?: number
   /** Optional row metadata when already known from a history list. */
@@ -66,11 +78,23 @@ function displayPath(path: string): { name: string; parent: string } {
 }
 
 export function CommitChangesDialog(props: CommitChangesDialogProps) {
-  const { open, onOpenChange, rootUri, hash, theme, fontSize = 13, commit } = props
+  const {
+    open,
+    onOpenChange,
+    rootUri,
+    hash,
+    workingTree = false,
+    theme,
+    fontSize = 13,
+    commit,
+  } = props
   const api = window.yaade?.git
+  const fsApi = window.yaade?.fs
   const [detail, setDetail] = useState<GitCommitDetail | null>(null)
   const [detailLoading, setDetailLoading] = useState(false)
   const [detailError, setDetailError] = useState<string | null>(null)
+  const [workingTreeEntries, setWorkingTreeEntries] = useState<GitStatusEntry[]>([])
+  const [workingTreePendingPath, setWorkingTreePendingPath] = useState<string | null>(null)
   const [selectedPath, setSelectedPath] = useState<string | null>(null)
   const [diffContents, setDiffContents] = useState<DiffContents | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
@@ -104,6 +128,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       setDiffContents(null)
       setDetailError(null)
       setDiffError(null)
+      setWorkingTreeEntries([])
       return
     }
     const request = ++detailRequest.current
@@ -113,8 +138,13 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     setSelectedPath(null)
     setDiffContents(null)
     setDiffError(null)
-    void api
-      .commitFiles(rootUri, hash)
+    const detailPromise = workingTree
+      ? loadWorkingTreeSnapshot(api, rootUri).then(snapshot => {
+          setWorkingTreeEntries(snapshot.entries)
+          return snapshot.detail
+        })
+      : api.commitFiles(rootUri, hash)
+    void detailPromise
       .then(next => {
         if (request !== detailRequest.current) return
         setDetail(next)
@@ -127,7 +157,28 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       .finally(() => {
         if (request === detailRequest.current) setDetailLoading(false)
       })
-  }, [open, api, rootUri, hash])
+  }, [open, api, rootUri, hash, workingTree])
+
+  const toggleWorkingTreeStage = async (file: GitCommitFile) => {
+    if (!api || !workingTree) return
+    const entry = workingTreeEntries.find(item => item.path === file.path)
+    if (!entry) return
+    setWorkingTreePendingPath(file.path)
+    try {
+      if (entry.staged) {
+        await api.unstage(rootUri, [file.path])
+      } else {
+        await api.stage(rootUri, [file.path])
+      }
+      const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
+      setWorkingTreeEntries(snapshot.entries)
+      setDetail(snapshot.detail)
+    } catch (error) {
+      setDetailError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkingTreePendingPath(null)
+    }
+  }
 
   const selectedFile =
     detail?.files.find(file => file.path === selectedPath) ?? detail?.files[0] ?? null
@@ -142,7 +193,12 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     const request = ++diffRequest.current
     setDiffLoading(true)
     setDiffError(null)
-    void loadCommitDiffContents(api, rootUri, hash, file)
+    const diffPromise = workingTree
+      ? fsApi
+        ? loadWorkingTreeDiffContents(api, fsApi, rootUri, file)
+        : Promise.reject(new Error("Filesystem access is unavailable."))
+      : loadCommitDiffContents(api, rootUri, hash, file)
+    void diffPromise
       .then(contents => {
         if (request !== diffRequest.current) return
         setDiffContents(contents)
@@ -163,10 +219,12 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     selectedFile?.path,
     selectedFile?.status,
     selectedFile?.originalPath,
+    fsApi,
+    workingTree,
   ])
 
-  const subject = detail?.subject ?? commit?.subject ?? "Commit"
-  const shortHash = commit?.shortHash ?? hash.slice(0, 7)
+  const subject = detail?.subject ?? commit?.subject ?? (workingTree ? "Uncommitted changes" : "Commit")
+  const shortHash = workingTree ? "WORKTREE" : commit?.shortHash ?? hash.slice(0, 7)
   const author = commit?.author
   const authoredAt = commit?.authoredAt
   const effectiveDiffStyle = compactLayout ? "unified" : diffStyle
@@ -193,43 +251,55 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
           detail.files.map(file => {
             const active = file.path === selectedFile?.path
             const visiblePath = displayPath(file.path)
+            const workingTreeEntry = workingTreeEntries.find(item => item.path === file.path)
             return (
               <li key={`${file.status}:${file.path}`}>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  data-yaade-list-item=""
-                  data-active={active ? "" : undefined}
-                  aria-pressed={active}
-                  title={file.path}
-                  onClick={() => setSelectedPath(file.path)}
-                  className={cn(
-                    "h-auto w-full shrink-0 items-start justify-start gap-2 rounded-sm px-2 py-1.5 text-left font-normal",
-                    active
-                      ? "bg-primary/10 text-foreground"
-                      : "text-muted-foreground hover:bg-accent/35 hover:text-foreground",
-                  )}
-                >
-                  <span
+                <div className="flex items-start gap-2 px-2 py-1.5">
+                  {workingTree ? (
+                    <Checkbox
+                      checked={workingTreeEntry?.staged ?? false}
+                      disabled={workingTreePendingPath !== null}
+                      aria-label={`${workingTreeEntry?.staged ? "Unstage" : "Stage"} ${file.path}`}
+                      onCheckedChange={() => void toggleWorkingTreeStage(file)}
+                      className="mt-1 size-3.5 shrink-0"
+                    />
+                  ) : null}
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-yaade-list-item=""
+                    data-active={active ? "" : undefined}
+                    aria-pressed={active}
+                    title={file.path}
+                    onClick={() => setSelectedPath(file.path)}
                     className={cn(
-                      "w-3 shrink-0 text-center font-mono font-medium",
-                      statusColor(file.status),
+                      "h-auto min-w-0 flex-1 shrink-0 items-start justify-start gap-2 rounded-sm p-0 text-left font-normal",
+                      active
+                        ? "text-foreground"
+                        : "text-muted-foreground hover:text-foreground",
                     )}
-                    title={file.status}
                   >
-                    {statusLetter(file.status)}
-                  </span>
-                  <span className="min-w-0 flex-1 font-mono">
-                    <span className="block truncate text-xs text-foreground">
-                      {visiblePath.name}
+                    <span
+                      className={cn(
+                        "w-3 shrink-0 text-center font-mono font-medium",
+                        statusColor(file.status),
+                      )}
+                      title={file.status}
+                    >
+                      {statusLetter(file.status)}
                     </span>
-                    {visiblePath.parent ? (
-                      <span className="block truncate text-3xs text-muted-foreground">
-                        {visiblePath.parent}/
+                    <span className="min-w-0 flex-1 font-mono">
+                      <span className="block truncate text-xs text-foreground">
+                        {visiblePath.name}
                       </span>
-                    ) : null}
-                  </span>
-                </Button>
+                      {visiblePath.parent ? (
+                        <span className="block truncate text-3xs text-muted-foreground">
+                          {visiblePath.parent}/
+                        </span>
+                      ) : null}
+                    </span>
+                  </Button>
+                </div>
               </li>
             )
           })
@@ -336,7 +406,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
         <div className="flex min-h-0 flex-1 overflow-hidden">
           {detailLoading && !detail ? (
             <div className="flex flex-1 items-center justify-center gap-2 text-xs text-muted-foreground">
-              <Spinner /> Loading commit…
+              <Spinner /> Loading {workingTree ? "changes" : "commit"}…
             </div>
           ) : detailError ? (
             <div className="flex flex-1 items-center justify-center p-6 text-sm text-destructive">
@@ -344,8 +414,12 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
             </div>
           ) : !detail ? (
             <CenteredEmpty
-              title="Commit unavailable"
-              description="Could not load this commit’s changes."
+              title={workingTree ? "Changes unavailable" : "Commit unavailable"}
+              description={
+                workingTree
+                  ? "Could not load the current working-tree changes."
+                  : "Could not load this commit’s changes."
+              }
             />
           ) : (
             <ResizablePanelGroup

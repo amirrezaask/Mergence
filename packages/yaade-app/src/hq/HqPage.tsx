@@ -9,7 +9,12 @@ import {
 import type { HqAgentSummary, HqProjectSummary } from "@yaade/rpc"
 import { pathToFileUri } from "@yaade/shared"
 import type { AgentCliDriver } from "@yaade/ui/agent-picker"
-import { ConfirmDialogHost, requestConfirm } from "@yaade/ui"
+import {
+  ConfirmDialogHost,
+  ProjectSidebar,
+  SidebarProvider,
+  requestConfirm,
+} from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
 import {
   Alert,
@@ -182,6 +187,17 @@ export function HqPage({
         })),
     [snapshot?.projects],
   )
+  const availableProjects = useMemo(
+    () =>
+      (snapshot?.projects ?? [])
+        .filter(project => project.availability === "available")
+        .map(project => ({
+          id: project.id,
+          name: project.name,
+          rootPath: project.rootPath,
+        })),
+    [snapshot?.projects],
+  )
 
   const openLaunchPicker = useCallback(
     (rootUri?: string | null) => {
@@ -265,10 +281,44 @@ export function HqPage({
   }
 
   return (
-    <div
-      className="flex h-full min-h-0 flex-col bg-background text-foreground"
-      data-yaade-shell="hq"
-    >
+    <SidebarProvider className="h-full min-h-0" enableKeyboardShortcut>
+      <ProjectSidebar
+        projects={availableProjects}
+        onSelectProject={project =>
+          onOpenProject({ id: project.id, rootPath: project.rootPath })
+        }
+        renderAddProject={compact => (
+          <OpenProjectOverlay
+            open={openProjectOpen}
+            onOpenChange={setOpenProjectOpen}
+            homeDir={homeDir}
+            projects={snapshot?.projects ?? []}
+            onOpenProject={project =>
+              onOpenProject({ id: project.id, rootPath: project.rootPath })
+            }
+            onOpenPath={onOpenProjectPath}
+            side="right"
+            align="start"
+            trigger={
+              <Button
+                type="button"
+                size={compact ? "icon-sm" : "sm"}
+                variant={compact ? "ghost" : "outline"}
+                className={compact ? "size-7" : "shrink-0"}
+                aria-label="Add project"
+                data-yaade-project-sidebar-add=""
+              >
+                <FolderOpen data-icon={compact ? undefined : "inline-start"} />
+                {!compact ? "Add project" : null}
+              </Button>
+            }
+          />
+        )}
+      />
+      <div
+        className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground"
+        data-yaade-shell="hq"
+      >
         <main className="min-h-0 flex-1 overflow-y-auto">
           <div className="mx-auto flex w-full max-w-screen-2xl flex-col gap-4 px-3 py-4 sm:px-5 lg:px-6">
             {overview.error ? (
@@ -318,27 +368,6 @@ export function HqPage({
                       <Plus data-icon="inline-start" />
                       Launch
                     </Button>
-                    <OpenProjectOverlay
-                      open={openProjectOpen}
-                      onOpenChange={setOpenProjectOpen}
-                      homeDir={homeDir}
-                      projects={[]}
-                      onOpenProject={() => undefined}
-                      onOpenPath={onOpenProjectPath}
-                      side="bottom"
-                      align="end"
-                      trigger={
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          aria-label="Add project"
-                          data-yaade-project-switcher=""
-                        >
-                          <FolderOpen data-icon="inline-start" />
-                          Add project
-                        </Button>
-                      }
-                    />
                     <Badge variant="secondary">
                       {agents.length} of {snapshot?.agents.length ?? 0}
                     </Badge>
@@ -461,7 +490,8 @@ export function HqPage({
         ) : null}
 
         <ConfirmDialogHost />
-    </div>
+      </div>
+    </SidebarProvider>
   )
 }
 

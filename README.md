@@ -101,6 +101,10 @@ pnpm dev          # host-server + Vite
 
 Open the Vite URL (proxies `/api` and `/ws` to the host).
 
+The dev startup registers `ide.local` to loopback, so the app is also available
+at `http://ide.local:5174`. The first startup may ask for administrator access
+to update the system hosts file. Set `JET_SKIP_LOCAL_HOST=1` to skip that step.
+
 **Browser-first projects:** each browser tab is one project. Pathnames are home-relative — `http://localhost:5174/dev/consultation` opens `~/dev/consultation` as the initial terminal cwd (you can still `cd` freely). Layout and panes persist on the host keyed by machine hostname + absolute path. There is no in-app window tab strip — use browser tabs to juggle projects.
 
 Some OS/browser-reserved shortcuts (`Mod-t`, `Mod-n`, `Mod-w`, `Mod-k`, `Mod-,`) may not reach the page in a normal Chrome tab.

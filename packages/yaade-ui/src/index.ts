@@ -30,6 +30,12 @@ export {
   type InstanceSidebarProps,
 } from "./shell/InstanceSidebar.js"
 export {
+  ProjectSidebar,
+  type ProjectSidebarProject,
+  type ProjectSidebarProps,
+} from "./shell/ProjectSidebar.js"
+export { SidebarShell, type SidebarShellProps } from "./shell/SidebarShell.js"
+export {
   TerminalSessionModal,
   formatSessionHeaderTitle,
   SessionTerminalWorkspace,

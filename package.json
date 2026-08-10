@@ -10,7 +10,7 @@
     "test:e2e": "playwright test --project=web-e2e",
     "typecheck": "turbo run typecheck",
     "lint": "turbo run lint",
-    "test": "pnpm --filter @yaade/rpc test && pnpm --filter @yaade/shared test && pnpm --filter @yaade/panels test && pnpm --filter @yaade/agent-telemetry test && pnpm --filter @yaade/ui test && pnpm --filter @yaade/workspace test && pnpm --filter @yaade/lsp test && pnpm --filter @yaade/monaco test && pnpm --filter @yaade/node-host test && pnpm --filter @yaade/host-client test && pnpm --filter @yaade/app test && pnpm --filter @yaade/host-server test",
+    "test": "pnpm --filter yaade test && pnpm --filter @yaade/rpc test && pnpm --filter @yaade/shared test && pnpm --filter @yaade/panels test && pnpm --filter @yaade/agent-telemetry test && pnpm --filter @yaade/ui test && pnpm --filter @yaade/workspace test && pnpm --filter @yaade/lsp test && pnpm --filter @yaade/monaco test && pnpm --filter @yaade/node-host test && pnpm --filter @yaade/host-client test && pnpm --filter @yaade/app test && pnpm --filter @yaade/host-server test",
     "test:bench": "playwright test --project=bench",
     "extract:vscode-keybindings": "node scripts/extract-vscode-mac-keybindings.mjs && node scripts/generate-default-keybindings.mjs",
     "validate:keybindings": "node scripts/validate-yaade-keybindings.mjs",

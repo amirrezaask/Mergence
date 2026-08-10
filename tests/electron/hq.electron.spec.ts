@@ -88,7 +88,7 @@ async function seedAgent(
 }
 
 test.describe("YAADE HQ", () => {
-  test("adds a project from the live agents toolbar", async () => {
+  test("lists projects in the collapsible HQ sidebar", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-hq-project-switcher-"))
     const home = path.join(root, "home")
     const alpha = path.join(home, "alpha")
@@ -104,7 +104,7 @@ test.describe("YAADE HQ", () => {
     })
     try {
       expect(await page.locator('[data-yaade-hq-summary=""]').count()).toBe(0)
-      expect(await page.locator('[data-yaade-hq-column="projects"]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(1)
       expect(await page.locator('[data-yaade-hq-column="agents"]').count()).toBe(1)
       await page.evaluate(async roots => {
         for (const rootPath of roots) {
@@ -118,12 +118,32 @@ test.describe("YAADE HQ", () => {
         window.dispatchEvent(new Event("yaade:agent-signal"))
       }, [alpha, beta])
 
+      const sidebarProjects = page.locator("[data-yaade-project-sidebar-item]")
+      await expect.poll(() => sidebarProjects.count()).toBeGreaterThanOrEqual(2)
+      const sidebarProjectText = await page.evaluate(() =>
+        [...document.querySelectorAll("[data-yaade-project-sidebar-item]")]
+          .map(item => item.textContent ?? "")
+          .join(" "),
+      )
+      expect(sidebarProjectText).toContain("alpha")
+      expect(sidebarProjectText).toContain("beta")
+
+      await page.locator('[data-yaade-project-sidebar-toggle=""]').click()
+      await expect
+        .poll(() =>
+          page
+            .locator('[data-yaade-project-sidebar=""]')
+            .getAttribute("data-yaade-sidebar-state"),
+        )
+        .toBe("collapsed")
+      await page.locator('[data-yaade-project-sidebar-toggle=""]').click()
+
       await page.getByRole("button", { name: "Add project" }).click()
       await page
         .locator('[data-yaade-project-switcher-menu=""]')
         .waitFor({ state: "visible" })
       expect(await page.locator('[data-slot="dialog-overlay"]').count()).toBe(0)
-      expect(await page.locator('[data-yaade-open-project-item]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-open-project-item]').count()).toBeGreaterThanOrEqual(2)
 
       const search = page.locator('[data-yaade-project-switcher-search=""]')
       await search.fill("~/beta")

@@ -101,9 +101,9 @@ describe("url-workspace", () => {
     assert.equal(joinProjectPath("/", "tmp"), "/tmp")
   })
 
-  it("defaults bare project routes to Changes and preserves legacy terminal links", () => {
+  it("defaults bare project routes to Git and preserves legacy terminal links", () => {
     assert.deepEqual(projectRouteFromSearch(""), {
-      view: "changes",
+      view: "history",
       workspaceId: null,
       checkoutKey: null,
       agentRunId: null,

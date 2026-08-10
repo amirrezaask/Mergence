@@ -13,12 +13,19 @@ import type {
   ProjectSession,
 } from "@yaade/rpc"
 import { pathToFileUri } from "@yaade/shared"
-import { isTerminalTabId, terminalTabId, type AgentRunInfo } from "@yaade/workspace"
+import {
+  isTerminalTabId,
+  terminalTabId,
+  type AgentRunInfo,
+} from "@yaade/workspace"
 import {
   AppShell,
   cn,
 } from "@yaade/ui/project"
-import { ConfirmDialogHost, requestConfirm } from "@yaade/ui"
+import {
+  ConfirmDialogHost,
+  requestConfirm,
+} from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
 import {
   Button,
@@ -27,21 +34,18 @@ import {
   TabsTrigger,
 } from "@yaade/ui/primitives"
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
-import { NotificationBell } from "@yaade/ui/notifications"
 import {
   Bot,
-  Code2,
   ChevronsUpDown,
-  FileDiff,
+  Code2,
   FolderKanban,
+  GitBranch,
   History,
   House,
-  SettingsIcon,
   SquareTerminal,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
-import { useSystemSignals } from "../system-signals/SystemSignalsProvider.js"
 import { preloadMuxApp } from "../mux/preload.js"
 import type {
   MuxLaunchAction,
@@ -175,23 +179,18 @@ function checkoutRouteKey(checkout: ActiveCheckout): string | null {
 
 type ProjectNavigationDockProps = {
   projectSwitcher: ReactElement
-  notifications: ReturnType<typeof useSystemSignals>
   onOpenHq: () => void
-  onOpenSettings: () => void
 }
 
 function ProjectNavigationDock({
   projectSwitcher,
-  notifications,
   onOpenHq,
-  onOpenSettings,
 }: ProjectNavigationDockProps) {
   const tabs = [
-    { value: "changes", label: "Changes", icon: FileDiff },
     { value: "agents", label: "Agents", icon: Bot },
     { value: "editors", label: "Editors", icon: Code2 },
     { value: "terminals", label: "Terminals", icon: SquareTerminal },
-    { value: "history", label: "History", icon: History },
+    { value: "history", label: "Git", icon: GitBranch },
   ] as const
 
   return (
@@ -230,25 +229,6 @@ function ProjectNavigationDock({
             ))}
           </TabsList>
         </div>
-
-        <div className="yaade-project-dock-surface flex min-w-max items-center gap-1 p-1.5">
-          <NotificationBell
-            counts={notifications.counts}
-            onClick={() => notifications.setOpen(true)}
-            className="size-9 rounded-xl"
-          />
-          <Button
-            variant="ghost"
-            size="icon-sm"
-            aria-label="Settings"
-            onPointerEnter={() => void preloadSettingsOverlay()}
-            onFocus={() => void preloadSettingsOverlay()}
-            onClick={onOpenSettings}
-            className="rounded-xl"
-          >
-            <SettingsIcon />
-          </Button>
-        </div>
       </div>
     </nav>
   )
@@ -277,7 +257,6 @@ export function ProjectPage({
   onNavigateProject,
   onOpenHq,
 }: ProjectPageProps) {
-  const notifications = useSystemSignals()
   const hq = useHqOverview()
   const {
     appearanceSettings,
@@ -289,7 +268,7 @@ export function ProjectPage({
     () => projectRouteFromSearch().view,
   )
   const [settingsOpen, setSettingsOpen] = useState(false)
-  const [openProjectOpen, setOpenProjectOpen] = useState(false)
+  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const [surfaceSelections, setSurfaceSelections] = useState<
     Partial<Record<Exclude<ProjectView, "history">, ProjectSurfaceSelection>>
   >({})
@@ -1086,6 +1065,7 @@ export function ProjectPage({
                     theme={activeTheme}
                     initialView="history"
                     unifiedHistory
+                    active={view === "history"}
                     toolbarStart={
                       <CheckoutPicker
                         projectPath={projectPath}
@@ -1327,8 +1307,8 @@ export function ProjectPage({
           <ProjectNavigationDock
             projectSwitcher={
               <OpenProjectOverlay
-                open={openProjectOpen}
-                onOpenChange={setOpenProjectOpen}
+                open={projectSwitcherOpen}
+                onOpenChange={setProjectSwitcherOpen}
                 homeDir={homeDir}
                 projects={hq.snapshot?.projects ?? []}
                 selectedRootPath={projectPath}
@@ -1342,6 +1322,7 @@ export function ProjectPage({
                     size="sm"
                     className="max-w-52 justify-start gap-1.5 rounded-xl px-2.5 sm:max-w-64"
                     aria-label="Switch project"
+                    title="Go to project"
                     data-yaade-project-switcher=""
                   >
                     <FolderKanban data-icon="inline-start" />
@@ -1354,9 +1335,7 @@ export function ProjectPage({
                 }
               />
             }
-            notifications={notifications}
             onOpenHq={onOpenHq}
-            onOpenSettings={() => setSettingsOpen(true)}
           />
         </Tabs>
       </div>

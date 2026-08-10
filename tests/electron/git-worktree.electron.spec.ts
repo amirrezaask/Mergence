@@ -95,7 +95,7 @@ test.describe("per-surface worktrees", () => {
     }
   })
 
-  test("Changes tab worktree switcher remounts git root without swapping session", async () => {
+  test("Git tab worktree switcher remounts git root without swapping session", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-wt-picker-"))
     const project = path.join(home, "repo")
     fs.mkdirSync(project, { recursive: true })
@@ -113,8 +113,8 @@ test.describe("per-surface worktrees", () => {
     try {
       await waitForProjectPage(page)
 
-      await page.locator('[data-yaade-project-tab="changes"]').click()
-      await page.locator('[data-yaade-project-panel="changes"]').waitFor({
+      await page.locator('[data-yaade-project-tab="history"]').click()
+      await page.locator('[data-yaade-project-panel="history"]').waitFor({
         state: "visible",
       })
 
@@ -126,7 +126,7 @@ test.describe("per-surface worktrees", () => {
         .poll(async () => (await switcher.textContent()) ?? "")
         .toContain("Main")
 
-      // Agents/Terminals surfaces do not show the Changes checkout switcher.
+      // Agents/Terminals surfaces do not show the Git checkout switcher.
       await page.locator('[data-yaade-project-tab="terminals"]').click()
       await waitForMux(page)
       await expect
@@ -143,7 +143,7 @@ test.describe("per-surface worktrees", () => {
         () => window.__yaadeAgent!.getState().sessionId,
       )
 
-      await page.locator('[data-yaade-project-tab="changes"]').click()
+      await page.locator('[data-yaade-project-tab="history"]').click()
       await switcher.waitFor({ state: "visible" })
       await switcher.click()
       const menu = page.locator("[data-yaade-worktree-switcher-menu]")
@@ -177,7 +177,7 @@ test.describe("per-surface worktrees", () => {
         .poll(() =>
           page
             .locator(
-              `[data-yaade-project-panel="changes"] [data-yaade-git-root]`,
+              `[data-yaade-project-panel="history"] [data-yaade-git-root]`,
             )
             .getAttribute("data-yaade-git-root"),
         )

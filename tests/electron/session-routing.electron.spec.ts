@@ -12,7 +12,7 @@ async function locationHref(page: {
 }
 
 test.describe("session routing", () => {
-  test("a canonical workspace opens Terminals and resumes after visiting Changes", async () => {
+  test("a canonical workspace opens Terminals and resumes after visiting Git", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
@@ -68,12 +68,12 @@ test.describe("session routing", () => {
       expect(state.route).toBe("session")
       expect(state.sessionId).toMatch(/^ses-/)
 
-      // Changes is the landing surface and does not keep a workspace in the URL.
-      await page.locator("[data-yaade-project-tab='changes']").click()
+      // Git is the landing surface and does not keep a workspace in the URL.
+      await page.locator("[data-yaade-project-tab='history']").click()
       await expect
         .poll(
           async () =>
-            page.locator("[data-yaade-project-panel='changes']").evaluate(el => {
+            page.locator("[data-yaade-project-panel='history']").evaluate(el => {
               return !el.classList.contains("invisible")
             }),
           { timeout: 5_000 },

@@ -81,6 +81,7 @@ import { cn } from "@/lib/utils.js"
 import { requestConfirm } from "@/components/ConfirmDialogHost.js"
 import { showYaadeToast } from "@/toast.js"
 import { SessionHeaderChromePortal } from "./session-header-chrome.js"
+import { SidebarShell } from "../shell/SidebarShell.js"
 const CommitChangesDialog = lazy(() =>
   import("./CommitChangesDialog.js").then(module => ({
     default: module.CommitChangesDialog,
@@ -115,9 +116,11 @@ type GitWorkspaceProps = {
   initialView?: GitView
   /**
    * Project-page History: hide Changes/Staged/History pills and prepend a
-   * “Current changes” status row. Commit clicks open CommitChangesDialog.
+   * “Uncommitted” status row. Commit clicks open CommitChangesDialog.
    */
   unifiedHistory?: boolean
+  /** Whether this workspace is active and should poll Git state. */
+  active?: boolean
   /** Project chrome rendered beside the commit action in the git toolbar. */
   toolbarStart?: ReactNode
 }
@@ -149,6 +152,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     fontSize = 13,
     initialView = "changes",
     unifiedHistory = false,
+    active = true,
     toolbarStart,
   } = props
   const api = window.yaade?.git
@@ -178,6 +182,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     unifiedHistory ? GIT_WORKING_TREE_ID : null,
   )
   const [dialogCommit, setDialogCommit] = useState<GitCommit | null>(null)
+  const [workingTreeDialogOpen, setWorkingTreeDialogOpen] = useState(false)
   const [mobileDetail, setMobileDetail] = useState(false)
   const [hunks, setHunks] = useState<DiffHunk[] | null>(null)
   const [hunksLoading, setHunksLoading] = useState(false)
@@ -185,6 +190,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const rootRef = useRef<HTMLElement>(null)
   const diffRequest = useRef(0)
   const historyRequest = useRef(0)
+  const refreshInFlight = useRef(false)
   const narrow = containerWidth > 0 && containerWidth < 560
 
   const loadHistoryPage = useCallback(async (cursor: string | null, reset = false) => {
@@ -226,6 +232,8 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       setLoading(false)
       return
     }
+    if (refreshInFlight.current) return
+    refreshInFlight.current = true
     setLoading(true)
     try {
       const repository = await api.isRepo(rootUri)
@@ -262,6 +270,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         description: errorMessage(error),
       })
     } finally {
+      refreshInFlight.current = false
       setLoading(false)
     }
   }, [api, loadHistoryPage, onBranchChange, rootUri])
@@ -269,6 +278,19 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   useEffect(() => {
     void refresh()
   }, [refresh])
+
+  useEffect(() => {
+    if (!active || view !== "history") return
+    const refreshIfVisible = () => {
+      if (document.visibilityState === "visible") void refresh()
+    }
+    const interval = window.setInterval(refreshIfVisible, 2_000)
+    document.addEventListener("visibilitychange", refreshIfVisible)
+    return () => {
+      window.clearInterval(interval)
+      document.removeEventListener("visibilitychange", refreshIfVisible)
+    }
+  }, [active, refresh, view])
 
   useEffect(() => {
     if (!rootUri || !api || !fsApi || !selected) {
@@ -538,6 +560,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       onSelect={hash => {
         if (hash === GIT_WORKING_TREE_ID) {
           setSelectedCommit(GIT_WORKING_TREE_ID)
+          setWorkingTreeDialogOpen(true)
           return
         }
         const commit = history.find(row => row.hash === hash)
@@ -618,6 +641,21 @@ export function GitWorkspace(props: GitWorkspaceProps) {
             theme={theme}
             fontSize={fontSize}
             commit={dialogCommit}
+          />
+        </Suspense>
+      ) : null}
+      {workingTreeDialogOpen ? (
+        <Suspense fallback={null}>
+          <CommitChangesDialog
+            open
+            onOpenChange={open => {
+              if (!open) setWorkingTreeDialogOpen(false)
+            }}
+            rootUri={rootUri}
+            hash={GIT_WORKING_TREE_ID}
+            workingTree
+            theme={theme}
+            fontSize={fontSize}
           />
         </Suspense>
       ) : null}
@@ -975,7 +1013,7 @@ function FileNavigator(props: {
   onDiscard: (entry: GitStatusEntry) => void
 }) {
   const { rows, filter, selected, pending, stageAllCount, unstageAllCount, numstat, onFilterChange, onSelect, onToggleStage, onStageAll, onUnstageAll, onOpenFile, onDiscard } = props
-  const scrollRef = useRef<HTMLDivElement>(null)
+  const scrollRef = useRef<HTMLElement>(null)
   const virtualizer = useVirtualizer({
     count: rows.length,
     getScrollElement: () => scrollRef.current,
@@ -984,7 +1022,7 @@ function FileNavigator(props: {
   })
   const fileRows = rows.filter((row): row is Extract<NavigationRow, { kind: "file" }> => row.kind === "file")
 
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.target !== event.currentTarget) return
     if (!["ArrowUp", "ArrowDown", "Home", "End", "Enter", " "].includes(event.key)) return
     if (fileRows.length === 0) return
@@ -1015,11 +1053,11 @@ function FileNavigator(props: {
   }
 
   return (
-    <aside
-      className="flex h-full min-h-0 flex-col overflow-hidden rounded-none border-0 bg-card"
+    <SidebarShell
       aria-label="Changed files"
-    >
-      <div className="flex shrink-0 items-center gap-2 border-b border-border/40 p-2">
+      className="rounded-none border-0"
+      header={
+        <>
         <div className="relative min-w-0 flex-1">
           <label htmlFor="git-filter-files" className="sr-only">Filter changed files</label>
           <SearchIcon className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground" aria-hidden />
@@ -1060,15 +1098,17 @@ function FileNavigator(props: {
             Stage all
           </Button>
         ) : null}
-      </div>
-      <div
-        ref={scrollRef}
-        data-yaade-list-panel="git-files"
-        tabIndex={0}
-        aria-label="Changed files list"
-        onKeyDown={handleKeyDown}
-        className="min-h-0 flex-1 overflow-auto outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
-      >
+        </>
+      }
+      contentRef={scrollRef}
+      contentProps={{
+        "data-yaade-list-panel": "git-files",
+        tabIndex: 0,
+        "aria-label": "Changed files list",
+        onKeyDown: handleKeyDown,
+      }}
+      contentClassName="outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
+    >
         {rows.length === 0 ? (
           <Empty className="h-full rounded-none border-0 p-3">
             <EmptyHeader>
@@ -1110,8 +1150,7 @@ function FileNavigator(props: {
             })}
           </div>
         )}
-      </div>
-    </aside>
+    </SidebarShell>
   )
 }
 
@@ -1554,7 +1593,7 @@ function HistoryList(props: {
                   <FileDiffIcon className="text-primary/80" aria-hidden />
                   <div className="min-w-0">
                     <span className="block truncate text-xs text-foreground">
-                      Current changes
+                      Uncommitted
                     </span>
                     <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
                       {dirtyCount === 0

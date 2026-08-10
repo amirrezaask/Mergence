@@ -10,9 +10,19 @@ import {
   spawnVite,
   wireChildLifecycle,
 } from "./spawn-backend.mjs"
+import {
+  ensureLocalHostRegistration,
+  LOCAL_HOSTNAME,
+} from "./register-local-host.mjs"
 
 const appDir = resolveAppDir(import.meta.url)
 const repoRoot = resolveRepoRoot(appDir)
+if (process.env.JET_SKIP_LOCAL_HOST !== "1") {
+  const registration = ensureLocalHostRegistration()
+  if (registration.changed) {
+    console.log(`[dev-web] registered ${LOCAL_HOSTNAME} → 127.0.0.1`)
+  }
+}
 const host = process.env.JET_HOST ?? DEFAULT_HOST
 const preferredHostPort = Number(process.env.JET_PORT ?? DEFAULT_HOST_PORT)
 const preferredVitePort = Number(process.env.JET_WEB_PORT ?? DEFAULT_VITE_PORT)

@@ -29,7 +29,6 @@ import {
   ConfirmDialogHost,
   InstanceSidebar,
   ModalEditorTabBar,
-  MuxStatusStrip,
   TabDndRoot,
   Toaster,
   TooltipProvider,
@@ -44,7 +43,6 @@ import {
   type AgentCliDriver,
   type InstanceSidebarItem,
   type ModalEditorBuffer,
-  type MuxStatusStripAction,
   type PaletteShellItem,
   type TabDndHandlers,
   type WhichKeyEntry,
@@ -3606,47 +3604,6 @@ export function MuxApp({
     return formatKeyBinding(muxPrefixBindingKey(binding.key))
   }, [])
 
-  const statusStripActions = useMemo<MuxStatusStripAction[]>(
-    () => [
-      {
-        id: "terminal.new",
-        label: "New",
-        icon: "new",
-        shortcut: shortcutFor("terminal.new"),
-        onClick: () => void executeCommand("terminal.new"),
-      },
-      {
-        id: "ui.showCommandPalette",
-        label: "Palette",
-        icon: "palette",
-        shortcut: shortcutFor("ui.showCommandPalette"),
-        onClick: () => void executeCommand("ui.showCommandPalette"),
-      },
-      {
-        id: "search.focus",
-        label: "Search",
-        icon: "search",
-        shortcut: shortcutFor("search.focus"),
-        onClick: () => void executeCommand("search.focus"),
-      },
-      {
-        id: "workspace.cd",
-        label: "Directory",
-        icon: "cd",
-        shortcut: shortcutFor("workspace.cd"),
-        onClick: () => void executeCommand("workspace.cd"),
-      },
-      {
-        id: "settings.show",
-        label: "Settings",
-        icon: "settings",
-        shortcut: shortcutFor("settings.show"),
-        onClick: () => void executeCommand("settings.show"),
-      },
-    ],
-    [executeCommand, shortcutFor],
-  )
-
   const keymapBindings = useMemo(
     () => keymaps.allBindings(),
     [keymaps, keymapRevision],
@@ -4769,12 +4726,7 @@ export function MuxApp({
       prefix={formatKeyBinding(pendingChordPrefix)}
       entries={whichKeyEntries}
     />
-  ) : (
-    <MuxStatusStrip
-      prefixLabel={formatKeyBinding(MUX_PREFIX)}
-      actions={statusStripActions}
-    />
-  )
+  ) : null
 
   const muxBody = (
     <TabDndRoot handlers={tabDnd}>

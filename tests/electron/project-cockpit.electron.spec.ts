@@ -44,7 +44,7 @@ test.describe("project cockpit", () => {
             agentSwitcher: document.querySelectorAll("[data-yaade-agent-switcher]").length,
           })),
         )
-        .toEqual({ overview: 0, tabs: 5, worktreeSwitcher: 1, agentSwitcher: 0 })
+        .toEqual({ overview: 0, tabs: 4, worktreeSwitcher: 1, agentSwitcher: 0 })
 
       await page.locator('[data-yaade-project-tab="history"]').click()
       await expectListRows(page, {

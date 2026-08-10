@@ -3,6 +3,7 @@ import test from "node:test"
 import { Duration, Effect } from "effect"
 import {
   acceptHostEvent,
+  createClientId,
   hostRealtimeReconnectDelay,
   websocketUrl,
 } from "./web-transport.js"
@@ -29,6 +30,11 @@ test("websocket URL follows the page origin and carries replay sequence", () => 
     ),
     "wss://jet.example/ws?since=9&clientId=client%20id%2Fwith%20reserved%20chars",
   )
+})
+
+test("client ids work when randomUUID is unavailable outside secure contexts", () => {
+  const id = createClientId({} as Crypto)
+  assert.match(id, /^client-[a-z0-9]+-[a-z0-9]+$/)
 })
 
 test("protocol gate rejects duplicates and incompatible messages", () => {

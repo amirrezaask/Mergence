@@ -716,9 +716,9 @@ test.describe("electron terminal", () => {
         )
         .toBe(1)
 
-      // Mux status strip is always present; focus a chrome control then Escape
-      // must still reach the PTY (global Escape is only claimed while zoomed).
-      await page.locator("[data-yaade-mux-status-strip] button").first().focus()
+      // Focus a pane chrome control; Escape must still reach the PTY (global
+      // Escape is only claimed while zoomed).
+      await page.locator("[data-yaade-mux-pane-chrome] button").first().focus()
       await page.keyboard.press("Escape")
       await expectSelectorVisible(page, "[data-yaade-mux]")
       await expect

@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node scripts/dev-web.mjs",
     "dev:frontend": "node scripts/dev-frontend.mjs",
+    "test": "node --test scripts/register-local-host.test.mjs",
     "build": "vite build && node scripts/verify-startup-graph.mjs && node scripts/compress-assets.mjs",
     "typecheck": "tsc --noEmit"
   },

@@ -102,15 +102,15 @@ test.describe("shell settings", () => {
         expect(contrast.sidebar).toBeGreaterThanOrEqual(7)
         expect(contrast.primaryMatchesSidebar).toBe(true)
 
-        // Mux has no sidebar search; probe focus ring on a status-strip control.
+        // Mux has no sidebar search; probe focus ring on pane chrome.
         // Use focusVisible so :focus-visible rings apply (programmatic focus alone does not).
         await page.evaluate(() => {
           const btn = document.querySelector(
-            "[data-yaade-mux-status-strip] button",
+            "[data-yaade-mux-pane-chrome] button",
           ) as HTMLElement | null
           btn?.focus({ focusVisible: true })
         })
-        const chromeBtn = page.locator("[data-yaade-mux-status-strip] button").first()
+        const chromeBtn = page.locator("[data-yaade-mux-pane-chrome] button").first()
         await expect
           .poll(() =>
             chromeBtn.evaluate(element => getComputedStyle(element).boxShadow),

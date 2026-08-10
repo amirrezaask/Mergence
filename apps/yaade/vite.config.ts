@@ -71,6 +71,7 @@ export default defineConfig({
     // Prefer the configured port; if busy, Vite picks the next free one.
     strictPort: false,
     host: "127.0.0.1",
+    allowedHosts: ["ide.local"],
     proxy: {
       "/api": `http://127.0.0.1:${process.env.JET_PORT ?? 4747}`,
       "/health": `http://127.0.0.1:${process.env.JET_PORT ?? 4747}`,

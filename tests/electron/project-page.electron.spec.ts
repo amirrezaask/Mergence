@@ -8,7 +8,7 @@ import { createMockLspHarness } from "../../apps/host-server/mocks/mock-lsp-harn
 import { launchJet, waitForProjectPage } from "./_launch.js"
 
 test.describe("project page", () => {
-  test("project dock uses an anchored switcher for known projects and paths", async () => {
+  test("bottom project combobox searches known projects and paths", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-switcher-"))
     const project = path.join(home, "repo")
     const other = path.join(home, "other")
@@ -113,6 +113,13 @@ test.describe("project page", () => {
             .getAttribute("aria-selected"),
         )
         .toBe("true")
+      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-project-switcher=""]').count()).toBe(1)
+      await page.locator('[data-yaade-project-tab="agents"]').click()
+      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
+      await page.locator('[data-yaade-project-tab="terminals"]').click()
+      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
+      await page.locator('[data-yaade-project-tab="changes"]').click()
       await expect
         .poll(async () =>
           (await page
@@ -122,6 +129,8 @@ test.describe("project page", () => {
         .toContain("Main")
       const dock = page.locator('[data-yaade-project-dock]')
       await dock.waitFor({ state: "visible" })
+      expect(await dock.locator('[data-yaade-notification-bell]').count()).toBe(0)
+      expect(await dock.getByRole("button", { name: "Settings" }).count()).toBe(0)
       expect(
         await page.locator('[data-yaade-shell="project"] [data-yaade-app-header]').count(),
       ).toBe(0)
@@ -197,7 +206,7 @@ test.describe("project page", () => {
         .toBe(true)
 
       await panel.locator('[data-yaade-worktree-switcher=""]').click()
-      await panel.locator('[data-yaade-worktree-item="feature"]').click()
+      await page.locator('[data-yaade-worktree-item="feature"]').click()
       await expect
         .poll(() => panel.locator('[data-yaade-worktree-switcher=""]').textContent())
         .toContain("feature")

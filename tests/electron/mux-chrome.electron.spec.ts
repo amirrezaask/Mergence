@@ -23,11 +23,11 @@ test.describe("mux chrome", () => {
     }
   })
 
-  test("a persistent status strip anchors the shell", async () => {
+  test("the shell leaves the workspace surface unobstructed at the bottom", async () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-      await expectSelectorVisible(page, "[data-yaade-mux-status-strip]")
+      expect(await page.locator("[data-yaade-mux-status-strip]").count()).toBe(0)
     } finally {
       await app.close()
     }

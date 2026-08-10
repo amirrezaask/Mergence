@@ -1,8 +1,51 @@
-import type { GitCommitFile } from "@yaade/shared"
+import type { GitCommitDetail, GitCommitFile } from "@yaade/shared"
+import { fileUriToPath, pathToFileUri } from "@yaade/shared"
 
 export type CommitDiffContents = { original: string; modified: string }
 
 type GitApi = NonNullable<NonNullable<typeof window.yaade>["git"]>
+type FsApi = NonNullable<NonNullable<typeof window.yaade>["fs"]>
+
+export async function loadWorkingTreeDetail(
+  api: GitApi,
+  rootUri: string,
+): Promise<GitCommitDetail> {
+  const entries = await api.status(rootUri)
+  return {
+    hash: "working-tree",
+    subject: "Uncommitted changes",
+    body: "",
+    files: entries.map(entry => ({
+      path: entry.path,
+      status: entry.worktreeStatus ?? entry.indexStatus ?? entry.status,
+      originalPath: entry.originalPath,
+    })),
+  }
+}
+
+export async function loadWorkingTreeDiffContents(
+  api: GitApi,
+  fsApi: FsApi,
+  rootUri: string,
+  file: GitCommitFile,
+): Promise<CommitDiffContents> {
+  const rootPath = fileUriToPath(rootUri).replace(/[/\\]+$/, "")
+  const fileUri = pathToFileUri(`${rootPath}/${file.path.replace(/^[/\\]+/, "")}`)
+  const oldPath = file.originalPath ?? file.path
+
+  if (file.status === "deleted") {
+    return {
+      original: await api.show(rootUri, oldPath, "HEAD").catch(() => ""),
+      modified: "",
+    }
+  }
+
+  const [original, modified] = await Promise.all([
+    api.show(rootUri, oldPath, "HEAD").catch(() => ""),
+    fsApi.readFile(fileUri).catch(() => ""),
+  ])
+  return { original, modified }
+}
 
 /** Prefer the dedicated RPC; fall back to `git:show` at parent vs commit. */
 export async function loadCommitDiffContents(

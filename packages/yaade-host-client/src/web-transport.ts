@@ -53,6 +53,15 @@ export function hostRealtimeReconnectDelay(attempt: number): Duration.Duration {
   return Duration.millis(Math.min(10_000, 250 * 2 ** Math.max(0, attempt)))
 }
 
+export function createClientId(
+  cryptoSource: Crypto | undefined = globalThis.crypto,
+): string {
+  if (typeof cryptoSource?.randomUUID === "function") {
+    return cryptoSource.randomUUID()
+  }
+  return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+}
+
 /**
  * Host realtime WS client.
  *
@@ -68,7 +77,7 @@ export class WebHostTransport implements YaadeHostTransport {
   private reconnectAttempt = 0
   private lastSequence = 0
   private closed = false
-  private readonly clientId = crypto.randomUUID()
+  private readonly clientId = createClientId()
   private readonly pendingAborts = new Set<AbortController>()
   private loopFiber: Fiber.RuntimeFiber<void, never> | null = null
 
