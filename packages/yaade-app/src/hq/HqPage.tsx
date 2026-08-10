@@ -117,6 +117,7 @@ export type HqPageProps = {
   onLaunchAgent: (
     project: Pick<HqProjectSummary, "id" | "rootPath">,
     driverId: AgentCliDriver["id"],
+    options?: { useWorktree?: boolean; worktreeName?: string },
   ) => void
   onCountsChange?: (counts: {
     projects: number
@@ -687,7 +688,7 @@ export function HqPage({
               projects={launchProjects}
               selectedRootUri={selectedLaunchRootUri}
               onSelectedRootUriChange={setSelectedLaunchRootUri}
-              onSelect={driver => {
+              onSelect={selection => {
                 const rootUri =
                   selectedLaunchRootUri ?? launchProjects[0]?.rootUri ?? null
                 const project = snapshot?.projects.find(
@@ -697,7 +698,10 @@ export function HqPage({
                 )
                 if (!project) return
                 closeLaunchPicker()
-                onLaunchAgent(project, driver.id)
+                onLaunchAgent(project, selection.driver.id, {
+                  useWorktree: selection.useWorktree,
+                  worktreeName: selection.worktreeName,
+                })
               }}
             />
           </Suspense>

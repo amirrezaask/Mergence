@@ -137,6 +137,26 @@ test.describe("shell settings", () => {
         .click()
       await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 2)
       await expectLocatorCount(page.locator("[data-yaade-color-mode-option]"), 3)
+      await expectLocatorCount(page.locator("[data-yaade-preferred-editor]"), 2)
+
+      await page.locator("[data-yaade-preferred-editor='neovim']").click()
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const value = localStorage.getItem("jet-appearance-settings")
+            return value ? JSON.parse(value).preferredEditor : null
+          }),
+        )
+        .toBe("neovim")
+      await page.locator("[data-yaade-preferred-editor='monaco']").click()
+      await expect
+        .poll(() =>
+          page.evaluate(() => {
+            const value = localStorage.getItem("jet-appearance-settings")
+            return value ? JSON.parse(value).preferredEditor : null
+          }),
+        )
+        .toBe("monaco")
 
       await page.locator("[data-yaade-theme-option='default-dark']").click()
       await expect

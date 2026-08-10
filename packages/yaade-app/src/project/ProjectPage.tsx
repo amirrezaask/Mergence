@@ -54,7 +54,9 @@ import {
   saveProjectSurfaceState,
   type ProjectSurfaceSelection,
 } from "../project-surface-state-client.js"
+import { defaultAgentWorktreeName } from "./agent-worktree-name.js"
 import {
+  claimHqAgentLaunch,
   clearHqAgentLaunch,
   peekHqAgentLaunch,
 } from "./hq-agent-launch.js"
@@ -93,6 +95,8 @@ export type ProjectPageProps = {
   agentLaunchIntent?: {
     id: string
     driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"]
+    useWorktree?: boolean
+    worktreeName?: string
   } | null
   onAgentLaunchIntentHandled?: (intentId: string) => void
   /** Focus a specific agent leaf when opening from HQ agent list. */
@@ -658,6 +662,77 @@ export function ProjectPage({
     [activeCheckout, openCheckoutForSurface, session],
   )
 
+  const openAgentLaunch = useCallback(
+    async (input: {
+      requestId: string
+      driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"]
+      useWorktree?: boolean
+      worktreeName?: string
+    }) => {
+      const request: MuxLaunchRequest = {
+        id: input.requestId,
+        action: { kind: "agent", driverId: input.driverId },
+      }
+      setLaunchRequest(request)
+      preferredSurfaceRef.current = "agents"
+      try {
+        if (input.useWorktree) {
+          const branch =
+            input.worktreeName?.trim() ||
+            defaultAgentWorktreeName(input.driverId)
+          const created = await createProjectSession({
+            rootPath: projectPath,
+            title: branch,
+            worktree: { branch },
+          })
+          const checkout = checkoutFromPaths(
+            projectPath,
+            created.cwdPath,
+            created.worktreeBranch ?? created.title,
+            created.checkoutKey,
+          )
+          setActiveCheckout(checkout)
+          persistCheckout(checkout, created.id)
+          await preloadMuxApp()
+          setView("agents")
+          await onOpenSession(created.id)
+          pushProjectRoute(location.pathname, {
+            view: "agents",
+            workspaceId: created.id,
+            checkoutKey: checkoutRouteKey(checkout),
+            agentRunId: null,
+          })
+          return
+        }
+        if (session && sameCheckoutPath(session.cwdPath, activeCheckout.cwdPath)) {
+          setView("agents")
+          return
+        }
+        await openCheckoutForSurface("agents", {
+          cwdPath: activeCheckout.cwdPath,
+          title: activeCheckout.label,
+          worktreeBranch:
+            activeCheckout.checkoutKey === "main" ? null : activeCheckout.label,
+          worktreePath:
+            activeCheckout.checkoutKey === "main" ? null : activeCheckout.cwdPath,
+        })
+      } catch (error) {
+        setLaunchRequest(current =>
+          current?.id === request.id ? null : current,
+        )
+        throw error
+      }
+    },
+    [
+      activeCheckout,
+      onOpenSession,
+      openCheckoutForSurface,
+      persistCheckout,
+      projectPath,
+      session,
+    ],
+  )
+
   const handleLaunchRequestHandled = useCallback(
     (
       requestId: string,
@@ -696,35 +771,35 @@ export function ProjectPage({
     const intent =
       agentLaunchIntent ??
       (queued
-        ? { id: queued.id, driverId: queued.driverId }
+        ? {
+            id: queued.id,
+            driverId: queued.driverId,
+            useWorktree: queued.useWorktree,
+            worktreeName: queued.worktreeName,
+          }
         : null)
     if (!intent) return
-
-    preferredSurfaceRef.current = "agents"
-    setLaunchRequest({
-      id: intent.id,
-      action: { kind: "agent", driverId: intent.driverId },
-    })
-
-    if (session && sameCheckoutPath(session.cwdPath, activeCheckout.cwdPath)) {
+    if (!claimHqAgentLaunch(intent.id)) {
+      // StrictMode remount after claim — re-seed mux launch without recreating
+      // a worktree. MuxApp's launch-request claim prevents a double pane open.
+      preferredSurfaceRef.current = "agents"
+      setLaunchRequest({
+        id: intent.id,
+        action: { kind: "agent", driverId: intent.driverId },
+      })
       setView("agents")
       return
     }
 
     let cancelled = false
-    void openCheckoutForSurface("agents", {
-      cwdPath: activeCheckout.cwdPath,
-      title: activeCheckout.label,
-      worktreeBranch:
-        activeCheckout.checkoutKey === "main" ? null : activeCheckout.label,
-      worktreePath:
-        activeCheckout.checkoutKey === "main" ? null : activeCheckout.cwdPath,
+    void openAgentLaunch({
+      requestId: intent.id,
+      driverId: intent.driverId,
+      useWorktree: intent.useWorktree,
+      worktreeName: intent.worktreeName,
     }).catch(error => {
       if (cancelled) return
       clearHqAgentLaunch(intent.id)
-      setLaunchRequest(current =>
-        current?.id === intent.id ? null : current,
-      )
       onAgentLaunchIntentHandled?.(intent.id)
       showYaadeToast(
         error instanceof Error
@@ -737,12 +812,10 @@ export function ProjectPage({
       cancelled = true
     }
   }, [
-    activeCheckout,
     agentLaunchIntent,
     onAgentLaunchIntentHandled,
-    openCheckoutForSurface,
+    openAgentLaunch,
     projectId,
-    session,
   ])
 
   const handleRemoveWorktree = useCallback(
@@ -1182,9 +1255,23 @@ export function ProjectPage({
           <AgentCliPickerOverlay
             open={agentPickerOpen}
             onOpenChange={setAgentPickerOpen}
-            onSelect={driver => {
+            onSelect={selection => {
               setAgentPickerOpen(false)
-              void handleLaunchAction({ kind: "agent", driverId: driver.id })
+              launchSequenceRef.current += 1
+              const requestId = `launch-${Date.now()}-${launchSequenceRef.current}`
+              void openAgentLaunch({
+                requestId,
+                driverId: selection.driver.id,
+                useWorktree: selection.useWorktree,
+                worktreeName: selection.worktreeName,
+              }).catch(error => {
+                showYaadeToast(
+                  error instanceof Error
+                    ? error.message
+                    : "Could not launch the agent.",
+                  { variant: "destructive" },
+                )
+              })
             }}
           />
         </Suspense>

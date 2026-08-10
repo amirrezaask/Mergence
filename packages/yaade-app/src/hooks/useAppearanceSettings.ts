@@ -45,6 +45,14 @@ export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarProjectFilterPath: null,
+  preferredEditor: "monaco",
+}
+
+export function normalizePreferredEditor(
+  value: unknown,
+  fallback: JetAppearanceSettings["preferredEditor"] = "monaco",
+): JetAppearanceSettings["preferredEditor"] {
+  return value === "monaco" || value === "neovim" ? value : fallback
 }
 
 function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
@@ -223,6 +231,10 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
           (parsed as { sidebarProjectFilterRootUri?: unknown })
             .sidebarProjectFilterRootUri ??
           (parsed as { sidebarProjectFilterId?: unknown }).sidebarProjectFilterId,
+      ),
+      preferredEditor: normalizePreferredEditor(
+        (parsed as { preferredEditor?: unknown }).preferredEditor,
+        base.preferredEditor,
       ),
     }
   } catch {

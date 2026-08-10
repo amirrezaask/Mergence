@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { expectListRows } from "../helpers/list.js"
 import {
+  expectLocatorCount,
   expectLocatorVisible,
   expectSelectorVisible,
 } from "../shell/assert.js"
@@ -85,7 +86,7 @@ test.describe("project instance sidebars", () => {
     }
   })
 
-  test("Agents tab has sidebar New and no native-agents tab", async () => {
+  test("Agents tab hides sidebar until an agent is launched", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
@@ -94,19 +95,24 @@ test.describe("project instance sidebars", () => {
         .toBe(0)
 
       await page.locator('[data-yaade-project-tab="agents"]').click()
-      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="agents"]')
-      await expectSelectorVisible(
-        page,
-        '[data-yaade-list-panel="project-agents"]',
+      await expectLocatorCount(
+        page.locator('[data-yaade-instance-sidebar="agents"]'),
+        0,
       )
-      await page
-        .locator(
-          '[data-yaade-instance-sidebar="agents"] [data-yaade-instance-sidebar-new]',
-        )
-        .click()
+      await expectSelectorVisible(page, "[data-yaade-agents-empty]")
+      await page.locator("[data-yaade-agents-empty-launch]").click()
       await expectLocatorVisible(
         page.getByRole("dialog").filter({ hasText: "Launch an agent" }),
       )
+      await expectLocatorCount(
+        page.locator('input[placeholder="Search providers…"]'),
+        0,
+      )
+      await expectSelectorVisible(page, "[data-yaade-use-worktree]")
+      await expectLocatorCount(page.locator("[data-yaade-worktree-name]"), 0)
+      await page.locator("[data-yaade-use-worktree]").click()
+      await expectSelectorVisible(page, "[data-yaade-worktree-name]")
+      await expectSelectorVisible(page, '[data-yaade-agent-cli-option="codex"]')
     } finally {
       await app.close()
     }

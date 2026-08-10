@@ -1846,6 +1846,41 @@ export function MuxApp({
     [ensureProjectWindow, openEditorSplit],
   )
 
+  /** Respects Settings → Editor (Monaco vs Neovim) for file opens. */
+  const openInPreferredEditor = useCallback(
+    (options?: {
+      uri?: string
+      filePath?: string
+      line?: number
+      column?: number
+      forceNewGroup?: boolean
+    }) => {
+      if (appearanceSettings.preferredEditor !== "neovim") {
+        openEditorInFocused(options)
+        return
+      }
+      let filePath = options?.filePath
+      if (!filePath && options?.uri?.startsWith("file://")) {
+        try {
+          filePath = fileUriToPath(options.uri)
+        } catch {
+          filePath = undefined
+        }
+      }
+      const w = ensureProjectWindow()
+      void openNeovimSplit(w.id, w.focusedPaneId, {
+        filePath,
+        line: options?.line,
+      })
+    },
+    [
+      appearanceSettings.preferredEditor,
+      ensureProjectWindow,
+      openEditorInFocused,
+      openNeovimSplit,
+    ],
+  )
+
   const untitledDropCounterRef = useRef(0)
   const openUntitledFromDrop = useCallback(
     (name: string, content: string) => {
@@ -2259,7 +2294,7 @@ export function MuxApp({
   openGitSplitRef.current = openGitSplit
   const openNeovimSplitRef = useRef(openNeovimSplit)
   openNeovimSplitRef.current = openNeovimSplit
-  openEditorInFocusedRef.current = openEditorInFocused
+  openEditorInFocusedRef.current = openInPreferredEditor
   const zoomPaneRef = useRef(zoomPane)
   zoomPaneRef.current = zoomPane
   const focusNeighborRef = useRef(focusNeighbor)
@@ -2368,8 +2403,8 @@ export function MuxApp({
       showYaadeToast("There is no recently closed buffer")
       return
     }
-    openEditorInFocusedRef.current({ uri })
-  }, [])
+    openInPreferredEditor({ uri })
+  }, [openInPreferredEditor])
 
   const openToolLocation = useCallback(
     (uri: string, line = 1, column = 1): void => {
@@ -2386,10 +2421,10 @@ export function MuxApp({
             column: current.column,
           })
         }
-        openEditorInFocusedRef.current({ uri, line, column })
+        openInPreferredEditor({ uri, line, column })
       })
     },
-    [getActiveDocument, workspace],
+    [getActiveDocument, openInPreferredEditor, workspace],
   )
 
   const navigateJumpHistory = useCallback(
@@ -2416,14 +2451,14 @@ export function MuxApp({
           )
           return
         }
-        openEditorInFocusedRef.current({
+        openInPreferredEditor({
           uri: entry.fileUri,
           line: entry.line,
           column: entry.column,
         })
       })
     },
-    [getActiveDocument, workspace],
+    [getActiveDocument, openInPreferredEditor, workspace],
   )
 
   const [keymapRevision, setKeymapRevision] = useState(0)
@@ -2460,13 +2495,15 @@ export function MuxApp({
         } else if (action.kind === "neovim") {
           const window = ensureProjectWindow()
           await openNeovimSplit(window.id, window.focusedPaneId)
-        } else {
-          openEditorInFocused({
-            uri: action.filePath
-              ? undefined
-              : `untitled:New File-${launchRequest.id}`,
+        } else if (action.filePath) {
+          openInPreferredEditor({
             filePath: action.filePath,
             line: action.line,
+            forceNewGroup: true,
+          })
+        } else {
+          openEditorInFocused({
+            uri: `untitled:New File-${launchRequest.id}`,
             forceNewGroup: true,
           })
         }
@@ -2486,6 +2523,7 @@ export function MuxApp({
     openAgentCliPane,
     openEditorInFocused,
     openGitSplit,
+    openInPreferredEditor,
     openNeovimSplit,
     openTerminalInActiveWindow,
   ])
@@ -2596,12 +2634,12 @@ export function MuxApp({
       ),
       commands.register(
         "mux.openEditor",
-        run(() => openEditorInFocusedRef.current()),
+        run(() => openInPreferredEditor()),
         {
           id: "mux.openEditor",
           title: "Open Editor",
           category: "View",
-          aliases: ["editor", "monaco", "code"],
+          aliases: ["editor", "monaco", "code", "nvim"],
         },
       ),
       commands.register(
@@ -2612,7 +2650,8 @@ export function MuxApp({
             typeof crypto.randomUUID === "function"
               ? crypto.randomUUID()
               : Date.now().toString(36)
-          openEditorInFocusedRef.current({ uri: `untitled:Untitled-${id}` })
+          // Untitled buffers are Monaco-only (Neovim has no untitled model).
+          openEditorInFocused({ uri: `untitled:Untitled-${id}` })
         }),
         {
           id: "editor.new",
@@ -3279,6 +3318,8 @@ export function MuxApp({
     embedded,
     onLaunchAgent,
     onSelectAgentTab,
+    openEditorInFocused,
+    openInPreferredEditor,
     reopenClosedEditor,
     resetAppearanceSettings,
     runActiveEditorAction,
@@ -4067,7 +4108,7 @@ export function MuxApp({
               getActiveDocument={getActiveDocument}
               getLspController={() => lspControllerRef.current}
               onOpenLocation={openToolLocation}
-              onOpenBuffer={uri => openEditorInFocused({ uri })}
+              onOpenBuffer={uri => openInPreferredEditor({ uri })}
             />
           </Suspense>
         )
@@ -4087,7 +4128,7 @@ export function MuxApp({
             onExpandedChange={ids => {
               explorerExpandedIdsRef.current = ids
             }}
-            onOpenFile={uri => openEditorInFocused({ uri })}
+            onOpenFile={uri => openInPreferredEditor({ uri })}
             onControllerReady={handleExplorerControllerReady}
           />
         </Suspense>
@@ -4096,7 +4137,7 @@ export function MuxApp({
     [
       getActiveDocument,
       handleExplorerControllerReady,
-      openEditorInFocused,
+      openInPreferredEditor,
       openToolLocation,
       sessionCwdPath,
       sessionId,
@@ -4570,31 +4611,37 @@ export function MuxApp({
                   className="absolute inset-0 flex min-h-0"
                   data-yaade-project-surface="agents"
                 >
-                  <InstanceSidebar
-                    dataPrefix="agents"
-                    title="Agents"
-                    titleIcon={
-                      <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                    }
-                    items={agentSidebarItems}
-                    activeId={focusAgentTabId}
-                    listPanelId="project-agents"
-                    emptyLabel="No agents running in this worktree."
-                    onSelect={tabId => {
-                      onSelectAgentTab?.(tabId)
-                    }}
-                    onNew={() => {
-                      onLaunchAgent?.()
-                    }}
-                    onClose={tabId => {
-                      if (!activeWindow) return
-                      const leaf = listTerminalLeaves(activeWindow.tree).find(
-                        l => l.ptyTabId === tabId,
-                      )
-                      if (!leaf) return
-                      void closePane(activeWindow.id, leaf.panelId, leaf.ptyTabId)
-                    }}
-                  />
+                  {agentSidebarItems.length > 0 ? (
+                    <InstanceSidebar
+                      dataPrefix="agents"
+                      title="Agents"
+                      titleIcon={
+                        <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+                      }
+                      items={agentSidebarItems}
+                      activeId={focusAgentTabId}
+                      listPanelId="project-agents"
+                      emptyLabel="No agents running in this worktree."
+                      onSelect={tabId => {
+                        onSelectAgentTab?.(tabId)
+                      }}
+                      onNew={() => {
+                        onLaunchAgent?.()
+                      }}
+                      onClose={tabId => {
+                        if (!activeWindow) return
+                        const leaf = listTerminalLeaves(activeWindow.tree).find(
+                          l => l.ptyTabId === tabId,
+                        )
+                        if (!leaf) return
+                        void closePane(
+                          activeWindow.id,
+                          leaf.panelId,
+                          leaf.ptyTabId,
+                        )
+                      }}
+                    />
+                  ) : null}
                   <div className="relative min-h-0 min-w-0 flex-1">
                     {focusAgentTabId &&
                     agentInstanceTabIds.includes(focusAgentTabId) ? (
@@ -4622,10 +4669,28 @@ export function MuxApp({
                         />
                       </div>
                     ) : (
-                      <div className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground">
-                        {focusAgentTabId
-                          ? "That agent is no longer running."
-                          : "Select an agent from the sidebar, or create one."}
+                      <div
+                        className="grid h-full place-items-center px-4 text-center text-sm text-muted-foreground"
+                        data-yaade-agents-empty=""
+                      >
+                        {focusAgentTabId ? (
+                          <p>That agent is no longer running.</p>
+                        ) : (
+                          <div className="max-w-sm">
+                            <p>No agents running in this worktree.</p>
+                            {onLaunchAgent ? (
+                              <Button
+                                className="mt-3"
+                                variant="secondary"
+                                size="sm"
+                                data-yaade-agents-empty-launch=""
+                                onClick={() => onLaunchAgent()}
+                              >
+                                Launch agent…
+                              </Button>
+                            ) : null}
+                          </div>
+                        )}
                       </div>
                     )}
                     <div

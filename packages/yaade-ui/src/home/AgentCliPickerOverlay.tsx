@@ -1,14 +1,5 @@
-import { FolderOpen, Plus, RefreshCw, Trash2 } from "lucide-react"
-import { useCallback, useEffect, useMemo, useState } from "react"
-import type { AgentDriverCapabilities, AgentProvider } from "@yaade/agents"
-import {
-  Command,
-  CommandEmpty,
-  CommandGroup,
-  CommandInput,
-  CommandItem,
-  CommandList,
-} from "../components/ui/command.js"
+import { FolderOpen, Plus, Trash2 } from "lucide-react"
+import { useEffect, useMemo, useState } from "react"
 import {
   Dialog,
   DialogContent,
@@ -17,6 +8,9 @@ import {
   DialogTitle,
 } from "../components/ui/dialog.js"
 import { Button } from "../components/ui/button.js"
+import { Checkbox } from "../components/ui/checkbox.js"
+import { Input } from "../components/ui/input.js"
+import { Label } from "../components/ui/label.js"
 import {
   Select,
   SelectContent,
@@ -36,10 +30,18 @@ export type AgentCliPickerProject = {
   path: string
 }
 
+export type AgentCliLaunchSelection = {
+  driver: AgentCliDriver
+  /** When true, create (or use) a git worktree for the launch. */
+  useWorktree: boolean
+  /** Optional branch / worktree name. Empty → host generates one. */
+  worktreeName: string
+}
+
 export type AgentCliPickerOverlayProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
-  onSelect: (driver: AgentCliDriver) => void
+  onSelect: (selection: AgentCliLaunchSelection) => void
   /** Workspace projects available for the new session. */
   projects?: AgentCliPickerProject[]
   /** Selected project root URI (required when creating a session). */
@@ -48,15 +50,6 @@ export type AgentCliPickerOverlayProps = {
   onRemoveProject?: (rootUri: string) => boolean | void | Promise<boolean | void>
   /** Opens the Add project folder modal. */
   onAddProject?: () => void
-}
-
-type ProviderAvailability = {
-  provider: AgentProvider
-  available: boolean
-  binary: string
-  version: string | null
-  capabilities: AgentDriverCapabilities
-  error: string | null
 }
 
 export function AgentCliPickerOverlay({
@@ -69,32 +62,15 @@ export function AgentCliPickerOverlay({
   onRemoveProject,
   onAddProject,
 }: AgentCliPickerOverlayProps) {
-  const [providers, setProviders] = useState<ProviderAvailability[]>([])
-  const [providersLoading, setProvidersLoading] = useState(false)
-  const [providersError, setProvidersError] = useState<string | null>(null)
-  const refreshProviders = useCallback(async (refresh = false) => {
-    const api = window.yaade?.agents
-    if (!api) {
-      setProvidersError("Provider detection is unavailable")
-      return
-    }
-    setProvidersLoading(true)
-    try {
-      setProviders(await api.listProviders(refresh))
-      setProvidersError(null)
-    } catch (error) {
-      setProvidersError(error instanceof Error ? error.message : "Could not detect providers")
-    } finally {
-      setProvidersLoading(false)
-    }
-  }, [])
+  const [useWorktree, setUseWorktree] = useState(false)
+  const [worktreeName, setWorktreeName] = useState("")
+
   useEffect(() => {
-    if (open) void refreshProviders(false)
-  }, [open, refreshProviders])
-  const providerById = useMemo(
-    () => new Map(providers.map(provider => [provider.provider, provider])),
-    [providers],
-  )
+    if (!open) return
+    setUseWorktree(false)
+    setWorktreeName("")
+  }, [open])
+
   const selectedProject =
     projects.find(project => project.rootUri === selectedRootUri) ?? projects[0]
   const showProjectControl = projects.length > 0 || onAddProject != null
@@ -107,24 +83,27 @@ export function AgentCliPickerOverlay({
     if (next) onSelectedRootUriChange?.(next.rootUri)
   }
 
+  const pick = (driver: AgentCliDriver) => {
+    onSelect({
+      driver,
+      useWorktree,
+      worktreeName: worktreeName.trim(),
+    })
+  }
+
+  const previewHint = useMemo(() => {
+    if (!useWorktree) return null
+    if (worktreeName.trim()) return `Worktree branch: ${worktreeName.trim()}`
+    return "Worktree name will be generated on launch"
+  }, [useWorktree, worktreeName])
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent size="picker" className="gap-0 overflow-hidden p-0">
         <DialogHeader className="px-4 pt-4 pb-3">
-          <div className="flex items-start justify-between gap-3">
           <DialogTitle>Launch an agent</DialogTitle>
-          <Button
-            size="xs"
-            variant="ghost"
-            disabled={providersLoading}
-            onClick={() => void refreshProviders(true)}
-          >
-            <RefreshCw className={providersLoading ? "animate-spin" : undefined} />
-            Refresh
-          </Button>
-          </div>
           <DialogDescription>
-            Choose a provider to start in the selected project workspace.
+            Pick a provider. Optionally launch into a fresh git worktree.
           </DialogDescription>
         </DialogHeader>
 
@@ -195,59 +174,67 @@ export function AgentCliPickerOverlay({
           </div>
         ) : null}
 
-        <Command className="rounded-none border-t">
-          <CommandInput placeholder="Search providers…" aria-label="Search providers" />
-          <CommandList
-            className="max-h-80"
-            data-yaade-list-panel="yaade:palette"
-          >
-            <CommandEmpty>No matching agents.</CommandEmpty>
-            <CommandGroup heading="Providers">
-              {AGENT_CLI_DRIVERS.map(driver => {
-                const detected = providerById.get(driver.id)
-                const unavailable = detected ? !detected.available : providersLoading
-                const capabilityLabels = detected
-                  ? Object.entries(detected.capabilities)
-                      .filter(([, enabled]) => enabled)
-                      .map(([name]) => name.replace(/Lifecycle$/, ""))
-                      .slice(0, 3)
-                  : []
-                return <CommandItem
-                  key={driver.id}
-                  value={`${driver.label} ${driver.description} ${driver.command}`}
-                  onSelect={() => onSelect(driver)}
-                  disabled={unavailable}
+        <div
+          className="grid gap-3 border-t px-4 py-3"
+          data-yaade-agent-cli-worktree=""
+        >
+          <label className="flex items-center gap-2 text-sm">
+            <Checkbox
+              checked={useWorktree}
+              onCheckedChange={checked => setUseWorktree(checked === true)}
+              data-yaade-use-worktree=""
+            />
+            Use a git worktree
+          </label>
+          {useWorktree ? (
+            <div className="grid gap-1.5">
+              <Label htmlFor="agent-worktree-name">Worktree name</Label>
+              <Input
+                id="agent-worktree-name"
+                value={worktreeName}
+                onChange={event => setWorktreeName(event.target.value)}
+                placeholder="Optional — e.g. feat/agent-task"
+                data-yaade-worktree-name=""
+              />
+              {previewHint ? (
+                <p className="text-3xs text-muted-foreground">{previewHint}</p>
+              ) : null}
+            </div>
+          ) : null}
+        </div>
+
+        <div
+          className="max-h-80 overflow-y-auto border-t"
+          data-yaade-list-panel="yaade:palette"
+          role="listbox"
+          aria-label="Agent providers"
+        >
+          <ul className="flex flex-col p-1">
+            {AGENT_CLI_DRIVERS.map(driver => (
+              <li key={driver.id}>
+                <button
+                  type="button"
+                  role="option"
                   data-yaade-list-item=""
-                  data-yaade-agent-provider-available={detected?.available ? "true" : "false"}
-                  className="py-3"
+                  data-yaade-agent-cli-option={driver.id}
+                  className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
+                  onClick={() => pick(driver)}
                 >
                   <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/50">
                     <AgentProviderIcon agent={driver.id} className="size-4" />
                   </span>
                   <span className="min-w-0 flex-1">
-                    <span
-                      className="block truncate font-medium"
-                      data-yaade-agent-cli-option={driver.id}
-                    >
-                      {driver.label}
-                    </span>
+                    <span className="block truncate font-medium">{driver.label}</span>
                     <span className="block truncate text-xs text-muted-foreground">
-                      {detected?.available
-                        ? [detected.version, ...capabilityLabels].filter(Boolean).join(" · ") || driver.description
-                        : detected?.error ?? (providersLoading ? "Checking availability…" : "CLI not found in PATH")}
+                      {driver.description}
                     </span>
                   </span>
-                  <code className="text-xs text-muted-foreground">
-                    {detected?.available ? detected.binary : "Unavailable"}
-                  </code>
-                </CommandItem>
-              })}
-            </CommandGroup>
-            {providersError ? (
-              <p className="px-3 py-2 text-xs text-destructive">{providersError}</p>
-            ) : null}
-          </CommandList>
-        </Command>
+                  <code className="text-xs text-muted-foreground">{driver.command}</code>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
       </DialogContent>
     </Dialog>
   )

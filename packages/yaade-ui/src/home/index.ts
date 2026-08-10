@@ -90,6 +90,7 @@ export {
 } from "./agent-cli-drivers.js"
 export {
   AgentCliPickerOverlay,
+  type AgentCliLaunchSelection,
   type AgentCliPickerOverlayProps,
   type AgentCliPickerProject,
 } from "./AgentCliPickerOverlay.js"

@@ -1,5 +1,6 @@
 export {
   AgentCliPickerOverlay,
+  type AgentCliLaunchSelection,
   type AgentCliPickerOverlayProps,
   type AgentCliPickerProject,
 } from "./home/AgentCliPickerOverlay.js"

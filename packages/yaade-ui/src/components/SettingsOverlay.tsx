@@ -52,6 +52,8 @@ import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 /** Mission Control is sidebar-only; legacy `"cards"` / `"tabs"` normalize here. */
 export type SessionLayout = "sidebar"
 export type ColorSchemeMode = "system" | "light" | "dark"
+/** Preferred file editor for quick open / search / go-to-definition. */
+export type PreferredEditor = "monaco" | "neovim"
 
 export type JetAppearanceSettings = {
   themeId: string
@@ -70,6 +72,8 @@ export type JetAppearanceSettings = {
    * Persisted as absolute project path (stable across reloads).
    */
   sidebarProjectFilterPath: string | null
+  /** Monaco buffer groups vs Neovim PTY panes for file opens. */
+  preferredEditor: PreferredEditor
 }
 
 export type SettingsOverlayProps = {
@@ -554,6 +558,42 @@ export function SettingsOverlay({
                           )
                         }
                       />
+                    </SettingsField>
+                    <SettingsField
+                      label="Editor"
+                      detail="Quick open, project search, and go-to-definition open files here. Ctrl-a n always opens Neovim."
+                    >
+                      <ToggleGroup
+                        type="single"
+                        variant="outline"
+                        size="sm"
+                        value={settings.preferredEditor}
+                        aria-label="Preferred editor"
+                        className="w-full"
+                        onValueChange={value => {
+                          if (value !== "monaco" && value !== "neovim") return
+                          onSettingsChange(
+                            settingPatch(settings, { preferredEditor: value }),
+                          )
+                        }}
+                      >
+                        <ToggleGroupItem
+                          value="monaco"
+                          aria-label="Monaco editor"
+                          className="flex-1"
+                          data-yaade-preferred-editor="monaco"
+                        >
+                          Monaco
+                        </ToggleGroupItem>
+                        <ToggleGroupItem
+                          value="neovim"
+                          aria-label="Neovim editor"
+                          className="flex-1"
+                          data-yaade-preferred-editor="neovim"
+                        >
+                          Neovim
+                        </ToggleGroupItem>
+                      </ToggleGroup>
                     </SettingsField>
                   </div>
                 </section>

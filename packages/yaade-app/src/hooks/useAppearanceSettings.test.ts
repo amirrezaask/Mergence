@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   normalizeColorSchemeMode,
+  normalizePreferredEditor,
   normalizeThemeId,
   themeIdForColorSchemeMode,
 } from "./useAppearanceSettings.js"
@@ -24,6 +25,15 @@ describe("normalizeThemeId", () => {
   it("uses the stored scheme for unknown ids", () => {
     assert.equal(normalizeThemeId("removed-theme", "light"), "default-light")
     assert.equal(normalizeThemeId("removed-theme", "dark"), "default-dark")
+  })
+})
+
+describe("preferred editor", () => {
+  it("normalizes monaco and neovim", () => {
+    assert.equal(normalizePreferredEditor("monaco"), "monaco")
+    assert.equal(normalizePreferredEditor("neovim"), "neovim")
+    assert.equal(normalizePreferredEditor("vim", "neovim"), "neovim")
+    assert.equal(normalizePreferredEditor(undefined), "monaco")
   })
 })
 

@@ -72,6 +72,7 @@ export {
   type OpenInAppTarget,
   type NewSessionButtonProps,
   type AgentCliDriver,
+  type AgentCliLaunchSelection,
   type AgentCliPickerOverlayProps,
   type AgentCliPickerProject,
   type ProjectTodo,
@@ -147,6 +148,7 @@ export {
   SettingsOverlay,
   type ColorSchemeMode,
   type JetAppearanceSettings,
+  type PreferredEditor,
   type SessionLayout,
 } from "./components/SettingsOverlay.js"
 export {

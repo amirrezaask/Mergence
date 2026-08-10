@@ -443,11 +443,14 @@ export function AppRoot() {
     (
       project: Pick<HqProjectSummary, "id" | "rootPath">,
       driverId: AgentCliDriver["id"],
+      options?: { useWorktree?: boolean; worktreeName?: string },
     ) => {
       const intent: PendingAgentLaunch = {
         id: `hq-launch-${Date.now()}-${driverId}`,
         projectId: project.id,
         driverId,
+        useWorktree: options?.useWorktree === true,
+        worktreeName: options?.worktreeName?.trim() || undefined,
       }
       // Module queue survives StrictMode remounts that wipe ProjectPage state.
       queueHqAgentLaunch(intent)
