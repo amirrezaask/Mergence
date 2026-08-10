@@ -3,6 +3,7 @@ import { execSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
+import { expectListRows } from "../helpers/list.js"
 import {
   launchJet,
   waitForMux,
@@ -93,12 +94,13 @@ test.describe("per-surface worktrees", () => {
     }
   })
 
-  test("Git tab worktree switcher remounts git root without swapping session", async () => {
-    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-wt-picker-"))
+  test("Git lists worktrees and switches the Git root", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-wt-history-"))
     const project = path.join(home, "repo")
+    const worktree = path.join(home, "feature")
     fs.mkdirSync(project, { recursive: true })
     execSync(
-      "git init && git config user.email t@t && git config user.name t && echo hi > README && git add . && git commit -m init",
+      "git init && git config user.email t@t && git config user.name t && echo hi > README && git add . && git commit -m init && git worktree add -b feature ../feature HEAD",
       { cwd: project, stdio: "ignore" },
     )
 
@@ -111,68 +113,63 @@ test.describe("per-surface worktrees", () => {
     try {
       await waitForProjectPage(page)
 
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      await expectListRows(page, {
+        panel: "project-git-history",
+        minItems: 2,
+        needle: "feature",
+        noResultsText: "No worktrees yet",
+      })
+      expect(
+        await page.locator('[data-yaade-git-toolbar] [data-yaade-worktree-switcher]').count(),
+      ).toBe(0)
+
+      await page
+        .locator('[data-yaade-project-worktree-item]')
+        .filter({ hasText: "feature" })
+        .click()
       await page.locator('[data-yaade-project-panel="history"]').waitFor({
         state: "visible",
       })
-
-      const switcher = page.locator(
-        '[data-yaade-git-toolbar] [data-yaade-worktree-switcher]',
-      )
-      await switcher.waitFor({ state: "visible" })
       await expect
-        .poll(async () => (await switcher.textContent()) ?? "")
-        .toContain("Main")
-
-      // Running process surface does not show the Git checkout switcher.
-      await page.locator('[data-yaade-project-process-new="running"]').click()
-      await page.locator('[data-yaade-agent-provider="terminal"]').click()
-      await page.locator("[data-yaade-worktree-main]").click()
-      await page.locator('[data-yaade-project-panel="running"]').waitFor({
-        state: "visible",
-      })
-      await expect
-        .poll(() =>
-          page.locator(
-            '[data-yaade-project-panel="history"]:not(.invisible) [data-yaade-worktree-switcher]',
-          ).count(),
-        )
-        .toBe(0)
-      await page.locator('[data-yaade-project-tab="history"]').click()
-      await switcher.waitFor({ state: "visible" })
-      await switcher.click()
-      const menu = page.locator("[data-yaade-worktree-switcher-menu]")
-      await menu.waitFor({ state: "visible" })
-      await page.locator("[data-yaade-worktree-create]").click()
-      const dialog = page.locator("[data-yaade-create-worktree-dialog]")
-      await dialog.waitFor({ state: "visible" })
-      const branch = `picker-wt-${Date.now().toString(36)}`
-      await dialog.locator("[data-yaade-worktree-branch]").fill(branch)
-      await dialog.locator("[data-yaade-create-worktree]").click()
-      await expect
-        .poll(async () => (await switcher.textContent()) ?? "", {
-          timeout: 5_000,
-        })
-        .toContain(branch)
-
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const checkout = new URLSearchParams(location.search).get("checkout")
-            return checkout != null && checkout.length > 0 && checkout !== "main"
-          }),
-        )
-        .toBe(true)
-
       await expect
         .poll(() =>
           page
-            .locator(
-              `[data-yaade-project-panel="history"] [data-yaade-git-root]`,
-            )
+            .locator('[data-yaade-project-panel="history"] [data-yaade-git-root]')
             .getAttribute("data-yaade-git-root"),
         )
-        .toContain(".yaade/worktrees")
+        .toBe(fs.realpathSync(worktree))
+      await expect
+        .poll(() =>
+          page.evaluate(() => new URLSearchParams(location.search).get("checkout")),
+        )
+        .toBe(fs.realpathSync(worktree))
+
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
+      await expect
+        .poll(() =>
+          page
+            .locator('[data-yaade-project-panel="history"] [data-yaade-git-root]')
+            .getAttribute("data-yaade-git-root"),
+        )
+        .toMatch(/\/repo$/)
+
+      await page.locator('[data-yaade-project-worktree-create=""]').click()
+      const dialog = page.locator("[data-yaade-create-worktree-dialog]")
+      await dialog.waitFor({ state: "visible" })
+      const createdBranch = `sidebar-wt-${Date.now().toString(36)}`
+      await dialog.locator("[data-yaade-worktree-branch]").fill(createdBranch)
+      await dialog.locator("[data-yaade-create-worktree]").click()
+      await expect
+        .poll(() =>
+          page
+            .locator('[data-yaade-project-worktree-item]')
+            .filter({ hasText: createdBranch })
+            .count(),
+        )
+        .toBe(1)
+      expect(
+        await page.locator('[data-yaade-git-toolbar] [data-yaade-worktree-switcher]').count(),
+      ).toBe(0)
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

@@ -22,6 +22,7 @@ export {
   type ProjectWorkspaceSidebarProcess,
   type ProjectWorkspaceSidebarProps,
   type ProjectWorkspaceSidebarView,
+  type ProjectWorkspaceSidebarWorktree,
 } from "./shell/ProjectWorkspaceSidebar.js"
 export {
   ModalEditorTabBar,

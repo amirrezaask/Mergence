@@ -42,11 +42,13 @@ test.describe("project cockpit", () => {
             tabs: document.querySelectorAll("[data-yaade-project-tab]").length,
             worktreeSwitcher: document.querySelectorAll("[data-yaade-worktree-switcher]").length,
             agentSwitcher: document.querySelectorAll("[data-yaade-agent-switcher]").length,
+            historyGroup: document.querySelectorAll("[data-yaade-project-git-history-group]").length,
+            mainWorktree: document.querySelectorAll('[data-yaade-project-worktree-item="main"]').length,
           })),
         )
-        .toEqual({ overview: 0, tabs: 4, worktreeSwitcher: 1, agentSwitcher: 0 })
+        .toEqual({ overview: 0, tabs: 0, worktreeSwitcher: 0, agentSwitcher: 0, historyGroup: 1, mainWorktree: 1 })
 
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
       await expectListRows(page, {
         panel: "git-history",
         minItems: 3,

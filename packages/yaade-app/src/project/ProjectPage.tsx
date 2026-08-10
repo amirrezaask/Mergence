@@ -12,7 +12,11 @@ import type {
   HqAgentSummary,
   ProjectSession,
 } from "@yaade/rpc"
-import { pathToFileUri, type YaadeTheme } from "@yaade/shared"
+import {
+  pathToFileUri,
+  type GitWorktree,
+  type YaadeTheme,
+} from "@yaade/shared"
 import {
   isTerminalTabId,
   terminalTabId,
@@ -31,7 +35,7 @@ import {
   SidebarProvider,
   requestConfirm,
   type ProjectWorkspaceSidebarProcess,
-  type ProjectWorkspaceSidebarView,
+  type ProjectWorkspaceSidebarWorktree,
 } from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
 import {
@@ -41,7 +45,6 @@ import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import {
   ChevronsUpDown,
   FolderKanban,
-  GitBranch,
   Plus,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
@@ -84,6 +87,7 @@ import {
   selectionFromPaths,
   type CheckoutSelection,
 } from "./CheckoutPicker.js"
+import { CreateWorktreeDialog } from "./CreateWorktreeDialog.js"
 import {
   RunningProjectSurface,
 } from "./ProjectProcessSurfaces.js"
@@ -174,6 +178,46 @@ function checkoutRouteKey(checkout: ActiveCheckout): string | null {
   return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
 }
 
+function projectWorktreeLabel(worktree: GitWorktree): string {
+  if (worktree.branch) return worktree.branch.replace(/^refs\/heads\//, "")
+  if (worktree.detached && worktree.head) {
+    return `detached@${worktree.head.slice(0, 7)}`
+  }
+  return worktree.path.split("/").filter(Boolean).pop() ?? worktree.path
+}
+
+function useProjectWorktrees(projectPath: string) {
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const api = window.yaade?.git
+      if (!api) throw new Error("Git service unavailable")
+      const rootUri = pathToFileUri(projectPath)
+      const isRepo = await api.isRepo(rootUri)
+      const rows = isRepo ? await api.worktreeList(rootUri) : []
+      setWorktrees(
+        rows.filter(worktree => !worktree.bare && !worktree.prunable),
+      )
+    } catch (reason) {
+      setWorktrees([])
+      setError(reason instanceof Error ? reason.message : String(reason))
+    } finally {
+      setLoading(false)
+    }
+  }, [projectPath])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  return { worktrees, loading, error, refresh }
+}
+
 function ProjectSurfaceSlot({
   panel,
   active,
@@ -221,31 +265,13 @@ function ProjectGitSurface({
   active,
   rootUri,
   theme,
-  projectPath,
-  homeDir,
-  defaultBranch,
   activeCheckout,
-  onSelectCheckout,
-  onCreateWorktree,
-  onRemoveWorktree,
 }: {
   view: "history" | "changes"
   active: boolean
   rootUri: string
   theme: YaadeTheme
-  projectPath: string
-  homeDir: string
-  defaultBranch: string
   activeCheckout: ActiveCheckout
-  onSelectCheckout: (checkout: CheckoutSelection) => void
-  onCreateWorktree: (input: {
-    branch: string
-    baseRef?: string
-  }) => Promise<CheckoutSelection | void>
-  onRemoveWorktree: (input: {
-    cwdPath: string
-    branch: string | null
-  }) => Promise<void>
 }) {
   return (
     <GitWorkspace
@@ -255,19 +281,6 @@ function ProjectGitSurface({
       initialView={view}
       unifiedHistory={view === "history"}
       active={active}
-      toolbarStart={
-        <CheckoutPicker
-          projectPath={projectPath}
-          homeDir={homeDir}
-          defaultBranch={defaultBranch}
-          activeLabel={activeCheckout.label}
-          activeCwdPath={activeCheckout.cwdPath}
-          onSelectCheckout={onSelectCheckout}
-          onCreateWorktree={onCreateWorktree}
-          onRemoveWorktree={onRemoveWorktree}
-          triggerClassName="h-6 rounded-md bg-transparent px-2 hover:bg-accent/70"
-        />
-      }
       onOpenFile={() => undefined}
     />
   )
@@ -337,6 +350,7 @@ export function ProjectPage({
     agentFocusTabId(initialAgentFocusTabId),
   )
   const [processPickerOpen, setProcessPickerOpen] = useState(false)
+  const [worktreeCreateOpen, setWorktreeCreateOpen] = useState(false)
   // Seed from the module queue so StrictMode remounts still see the HQ intent.
   const [launchRequest, setLaunchRequest] = useState<MuxLaunchRequest | null>(
     () => {
@@ -358,6 +372,12 @@ export function ProjectPage({
     })(),
   )
   const rootUri = useMemo(() => pathToFileUri(projectPath), [projectPath])
+  const {
+    worktrees,
+    loading: worktreesLoading,
+    error: worktreesError,
+    refresh: refreshWorktrees,
+  } = useProjectWorktrees(projectPath)
   const title = workspaceDocumentTitle(projectPath, homeDir)
 
   useEffect(() => {
@@ -641,7 +661,7 @@ export function ProjectPage({
     [ensureProjectSession, focusAgentTabId, projectId, surfaceSelections],
   )
 
-  const handleSelectCheckout = useCallback(
+  const handleSelectHistoryCheckout = useCallback(
     async (input: CheckoutSelection) => {
       const checkout = checkoutFromPaths(
         projectPath,
@@ -651,14 +671,16 @@ export function ProjectPage({
       )
       setActiveCheckout(checkout)
       persistChangesCheckout(checkout)
+      setHistoryMounted(true)
+      setView("history")
       pushProjectRoute(location.pathname, {
-        view,
-        workspaceId: view === "editors" ? session?.id ?? null : null,
+        view: "history",
+        workspaceId: null,
         checkoutKey: checkoutRouteKey(checkout),
-        processId: view === "running" ? focusAgentTabId : null,
+        processId: null,
       })
     },
-    [focusAgentTabId, persistChangesCheckout, projectPath, session, view],
+    [persistChangesCheckout, projectPath],
   )
 
   const handleSelectEditorCheckout = useCallback(
@@ -720,6 +742,7 @@ export function ProjectPage({
       )
       setActiveCheckout(checkout)
       persistChangesCheckout(checkout)
+      await refreshWorktrees()
       if (!session) await onOpenSession(created.id)
       pushProjectRoute(location.pathname, {
         view,
@@ -729,7 +752,15 @@ export function ProjectPage({
       })
       return selection
     },
-    [focusAgentTabId, onOpenSession, persistChangesCheckout, projectPath, session, view],
+    [
+      focusAgentTabId,
+      onOpenSession,
+      persistChangesCheckout,
+      projectPath,
+      refreshWorktrees,
+      session,
+      view,
+    ],
   )
 
   const handleSelectAgent = useCallback(
@@ -991,6 +1022,7 @@ export function ProjectPage({
           rootPath: projectPath,
           worktreePath: input.cwdPath,
         })
+        await refreshWorktrees()
         const checkout = mainCheckout(projectPath)
         setActiveCheckout(checkout)
         persistChangesCheckout(checkout)
@@ -1007,7 +1039,7 @@ export function ProjectPage({
         throw error
       }
     },
-    [persistChangesCheckout, projectPath, session, view],
+    [persistChangesCheckout, projectPath, refreshWorktrees, session, view],
   )
 
   const handleRemoveEditorWorktree = useCallback(
@@ -1056,42 +1088,6 @@ export function ProjectPage({
     projectId,
     activeCheckout.checkoutKey,
     activeCheckout.cwdPath,
-  )
-
-  const handleViewSelect = useCallback(
-    (next: ProjectView) => {
-      if (next === "history") setHistoryMounted(true)
-      if (next === "running") {
-        preferredSurfaceRef.current = next
-        setView(next)
-        const saved = surfaceSelections[next]
-        pushProjectRoute(location.pathname, {
-          view: next,
-          workspaceId: null,
-          checkoutKey: saved?.checkoutKey ?? checkoutRouteKey(activeCheckout),
-          processId: saved?.processId ?? saved?.runId ?? saved?.terminalId ?? null,
-        })
-        return
-      }
-      if (next === "editors") {
-        preferredSurfaceRef.current = next
-        void ensureCheckoutSession(next).catch(error => {
-          showYaadeToast(
-            error instanceof Error ? error.message : "Workspace unavailable",
-            { variant: "destructive" },
-          )
-        })
-        return
-      }
-      setView(next)
-      pushProjectRoute(location.pathname, {
-        view: next,
-        workspaceId: null,
-        checkoutKey: checkoutRouteKey(activeCheckout),
-        processId: null,
-      })
-    },
-    [activeCheckout, ensureCheckoutSession, surfaceSelections],
   )
 
   const handleProcessSelect = useCallback(
@@ -1156,11 +1152,66 @@ export function ProjectPage({
     ],
   )
 
-  const projectViews = useMemo<ProjectWorkspaceSidebarView[]>(
+  const gitHistoryWorktrees = useMemo<ProjectWorkspaceSidebarWorktree[]>(
     () => [
-      { id: "history", label: "Git history", icon: <GitBranch aria-hidden />, selected: view === "history", onSelect: () => handleViewSelect("history") },
+      {
+        id: "main",
+        label: "Main",
+        subtitle: projectPath,
+        selected: sameCheckoutPath(activeCheckout.cwdPath, projectPath),
+        onSelect: () =>
+          void handleSelectHistoryCheckout(
+            selectionFromPaths(projectPath, projectPath, "Main"),
+          ),
+      },
+      ...worktrees
+        .filter(worktree => !sameCheckoutPath(worktree.path, projectPath))
+        .map(worktree => {
+          const branch = worktree.branch?.replace(/^refs\/heads\//, "") ?? null
+          const label = projectWorktreeLabel(worktree)
+          const selected = sameCheckoutPath(
+            activeCheckout.cwdPath,
+            worktree.path,
+          )
+          return {
+            id: worktree.path,
+            label,
+            subtitle: worktree.path,
+            selected,
+            onSelect: () =>
+              void handleSelectHistoryCheckout(
+                selectionFromPaths(
+                  projectPath,
+                  worktree.path,
+                  label,
+                  branch,
+                ),
+              ),
+            onRemove: selected
+              ? () =>
+                  void handleRemoveWorktree({
+                    cwdPath: worktree.path,
+                    branch,
+                  })
+              : undefined,
+          }
+        }),
     ],
-    [handleViewSelect, view],
+    [
+      activeCheckout.cwdPath,
+      handleRemoveWorktree,
+      handleSelectHistoryCheckout,
+      projectPath,
+      worktrees,
+    ],
+  )
+
+  const handleCreateGitWorktree = useCallback(
+    async (input: { branch: string; baseRef?: string }) => {
+      const selection = await handleCreateWorktree(input)
+      if (selection) await handleSelectHistoryCheckout(selection)
+    },
+    [handleCreateWorktree, handleSelectHistoryCheckout],
   )
 
   const createTerminalAtCheckout = useCallback(
@@ -1249,7 +1300,10 @@ export function ProjectPage({
       >
         <ProjectWorkspaceSidebar
           projectName={projectName}
-          views={projectViews}
+          gitHistoryWorktrees={gitHistoryWorktrees}
+          gitHistoryLoading={worktreesLoading}
+          gitHistoryError={worktreesError}
+          onNewGitWorktree={() => setWorktreeCreateOpen(true)}
           processes={runningSidebarItems}
           onOpenHq={onOpenHq}
           loading={processSidebar.loading}
@@ -1306,13 +1360,7 @@ export function ProjectPage({
                 active={view === "history"}
                 rootUri={checkoutRootUri}
                 theme={activeTheme}
-                projectPath={projectPath}
-                homeDir={homeDir}
-                defaultBranch={defaultBranch}
                 activeCheckout={activeCheckout}
-                onSelectCheckout={handleSelectCheckout}
-                onCreateWorktree={handleCreateWorktree}
-                onRemoveWorktree={handleRemoveWorktree}
               />
             </ProjectSurfaceSlot>
 
@@ -1327,13 +1375,7 @@ export function ProjectPage({
                 active
                 rootUri={checkoutRootUri}
                 theme={activeTheme}
-                projectPath={projectPath}
-                homeDir={homeDir}
-                defaultBranch={defaultBranch}
                 activeCheckout={activeCheckout}
-                onSelectCheckout={handleSelectCheckout}
-                onCreateWorktree={handleCreateWorktree}
-                onRemoveWorktree={handleRemoveWorktree}
               />
             </ProjectSurfaceSlot>
 
@@ -1474,8 +1516,21 @@ export function ProjectPage({
         </Suspense>
       ) : null}
 
+      <CreateWorktreeDialog
+        open={worktreeCreateOpen}
+        onOpenChange={setWorktreeCreateOpen}
+        projectPath={projectPath}
+        homeDir={homeDir}
+        defaultBranch={defaultBranch}
+        onCreate={async input => {
+          await handleCreateGitWorktree(input)
+        }}
+      />
+
       {!session ? <Toaster position="bottom-right" /> : null}
-      {!session ? <ConfirmDialogHost /> : null}
+      {!session || view === "history" || view === "changes" ? (
+        <ConfirmDialogHost />
+      ) : null}
     </AppShell>
   )
 }

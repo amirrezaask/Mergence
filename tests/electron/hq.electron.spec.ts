@@ -225,7 +225,7 @@ test.describe("YAADE HQ", () => {
         needle: "Codex Alpha",
         noResultsText: "No processes yet",
       })
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
       await page.locator(`[data-yaade-instance-sidebar-item="${agent.runId}"]`).click()
       await page.reload()
       await waitForProjectPage(page)

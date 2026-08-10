@@ -69,7 +69,7 @@ test.describe("session routing", () => {
       expect(state.sessionId).toMatch(/^ses-/)
 
       // Git is the landing surface and does not keep a workspace in the URL.
-      await page.locator("[data-yaade-project-tab='history']").click()
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
       await expect
         .poll(
           async () =>

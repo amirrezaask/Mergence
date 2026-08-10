@@ -50,7 +50,7 @@ test.describe("project instance sidebars", () => {
       await page.keyboard.press("Enter")
       await waitForTerminalText(page, "yaade-server-owned-terminal")
 
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
       await expectSelectorVisible(page, '[data-yaade-project-panel="history"]')
       await page.locator(`[data-yaade-instance-sidebar-item="${instanceId}"]`).click()
       await expectSelectorVisible(page, `[data-yaade-instance-sidebar-item="${instanceId}"]`)

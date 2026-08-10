@@ -7,7 +7,6 @@ import {
   useRef,
   useState,
   type KeyboardEvent,
-  type ReactNode,
 } from "react"
 import { useVirtualizer } from "@tanstack/react-virtual"
 import type {
@@ -121,8 +120,6 @@ type GitWorkspaceProps = {
   unifiedHistory?: boolean
   /** Whether this workspace is active and should poll Git state. */
   active?: boolean
-  /** Project chrome rendered beside the commit action in the git toolbar. */
-  toolbarStart?: ReactNode
 }
 
 type DiffContents = {
@@ -153,7 +150,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     initialView = "changes",
     unifiedHistory = false,
     active = true,
-    toolbarStart,
   } = props
   const api = window.yaade?.git
   const fsApi = window.yaade?.fs
@@ -616,7 +612,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         summary={summary}
         stagedCount={stagedCount}
         pendingAction={pendingAction}
-        toolbarStart={toolbarStart}
         onCommit={commit}
         onRemoteAction={action => {
           if (!rootUri || !api) return
@@ -752,7 +747,6 @@ function GitToolbar(props: {
   summary: GitRepositorySummary
   stagedCount: number
   pendingAction: string | null
-  toolbarStart?: ReactNode
   hideCommit?: boolean
   onCommit: (summary: string, body: string) => Promise<boolean>
   onRemoteAction: (action: "fetch" | "pull" | "push") => void
@@ -763,7 +757,6 @@ function GitToolbar(props: {
     summary,
     stagedCount,
     pendingAction,
-    toolbarStart,
     hideCommit = false,
     onCommit,
     onRemoteAction,
@@ -776,7 +769,6 @@ function GitToolbar(props: {
       className="flex h-7 shrink-0 items-center justify-end gap-2 border-b border-border bg-card px-2"
     >
       <div className="flex shrink-0 items-center gap-1">
-        {toolbarStart}
         {hideCommit ? null : (
           <GitCommitDialog
             key={repositoryKey}

@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react"
-import { ChevronRight, Circle, House } from "lucide-react"
+import { ChevronRight, Circle, GitBranch, House, Plus, X } from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
@@ -11,10 +11,12 @@ import {
   SidebarContent,
   SidebarFooter,
   SidebarGroup,
+  SidebarGroupAction,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarHeader,
   SidebarMenu,
+  SidebarMenuAction,
   SidebarMenuButton,
   SidebarMenuItem,
   SidebarSeparator,
@@ -32,6 +34,15 @@ export type ProjectWorkspaceSidebarView = {
   onSelect: () => void
 }
 
+export type ProjectWorkspaceSidebarWorktree = {
+  id: string
+  label: string
+  subtitle?: string
+  selected: boolean
+  onSelect: () => void
+  onRemove?: () => void
+}
+
 export type ProjectWorkspaceSidebarProcess = SidebarProcessItemData & {
   icon: ReactNode
   selected: boolean
@@ -40,7 +51,10 @@ export type ProjectWorkspaceSidebarProcess = SidebarProcessItemData & {
 export type ProjectWorkspaceSidebarProps = {
   projectName: string
   projectSwitcher?: ReactNode
-  views: readonly ProjectWorkspaceSidebarView[]
+  gitHistoryWorktrees: readonly ProjectWorkspaceSidebarWorktree[]
+  gitHistoryLoading?: boolean
+  gitHistoryError?: string | null
+  onNewGitWorktree: () => void
   processes: readonly ProjectWorkspaceSidebarProcess[]
   onOpenHq: () => void
   /** Single Running launcher (+ shell & agent providers). */
@@ -49,6 +63,117 @@ export type ProjectWorkspaceSidebarProps = {
   error?: string | null
   footer?: ReactNode
   className?: string
+}
+
+function GitHistoryGroup({
+  worktrees,
+  loading,
+  error,
+  onNew,
+}: {
+  worktrees: readonly ProjectWorkspaceSidebarWorktree[]
+  loading?: boolean
+  error?: string | null
+  onNew: () => void
+}) {
+  const { isMobile, setOpenMobile } = useSidebar()
+  const [open, setOpen] = useState(true)
+
+  const select = (item: ProjectWorkspaceSidebarWorktree) => {
+    item.onSelect()
+    if (isMobile) setOpenMobile(false)
+  }
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} asChild>
+      <SidebarGroup
+        className="gap-1 py-2 group-data-[collapsible=icon]:hidden"
+        data-yaade-project-git-history-group=""
+        data-state={open ? "open" : "closed"}
+      >
+        <CollapsibleTrigger asChild>
+          <SidebarGroupLabel className="cursor-pointer select-none pr-10 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+            <ChevronRight
+              className={cn(
+                "transition-transform duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]",
+                open && "rotate-90",
+              )}
+              aria-hidden
+            />
+            <GitBranch aria-hidden />
+            <span>Git</span>
+            <span className="ml-auto tabular-nums text-3xs text-sidebar-foreground/60">
+              {worktrees.length}
+            </span>
+          </SidebarGroupLabel>
+        </CollapsibleTrigger>
+        <SidebarGroupAction
+          type="button"
+          aria-label="New worktree"
+          onClick={event => {
+            event.stopPropagation()
+            onNew()
+          }}
+          data-yaade-project-worktree-create=""
+        >
+          <Plus />
+        </SidebarGroupAction>
+        <CollapsibleContent>
+          <SidebarGroupContent data-yaade-list-panel="project-git-history">
+            {loading || error || worktrees.length === 0 ? (
+              <div className="px-2 py-2 text-3xs text-sidebar-foreground/60">
+                {loading ? "Loading worktrees…" : error ?? "No worktrees yet"}
+              </div>
+            ) : (
+              <SidebarMenu>
+                {worktrees.map(item => (
+                  <SidebarMenuItem
+                    key={item.id}
+                    className="shrink-0"
+                    data-yaade-project-worktree-item={item.id}
+                    data-yaade-list-item=""
+                  >
+                    <SidebarMenuButton
+                      type="button"
+                      isActive={item.selected}
+                      tooltip={item.label}
+                      onClick={() => select(item)}
+                      className="h-auto min-h-8 py-1.5"
+                      aria-current={item.selected ? "page" : undefined}
+                    >
+                      <GitBranch aria-hidden />
+                      <span className="flex min-w-0 flex-1 flex-col gap-0.5">
+                        <span className="truncate text-xs">{item.label}</span>
+                        {item.subtitle ? (
+                          <span className="truncate text-3xs text-sidebar-foreground/60">
+                            {item.subtitle}
+                          </span>
+                        ) : null}
+                      </span>
+                    </SidebarMenuButton>
+                    {item.onRemove ? (
+                      <SidebarMenuAction
+                        type="button"
+                        showOnHover
+                        aria-label={`Remove ${item.label} worktree`}
+                        onClick={event => {
+                          event.stopPropagation()
+                          item.onRemove?.()
+                        }}
+                        data-yaade-project-worktree-remove={item.id}
+                      >
+                        <X />
+                      </SidebarMenuAction>
+                    ) : null}
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            )}
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
+  )
 }
 
 function ProcessGroup({
@@ -125,7 +250,10 @@ function ProcessGroup({
 export function ProjectWorkspaceSidebar({
   projectName,
   projectSwitcher,
-  views,
+  gitHistoryWorktrees,
+  gitHistoryLoading,
+  gitHistoryError,
+  onNewGitWorktree,
   processes,
   onOpenHq,
   launcher,
@@ -134,13 +262,6 @@ export function ProjectWorkspaceSidebar({
   footer,
   className,
 }: ProjectWorkspaceSidebarProps) {
-  const { isMobile, setOpenMobile } = useSidebar()
-
-  const selectView = (view: ProjectWorkspaceSidebarView) => {
-    view.onSelect()
-    if (isMobile) setOpenMobile(false)
-  }
-
   return (
     <Sidebar
       variant="sidebar"
@@ -172,28 +293,12 @@ export function ProjectWorkspaceSidebar({
       </SidebarHeader>
 
       <SidebarContent className="gap-0" data-yaade-project-sidebar-content="">
-        <SidebarGroup className="gap-1 py-2">
-          <SidebarGroupContent>
-            <SidebarMenu>
-              {views.map(view => (
-                <SidebarMenuItem key={view.id} data-yaade-project-nav-item={view.id}>
-                  <SidebarMenuButton
-                    type="button"
-                    isActive={view.selected}
-                    tooltip={view.label}
-                    onClick={() => selectView(view)}
-                    aria-current={view.selected ? "page" : undefined}
-                    aria-selected={view.selected ? "true" : "false"}
-                    data-yaade-project-tab={view.id}
-                  >
-                    {view.icon}
-                    <span>{view.label}</span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              ))}
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
+        <GitHistoryGroup
+          worktrees={gitHistoryWorktrees}
+          loading={gitHistoryLoading}
+          error={gitHistoryError}
+          onNew={onNewGitWorktree}
+        />
         <SidebarSeparator />
         <ProcessGroup
           items={processes}

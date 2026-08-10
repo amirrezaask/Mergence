@@ -95,18 +95,15 @@ test.describe("project page", () => {
     })
     try {
       await waitForProjectPage(page)
-      const tabs = page.locator("[data-yaade-project-tab]")
-      await expect.poll(() => tabs.count()).toBe(1)
-      expect(
-        await tabs.evaluateAll(items => items.map(item => item.textContent?.trim())),
-      ).toEqual(["Git history"])
       await expect
-        .poll(() =>
-          page
-            .locator('[data-yaade-project-tab="history"]')
-            .getAttribute("aria-selected"),
-        )
-        .toBe("true")
+        .poll(() => page.locator('[data-yaade-project-git-history-group=""]').count())
+        .toBe(1)
+      await expectListRows(page, {
+        panel: "project-git-history",
+        minItems: 1,
+        needle: "Main",
+        noResultsText: "No worktrees yet",
+      })
       expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(1)
       expect(await page.locator('[data-yaade-project-switcher=""]').count()).toBe(1)
       expect(
@@ -117,13 +114,9 @@ test.describe("project page", () => {
       ).toBe(true)
       expect(await page.locator('[data-yaade-project-tab="editors"]').count()).toBe(0)
       expect(await page.locator('[data-yaade-project-tab="changes"]').count()).toBe(0)
-      await expect
-        .poll(async () =>
-          (await page
-            .locator('[data-yaade-git-toolbar] [data-yaade-worktree-switcher]')
-            .textContent()) ?? "",
-        )
-        .toContain("Main")
+      expect(
+        await page.locator('[data-yaade-git-toolbar] [data-yaade-worktree-switcher]').count(),
+      ).toBe(0)
       expect(await page.locator('[data-yaade-project-dock]').count()).toBe(0)
       expect(await page.getByRole("button", { name: "Open HQ" }).count()).toBe(1)
       expect(await page.getByRole("button", { name: "Settings" }).count()).toBe(0)
@@ -280,7 +273,7 @@ test.describe("project page", () => {
     })
     try {
       await waitForProjectPage(page)
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
       expect(
         await page.locator('[data-yaade-git-toolbar] [data-yaade-git-commit-trigger]').count(),
       ).toBe(1)
@@ -435,7 +428,7 @@ test.describe("project page", () => {
     })
     try {
       await waitForProjectPage(page)
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
       const panel = page.locator('[data-yaade-list-panel="git-history"]')
       await panel.waitFor({ state: "visible", timeout: 15_000 })
       await expect
