@@ -1,11 +1,10 @@
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
+import { lazy, Suspense, useCallback, useEffect, useState } from "react"
 import type { YaadeTheme } from "@yaade/shared"
 import {
   type AgentRunInfo,
   type TerminalInstanceInfo,
 } from "@yaade/workspace"
-import { InstanceSidebar, type InstanceSidebarItem } from "@yaade/ui"
-import { Bot, Circle, RotateCcw, SquareTerminal } from "lucide-react"
+import { Circle, RotateCcw } from "lucide-react"
 import { Button } from "@yaade/ui/primitives"
 import { pathToFileUri } from "@yaade/shared"
 import { showYaadeToast } from "@yaade/ui/toast"
@@ -126,13 +125,11 @@ export function AgentsProjectSurface({
   selectedId,
   theme,
   onSelect,
-  onNew,
 }: {
   projectId: string
   selectedId: string | null
   theme: YaadeTheme
   onSelect: (id: string | null) => void
-  onNew: () => void
 }) {
   const [runs, setRuns] = useState<AgentRunInfo[]>([])
   const [loading, setLoading] = useState(true)
@@ -188,36 +185,8 @@ export function AgentsProjectSurface({
     return () => { cancelled = true }
   }, [selected?.processState, selected?.revision, selected?.runId])
 
-  const items = useMemo((): InstanceSidebarItem[] => runs.map(run => ({
-    id: run.runId,
-    label: run.title,
-    subtitle: `${run.checkoutKey === "main" ? "Main" : run.checkoutKey} · ${terminalStatus(run.processState)}`,
-    icon: <Bot className="size-3.5" aria-hidden />,
-  })), [runs])
-
-  const close = useCallback((id: string) => {
-    const run = runs.find(item => item.runId === id)
-    if (!run) return
-    void window.yaade?.agents?.close({ runId: id, generation: run.generation })
-      .then(() => refresh())
-      .catch(reason => showYaadeToast(reason instanceof Error ? reason.message : "Could not close agent", { variant: "destructive" }))
-  }, [refresh, runs])
-
   return (
     <div className="flex h-full min-h-0" data-yaade-project-panel="agents">
-      <InstanceSidebar
-        title="Agents"
-        titleIcon={<Bot className="size-3.5" aria-hidden />}
-        items={items}
-        activeId={activeId}
-        onSelect={id => onSelect(id)}
-        onNew={onNew}
-        onClose={close}
-        emptyLabel={loading ? "Loading agents…" : error ?? "No agents yet"}
-        listPanelId="project-agents"
-        dataPrefix="agents"
-        newLabel="Launch"
-      />
       {selected ? (
         <ProcessDetail
           id={selected.runId}
@@ -241,15 +210,11 @@ export function AgentsProjectSurface({
 
 export function TerminalsProjectSurface({
   projectId,
-  checkoutKey,
-  checkoutPath,
   selectedId,
   theme,
   onSelect,
 }: {
   projectId: string
-  checkoutKey: string
-  checkoutPath: string
   selectedId: string | null
   theme: YaadeTheme
   onSelect: (id: string | null) => void
@@ -309,30 +274,6 @@ export function TerminalsProjectSurface({
     return () => { cancelled = true }
   }, [selected?.processState, selected?.revision, selected?.id])
 
-  const items = useMemo((): InstanceSidebarItem[] => instances.map(instance => ({
-    id: instance.id,
-    label: instance.title,
-    subtitle: `${instance.checkoutKey === "main" ? "Main" : instance.checkoutKey} · ${terminalStatus(instance.processState)}`,
-    icon: <SquareTerminal className="size-3.5" aria-hidden />,
-  })), [instances])
-
-  const create = useCallback(() => {
-    void window.yaade?.terminal?.createInstance({ projectId, checkoutKey, checkoutPath })
-      .then(instance => {
-        setInstances(current => upsertByRevision(current, instance.id, instance, row => row.id))
-        onSelect(instance.id)
-      })
-      .catch(reason => showYaadeToast(reason instanceof Error ? reason.message : "Could not create terminal", { variant: "destructive" }))
-  }, [checkoutKey, checkoutPath, onSelect, projectId])
-
-  const close = useCallback((id: string) => {
-    const instance = instances.find(item => item.id === id)
-    if (!instance) return
-    void window.yaade?.terminal?.closeInstance({ id, generation: instance.generation })
-      .then(() => setInstances(current => current.filter(item => item.id !== id)))
-      .catch(reason => showYaadeToast(reason instanceof Error ? reason.message : "Could not close terminal", { variant: "destructive" }))
-  }, [instances])
-
   const restart = useCallback(() => {
     if (!selected) return
     void window.yaade?.terminal?.restartInstance({ id: selected.id, generation: selected.generation })
@@ -344,18 +285,6 @@ export function TerminalsProjectSurface({
 
   return (
     <div className="flex h-full min-h-0" data-yaade-project-panel="terminals">
-      <InstanceSidebar
-        title="Terminals"
-        titleIcon={<SquareTerminal className="size-3.5" aria-hidden />}
-        items={items}
-        activeId={activeId}
-        onSelect={id => onSelect(id)}
-        onNew={create}
-        onClose={close}
-        emptyLabel={loading ? "Loading terminals…" : error ?? "No terminals yet"}
-        listPanelId="project-terminals"
-        dataPrefix="terminals"
-      />
       {selected ? (
         <ProcessDetail
           id={selected.id}

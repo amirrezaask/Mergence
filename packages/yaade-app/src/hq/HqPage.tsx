@@ -12,6 +12,7 @@ import type { AgentCliDriver } from "@yaade/ui/agent-picker"
 import {
   ConfirmDialogHost,
   ProjectSidebar,
+  SidebarInset,
   SidebarProvider,
   requestConfirm,
 } from "@yaade/ui"
@@ -281,7 +282,11 @@ export function HqPage({
   }
 
   return (
-    <SidebarProvider className="h-full min-h-0" enableKeyboardShortcut>
+    <SidebarProvider
+      className="h-full min-h-0"
+      storageKey="yaade_hq_sidebar_state"
+      enableKeyboardShortcut
+    >
       <ProjectSidebar
         projects={availableProjects}
         onSelectProject={project =>
@@ -315,8 +320,8 @@ export function HqPage({
           />
         )}
       />
-      <div
-        className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground"
+      <SidebarInset
+        className="h-full min-h-0 min-w-0 overflow-hidden bg-background text-foreground"
         data-yaade-shell="hq"
       >
         <main className="min-h-0 flex-1 overflow-y-auto">
@@ -490,7 +495,7 @@ export function HqPage({
         ) : null}
 
         <ConfirmDialogHost />
-      </div>
+      </SidebarInset>
     </SidebarProvider>
   )
 }

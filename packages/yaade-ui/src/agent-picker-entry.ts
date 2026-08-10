@@ -8,3 +8,4 @@ export {
   AGENT_CLI_DRIVERS,
   type AgentCliDriver,
 } from "./home/agent-cli-drivers.js"
+export { AgentProviderIcon } from "./home/sidebar/SessionStatusIndicator.js"

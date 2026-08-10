@@ -2066,6 +2066,7 @@ export function MuxApp({
 
   const knownDropWorkspacePaths = useMemo(() => {
     const roots = [sessionCwdPath, sessionProjectPath, editorWorkspacePath]
+      .filter((p): p is string => Boolean(p))
       .map(p => normalizeAbsPath(p))
       .filter((p): p is string => Boolean(p))
     return [...new Set(roots)]

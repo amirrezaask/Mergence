@@ -197,9 +197,8 @@ export function AgentCliPickerOverlay({
     return "Worktree name will be generated on launch"
   }, [checkoutValue, worktreeName])
 
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent size="picker" className="gap-0 overflow-hidden p-0">
+  const pickerContent = (
+    <>
         <DialogHeader className="px-4 pt-4 pb-3">
           <DialogTitle>Launch an agent</DialogTitle>
         </DialogHeader>
@@ -411,6 +410,13 @@ export function AgentCliPickerOverlay({
             Launch {selectedDriver.label}
           </Button>
         </div>
+    </>
+  )
+
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent size="picker" className="gap-0 overflow-hidden p-0">
+        {pickerContent}
       </DialogContent>
     </Dialog>
   )

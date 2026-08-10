@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react"
+import { useEffect, useMemo, useState, type ReactNode } from "react"
 import type { GitWorktree } from "@yaade/shared"
 import { fileUriToPath, pathToFileUri } from "@yaade/shared"
 import { cn } from "@yaade/ui/project"
@@ -60,6 +60,7 @@ export type CheckoutPickerProps = {
   dialogTitle?: string
   dialogDescription?: string
   triggerClassName?: string
+  trigger?: ReactNode
   /** Hide the remove-current action (launch dialogs). */
   allowRemove?: boolean
 }
@@ -187,6 +188,7 @@ export function CheckoutPicker({
   dialogTitle = "Choose checkout",
   dialogDescription = "Pick Main or a git worktree.",
   triggerClassName,
+  trigger,
   allowRemove = true,
 }: CheckoutPickerProps) {
   const [uncontrolledOpen, setUncontrolledOpen] = useState(false)
@@ -396,26 +398,28 @@ export function CheckoutPicker({
           }}
         >
           <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="ghost"
-              size="xs"
-              data-yaade-worktree-switcher=""
-              aria-label="Worktree"
-              aria-expanded={open}
-              disabled={busy}
-              onPointerEnter={onIntent}
-              onFocus={onIntent}
-              className={cn(
-                "h-7 max-w-48 gap-1 border border-transparent bg-secondary/60 px-2 text-xs text-foreground hover:text-foreground",
-                open && "text-foreground",
-                triggerClassName,
-              )}
-            >
-              <GitBranchIcon className="size-3.5" aria-hidden />
-              <span className="truncate">{activeLabel ?? "Main"}</span>
-              <ChevronDownIcon className="size-2.5 opacity-70" aria-hidden />
-            </Button>
+            {trigger ?? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="xs"
+                data-yaade-worktree-switcher=""
+                aria-label="Worktree"
+                aria-expanded={open}
+                disabled={busy}
+                onPointerEnter={onIntent}
+                onFocus={onIntent}
+                className={cn(
+                  "h-7 max-w-48 gap-1 border border-transparent bg-secondary/60 px-2 text-xs text-foreground hover:text-foreground",
+                  open && "text-foreground",
+                  triggerClassName,
+                )}
+              >
+                <GitBranchIcon className="size-3.5" aria-hidden />
+                <span className="truncate">{activeLabel ?? "Main"}</span>
+                <ChevronDownIcon className="size-2.5 opacity-70" aria-hidden />
+              </Button>
+            )}
           </PopoverTrigger>
           <PopoverContent
             align="end"

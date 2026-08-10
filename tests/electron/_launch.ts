@@ -260,16 +260,13 @@ export async function openMuxTerminal(
   throw new Error("openMuxTerminal: terminal or empty picker did not become available")
 }
 
-/** Wait for the project shell and its default Changes surface. */
+/** Wait for the project shell. */
 export async function waitForProjectPage(
   page: ShellDriver,
   timeoutMs = 30_000,
 ): Promise<void> {
   await page.waitForSelector("[data-yaade-shell='project']", {
     timeout: timeoutMs,
-  })
-  await page.waitForSelector("[data-yaade-project-tab][aria-selected='true']", {
-    timeout: Math.min(timeoutMs, 10_000),
   })
 }
 

@@ -36,6 +36,12 @@ export {
 } from "./shell/ProjectSidebar.js"
 export { SidebarShell, type SidebarShellProps } from "./shell/SidebarShell.js"
 export {
+  ProjectWorkspaceSidebar,
+  type ProjectWorkspaceSidebarProcess,
+  type ProjectWorkspaceSidebarProps,
+  type ProjectWorkspaceSidebarView,
+} from "./shell/ProjectWorkspaceSidebar.js"
+export {
   TerminalSessionModal,
   formatSessionHeaderTitle,
   SessionTerminalWorkspace,

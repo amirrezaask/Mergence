@@ -8,7 +8,7 @@ import { createMockLspHarness } from "../../apps/host-server/mocks/mock-lsp-harn
 import { launchJet, waitForProjectPage } from "./_launch.js"
 
 test.describe("project page", () => {
-  test("bottom project combobox searches known projects and paths", async () => {
+  test("project switcher searches known projects and paths", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-switcher-"))
     const project = path.join(home, "repo")
     const other = path.join(home, "other")
@@ -96,15 +96,10 @@ test.describe("project page", () => {
     try {
       await waitForProjectPage(page)
       const tabs = page.locator("[data-yaade-project-tab]")
-      await expect.poll(() => tabs.count()).toBe(4)
+      await expect.poll(() => tabs.count()).toBe(1)
       expect(
         await tabs.evaluateAll(items => items.map(item => item.textContent?.trim())),
-      ).toEqual([
-        "Agents",
-        "Editors",
-        "Terminals",
-        "Git",
-      ])
+      ).toEqual(["Git history"])
       await expect
         .poll(() =>
           page
@@ -112,13 +107,16 @@ test.describe("project page", () => {
             .getAttribute("aria-selected"),
         )
         .toBe("true")
-      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(1)
       expect(await page.locator('[data-yaade-project-switcher=""]').count()).toBe(1)
-      await page.locator('[data-yaade-project-tab="agents"]').click()
-      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
-      await page.locator('[data-yaade-project-tab="terminals"]').click()
-      expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
-      await page.locator('[data-yaade-project-tab="history"]').click()
+      expect(
+        await page.locator('[data-yaade-project-process-group="agents"]').isVisible(),
+      ).toBe(true)
+      expect(
+        await page.locator('[data-yaade-project-process-group="terminals"]').isVisible(),
+      ).toBe(true)
+      expect(await page.locator('[data-yaade-project-tab="editors"]').count()).toBe(0)
+      expect(await page.locator('[data-yaade-project-tab="changes"]').count()).toBe(0)
       await expect
         .poll(async () =>
           (await page
@@ -126,21 +124,12 @@ test.describe("project page", () => {
             .textContent()) ?? "",
         )
         .toContain("Main")
-    const dock = page.locator('[data-yaade-project-dock]')
-    await dock.waitFor({ state: "visible" })
-    await expect
-      .poll(async () => (await dock.getByRole("button", { name: "Open HQ" }).textContent()) ?? "")
-      .toContain("HQ")
-    expect(await dock.locator('[data-yaade-notification-bell]').count()).toBe(0)
-      expect(await dock.getByRole("button", { name: "Settings" }).count()).toBe(0)
+      expect(await page.locator('[data-yaade-project-dock]').count()).toBe(0)
+      expect(await page.getByRole("button", { name: "Open HQ" }).count()).toBe(1)
+      expect(await page.getByRole("button", { name: "Settings" }).count()).toBe(0)
       expect(
         await page.locator('[data-yaade-shell="project"] [data-yaade-app-header]').count(),
       ).toBe(0)
-      const dockBox = await dock.boundingBox()
-      const viewport = page.viewportSize()
-      expect(dockBox).not.toBeNull()
-      expect(viewport).not.toBeNull()
-      expect(dockBox!.y + dockBox!.height).toBeGreaterThan(viewport!.height - 48)
       expect(await page.evaluate(() => location.search)).toBe("")
 
       const projects = await page.evaluate(async () => {
@@ -151,16 +140,6 @@ test.describe("project page", () => {
         projects.some(item => fs.realpathSync(item.rootPath) === fs.realpathSync(project)),
       ).toBe(true)
 
-      await expect
-        .poll(() =>
-          page.locator('[data-yaade-project-tab="native-agents"]').count(),
-        )
-        .toBe(0)
-      await expect
-        .poll(() =>
-          page.locator('[data-yaade-project-tab="agents"]').count(),
-        )
-        .toBe(1)
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

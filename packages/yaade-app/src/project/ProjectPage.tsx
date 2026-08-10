@@ -6,7 +6,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactElement,
 } from "react"
 import type {
   HqAgentSummary,
@@ -17,6 +16,7 @@ import {
   isTerminalTabId,
   terminalTabId,
   type AgentRunInfo,
+  type TerminalInstanceInfo,
 } from "@yaade/workspace"
 import {
   AppShell,
@@ -24,14 +24,16 @@ import {
 } from "@yaade/ui/project"
 import {
   ConfirmDialogHost,
+  ProjectWorkspaceSidebar,
+  SidebarInset,
+  SidebarProvider,
   requestConfirm,
+  type ProjectWorkspaceSidebarProcess,
+  type ProjectWorkspaceSidebarView,
 } from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
 import {
   Button,
-  Tabs,
-  TabsList,
-  TabsTrigger,
 } from "@yaade/ui/primitives"
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import {
@@ -40,7 +42,6 @@ import {
   Code2,
   FolderKanban,
   GitBranch,
-  House,
   SquareTerminal,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
@@ -87,6 +88,10 @@ import {
   AgentsProjectSurface,
   TerminalsProjectSurface,
 } from "./ProjectProcessSurfaces.js"
+import {
+  processStatusLabel,
+  useProjectProcessSidebar,
+} from "./project-process-sidebar.js"
 
 const GitWorkspace = lazy(() =>
   import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
@@ -176,67 +181,18 @@ function checkoutRouteKey(checkout: ActiveCheckout): string | null {
   return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
 }
 
-type ProjectNavigationDockProps = {
-  projectSwitcher: ReactElement
-  onOpenHq: () => void
-}
-
-function ProjectNavigationDock({
-  projectSwitcher,
-  onOpenHq,
-}: ProjectNavigationDockProps) {
-  const tabs = [
-    { value: "agents", label: "Agents", icon: Bot },
-    { value: "editors", label: "Editors", icon: Code2 },
-    { value: "terminals", label: "Terminals", icon: SquareTerminal },
-    { value: "history", label: "Git", icon: GitBranch },
-  ] as const
-
-  return (
-    <nav
-      aria-label="Project navigation"
-      className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex justify-center"
-      data-yaade-project-dock=""
-    >
-      <div className="pointer-events-auto flex max-w-full items-center gap-2 overflow-x-auto px-3 pb-3 pt-2 [scrollbar-width:none] sm:px-4 sm:pb-4 [&::-webkit-scrollbar]:hidden">
-        <div
-          className="yaade-project-dock-surface flex min-w-max items-center gap-1 p-1.5"
-          data-yaade-project-nav=""
-        >
-          <Button
-            variant="ghost"
-            size="sm"
-            aria-label="Open HQ"
-            onClick={onOpenHq}
-            className="gap-1.5 rounded-xl px-2.5"
-          >
-            <House />
-            <span className="hidden sm:inline">HQ</span>
-          </Button>
-          {projectSwitcher}
-          <TabsList className="h-10 gap-0.5 rounded-xl bg-transparent p-0">
-            {tabs.map(({ value, label, icon: Icon }) => (
-              <TabsTrigger
-                key={value}
-                value={value}
-                aria-label={label}
-                data-yaade-project-tab={value}
-                className="h-10 gap-1.5 rounded-xl px-2.5 text-xs after:hidden data-[state=active]:bg-accent/80 data-[state=active]:shadow-sm sm:px-3"
-              >
-                <Icon className="size-4" aria-hidden />
-                <span className="hidden sm:inline">{label}</span>
-              </TabsTrigger>
-            ))}
-          </TabsList>
-        </div>
-      </div>
-    </nav>
-  )
-}
-
 function agentFocusTabId(identity: string | null): string | null {
   if (!identity) return null
   return isTerminalTabId(identity) ? identity : terminalTabId(identity)
+}
+
+function processStatusVariant(
+  status: AgentRunInfo["processState"] | TerminalInstanceInfo["processState"],
+): "default" | "secondary" | "destructive" | "outline" {
+  if (status === "running") return "default"
+  if (status === "starting" || status === "reserved") return "outline"
+  if (status === "failed") return "destructive"
+  return "secondary"
 }
 
 export function ProjectPage({
@@ -984,9 +940,150 @@ export function ProjectPage({
     [openSurface],
   )
 
+  const processSidebar = useProjectProcessSidebar(
+    projectId,
+    activeCheckout.checkoutKey,
+    activeCheckout.cwdPath,
+  )
+
+  const handleViewSelect = useCallback(
+    (next: ProjectView) => {
+      if (next === "history") setHistoryMounted(true)
+      if (next === "agents" || next === "terminals") {
+        preferredSurfaceRef.current = next
+        setView(next)
+        const saved = surfaceSelections[next]
+        pushProjectRoute(location.pathname, {
+          view: next,
+          workspaceId: null,
+          checkoutKey: saved?.checkoutKey ?? checkoutRouteKey(activeCheckout),
+          agentRunId: next === "agents" ? saved?.runId ?? null : null,
+          terminalInstanceId: next === "terminals" ? saved?.terminalId ?? null : null,
+        })
+        return
+      }
+      if (next === "editors") {
+        preferredSurfaceRef.current = next
+        void ensureCheckoutSession(next).catch(error => {
+          showYaadeToast(
+            error instanceof Error ? error.message : "Workspace unavailable",
+            { variant: "destructive" },
+          )
+        })
+        return
+      }
+      setView(next)
+      pushProjectRoute(location.pathname, {
+        view: next,
+        workspaceId: null,
+        checkoutKey: checkoutRouteKey(activeCheckout),
+        agentRunId: null,
+      })
+    },
+    [activeCheckout, ensureCheckoutSession, surfaceSelections],
+  )
+
+  const handleAgentSelect = useCallback(
+    (runId: string | null) => {
+      setSurfaceSelections(current => ({
+        ...current,
+        agents: { ...current.agents, runId },
+      }))
+      void saveProjectSurfaceState(projectId, "agents", {
+        ...surfaceSelections.agents,
+        runId,
+      })
+      preferredSurfaceRef.current = "agents"
+      setView("agents")
+      replaceProjectRoute(location.pathname, {
+        view: "agents",
+        workspaceId: null,
+        checkoutKey: surfaceSelections.agents?.checkoutKey ?? checkoutRouteKey(activeCheckout),
+        agentRunId: runId,
+      })
+    },
+    [activeCheckout, projectId, surfaceSelections.agents],
+  )
+
+  const handleTerminalSelect = useCallback(
+    (terminalId: string | null) => {
+      const selection = {
+        ...surfaceSelections.terminals,
+        terminalId,
+        checkoutKey: activeCheckout.checkoutKey,
+        checkoutPath: activeCheckout.cwdPath,
+      }
+      setSurfaceSelections(current => ({ ...current, terminals: selection }))
+      void saveProjectSurfaceState(projectId, "terminals", selection)
+      preferredSurfaceRef.current = "terminals"
+      setView("terminals")
+      replaceProjectRoute(location.pathname, {
+        view: "terminals",
+        workspaceId: null,
+        checkoutKey: checkoutRouteKey(activeCheckout),
+        terminalInstanceId: terminalId,
+      })
+    },
+    [activeCheckout, projectId, surfaceSelections.terminals],
+  )
+
+  const activeAgentId =
+    projectRouteFromSearch().agentRunId ?? surfaceSelections.agents?.runId ?? null
+  const activeTerminalId =
+    projectRouteFromSearch().terminalInstanceId ?? surfaceSelections.terminals?.terminalId ?? null
+
+  const agentSidebarItems = useMemo<ProjectWorkspaceSidebarProcess[]>(
+    () =>
+      processSidebar.agents.map(run => ({
+        id: run.runId,
+        label: run.title,
+        subtitle: `${run.checkoutKey === "main" ? "Main" : run.checkoutKey}`,
+        icon: <Bot aria-hidden />,
+        selected: activeAgentId === run.runId,
+        status: processStatusLabel(run.processState),
+        statusVariant: processStatusVariant(run.processState),
+        onSelect: () => handleAgentSelect(run.runId),
+        onClose: () => void processSidebar.closeAgent(run),
+      })),
+    [activeAgentId, handleAgentSelect, processSidebar.agents, processSidebar.closeAgent],
+  )
+
+  const terminalSidebarItems = useMemo<ProjectWorkspaceSidebarProcess[]>(
+    () =>
+      processSidebar.terminals.map(instance => ({
+        id: instance.id,
+        label: instance.title,
+        subtitle: `${instance.checkoutKey === "main" ? "Main" : instance.checkoutKey}`,
+        icon: <SquareTerminal aria-hidden />,
+        selected: activeTerminalId === instance.id,
+        status: processStatusLabel(instance.processState),
+        statusVariant: processStatusVariant(instance.processState),
+        onSelect: () => handleTerminalSelect(instance.id),
+        onClose: () => void processSidebar.closeTerminal(instance),
+      })),
+    [activeTerminalId, handleTerminalSelect, processSidebar.closeTerminal, processSidebar.terminals],
+  )
+
+  const projectViews = useMemo<ProjectWorkspaceSidebarView[]>(
+    () => [
+      { id: "editors", label: "Editors", icon: <Code2 aria-hidden />, selected: view === "editors", onSelect: () => handleViewSelect("editors") },
+      { id: "history", label: "Git history", icon: <GitBranch aria-hidden />, selected: view === "history", onSelect: () => handleViewSelect("history") },
+    ],
+    [handleViewSelect, view],
+  )
+
+  const createTerminal = useCallback(async () => {
+    try {
+      const id = await processSidebar.createTerminal()
+      handleTerminalSelect(id)
+    } catch (error) {
+      showYaadeToast(error instanceof Error ? error.message : "Could not create terminal", {
+        variant: "destructive",
+      })
+    }
+  }, [handleTerminalSelect, processSidebar.createTerminal])
+
   const surface = surfaceForView(view)
-  const muxSurface: MuxSurface =
-    surface ?? preferredSurfaceRef.current ?? "terminals"
   const checkoutRootUri = useMemo(
     () => pathToFileUri(activeCheckout.cwdPath),
     [activeCheckout.cwdPath],
@@ -994,50 +1091,62 @@ export function ProjectPage({
 
   return (
     <AppShell>
-      <div
-        className="relative flex h-full min-h-0 w-full flex-col bg-background"
-        data-yaade-shell="project"
-        data-yaade-project-id={projectId}
-        data-yaade-project-path={projectPath}
+      <SidebarProvider
+        className="h-full min-h-0"
+        storageKey="yaade_project_sidebar_state"
+        enableKeyboardShortcut
       >
-        <Tabs
-          value={view}
-          onValueChange={value => {
-            const next = value as ProjectView
-            if (next === "history") setHistoryMounted(true)
-            if (next === "agents" || next === "terminals") {
-              preferredSurfaceRef.current = next
-              setView(next)
-              const saved = surfaceSelections[next]
-              pushProjectRoute(location.pathname, {
-                view: next,
-                workspaceId: null,
-                checkoutKey: saved?.checkoutKey ?? checkoutRouteKey(activeCheckout),
-                agentRunId: next === "agents" ? saved?.runId ?? null : null,
-                terminalInstanceId: next === "terminals" ? saved?.terminalId ?? null : null,
-              })
-              return
-            }
-            if (next === "editors") {
-              preferredSurfaceRef.current = next
-              void ensureCheckoutSession(next).catch(error => {
-                showYaadeToast(
-                  error instanceof Error ? error.message : "Workspace unavailable",
-                  { variant: "destructive" },
-                )
-              })
-              return
-            }
-            setView(next)
-            pushProjectRoute(location.pathname, {
-              view: next,
-              workspaceId: null,
-              checkoutKey: checkoutRouteKey(activeCheckout),
-              agentRunId: null,
-            })
-          }}
-          className="flex min-h-0 flex-1 flex-col"
-        >
+        <ProjectWorkspaceSidebar
+          projectName={projectName}
+          projectPath={projectPath}
+          views={projectViews}
+          agents={agentSidebarItems}
+          terminals={terminalSidebarItems}
+          onOpenHq={onOpenHq}
+          onNewAgent={() => setAgentPickerOpen(true)}
+          onNewTerminal={() => void createTerminal()}
+          agentLoading={processSidebar.agentLoading}
+          terminalLoading={processSidebar.terminalLoading}
+          agentError={processSidebar.agentError}
+          terminalError={processSidebar.terminalError}
+          projectSwitcher={
+            <OpenProjectOverlay
+              open={projectSwitcherOpen}
+              onOpenChange={setProjectSwitcherOpen}
+              homeDir={homeDir}
+              projects={hq.snapshot?.projects ?? []}
+              selectedRootPath={projectPath}
+              onOpenProject={project => onNavigateProject(project.rootPath)}
+              onOpenPath={async rootPath => onNavigateProject(rootPath)}
+              side="right"
+              align="start"
+              trigger={
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="max-w-52 justify-start gap-1.5 px-1.5 text-left sm:max-w-64"
+                  aria-label="Switch project"
+                  title="Go to project"
+                  data-yaade-project-switcher=""
+                >
+                  <FolderKanban data-icon="inline-start" />
+                  <span className="truncate font-semibold">{projectName}</span>
+                  <ChevronsUpDown
+                    className="size-3 shrink-0 opacity-60"
+                    aria-hidden
+                  />
+                </Button>
+              }
+            />
+          }
+        />
+        <SidebarInset className="min-h-0 overflow-hidden">
+          <div
+            className="relative flex h-full min-h-0 w-full flex-col bg-background"
+            data-yaade-shell="project"
+            data-yaade-project-id={projectId}
+            data-yaade-project-path={projectPath}
+          >
           {/* Keep mux mounted so PTYs survive surface switches. */}
           <div className="relative min-h-0 flex-1 overflow-hidden">
             {historyMounted ? (
@@ -1237,23 +1346,7 @@ export function ProjectPage({
                     null
                   }
                   theme={activeTheme}
-                  onSelect={runId => {
-                    setSurfaceSelections(current => ({
-                      ...current,
-                      agents: { ...current.agents, runId },
-                    }))
-                    void saveProjectSurfaceState(projectId, "agents", {
-                      ...surfaceSelections.agents,
-                      runId,
-                    })
-                    replaceProjectRoute(location.pathname, {
-                      view: "agents",
-                      workspaceId: null,
-                      checkoutKey: surfaceSelections.agents?.checkoutKey ?? null,
-                      agentRunId: runId,
-                    })
-                  }}
-                  onNew={() => setAgentPickerOpen(true)}
+                  onSelect={handleAgentSelect}
                 />
               </div>
             ) : null}
@@ -1262,30 +1355,13 @@ export function ProjectPage({
               <div className="absolute inset-0 overflow-hidden">
                 <TerminalsProjectSurface
                   projectId={projectId}
-                  checkoutKey={activeCheckout.checkoutKey}
-                  checkoutPath={activeCheckout.cwdPath}
                   selectedId={
                     projectRouteFromSearch().terminalInstanceId ??
                     surfaceSelections.terminals?.terminalId ??
                     null
                   }
                   theme={activeTheme}
-                  onSelect={terminalId => {
-                    const selection = {
-                      ...surfaceSelections.terminals,
-                      terminalId,
-                      checkoutKey: activeCheckout.checkoutKey,
-                      checkoutPath: activeCheckout.cwdPath,
-                    }
-                    setSurfaceSelections(current => ({ ...current, terminals: selection }))
-                    void saveProjectSurfaceState(projectId, "terminals", selection)
-                    replaceProjectRoute(location.pathname, {
-                      view: "terminals",
-                      workspaceId: null,
-                      checkoutKey: checkoutRouteKey(activeCheckout),
-                      terminalInstanceId: terminalId,
-                    })
-                  }}
+                  onSelect={handleTerminalSelect}
                 />
               </div>
             ) : null}
@@ -1304,41 +1380,9 @@ export function ProjectPage({
             ) : null}
           </div>
 
-          <ProjectNavigationDock
-            projectSwitcher={
-              <OpenProjectOverlay
-                open={projectSwitcherOpen}
-                onOpenChange={setProjectSwitcherOpen}
-                homeDir={homeDir}
-                projects={hq.snapshot?.projects ?? []}
-                selectedRootPath={projectPath}
-                onOpenProject={project => onNavigateProject(project.rootPath)}
-                onOpenPath={async rootPath => onNavigateProject(rootPath)}
-                side="top"
-                align="start"
-                trigger={
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="max-w-52 justify-start gap-1.5 rounded-xl px-2.5 sm:max-w-64"
-                    aria-label="Switch project"
-                    title="Go to project"
-                    data-yaade-project-switcher=""
-                  >
-                    <FolderKanban data-icon="inline-start" />
-                    <span className="truncate font-semibold">{projectName}</span>
-                    <ChevronsUpDown
-                      className="size-3 shrink-0 opacity-60"
-                      aria-hidden
-                    />
-                  </Button>
-                }
-              />
-            }
-            onOpenHq={onOpenHq}
-          />
-        </Tabs>
-      </div>
+        </div>
+        </SidebarInset>
+      </SidebarProvider>
 
       {settingsOpen ? (
         <Suspense fallback={null}>

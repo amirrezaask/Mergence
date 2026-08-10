@@ -58,6 +58,7 @@ function useSidebar() {
 
 function SidebarProvider({
   defaultOpen = true,
+  storageKey = SIDEBAR_COOKIE_NAME,
   open: openProp,
   onOpenChange: setOpenProp,
   className,
@@ -67,6 +68,8 @@ function SidebarProvider({
   ...props
 }: React.ComponentProps<"div"> & {
   defaultOpen?: boolean
+  /** Cookie key used to persist this sidebar independently from other shells. */
+  storageKey?: string
   open?: boolean
   onOpenChange?: (open: boolean) => void
   enableKeyboardShortcut?: boolean
@@ -89,12 +92,12 @@ function SidebarProvider({
       }
 
       // This sets the cookie to keep the sidebar state.
-      document.cookie = `${SIDEBAR_COOKIE_NAME}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
+      document.cookie = `${storageKey}=${openState}; path=/; max-age=${SIDEBAR_COOKIE_MAX_AGE}`
       if (openState) {
         setPeekState(false)
       }
     },
-    [setOpenProp, open]
+    [setOpenProp, open, storageKey]
   )
 
   const setPeek = React.useCallback((next: boolean) => {

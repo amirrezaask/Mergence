@@ -1,9 +1,7 @@
 import { expect, test } from "@playwright/test"
 import { expectListRows } from "../helpers/list.js"
 import {
-  expectLocatorCount,
   expectLocatorContainsText,
-  expectLocatorVisible,
   expectSelectorVisible,
 } from "../shell/assert.js"
 import {
@@ -19,10 +17,10 @@ test.describe("project instance sidebars", () => {
   test("Terminals reconstruct from the server across navigation and reload", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
-      await page.locator('[data-yaade-project-tab="terminals"]').click()
       await expectSelectorVisible(page, '[data-yaade-instance-sidebar="terminals"]')
 
       await page.locator('[data-yaade-instance-sidebar="terminals"] [data-yaade-instance-sidebar-new]').click()
+      await page.locator('[data-yaade-worktree-main]').click()
       await expectListRows(page, {
         panel: "project-terminals",
         minItems: 1,
@@ -52,11 +50,8 @@ test.describe("project instance sidebars", () => {
       await waitForTerminalText(page, "yaade-server-owned-terminal")
 
       await page.locator('[data-yaade-project-tab="history"]').click()
-      await page.locator('[data-yaade-project-tab="terminals"]').click()
-      await expectSelectorVisible(page, `[data-yaade-instance-sidebar-item="${instanceId}"]`)
-      await page.evaluate(() => history.back())
       await expectSelectorVisible(page, '[data-yaade-project-panel="history"]')
-      await page.evaluate(() => history.forward())
+      await page.locator(`[data-yaade-instance-sidebar-item="${instanceId}"]`).click()
       await expectSelectorVisible(page, `[data-yaade-instance-sidebar-item="${instanceId}"]`)
 
       await page.reload()
@@ -100,33 +95,12 @@ test.describe("project instance sidebars", () => {
         .poll(async () => page.locator('[data-yaade-project-tab="native-agents"]').count())
         .toBe(0)
 
-      await page.locator('[data-yaade-project-tab="agents"]').click()
       await expectSelectorVisible(page, '[data-yaade-instance-sidebar="agents"]')
-      await page.locator("[data-yaade-instance-sidebar-new]").click()
-      await expectLocatorVisible(
-        page.getByRole("dialog").filter({ hasText: "Launch an agent" }),
-      )
-      await expectLocatorCount(
-        page.locator('[data-yaade-agent-cli-combobox]'),
-        1,
-      )
-      await expectSelectorVisible(page, "[data-yaade-agent-checkout]")
-      await expectLocatorCount(page.locator("[data-yaade-worktree-name]"), 0)
-      await page.locator("[data-yaade-agent-checkout]").click()
+      await page.locator('[data-yaade-project-process-new="agents"]').click()
+      await expectSelectorVisible(page, "[data-yaade-agent-launch-menu]")
+      await expectSelectorVisible(page, '[data-yaade-agent-provider="codex"]')
+      await page.locator('[data-yaade-agent-provider="codex"]').click()
       await expectSelectorVisible(page, "[data-yaade-worktree-main]")
-      await page.locator("[data-yaade-worktree-create]").click()
-      await expectSelectorVisible(page, "[data-yaade-worktree-name]")
-      await page.locator("[data-yaade-agent-cli-combobox]").click()
-      await expectSelectorVisible(page, 'input[placeholder="Search providers…"]')
-      await expectSelectorVisible(page, '[data-yaade-agent-cli-option="codex"]')
-      await expectLocatorVisible(
-        page.locator('[data-yaade-agent-cli-option="codex"] svg'),
-      )
-      await page.locator('[data-yaade-agent-cli-option="claude"]').click()
-      await expectLocatorContainsText(
-        page.locator("[data-yaade-agent-cli-combobox]"),
-        "Claude",
-      )
     } finally {
       await app.close()
     }
