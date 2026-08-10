@@ -194,6 +194,41 @@ export type JetElectronTerminal = {
   onData(id: string, callback: (data: string) => void): () => void
   onExit(cb: (id: string, exitCode: number, signal?: number) => void): () => void
   dispose(id: string): Promise<void>
+  listInstances(projectId: string): Promise<TerminalInstanceInfo[]>
+  createInstance(req: {
+    projectId: string
+    checkoutKey: string
+    checkoutPath: string
+    title?: string
+  }): Promise<TerminalInstanceInfo>
+  restartInstance(req: { id: string; generation: number }): Promise<TerminalInstanceInfo | null>
+  closeInstance(req: { id: string; generation: number }): Promise<TerminalInstanceInfo | null>
+  getInstanceTranscript(id: string): Promise<{ output: string; truncated: boolean } | null>
+  onInstanceEvent(callback: (event: TerminalInstanceEvent) => void): () => void
+}
+
+export type TerminalInstanceInfo = {
+  id: string
+  generation: number
+  projectId: string
+  checkoutKey: string
+  checkoutPath: string
+  title: string
+  ptyId: string | null
+  processState: "starting" | "running" | "exited" | "failed" | "disconnected"
+  createdAt: string
+  startedAt: string | null
+  lastActivityAt: string | null
+  endedAt: string | null
+  exitCode: number | null
+  endReason: string | null
+  revision: number
+}
+
+export type TerminalInstanceEvent = {
+  type: "terminal.instance"
+  kind: "instance.created" | "instance.updated" | "instance.ended" | "instance.removed"
+  instance: TerminalInstanceInfo
 }
 
 export type LaunchConfig = {
@@ -342,8 +377,11 @@ export type JetElectronAgents = {
     pty: { id: string; title: string | null } | null
   }>
   stop(req: { runId: string; generation?: number }): Promise<AgentRunInfo | null>
+  close(req: { runId: string; generation?: number }): Promise<AgentRunInfo | null>
   listLive(projectId?: string): Promise<AgentRunInfo[]>
+  listProject(projectId: string): Promise<AgentRunInfo[]>
   get(runId: string): Promise<AgentRunInfo | null>
+  getTranscript(runId: string): Promise<{ output: string; truncated: boolean } | null>
   listActivity(opts?: { limit?: number; cursor?: string; projectId?: string }): Promise<{
     runs: AgentRunInfo[]
     nextCursor: string | null

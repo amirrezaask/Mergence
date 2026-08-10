@@ -1026,6 +1026,12 @@ async function handleHttp(
       projectPath: rootPath,
     })
     const busyLeaves = runtime.db.listLeavesForCheckout(session.id, worktreePath)
+    let canonicalWorktreePath = worktreePath
+    try {
+      canonicalWorktreePath = fs.realpathSync(worktreePath)
+    } catch {
+      /* removal endpoint reports the unavailable worktree below */
+    }
     const project = runtime.db.projects().find(p => {
       try {
         return fs.realpathSync(p.rootPath) === fs.realpathSync(rootPath)
@@ -1045,13 +1051,30 @@ async function handleHttp(
         }
       })
       .map(run => ({ kind: "agent" as const, id: run.runId, title: run.title }))
-    const blockingTerminals = busyLeaves
-      .filter(leaf => leaf.ptyId && runtime.terminal.inspect(leaf.ptyId)?.status === "running")
+    const liveTerminalInstances = runtime.terminalInstances.listLiveForCheckout(canonicalWorktreePath)
+    const registeredTerminals = liveTerminalInstances.map(instance => ({
+        kind: "terminal" as const,
+        id: instance.id,
+        title: instance.title,
+      }))
+    // Compatibility for pre-registry mux layouts during migration.
+    const registeredPtyIds = new Set(
+      liveTerminalInstances.flatMap(instance =>
+        instance.ptyId ? [instance.ptyId] : [],
+      ),
+    )
+    const legacyTerminals = busyLeaves
+      .filter(leaf =>
+        leaf.ptyId &&
+        !registeredPtyIds.has(leaf.ptyId) &&
+        runtime.terminal.inspect(leaf.ptyId)?.status === "running",
+      )
       .map(leaf => ({
         kind: "terminal" as const,
         id: leaf.ptyId!,
         title: leaf.label ?? leaf.agentTitle ?? "Terminal",
       }))
+    const blockingTerminals = [...registeredTerminals, ...legacyTerminals]
     const dirtyEditors = runtime.db
       .listEditorRecoveryBuffers(session.id)
       .filter(buffer => {

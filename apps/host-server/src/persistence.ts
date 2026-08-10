@@ -415,6 +415,12 @@ export class ProjectDatabase {
                 payload_json=?, updated_at=?
           WHERE id=?`,
       )
+      const hasAgentRuns = this.db.prepare(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='agent_runs'",
+      ).get()
+      const repointAgentRuns = hasAgentRuns
+        ? this.db.prepare("UPDATE agent_runs SET workspace_id=? WHERE workspace_id=?")
+        : null
 
       for (const group of groups.values()) {
         const main = group.rows.find(row => row.cwd_path === group.projectPath)
@@ -479,6 +485,7 @@ export class ProjectDatabase {
             }
           }
           archive.run(now, now, loser.id)
+          repointAgentRuns?.run(survivor.id, loser.id)
         }
 
         const merged: ProjectSessionPayload = {

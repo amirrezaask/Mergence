@@ -211,6 +211,7 @@ export type ProjectRoute = {
   workspaceId: string | null
   checkoutKey: string | null
   agentRunId: string | null
+  terminalInstanceId: string | null
 }
 
 function nonEmptyParam(params: URLSearchParams, key: string): string | null {
@@ -235,6 +236,7 @@ export function projectRouteFromSearch(
     workspaceId,
     checkoutKey: nonEmptyParam(params, "checkout"),
     agentRunId: nonEmptyParam(params, "agent"),
+    terminalInstanceId: nonEmptyParam(params, "terminal"),
   }
 }
 
@@ -252,6 +254,9 @@ export function projectRouteUrl(
   if (route.agentRunId && route.view === "agents") {
     params.set("agent", route.agentRunId)
   }
+  if (route.terminalInstanceId && route.view === "terminals") {
+    params.set("terminal", route.terminalInstanceId)
+  }
   const query = params.toString()
   return `${pathname || "/"}${query ? `?${query}` : ""}`
 }
@@ -265,6 +270,17 @@ export function pushProjectRoute(
   const next = projectRouteUrl(pathname, route)
   if (`${location.pathname}${location.search}` === next) return
   history.pushState({ projectRoute: route }, "", next)
+}
+
+/** Update selection within the current project surface without adding a history entry. */
+export function replaceProjectRoute(
+  pathname: string,
+  route: Partial<ProjectRoute> & { view: ProjectView },
+): void {
+  if (typeof history === "undefined") return
+  const next = projectRouteUrl(pathname, route)
+  if (`${location.pathname}${location.search}` === next) return
+  history.replaceState({ projectRoute: route }, "", next)
 }
 
 /** Build `pathname?s=<sessionId>` (or bare pathname when sessionId is null). */

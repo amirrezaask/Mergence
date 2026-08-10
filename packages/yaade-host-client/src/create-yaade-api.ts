@@ -111,6 +111,10 @@ export function createYaadeApi(
     const signal = args[2] as number | undefined
     for (const cb of terminalExitListeners) cb(id, exitCode, signal)
   })
+  transport.on("terminal-instances:event", (...args: unknown[]) => {
+    const event = args[0] as import("@yaade/workspace").TerminalInstanceEvent
+    for (const cb of terminalInstanceListeners) cb(event)
+  })
   transport.on("notifications:event", (...args: unknown[]) => {
     const event = args[0] as import("@yaade/shared").NotificationStreamEvent
     for (const cb of notificationEventListeners) cb(event)
@@ -134,6 +138,9 @@ export function createYaadeApi(
   const fileIndexListeners = new Set<(rootUri: string, files: string[]) => void>()
   const searchReadyListeners = new Set<(rootUri: string) => void>()
   const terminalExitListeners = new Set<(id: string, exitCode: number, signal?: number) => void>()
+  const terminalInstanceListeners = new Set<
+    (event: import("@yaade/workspace").TerminalInstanceEvent) => void
+  >()
   const notificationEventListeners = new Set<
     (event: import("@yaade/shared").NotificationStreamEvent) => void
   >()
@@ -294,8 +301,11 @@ export function createYaadeApi(
       listProviders: refresh => transport.invoke("agents:listProviders", refresh === true),
       launch: req => transport.invoke("agents:launch", req),
       stop: req => transport.invoke("agents:stop", req),
+      close: req => transport.invoke("agents:close", req),
       listLive: projectId => transport.invoke("agents:listLive", projectId),
+      listProject: projectId => transport.invoke("agents:listProject", projectId),
       get: runId => transport.invoke("agents:get", runId),
+      getTranscript: runId => transport.invoke("agents:getTranscript", runId),
       listActivity: opts => transport.invoke("agents:listActivity", opts ?? {}),
       getSnapshot: sessionId => transport.invoke("agents:getSnapshot", sessionId),
       listEvents: (sessionId, opts) =>
@@ -375,6 +385,15 @@ export function createYaadeApi(
         terminalDataListeners.delete(id)
         terminalReplayFloors.delete(id)
         return transport.invoke("terminal:dispose", id)
+      },
+      listInstances: projectId => transport.invoke("terminal:listInstances", projectId),
+      createInstance: req => transport.invoke("terminal:createInstance", req),
+      restartInstance: req => transport.invoke("terminal:restartInstance", req),
+      closeInstance: req => transport.invoke("terminal:closeInstance", req),
+      getInstanceTranscript: id => transport.invoke("terminal:getInstanceTranscript", id),
+      onInstanceEvent: callback => {
+        terminalInstanceListeners.add(callback)
+        return () => terminalInstanceListeners.delete(callback)
       },
     },
     getLaunchConfig: () => transport.invoke("yaade:getLaunchConfig"),

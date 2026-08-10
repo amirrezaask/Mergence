@@ -108,6 +108,9 @@ type AgentRunRow = {
   end_reason: string | null
   telemetry_error: string | null
   revision: number
+  transcript?: string
+  transcript_truncated?: number
+  removed_at?: string | null
 }
 
 const PROVIDERS: readonly AgentProvider[] = [
@@ -458,18 +461,80 @@ export class AgentRunService {
     const rows = (projectId
       ? this.db.prepare(
           `SELECT * FROM agent_runs
-             WHERE project_id=? AND process_state IN ('starting','running')
+             WHERE project_id=? AND removed_at IS NULL AND process_state IN ('starting','running')
              ORDER BY started_at DESC, created_at DESC`,
         ).all(projectId)
       : this.db.prepare(
           `SELECT * FROM agent_runs
-             WHERE process_state IN ('starting','running')
+             WHERE removed_at IS NULL AND process_state IN ('starting','running')
              ORDER BY started_at DESC, created_at DESC`,
         ).all()) as AgentRunRow[]
     return rows.flatMap(row => {
       const run = rowToRun(row)
       return run ? [run] : []
     })
+  }
+
+  listProject(projectId: string): AgentRun[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM agent_runs WHERE project_id=? AND removed_at IS NULL
+        ORDER BY created_at DESC, run_id DESC`,
+    ).all(projectId) as AgentRunRow[]
+    return rows.flatMap(row => {
+      const run = rowToRun(row)
+      return run ? [run] : []
+    })
+  }
+
+  listLiveForCheckout(checkoutPath: string): AgentRun[] {
+    const rows = this.db.prepare(
+      `SELECT * FROM agent_runs WHERE checkout_path=? AND removed_at IS NULL
+        AND process_state IN ('starting','running')`,
+    ).all(checkoutPath) as AgentRunRow[]
+    return rows.flatMap(row => {
+      const run = rowToRun(row)
+      return run ? [run] : []
+    })
+  }
+
+  storeTranscript(ptyId: string, output: string, truncated = false): void {
+    const bytes = Buffer.from(output, "utf8")
+    const limit = 256 * 1024
+    const bounded = bytes.byteLength <= limit
+      ? output
+      : bytes.subarray(bytes.byteLength - limit).toString("utf8")
+    this.db.prepare(
+      `UPDATE agent_runs SET transcript=?, transcript_truncated=?, revision=revision+1
+        WHERE pty_id=? AND removed_at IS NULL`,
+    ).run(bounded, truncated || bytes.byteLength > limit ? 1 : 0, ptyId)
+  }
+
+  transcript(runId: string): { output: string; truncated: boolean } | null {
+    const row = this.db.prepare(
+      `SELECT transcript, transcript_truncated FROM agent_runs
+        WHERE run_id=? AND removed_at IS NULL`,
+    ).get(runId) as { transcript: string; transcript_truncated: number } | undefined
+    return row ? { output: row.transcript, truncated: row.transcript_truncated === 1 } : null
+  }
+
+  close(runId: string, generation?: number): AgentRun | null {
+    const run = this.get(runId)
+    if (!run) return null
+    if (generation != null && generation !== run.generation) return run
+    this.clearTelemetryGrace(runId)
+    const changed = this.db.prepare(
+      `UPDATE agent_runs SET process_state=CASE
+            WHEN process_state IN ('reserved','starting','running') THEN 'exited' ELSE process_state END,
+          activity_state=CASE WHEN process_state IN ('reserved','starting','running') THEN 'idle' ELSE activity_state END,
+          ended_at=COALESCE(ended_at, ?), end_reason=COALESCE(end_reason, 'closed'),
+          transcript='', transcript_truncated=0, removed_at=?, revision=revision+1
+        WHERE run_id=? AND generation=? AND removed_at IS NULL`,
+    ).run(nowIso(), nowIso(), runId, run.generation)
+    if (Number(changed.changes) === 0) return this.get(runId)
+    const removed = this.db.prepare("SELECT * FROM agent_runs WHERE run_id=?").get(runId) as AgentRunRow | undefined
+    const result = removed ? rowToRun(removed) : null
+    if (result) this.emit({ type: "agents.run", sessionId: result.runId, kind: "run.ended", run: result })
+    return result
   }
 
   listActivity(input?: { limit?: number; cursor?: string; projectId?: string }): {

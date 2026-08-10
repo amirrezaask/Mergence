@@ -54,6 +54,9 @@ export function ensureAgentTelemetrySchema(db: DatabaseSync): void {
       exit_code INTEGER,
       end_reason TEXT,
       telemetry_error TEXT,
+      transcript TEXT NOT NULL DEFAULT '',
+      transcript_truncated INTEGER NOT NULL DEFAULT 0,
+      removed_at TEXT,
       revision INTEGER NOT NULL DEFAULT 1
     );
     CREATE INDEX IF NOT EXISTS idx_agent_runs_live
@@ -65,6 +68,18 @@ export function ensureAgentTelemetrySchema(db: DatabaseSync): void {
     CREATE INDEX IF NOT EXISTS idx_agent_runs_activity
       ON agent_runs(ended_at DESC, created_at DESC);
   `)
+  const columns = new Set(
+    (db.prepare("PRAGMA table_info(agent_runs)").all() as Array<{ name: string }>).map(row => row.name),
+  )
+  if (!columns.has("transcript")) {
+    db.exec("ALTER TABLE agent_runs ADD COLUMN transcript TEXT NOT NULL DEFAULT ''")
+  }
+  if (!columns.has("transcript_truncated")) {
+    db.exec("ALTER TABLE agent_runs ADD COLUMN transcript_truncated INTEGER NOT NULL DEFAULT 0")
+  }
+  if (!columns.has("removed_at")) {
+    db.exec("ALTER TABLE agent_runs ADD COLUMN removed_at TEXT")
+  }
   // PTYs live only in host memory. A new host can retain history, but never
   // claim an old process is actionable after restart.
   db.prepare(

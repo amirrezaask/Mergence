@@ -50,6 +50,7 @@ import type {
 import {
   projectRouteFromSearch,
   pushProjectRoute,
+  replaceProjectRoute,
   type ProjectView,
   workspaceDocumentTitle,
 } from "../url-workspace.js"
@@ -78,6 +79,10 @@ import {
   selectionFromPaths,
   type CheckoutSelection,
 } from "./CheckoutPicker.js"
+import {
+  AgentsProjectSurface,
+  TerminalsProjectSurface,
+} from "./ProjectProcessSurfaces.js"
 
 const GitWorkspace = lazy(() =>
   import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
@@ -105,6 +110,7 @@ export type ProjectPageProps = {
   projectPath: string
   homeDir: string
   machineHostname: string
+  routeRevision?: number
   /** Active session — surface workspace renders in-page when set. */
   session: ProjectSession | null
   /** One-shot launch requested from HQ before navigating into this project. */
@@ -271,6 +277,7 @@ export function ProjectPage({
   projectPath,
   homeDir,
   machineHostname,
+  routeRevision = 0,
   session,
   agentLaunchIntent = null,
   onAgentLaunchIntentHandled,
@@ -325,7 +332,6 @@ export function ProjectPage({
     },
   )
   const launchSequenceRef = useRef(0)
-  const openingLiveAgentSessionRef = useRef<string | null>(null)
   const preferredSurfaceRef = useRef<MuxSurface | null>(
     (() => {
       if (!session) return null
@@ -339,6 +345,26 @@ export function ProjectPage({
   useEffect(() => {
     document.title = title
   }, [title])
+
+  useEffect(() => {
+    const route = projectRouteFromSearch()
+    setView(route.view)
+    if (route.view === "history") setHistoryMounted(true)
+    if (route.view === "agents") {
+      setSurfaceSelections(current => ({
+        ...current,
+        agents: { ...current.agents, runId: route.agentRunId },
+      }))
+    } else if (route.view === "terminals") {
+      setSurfaceSelections(current => ({
+        ...current,
+        terminals: {
+          ...current.terminals,
+          terminalId: route.terminalInstanceId,
+        },
+      }))
+    }
+  }, [routeRevision])
 
   useEffect(() => {
     setDefaultBranch("main")
@@ -498,36 +524,6 @@ export function ProjectPage({
     onInitialAgentFocusHandled?.()
   }, [initialAgentFocusTabId, onInitialAgentFocusHandled])
 
-  // Opening the project link from an HQ agent row lands on the project page
-  // without a session id. Pick a live session when the user selects Agents so
-  // the project surface does not look empty just because navigation started at
-  // the project instead of the agent anchor.
-  useEffect(() => {
-    if (view !== "agents" || session || !hq.snapshot) return
-    const liveAgent = hq.snapshot.agents.find(agent => agent.projectId === projectId)
-    if (!liveAgent || openingLiveAgentSessionRef.current) return
-    const runId = liveAgent.runId || liveAgent.sessionId
-    openingLiveAgentSessionRef.current = liveAgent.projectSessionId
-    preferredSurfaceRef.current = "agents"
-    setFocusAgentTabId(agentFocusTabId(runId))
-    void onOpenSession(liveAgent.projectSessionId)
-      .then(() => {
-        pushProjectRoute(location.pathname, {
-          view: "agents",
-          workspaceId: liveAgent.projectSessionId,
-          checkoutKey: null,
-          agentRunId: runId,
-        })
-      })
-      .catch(error => {
-        openingLiveAgentSessionRef.current = null
-        showYaadeToast(
-          error instanceof Error ? error.message : "Workspace unavailable",
-          { variant: "destructive" },
-        )
-      })
-  }, [hq.snapshot, onOpenSession, projectId, session, view])
-
   const persistChangesCheckout = useCallback(
     (checkout: ActiveCheckout) => {
       setSurfaceSelections(current => ({
@@ -590,7 +586,7 @@ export function ProjectPage({
       persistChangesCheckout(checkout)
       pushProjectRoute(location.pathname, {
         view,
-        workspaceId: isSurfaceView(view) ? session?.id ?? null : null,
+        workspaceId: view === "editors" ? session?.id ?? null : null,
         checkoutKey: checkoutRouteKey(checkout),
         agentRunId: view === "agents" ? focusAgentTabId : null,
       })
@@ -745,23 +741,31 @@ export function ProjectPage({
         setSurfaceSelections(current => ({ ...current, agents: selection }))
         void saveProjectSurfaceState(projectId, "agents", selection)
 
-        const request: MuxLaunchRequest = {
-          id: input.requestId,
-          action: {
-            kind: "agent",
-            driverId: input.driverId,
-            checkoutPath,
-            checkoutKey,
-            checkoutLabel,
-          },
-        }
-        setLaunchRequest(request)
+        const api = window.yaade?.agents
+        if (!api || !workspaceId) throw new Error("Agent service unavailable")
+        const launched = await api.launch({
+          launchRequestId: input.requestId,
+          provider: input.driverId,
+          projectId,
+          workspaceId,
+          checkoutKey,
+          checkoutPath,
+          title: `${input.driverId.charAt(0).toUpperCase()}${input.driverId.slice(1)} agent`,
+        })
+        const runId = launched.run.runId
+        const selected = { ...selection, runId }
+        setSurfaceSelections(current => ({ ...current, agents: selected }))
+        void saveProjectSurfaceState(projectId, "agents", selected)
+        setFocusAgentTabId(agentFocusTabId(runId))
+        clearHqAgentLaunch(input.requestId)
+        setLaunchRequest(null)
+        onAgentLaunchIntentHandled?.(input.requestId)
         setView("agents")
         pushProjectRoute(location.pathname, {
           view: "agents",
-          workspaceId,
+          workspaceId: null,
           checkoutKey: checkoutKey === "main" ? null : checkoutKey,
-          agentRunId: null,
+          agentRunId: runId,
         })
       } catch (error) {
         setLaunchRequest(current =>
@@ -770,7 +774,14 @@ export function ProjectPage({
         throw error
       }
     },
-    [ensureProjectSession, onOpenSession, projectId, projectPath, session],
+    [
+      ensureProjectSession,
+      onAgentLaunchIntentHandled,
+      onOpenSession,
+      projectId,
+      projectPath,
+      session,
+    ],
   )
 
   const handleLaunchRequestHandled = useCallback(
@@ -830,10 +841,6 @@ export function ProjectPage({
     if (!intent) return
     if (!claimHqAgentLaunch(intent.id)) {
       preferredSurfaceRef.current = "agents"
-      setLaunchRequest({
-        id: intent.id,
-        action: { kind: "agent", driverId: intent.driverId },
-      })
       setView("agents")
       return
     }
@@ -886,7 +893,7 @@ export function ProjectPage({
         persistChangesCheckout(checkout)
         pushProjectRoute(location.pathname, {
           view,
-          workspaceId: isSurfaceView(view) ? session?.id ?? null : null,
+          workspaceId: view === "editors" ? session?.id ?? null : null,
           checkoutKey: null,
         })
       } catch (error) {
@@ -920,6 +927,7 @@ export function ProjectPage({
       <div
         className="relative flex h-full min-h-0 w-full flex-col bg-background"
         data-yaade-shell="project"
+        data-yaade-project-id={projectId}
         data-yaade-project-path={projectPath}
       >
         <Tabs
@@ -927,12 +935,21 @@ export function ProjectPage({
           onValueChange={value => {
             const next = value as ProjectView
             if (next === "history") setHistoryMounted(true)
-            if (isSurfaceView(next)) {
+            if (next === "agents" || next === "terminals") {
               preferredSurfaceRef.current = next
+              setView(next)
               const saved = surfaceSelections[next]
-              if (next === "agents") {
-                setFocusAgentTabId(agentFocusTabId(saved?.runId ?? null))
-              }
+              pushProjectRoute(location.pathname, {
+                view: next,
+                workspaceId: null,
+                checkoutKey: saved?.checkoutKey ?? checkoutRouteKey(activeCheckout),
+                agentRunId: next === "agents" ? saved?.runId ?? null : null,
+                terminalInstanceId: next === "terminals" ? saved?.terminalId ?? null : null,
+              })
+              return
+            }
+            if (next === "editors") {
+              preferredSurfaceRef.current = next
               void ensureCheckoutSession(next).catch(error => {
                 showYaadeToast(
                   error instanceof Error ? error.message : "Workspace unavailable",
@@ -1040,14 +1057,14 @@ export function ProjectPage({
               </div>
             ) : null}
 
-            {session && !(view === "agents" && (historicalRun || agentLookupMissing)) ? (
+            {session && view === "editors" ? (
               <div
                 className={cn(
                   "absolute inset-0 overflow-hidden",
-                  !isSurfaceView(view) && "pointer-events-none invisible",
+                  view !== "editors" && "pointer-events-none invisible",
                 )}
-                aria-hidden={!isSurfaceView(view)}
-                data-yaade-project-panel={muxSurface}
+                aria-hidden={view !== "editors"}
+                data-yaade-project-panel="editors"
               >
                 <Suspense
                   fallback={
@@ -1067,10 +1084,8 @@ export function ProjectPage({
                     homeDir={homeDir}
                     machineHostname={machineHostname}
                     embedded
-                    surface={muxSurface}
-                    focusAgentTabId={
-                      muxSurface === "agents" ? focusAgentTabId : null
-                    }
+                    surface="editors"
+                    focusAgentTabId={null}
                     onBackToProject={onClearSession}
                     onLaunchAgent={() => setAgentPickerOpen(true)}
                     onSelectAgentTab={tabId => {
@@ -1098,6 +1113,19 @@ export function ProjectPage({
                         })
                         return
                       }
+                      if (next === "agents" || next === "terminals") {
+                        setView(next)
+                        pushProjectRoute(location.pathname, {
+                          view: next,
+                          workspaceId: null,
+                          checkoutKey: checkoutRouteKey(activeCheckout),
+                          agentRunId: next === "agents" ? surfaceSelections.agents?.runId ?? null : null,
+                          terminalInstanceId: next === "terminals"
+                            ? surfaceSelections.terminals?.terminalId ?? null
+                            : null,
+                        })
+                        return
+                      }
                       void ensureCheckoutSession(next).catch(error => {
                         showYaadeToast(
                           error instanceof Error
@@ -1114,60 +1142,70 @@ export function ProjectPage({
               </div>
             ) : null}
 
-            {view === "agents" && historicalRun ? (
-              <div
-                className="absolute inset-0 grid place-items-center overflow-auto p-6"
-                data-yaade-project-panel="agents"
-                data-yaade-agent-history={historicalRun.runId}
-              >
-                <div className="w-full max-w-lg rounded-md border border-border bg-card p-5">
-                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
-                    Historical agent run
-                  </p>
-                  <h2 className="mt-1 text-lg font-semibold">{historicalRun.title}</h2>
-                  <dl className="mt-4 grid grid-cols-[auto_1fr] gap-x-4 gap-y-2 text-sm">
-                    <dt className="text-muted-foreground">Provider</dt>
-                    <dd className="capitalize">{historicalRun.provider}</dd>
-                    <dt className="text-muted-foreground">Worktree</dt>
-                    <dd className="truncate font-mono">{historicalRun.checkoutKey}</dd>
-                    <dt className="text-muted-foreground">Status</dt>
-                    <dd>{historicalRun.endReason ?? historicalRun.processState}</dd>
-                    <dt className="text-muted-foreground">Ended</dt>
-                    <dd>{historicalRun.endedAt ? new Date(historicalRun.endedAt).toLocaleString() : "Host restarted"}</dd>
-                  </dl>
-                  <p className="mt-4 text-xs text-muted-foreground">
-                    Terminal transcripts are intentionally not retained in HQ activity.
-                  </p>
-                </div>
+            {view === "agents" ? (
+              <div className="absolute inset-0 overflow-hidden">
+                <AgentsProjectSurface
+                  projectId={projectId}
+                  selectedId={
+                    projectRouteFromSearch().agentRunId ??
+                    surfaceSelections.agents?.runId ??
+                    null
+                  }
+                  theme={activeTheme}
+                  onSelect={runId => {
+                    setSurfaceSelections(current => ({
+                      ...current,
+                      agents: { ...current.agents, runId },
+                    }))
+                    void saveProjectSurfaceState(projectId, "agents", {
+                      ...surfaceSelections.agents,
+                      runId,
+                    })
+                    replaceProjectRoute(location.pathname, {
+                      view: "agents",
+                      workspaceId: null,
+                      checkoutKey: surfaceSelections.agents?.checkoutKey ?? null,
+                      agentRunId: runId,
+                    })
+                  }}
+                  onNew={() => setAgentPickerOpen(true)}
+                />
               </div>
             ) : null}
 
-            {view === "agents" && agentLookupMissing && agentLookupComplete && projectRouteFromSearch().agentRunId ? (
-              <div className="absolute inset-0 grid place-items-center text-sm text-muted-foreground" data-yaade-agent-not-found="">
-                This agent run was not found.
+            {view === "terminals" ? (
+              <div className="absolute inset-0 overflow-hidden">
+                <TerminalsProjectSurface
+                  projectId={projectId}
+                  checkoutKey={activeCheckout.checkoutKey}
+                  checkoutPath={activeCheckout.cwdPath}
+                  selectedId={
+                    projectRouteFromSearch().terminalInstanceId ??
+                    surfaceSelections.terminals?.terminalId ??
+                    null
+                  }
+                  theme={activeTheme}
+                  onSelect={terminalId => {
+                    const selection = {
+                      ...surfaceSelections.terminals,
+                      terminalId,
+                      checkoutKey: activeCheckout.checkoutKey,
+                      checkoutPath: activeCheckout.cwdPath,
+                    }
+                    setSurfaceSelections(current => ({ ...current, terminals: selection }))
+                    void saveProjectSurfaceState(projectId, "terminals", selection)
+                    replaceProjectRoute(location.pathname, {
+                      view: "terminals",
+                      workspaceId: null,
+                      checkoutKey: checkoutRouteKey(activeCheckout),
+                      terminalInstanceId: terminalId,
+                    })
+                  }}
+                />
               </div>
             ) : null}
 
-            {view === "agents" && !session ? (
-              <div
-                className="absolute inset-0 grid place-items-center overflow-hidden"
-                data-yaade-project-panel="agents"
-              >
-                <div className="max-w-sm px-4 text-center text-sm text-muted-foreground">
-                  <p>{routeError ?? "Select a running agent from the sidebar, or launch one."}</p>
-                  <Button
-                    className="mt-3"
-                    variant="secondary"
-                    size="sm"
-                    onClick={() => setAgentPickerOpen(true)}
-                  >
-                    Launch agent…
-                  </Button>
-                </div>
-              </div>
-            ) : null}
-
-            {(view === "editors" || view === "terminals") && !session ? (
+            {view === "editors" && !session ? (
               <div
                 className="absolute inset-0 grid place-items-center overflow-hidden"
                 data-yaade-project-panel={view}

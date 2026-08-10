@@ -107,6 +107,7 @@ describe("url-workspace", () => {
       workspaceId: null,
       checkoutKey: null,
       agentRunId: null,
+      terminalInstanceId: null,
     })
     assert.equal(projectRouteFromSearch("?s=ses-1").view, "terminals")
   })
@@ -142,7 +143,16 @@ describe("url-workspace", () => {
         workspaceId: null,
         checkoutKey: "wt-key",
         agentRunId: null,
+        terminalInstanceId: null,
       },
+    )
+    assert.equal(
+      projectRouteUrl("/dev/yaade", {
+        view: "terminals",
+        workspaceId: null,
+        terminalInstanceId: "terminal-1",
+      }),
+      "/dev/yaade?view=terminals&terminal=terminal-1",
     )
   })
 })

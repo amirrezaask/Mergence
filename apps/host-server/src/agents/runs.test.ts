@@ -95,4 +95,31 @@ describe("AgentRunService", () => {
       assert.equal(restarted.listLive().length, 0)
     })
   })
+
+  it("lists every non-removed project run and persists its final transcript", () => {
+    withService(service => {
+      const run = service.reserve({
+        launchRequestId: "request-project-list",
+        provider: "codex",
+        projectId: "project-1",
+        workspaceId: "workspace-1",
+        checkoutKey: "main",
+        checkoutPath: "/tmp/project",
+        title: "Codex",
+      }).run
+      service.begin(run.runId, run.generation)
+      service.bindPty(run.runId, run.generation, "pty-project-list")
+      service.storeTranscript("pty-project-list", "durable output")
+      service.onPtyExit("pty-project-list", 0, true)
+
+      assert.equal(service.listProject("project-1").length, 1)
+      assert.deepEqual(service.transcript(run.runId), {
+        output: "durable output",
+        truncated: false,
+      })
+
+      service.close(run.runId, run.generation)
+      assert.equal(service.listProject("project-1").length, 0)
+    })
+  })
 })

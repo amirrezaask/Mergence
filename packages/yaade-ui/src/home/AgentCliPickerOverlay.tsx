@@ -1,24 +1,31 @@
-import { FolderOpen, Plus, Trash2 } from "lucide-react"
+import { Check, ChevronDown, FolderOpen, Plus, Trash2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
 import type { GitWorktree } from "@yaade/shared"
 import { pathToFileUri } from "@yaade/shared"
+import { cn } from "@yaade/ui/project"
 import {
+  Button,
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
-} from "../components/ui/dialog.js"
-import { Button } from "../components/ui/button.js"
-import { Input } from "../components/ui/input.js"
-import { Label } from "../components/ui/label.js"
-import {
+  Input,
+  Label,
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "../components/ui/select.js"
+} from "@yaade/ui/primitives"
 import {
   AGENT_CLI_DRIVERS,
   type AgentCliDriver,
@@ -88,6 +95,10 @@ export function AgentCliPickerOverlay({
   onAddProject,
   projectPath,
 }: AgentCliPickerOverlayProps) {
+  const [agentOpen, setAgentOpen] = useState(false)
+  const [agentId, setAgentId] = useState<AgentCliDriver["id"]>(
+    AGENT_CLI_DRIVERS[0].id,
+  )
   const [checkoutValue, setCheckoutValue] = useState(MAIN_VALUE)
   const [worktreeName, setWorktreeName] = useState("")
   const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
@@ -99,6 +110,8 @@ export function AgentCliPickerOverlay({
 
   useEffect(() => {
     if (!open) return
+    setAgentOpen(false)
+    setAgentId(AGENT_CLI_DRIVERS[0].id)
     setCheckoutValue(MAIN_VALUE)
     setWorktreeName("")
   }, [open])
@@ -142,10 +155,14 @@ export function AgentCliPickerOverlay({
     if (next) onSelectedRootUriChange?.(next.rootUri)
   }
 
-  const pick = (driver: AgentCliDriver) => {
+  const selectedDriver =
+    AGENT_CLI_DRIVERS.find(driver => driver.id === agentId) ??
+    AGENT_CLI_DRIVERS[0]
+
+  const pick = () => {
     if (checkoutValue === CREATE_VALUE) {
       onSelect({
-        driver,
+        driver: selectedDriver,
         useWorktree: true,
         worktreeName: worktreeName.trim(),
       })
@@ -153,7 +170,7 @@ export function AgentCliPickerOverlay({
     }
     if (checkoutValue === MAIN_VALUE || !resolvedProjectPath) {
       onSelect({
-        driver,
+        driver: selectedDriver,
         useWorktree: false,
         worktreeName: "",
         checkoutPath: resolvedProjectPath || undefined,
@@ -165,7 +182,7 @@ export function AgentCliPickerOverlay({
     const wt = worktrees.find(item => item.path === checkoutValue)
     const label = wt ? branchLabel(wt) : checkoutValue
     onSelect({
-      driver,
+      driver: selectedDriver,
       useWorktree: false,
       worktreeName: "",
       checkoutPath: checkoutValue,
@@ -185,9 +202,6 @@ export function AgentCliPickerOverlay({
       <DialogContent size="picker" className="gap-0 overflow-hidden p-0">
         <DialogHeader className="px-4 pt-4 pb-3">
           <DialogTitle>Launch an agent</DialogTitle>
-          <DialogDescription>
-            Pick a provider and the checkout (Main or a worktree) to launch into.
-          </DialogDescription>
         </DialogHeader>
 
         {showProjectControl ? (
@@ -259,11 +273,90 @@ export function AgentCliPickerOverlay({
 
         {resolvedProjectPath ? (
           <div
-            className="grid gap-3 border-t px-4 py-3"
+            className="grid grid-cols-2 gap-3 border-t px-4 py-3"
             data-yaade-agent-cli-worktree=""
           >
-            <div className="grid gap-1.5">
-              <Label htmlFor="agent-checkout">Checkout</Label>
+            <div className="grid min-w-0 gap-1.5">
+              <Label htmlFor="agent-provider">Agent</Label>
+              <Popover open={agentOpen} onOpenChange={setAgentOpen}>
+                <PopoverTrigger asChild>
+                  <Button
+                    id="agent-provider"
+                    type="button"
+                    variant="outline"
+                    role="combobox"
+                    aria-expanded={agentOpen}
+                    className="w-full justify-between font-normal"
+                    data-yaade-agent-cli-combobox=""
+                  >
+                    <span className="flex min-w-0 items-center gap-2">
+                      <AgentProviderIcon
+                        agent={selectedDriver.id}
+                        className="size-4"
+                      />
+                      <span className="truncate">{selectedDriver.label}</span>
+                    </span>
+                    <ChevronDown className="size-4 shrink-0 text-muted-foreground" />
+                  </Button>
+                </PopoverTrigger>
+                <PopoverContent
+                  align="start"
+                  className="w-[var(--radix-popover-trigger-width)] p-0"
+                >
+                  <Command>
+                    <CommandInput
+                      placeholder="Search providers…"
+                      aria-label="Search providers"
+                    />
+                    <CommandList>
+                      <CommandEmpty>No providers found.</CommandEmpty>
+                      <CommandGroup>
+                        {AGENT_CLI_DRIVERS.map(driver => (
+                          <CommandItem
+                            key={driver.id}
+                            value={`${driver.label} ${driver.description} ${driver.command}`}
+                            data-yaade-agent-cli-option={driver.id}
+                            onSelect={() => {
+                              setAgentId(driver.id)
+                              setAgentOpen(false)
+                            }}
+                            className="gap-3 py-2.5"
+                          >
+                            <Check
+                              className={cn(
+                                "size-4 shrink-0",
+                                driver.id === selectedDriver.id
+                                  ? "opacity-100"
+                                  : "opacity-0",
+                              )}
+                            />
+                            <span className="flex size-7 shrink-0 items-center justify-center rounded-md border bg-muted/50">
+                              <AgentProviderIcon
+                                agent={driver.id}
+                                className="size-4"
+                              />
+                            </span>
+                            <span className="min-w-0 flex-1">
+                              <span className="block truncate font-medium">
+                                {driver.label}
+                              </span>
+                              <span className="block truncate text-3xs text-muted-foreground">
+                                {driver.description}
+                              </span>
+                            </span>
+                            <code className="text-3xs text-muted-foreground">
+                              {driver.command}
+                            </code>
+                          </CommandItem>
+                        ))}
+                      </CommandGroup>
+                    </CommandList>
+                  </Command>
+                </PopoverContent>
+              </Popover>
+            </div>
+            <div className="grid min-w-0 gap-1.5">
+              <Label htmlFor="agent-checkout">Worktree</Label>
               <Select value={checkoutValue} onValueChange={setCheckoutValue}>
                 <SelectTrigger
                   id="agent-checkout"
@@ -292,7 +385,7 @@ export function AgentCliPickerOverlay({
               </Select>
             </div>
             {checkoutValue === CREATE_VALUE ? (
-              <div className="grid gap-1.5">
+              <div className="col-span-2 grid gap-1.5">
                 <Label htmlFor="agent-worktree-name">Worktree name</Label>
                 <Input
                   id="agent-worktree-name"
@@ -310,37 +403,13 @@ export function AgentCliPickerOverlay({
           </div>
         ) : null}
 
-        <div
-          className="max-h-80 overflow-y-auto border-t"
-          data-yaade-list-panel="yaade:palette"
-          role="listbox"
-          aria-label="Agent providers"
-        >
-          <ul className="flex flex-col p-1">
-            {AGENT_CLI_DRIVERS.map(driver => (
-              <li key={driver.id}>
-                <button
-                  type="button"
-                  role="option"
-                  data-yaade-list-item=""
-                  data-yaade-agent-cli-option={driver.id}
-                  className="flex w-full items-center gap-3 rounded-md px-3 py-3 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground"
-                  onClick={() => pick(driver)}
-                >
-                  <span className="flex size-8 shrink-0 items-center justify-center rounded-md border bg-muted/50">
-                    <AgentProviderIcon agent={driver.id} className="size-4" />
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <span className="block truncate font-medium">{driver.label}</span>
-                    <span className="block truncate text-xs text-muted-foreground">
-                      {driver.description}
-                    </span>
-                  </span>
-                  <code className="text-xs text-muted-foreground">{driver.command}</code>
-                </button>
-              </li>
-            ))}
-          </ul>
+        <div className="flex items-center justify-end gap-2 border-t px-4 py-3">
+          <Button type="button" variant="ghost" onClick={() => onOpenChange(false)}>
+            Cancel
+          </Button>
+          <Button type="button" onClick={pick} data-yaade-agent-cli-launch="">
+            Launch {selectedDriver.label}
+          </Button>
         </div>
       </DialogContent>
     </Dialog>

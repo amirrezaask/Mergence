@@ -121,7 +121,7 @@ test.describe("YAADE HQ", () => {
       await expect.poll(() => row.count()).toBe(1)
       const href = await row.getByRole("link", { name: /Codex Alpha/ }).getAttribute("href")
       expect(href).toContain(`view=agents`)
-      expect(href).toContain(`s=${encodeURIComponent(agent.workspaceId)}`)
+      expect(href).not.toContain("s=")
       expect(href).toContain(`agent=${encodeURIComponent(agent.runId)}`)
 
       await row.getByRole("link", { name: /Codex Alpha/ }).click()
@@ -130,9 +130,9 @@ test.describe("YAADE HQ", () => {
       const route = await page.evaluate(() => Object.fromEntries(new URLSearchParams(location.search)))
       expect(route).toMatchObject({
         view: "agents",
-        s: agent.workspaceId,
         agent: agent.runId,
       })
+      expect(route.s).toBeUndefined()
       await expect
         .poll(() => page.locator("[data-yaade-hq-agent-dialog]").count())
         .toBe(0)
@@ -146,7 +146,7 @@ test.describe("YAADE HQ", () => {
       await expect
         .poll(() =>
           page.locator(
-            `[data-yaade-instance-sidebar-item="yaade:terminal:${agent.runId}"]`,
+            `[data-yaade-instance-sidebar-item="${agent.runId}"]`,
           ).count(),
         )
         .toBe(1)
@@ -154,8 +154,18 @@ test.describe("YAADE HQ", () => {
         panel: "project-agents",
         minItems: 1,
         needle: "Codex Alpha",
-        noResultsText: "No agents running.",
+        noResultsText: "No agents yet",
       })
+      await page.locator('[data-yaade-project-tab="changes"]').click()
+      await page.locator('[data-yaade-project-tab="agents"]').click()
+      await page.reload()
+      await waitForProjectPage(page)
+      await expect
+        .poll(() => page.locator(`[data-yaade-instance-sidebar-item="${agent.runId}"]`).count())
+        .toBe(1)
+      const restored = await page.evaluate(runId => window.yaade!.agents!.get(runId), agent.runId)
+      expect(restored?.ptyId).toBe(agent.ptyId)
+      expect(restored?.processState).toBe("running")
     } finally {
       await app.close()
       fs.rmSync(root, { recursive: true, force: true })
@@ -213,8 +223,7 @@ test.describe("YAADE HQ", () => {
 
       await activity.click()
       await waitForProjectPage(page)
-      await page
-        .locator(`[data-yaade-agent-history="${agent.runId}"]`)
+      await page.locator(`[data-yaade-instance-sidebar-item="${agent.runId}"]`)
         .waitFor({ state: "visible", timeout: 10_000 })
       await expect
         .poll(() => page.locator("[data-yaade-terminal-panel]").count())

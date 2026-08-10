@@ -9,6 +9,7 @@ export type ProjectSurfaceSelection = {
   checkoutKey?: string | null
   checkoutPath?: string | null
   runId?: string | null
+  terminalId?: string | null
 }
 
 export type ProjectSurfaceStateRow = {

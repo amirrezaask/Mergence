@@ -22,6 +22,7 @@ import {
   type AgentSnapshotStreamEvent,
 } from "./agents/index.js"
 import type { ProjectDatabase } from "./persistence.js"
+import { TerminalInstanceService } from "./terminal-instances.js"
 import { WorkspaceHost } from "./workspace.js"
 
 export type HostRuntime = {
@@ -38,6 +39,7 @@ export type HostRuntime = {
   notifications: NotificationService
   agents: AgentTelemetryService
   agentRuns: AgentRunService
+  terminalInstances: TerminalInstanceService
   hookQueueTimer: ReturnType<typeof setInterval>
 }
 
@@ -90,6 +92,9 @@ export function createRuntime(
     events.emit("agents:event", [streamEvent])
   })
   agentRuns = runService
+  const terminalInstances = new TerminalInstanceService(db.raw(), streamEvent => {
+    events.emit("terminal-instances:event", [streamEvent])
+  })
 
   terminal.setEmit((channel, args) => {
     events.emit(channel, args)
@@ -101,6 +106,18 @@ export function createRuntime(
       const ptyId = String(args[0] ?? "")
       terminalOscBuffers.delete(ptyId)
       const exitCode = typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0)
+      const replay = terminal.readOutput(ptyId)
+      terminalInstances.onPtyExit(
+        ptyId,
+        exitCode,
+        replay?.output ?? "",
+        replay?.truncated ?? false,
+      )
+      runService.storeTranscript(
+        ptyId,
+        replay?.output ?? "",
+        replay?.truncated ?? false,
+      )
       handleTerminalExit(notifications, agents, agentRuns, ptyId, exitCode)
     }
   })
@@ -125,6 +142,7 @@ export function createRuntime(
     notifications,
     agents,
     agentRuns: runService,
+    terminalInstances,
     hookQueueTimer,
   }
   try {

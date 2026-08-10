@@ -161,8 +161,11 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
     const inspected = runtime.terminal.inspect(run.ptyId)
     if (!inspected || inspected.status !== "running") continue
     const project = projectById.get(run.projectId)
-    const projectSession = sessionById.get(run.workspaceId)
-    if (!project || !projectSession || projectSession.archivedAt) continue
+    const referencedSession = sessionById.get(run.workspaceId)
+    const projectSession = referencedSession && !referencedSession.archivedAt
+      ? referencedSession
+      : sessionsByProjectPath.get(project?.rootPath ?? "")?.[0]
+    if (!project || !projectSession) continue
     const snapshot = runtime.agents.getSnapshot(run.runId)
     const unreadCount = unreadBySession[run.runId] ?? 0
     const attention = snapshotAttention(snapshot, attentionBySession[run.runId] ?? 0)

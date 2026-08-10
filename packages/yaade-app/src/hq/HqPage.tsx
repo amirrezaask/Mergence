@@ -299,7 +299,7 @@ export function HqPage({
     (run: AgentRunInfo) =>
       projectRouteUrl(urlPathForKnownProject(run.projectId), {
         view: "agents",
-        workspaceId: run.workspaceId,
+        workspaceId: null,
         agentRunId: run.runId,
       }),
     [],

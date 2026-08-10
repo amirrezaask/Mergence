@@ -2,6 +2,14 @@ import { useCallback, useEffect, useState } from "react"
 import type { HqAgentSummary, HqProjectSummary, ProjectSession } from "@yaade/rpc"
 import type { AgentCliDriver } from "@yaade/ui/agent-picker"
 import {
+  findTerminalBufferMatch,
+  readTerminalBufferText,
+  readTerminalCellHeight,
+  readTerminalCellSize,
+  readTerminalCursor,
+  readTerminalDims,
+} from "@yaade/ui/terminal-registry"
+import {
   clearHqAgentLaunch,
   queueHqAgentLaunch,
   type HqAgentLaunchIntent,
@@ -33,8 +41,8 @@ import {
   knownProjectIdFromPathname,
   popToProjectUrl,
   projectRootFromLocation,
+  pushProjectRoute,
   pushProjectUrl,
-  pushSessionUrl,
   replaceSessionUrl,
   sessionIdFromSearch,
   urlPathForKnownProject,
@@ -173,12 +181,12 @@ function basicAgentBridge(input: {
     measurePerf: () => undefined,
     dropFilesOnTerminal: async () => false,
     dropFilesOnEditor: async () => false,
-    getTerminalText: () => "",
-    getTerminalCellHeight: () => 0,
-    getTerminalCellSize: () => null,
-    getTerminalDims: () => null,
-    getTerminalCursor: () => null,
-    findTerminalText: () => null,
+    getTerminalText: tabId => readTerminalBufferText(tabId),
+    getTerminalCellHeight: tabId => readTerminalCellHeight(tabId),
+    getTerminalCellSize: tabId => readTerminalCellSize(tabId),
+    getTerminalDims: tabId => readTerminalDims(tabId),
+    getTerminalCursor: tabId => readTerminalCursor(tabId),
+    findTerminalText: (needle, tabId) => findTerminalBufferMatch(needle, tabId),
     createProjectSession: input.createProjectSession,
     listProjectSessions: input.listProjectSessions,
     openProjectSession: input.openProjectSession,
@@ -347,7 +355,10 @@ export function AppRoot() {
         loadProjectSession(sessionId),
         preloadMuxApp(),
       ])
-      pushSessionUrl(location.pathname, sessionId)
+      pushProjectRoute(location.pathname, {
+        view: "editors",
+        workspaceId: sessionId,
+      })
       setBoot({ ...boot, sessionId, session })
     },
     [boot],
@@ -400,7 +411,7 @@ export function AppRoot() {
       pushProjectUrl(
         projectRouteUrl(pathname, {
           view: "agents",
-          workspaceId: agent.projectSessionId,
+          workspaceId: null,
           agentRunId:
             "runId" in agent && typeof agent.runId === "string"
               ? agent.runId
@@ -421,7 +432,7 @@ export function AppRoot() {
       )
       return projectRouteUrl(pathname, {
         view: "agents",
-        workspaceId: agent.projectSessionId,
+        workspaceId: null,
         agentRunId:
           "runId" in agent && typeof agent.runId === "string"
             ? agent.runId
@@ -557,6 +568,7 @@ export function AppRoot() {
       projectPath={boot.project.rootPath}
       homeDir={boot.homeDir}
       machineHostname={boot.machineHostname}
+      routeRevision={routeEpoch}
       session={boot.session}
       routeError={boot.routeError}
       agentLaunchIntent={

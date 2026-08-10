@@ -283,8 +283,12 @@ async function handleAgents(
       const projectId = typeof args[0] === "string" && args[0] ? args[0] : undefined
       return runtime.agentRuns.listLive(projectId)
     }
+    case "agents:listProject":
+      return runtime.agentRuns.listProject(str(args[0], "projectId"))
     case "agents:get":
       return runtime.agentRuns.get(str(args[0], "runId"))
+    case "agents:getTranscript":
+      return runtime.agentRuns.transcript(str(args[0], "runId"))
     case "agents:listActivity": {
       const body = (args[0] as { limit?: number; cursor?: string; projectId?: string } | undefined) ?? {}
       return runtime.agentRuns.listActivity(body)
@@ -423,8 +427,25 @@ async function handleAgents(
       const run = runtime.agentRuns.get(body.runId)
       if (!run) return null
       if (body.generation != null && body.generation !== run.generation) return run
-      if (run.ptyId) runtime.terminal.dispose(run.ptyId)
+      if (run.ptyId) {
+        const replay = runtime.terminal.readOutput(run.ptyId)
+        runtime.agentRuns.storeTranscript(run.ptyId, replay?.output ?? "", replay?.truncated ?? false)
+        runtime.terminal.dispose(run.ptyId)
+      }
       return runtime.agentRuns.stop(run.runId, run.generation)
+    }
+    case "agents:close": {
+      const body = args[0] as { runId?: string; generation?: number }
+      if (!body?.runId) throw new Error("agents:close requires runId")
+      const run = runtime.agentRuns.get(body.runId)
+      if (!run) return null
+      if (body.generation != null && body.generation !== run.generation) return run
+      if (run.ptyId) {
+        const replay = runtime.terminal.readOutput(run.ptyId)
+        runtime.agentRuns.storeTranscript(run.ptyId, replay?.output ?? "", replay?.truncated ?? false)
+        runtime.terminal.dispose(run.ptyId)
+      }
+      return runtime.agentRuns.close(run.runId, run.generation)
     }
     case "agents:getSnapshot":
       return agents.getSnapshot(str(args[0], "sessionId"))
@@ -776,6 +797,85 @@ async function handleTerminal(
   clientId: string,
 ): Promise<unknown> {
   switch (channel) {
+    case "terminal:listInstances":
+      return runtime.terminalInstances.listProject(str(args[0], "projectId"))
+    case "terminal:getInstanceTranscript":
+      return runtime.terminalInstances.transcript(str(args[0], "id"))
+    case "terminal:createInstance": {
+      const body = args[0] as {
+        projectId?: string
+        checkoutKey?: string
+        checkoutPath?: string
+        title?: string
+      }
+      if (!body?.projectId || !body.checkoutPath) {
+        throw new Error("terminal:createInstance requires projectId and checkoutPath")
+      }
+      const project = runtime.db.project(body.projectId)
+      if (!project) throw new Error("project is unavailable")
+      let checkoutPath: string
+      try {
+        checkoutPath = fs.realpathSync(path.resolve(body.checkoutPath))
+      } catch {
+        throw new Error("terminal checkout path is unavailable")
+      }
+      if (!pathAllowed(checkoutPath, runtime.config.allowedRoots)) {
+        throw new Error("terminal checkout path outside allowed roots")
+      }
+      const title = body.title?.trim().slice(0, 160) || "Terminal"
+      const instance = runtime.terminalInstances.reserve({
+        projectId: project.id,
+        checkoutKey: body.checkoutKey?.trim() || (checkoutPath === project.rootPath ? "main" : checkoutPath),
+        checkoutPath,
+        title,
+      })
+      try {
+        const created = runtime.terminal.create(pathToFileUri(checkoutPath), null, clientId)
+        return runtime.terminalInstances.bindPty(instance.id, instance.generation, created.id, created.title) ?? instance
+      } catch (error) {
+        runtime.terminalInstances.fail(
+          instance.id,
+          instance.generation,
+          error instanceof Error ? error.message : String(error),
+        )
+        throw error
+      }
+    }
+    case "terminal:restartInstance": {
+      const body = args[0] as { id?: string; generation?: number }
+      if (!body?.id || body.generation == null) {
+        throw new Error("terminal:restartInstance requires id and generation")
+      }
+      const restarting = runtime.terminalInstances.beginRestart(body.id, body.generation)
+      if (!restarting || restarting.generation === body.generation) return restarting
+      try {
+        const created = runtime.terminal.create(pathToFileUri(restarting.checkoutPath), null, clientId)
+        return runtime.terminalInstances.bindPty(
+          restarting.id,
+          restarting.generation,
+          created.id,
+          created.title,
+        ) ?? restarting
+      } catch (error) {
+        runtime.terminalInstances.fail(
+          restarting.id,
+          restarting.generation,
+          error instanceof Error ? error.message : String(error),
+        )
+        throw error
+      }
+    }
+    case "terminal:closeInstance": {
+      const body = args[0] as { id?: string; generation?: number }
+      if (!body?.id || body.generation == null) {
+        throw new Error("terminal:closeInstance requires id and generation")
+      }
+      const instance = runtime.terminalInstances.get(body.id)
+      if (!instance || instance.generation !== body.generation) return instance
+      const replay = instance.ptyId ? runtime.terminal.readOutput(instance.ptyId) : null
+      if (instance.ptyId) runtime.terminal.dispose(instance.ptyId)
+      return runtime.terminalInstances.close(instance.id, instance.generation, replay?.output ?? "")
+    }
     case "terminal:create": {
       const cwdUri = str(args[0], "cwdUri")
       await assertAllowedUri(cwdUri, runtime.config.allowedRoots, fileUriToPath)
