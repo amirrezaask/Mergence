@@ -44,7 +44,9 @@ test.describe("project page", () => {
         .toBe("true")
       await expect
         .poll(async () =>
-          (await page.locator("[data-yaade-worktree-switcher]").textContent()) ?? "",
+          (await page
+            .locator('[data-yaade-app-header] [data-yaade-worktree-switcher]')
+            .textContent()) ?? "",
         )
         .toContain("Main")
       expect(await page.evaluate(() => location.search)).toBe("")

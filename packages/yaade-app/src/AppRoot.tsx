@@ -482,12 +482,15 @@ export function AppRoot() {
           const muxReady = preloadMuxApp()
           const created = await createProjectSession({
             rootPath: projectPath,
-            title: input?.title,
+            title: input?.title ?? "Main",
             worktree: input?.worktree,
           })
           await muxReady
           await openSession(created.id)
-          return { id: created.id }
+          return {
+            id: created.id,
+            createdWorktree: created.createdWorktree,
+          }
         },
         listProjectSessions: async () => {
           const rows = await listProjectSessions(projectPath)

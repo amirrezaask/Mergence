@@ -99,7 +99,7 @@ export function InstanceSidebar({
                       {item.label}
                     </span>
                     {item.subtitle ? (
-                      <span className="block truncate text-3xs text-muted-foreground capitalize">
+                      <span className="block truncate text-3xs text-muted-foreground">
                         {item.subtitle}
                       </span>
                     ) : null}

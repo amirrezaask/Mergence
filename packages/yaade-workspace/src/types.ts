@@ -334,6 +334,7 @@ export type JetElectronAgents = {
     projectId: string
     workspaceId: string
     checkoutKey?: string
+    checkoutPath?: string
     title?: string
     args?: string[]
   }): Promise<{

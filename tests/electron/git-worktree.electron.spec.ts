@@ -19,17 +19,20 @@ function hasGit(): boolean {
   }
 }
 
-test.describe("git worktree sessions", () => {
+test.describe("per-surface worktrees", () => {
   test.skip(!hasGit(), "git not available")
 
-  test("worktree session spawns terminal in the worktree cwd", async () => {
+  test("one project session; terminal launch into a worktree keeps session on Main", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-wt-home-"))
     const project = path.join(home, "repo")
     fs.mkdirSync(project, { recursive: true })
-    execSync("git init && git config user.email t@t && git config user.name t && echo hi > README && git add . && git commit -m init", {
-      cwd: project,
-      stdio: "ignore",
-    })
+    execSync(
+      "git init && git config user.email t@t && git config user.name t && echo hi > README && git add . && git commit -m init",
+      {
+        cwd: project,
+        stdio: "ignore",
+      },
+    )
 
     const { app, page } = await launchJet({
       homeDir: home,
@@ -40,22 +43,47 @@ test.describe("git worktree sessions", () => {
     try {
       await waitForProjectPage(page)
       const branch = `e2e-wt-${Date.now().toString(36)}`
-      await page.evaluate(async br => {
-        await window.__yaadeAgent!.createProjectSession?.({
-          title: br,
+      const created = await page.evaluate(async br => {
+        return window.__yaadeAgent!.createProjectSession?.({
+          title: "Main",
           worktree: { branch: br },
         })
       }, branch)
+      expect(created?.id).toBeTruthy()
+      expect(created?.createdWorktree?.path).toContain(".yaade/worktrees")
       await waitForMux(page)
-      await page.evaluate(() => window.__yaadeAgent!.executeCommand("terminal.new"))
+
+      const before = await page.evaluate(() => window.__yaadeAgent!.getState())
+      expect(before.sessionCwd).toMatch(/\/repo$/)
+      expect(before.sessionCwd).not.toContain(".yaade/worktrees")
+      const sessionId = before.sessionId
+
+      await page.locator('[data-yaade-project-tab="terminals"]').click()
+      await page.locator('[data-yaade-project-panel="terminals"]').waitFor({
+        state: "visible",
+      })
+      await page.locator("[data-yaade-instance-sidebar-new]").click()
+      const dialog = page.locator("[data-yaade-worktree-switcher-menu]")
+      await dialog.waitFor({ state: "visible" })
+      await page.locator(`[data-yaade-worktree-item="${branch}"]`).click()
+
       await page.locator("[data-yaade-terminal-panel]").waitFor({
         state: "visible",
         timeout: 15_000,
       })
 
-      const state = await page.evaluate(() => window.__yaadeAgent!.getState())
-      expect(state.sessionCwd).toContain(".yaade/worktrees")
-      expect(fs.existsSync(state.sessionCwd!)).toBe(true)
+      const after = await page.evaluate(() => window.__yaadeAgent!.getState())
+      expect(after.sessionId).toBe(sessionId)
+      expect(after.sessionCwd).toMatch(/\/repo$/)
+
+      await expect
+        .poll(async () =>
+          page
+            .locator("[data-yaade-instance-sidebar='terminals'] [data-yaade-list-item]")
+            .first()
+            .textContent(),
+        )
+        .toContain(branch)
 
       await page.locator("[data-yaade-terminal-panel]").first().click()
       await page.keyboard.type("pwd")
@@ -67,7 +95,7 @@ test.describe("git worktree sessions", () => {
     }
   })
 
-  test("singular worktree switcher opens main and can create a worktree", async () => {
+  test("Changes tab worktree switcher remounts git root without swapping session", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-wt-picker-"))
     const project = path.join(home, "repo")
     fs.mkdirSync(project, { recursive: true })
@@ -85,71 +113,41 @@ test.describe("git worktree sessions", () => {
     try {
       await waitForProjectPage(page)
 
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const tabs = [
-              ...document.querySelectorAll("[data-yaade-project-tab]"),
-            ].map(el => el.getAttribute("data-yaade-project-tab"))
-            return tabs
-          }),
-        )
-        .toEqual(["changes", "agents", "editors", "terminals", "history"])
-
-      const switcher = page.locator("[data-yaade-worktree-switcher]")
-      await switcher.waitFor({ state: "visible" })
-      await expect
-        .poll(async () => (await switcher.textContent()) ?? "")
-        .toContain("Main")
-
-      await page.locator('[data-yaade-project-tab="history"]').click()
-      await switcher.waitFor({ state: "visible" })
-
-      await page.locator('[data-yaade-project-tab="terminals"]').click()
-      await switcher.click()
-      const menu = page.locator("[data-yaade-worktree-switcher-menu]")
-      await menu.waitFor({ state: "visible" })
-      await page.locator("[data-yaade-worktree-main]").waitFor({
-        state: "visible",
-      })
-      await page.locator("[data-yaade-worktree-create]").waitFor({
-        state: "visible",
-      })
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const input = document.querySelector(
-              "[data-yaade-worktree-switcher-search]",
-            )
-            return input === document.activeElement
-          }),
-        )
-        .toBe(true)
-
-      await page.locator("[data-yaade-worktree-main]").click()
-      await waitForMux(page)
-      await expect
-        .poll(() =>
-          page.evaluate(() => {
-            const cwd = window.__yaadeAgent!.getState().sessionCwd ?? ""
-            return {
-              isRepo: /\/repo$/.test(cwd),
-              isWorktree: cwd.includes(".yaade/worktrees"),
-            }
-          }),
-        )
-        .toEqual({ isRepo: true, isWorktree: false })
-
       await page.locator('[data-yaade-project-tab="changes"]').click()
       await page.locator('[data-yaade-project-panel="changes"]').waitFor({
         state: "visible",
       })
 
+      const switcher = page.locator(
+        '[data-yaade-app-header] [data-yaade-worktree-switcher]',
+      )
+      await switcher.waitFor({ state: "visible" })
+      await expect
+        .poll(async () => (await switcher.textContent()) ?? "")
+        .toContain("Main")
+
+      // Agents/Terminals surfaces do not show the Changes checkout switcher.
+      await page.locator('[data-yaade-project-tab="terminals"]').click()
+      await waitForMux(page)
+      await expect
+        .poll(() =>
+          page.evaluate(
+            () =>
+              document.querySelectorAll(
+                "[data-yaade-app-header] [data-yaade-worktree-switcher]",
+              ).length,
+          ),
+        )
+        .toBe(0)
+      const sessionId = await page.evaluate(
+        () => window.__yaadeAgent!.getState().sessionId,
+      )
+
+      await page.locator('[data-yaade-project-tab="changes"]').click()
+      await switcher.waitFor({ state: "visible" })
       await switcher.click()
+      const menu = page.locator("[data-yaade-worktree-switcher-menu]")
       await menu.waitFor({ state: "visible" })
-      await page.locator("[data-yaade-worktree-create]").waitFor({
-        state: "visible",
-      })
       await page.locator("[data-yaade-worktree-create]").click()
       const dialog = page.locator("[data-yaade-create-worktree-dialog]")
       await dialog.waitFor({ state: "visible" })
@@ -157,11 +155,11 @@ test.describe("git worktree sessions", () => {
       await dialog.locator("[data-yaade-worktree-branch]").fill(branch)
       await dialog.locator("[data-yaade-create-worktree]").click()
       await expect
-        .poll(
-          async () => (await switcher.textContent()) ?? "",
-          { timeout: 5_000 },
-        )
+        .poll(async () => (await switcher.textContent()) ?? "", {
+          timeout: 5_000,
+        })
         .toContain(branch)
+
       await expect
         .poll(() =>
           page.evaluate(() => {
@@ -170,6 +168,20 @@ test.describe("git worktree sessions", () => {
           }),
         )
         .toBe(true)
+
+      const after = await page.evaluate(() => window.__yaadeAgent!.getState())
+      expect(after.sessionId).toBe(sessionId)
+      expect(after.sessionCwd).toMatch(/\/repo$/)
+
+      await expect
+        .poll(() =>
+          page
+            .locator(
+              `[data-yaade-project-panel="changes"] [data-yaade-git-root]`,
+            )
+            .getAttribute("data-yaade-git-root"),
+        )
+        .toContain(".yaade/worktrees")
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

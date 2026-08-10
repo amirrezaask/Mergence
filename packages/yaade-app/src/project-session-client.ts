@@ -58,27 +58,31 @@ export async function loadProjectSession(
 export async function createProjectSession(input: {
   rootPath: string
   title?: string
-  /** Attach an existing checkout (main or worktree) without `git worktree add`. */
-  cwdPath?: string
-  worktreeBranch?: string | null
-  worktreePath?: string | null
+  /** Create a git worktree; session remains the project Main row. */
   worktree?: { branch: string; baseRef?: string; createBranch?: boolean }
-}): Promise<ProjectSession> {
-  const raw = await requestJson<ProjectSession>("/api/v1/project-sessions", {
+}): Promise<ProjectSession & {
+  createdWorktree?: { path: string; branch: string }
+}> {
+  const raw = await requestJson<
+    ProjectSession & { createdWorktree?: { path: string; branch: string } }
+  >("/api/v1/project-sessions", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(input),
   })
-  return normalizeSession(raw)
+  return {
+    ...normalizeSession(raw),
+    ...(raw.createdWorktree ? { createdWorktree: raw.createdWorktree } : {}),
+  }
 }
 
 /**
- * Reopen the newest non-archived session for a checkout, or create one.
- * Used by the Worktrees picker to enter MuxApp for Main / an existing worktree.
+ * Ensure the single Main project session exists (cwd = project root).
+ * Checkout paths are per-surface / per-pane — not sessions.
  */
 export async function openCheckoutSession(input: {
   rootPath: string
-  cwdPath: string
+  cwdPath?: string
   title?: string
   worktreeBranch?: string | null
   worktreePath?: string | null
@@ -88,14 +92,21 @@ export async function openCheckoutSession(input: {
     headers: { "content-type": "application/json" },
     body: JSON.stringify({
       rootPath: input.rootPath,
-      cwdPath: input.cwdPath,
-      checkoutKey: input.cwdPath === input.rootPath ? "main" : undefined,
       title: input.title,
-      worktreeBranch: input.worktreeBranch ?? null,
-      worktreePath: input.worktreePath ?? (input.cwdPath === input.rootPath ? null : input.cwdPath),
     }),
   })
   return normalizeSession(raw)
+}
+
+export async function removeProjectWorktree(input: {
+  rootPath: string
+  worktreePath: string
+}): Promise<void> {
+  await requestJson<{ ok: boolean }>("/api/v1/project-worktrees", {
+    method: "DELETE",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  })
 }
 
 export async function saveProjectSessionPayload(

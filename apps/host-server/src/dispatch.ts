@@ -54,11 +54,14 @@ import type {
 } from "@yaade/shared"
 import { fileUriToPath, pathToFileUri } from "@yaade/shared"
 import { getCliAgentDriver } from "@yaade/agents"
+import fs from "node:fs"
+import path from "node:path"
 import { GitServiceLive, GitServiceTag } from "./effect/git.js"
 import { HostRuntimeTag, LspHostTag } from "./effect/tags.js"
 import type { HostRuntime } from "./host-runtime.js"
 import { normalizeHookEventName } from "./notifications/index.js"
 import { installProjectHooksForProvider } from "./agents/index.js"
+import { pathAllowed } from "./sandbox.js"
 
 export type { HostRuntime } from "./host-runtime.js"
 export { createRuntime, shutdownRuntime } from "./host-runtime.js"
@@ -293,6 +296,7 @@ async function handleAgents(
         projectId?: string
         workspaceId?: string
         checkoutKey?: string
+        checkoutPath?: string
         title?: string
         args?: string[]
       }
@@ -309,16 +313,35 @@ async function handleAgents(
       if (!project || !workspace || workspace.project_path !== project.rootPath) {
         throw new Error("project workspace is unavailable")
       }
+      const checkoutPathRaw =
+        typeof body.checkoutPath === "string" && body.checkoutPath.trim()
+          ? body.checkoutPath.trim()
+          : workspace.cwd_path
+      let checkoutPath: string
+      try {
+        checkoutPath = fs.realpathSync(path.resolve(checkoutPathRaw))
+      } catch {
+        throw new Error("agent checkout path is unavailable")
+      }
+      if (!pathAllowed(checkoutPath, runtime.config.allowedRoots)) {
+        throw new Error("agent checkout path outside allowed roots")
+      }
       const title = typeof body.title === "string" && body.title.trim()
         ? body.title.trim().slice(0, 160)
         : `${provider.charAt(0).toUpperCase()}${provider.slice(1)} agent`
+      const checkoutKey =
+        typeof body.checkoutKey === "string" && body.checkoutKey
+          ? body.checkoutKey
+          : checkoutPath === project.rootPath
+            ? "main"
+            : checkoutPath
       const reservation = runtime.agentRuns.reserve({
         launchRequestId: body.launchRequestId,
         provider,
         projectId: project.id,
         workspaceId: workspace.id,
-        checkoutKey: typeof body.checkoutKey === "string" && body.checkoutKey ? body.checkoutKey : "main",
-        checkoutPath: workspace.cwd_path,
+        checkoutKey,
+        checkoutPath,
         title,
       })
       if (!reservation.created) {
@@ -343,7 +366,7 @@ async function handleAgents(
         ingestUrl.searchParams.set("sessionId", run.runId)
         const installed = await driver.installHooks({
           sessionId: run.runId,
-          projectRoot: workspace.cwd_path,
+          projectRoot: checkoutPath,
           ingestUrl: ingestUrl.toString(),
           provider,
           origin,
@@ -357,7 +380,7 @@ async function handleAgents(
         const userArgs = Array.isArray(body.args)
           ? body.args.filter((value): value is string => typeof value === "string")
           : []
-        const created = runtime.terminal.create(pathToFileUri(workspace.cwd_path), {
+        const created = runtime.terminal.create(pathToFileUri(checkoutPath), {
           command: availability.binary,
           args: [...launchArgs, ...userArgs],
           env: launchEnv,
@@ -379,7 +402,7 @@ async function handleAgents(
           sessionId: bound.runId,
           processId: created.id,
           projectId: project.id,
-          cwd: workspace.cwd_path,
+          cwd: checkoutPath,
         })
         const finalRun = telemetryError
           ? runtime.agentRuns.markTelemetryDegraded(bound.runId, bound.generation, telemetryError)

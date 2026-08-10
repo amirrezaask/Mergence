@@ -1,6 +1,4 @@
 - run codex with --enable-hooks
 - agent sessions should have this feature to show the diff of that agent's work in pierrediffs
 - changes should have a seperate worktree switcher
-- [x] when launching agents remove the search for providers and have a toggle button for using worktrees and optional worktree name
-- [x] editor should be switchable between neovim/monaco
 - 3 column TODO board for projects

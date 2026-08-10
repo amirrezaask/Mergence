@@ -1,5 +1,7 @@
 import { FolderOpen, Plus, Trash2 } from "lucide-react"
 import { useEffect, useMemo, useState } from "react"
+import type { GitWorktree } from "@yaade/shared"
+import { pathToFileUri } from "@yaade/shared"
 import {
   Dialog,
   DialogContent,
@@ -8,7 +10,6 @@ import {
   DialogTitle,
 } from "../components/ui/dialog.js"
 import { Button } from "../components/ui/button.js"
-import { Checkbox } from "../components/ui/checkbox.js"
 import { Input } from "../components/ui/input.js"
 import { Label } from "../components/ui/label.js"
 import {
@@ -32,10 +33,13 @@ export type AgentCliPickerProject = {
 
 export type AgentCliLaunchSelection = {
   driver: AgentCliDriver
-  /** When true, create (or use) a git worktree for the launch. */
+  /** When true, create a fresh git worktree for the launch. */
   useWorktree: boolean
-  /** Optional branch / worktree name. Empty → host generates one. */
+  /** Optional branch / worktree name when creating. Empty → host generates one. */
   worktreeName: string
+  checkoutPath?: string
+  checkoutKey?: string
+  checkoutLabel?: string
 }
 
 export type AgentCliPickerOverlayProps = {
@@ -50,7 +54,28 @@ export type AgentCliPickerOverlayProps = {
   onRemoveProject?: (rootUri: string) => boolean | void | Promise<boolean | void>
   /** Opens the Add project folder modal. */
   onAddProject?: () => void
+  /** Absolute project path for listing existing worktrees. */
+  projectPath?: string
+  homeDir?: string
+  defaultBranch?: string
 }
+
+function checkoutPathKey(p: string): string {
+  return p.replace(/\/+$/, "").replace(/^\/private(\/var\/)/, "$1")
+}
+
+function sameCheckoutPath(a: string, b: string): boolean {
+  return checkoutPathKey(a) === checkoutPathKey(b)
+}
+
+function branchLabel(wt: GitWorktree): string {
+  if (wt.branch) return wt.branch.replace(/^refs\/heads\//, "")
+  if (wt.detached && wt.head) return `detached@${wt.head.slice(0, 7)}`
+  return wt.path.split("/").filter(Boolean).pop() ?? wt.path
+}
+
+const CREATE_VALUE = "__create__"
+const MAIN_VALUE = "__main__"
 
 export function AgentCliPickerOverlay({
   open,
@@ -61,19 +86,53 @@ export function AgentCliPickerOverlay({
   onSelectedRootUriChange,
   onRemoveProject,
   onAddProject,
+  projectPath,
 }: AgentCliPickerOverlayProps) {
-  const [useWorktree, setUseWorktree] = useState(false)
+  const [checkoutValue, setCheckoutValue] = useState(MAIN_VALUE)
   const [worktreeName, setWorktreeName] = useState("")
-
-  useEffect(() => {
-    if (!open) return
-    setUseWorktree(false)
-    setWorktreeName("")
-  }, [open])
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
 
   const selectedProject =
     projects.find(project => project.rootUri === selectedRootUri) ?? projects[0]
   const showProjectControl = projects.length > 0 || onAddProject != null
+  const resolvedProjectPath = projectPath ?? selectedProject?.path ?? ""
+
+  useEffect(() => {
+    if (!open) return
+    setCheckoutValue(MAIN_VALUE)
+    setWorktreeName("")
+  }, [open])
+
+  useEffect(() => {
+    if (!open || !resolvedProjectPath) {
+      setWorktrees([])
+      return
+    }
+    let cancelled = false
+    const rootUri = pathToFileUri(resolvedProjectPath)
+    void window.yaade?.git
+      ?.isRepo(rootUri)
+      .then(isRepo =>
+        isRepo ? window.yaade?.git?.worktreeList(rootUri) ?? [] : [],
+      )
+      .then(rows => {
+        if (cancelled) return
+        setWorktrees(
+          rows.filter(
+            wt =>
+              !wt.bare &&
+              !wt.prunable &&
+              !sameCheckoutPath(wt.path, resolvedProjectPath),
+          ),
+        )
+      })
+      .catch(() => {
+        if (!cancelled) setWorktrees([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, resolvedProjectPath])
 
   const removeSelectedProject = async () => {
     if (!selectedProject || !onRemoveProject) return
@@ -84,18 +143,42 @@ export function AgentCliPickerOverlay({
   }
 
   const pick = (driver: AgentCliDriver) => {
+    if (checkoutValue === CREATE_VALUE) {
+      onSelect({
+        driver,
+        useWorktree: true,
+        worktreeName: worktreeName.trim(),
+      })
+      return
+    }
+    if (checkoutValue === MAIN_VALUE || !resolvedProjectPath) {
+      onSelect({
+        driver,
+        useWorktree: false,
+        worktreeName: "",
+        checkoutPath: resolvedProjectPath || undefined,
+        checkoutKey: "main",
+        checkoutLabel: "Main",
+      })
+      return
+    }
+    const wt = worktrees.find(item => item.path === checkoutValue)
+    const label = wt ? branchLabel(wt) : checkoutValue
     onSelect({
       driver,
-      useWorktree,
-      worktreeName: worktreeName.trim(),
+      useWorktree: false,
+      worktreeName: "",
+      checkoutPath: checkoutValue,
+      checkoutKey: checkoutValue,
+      checkoutLabel: label,
     })
   }
 
   const previewHint = useMemo(() => {
-    if (!useWorktree) return null
+    if (checkoutValue !== CREATE_VALUE) return null
     if (worktreeName.trim()) return `Worktree branch: ${worktreeName.trim()}`
     return "Worktree name will be generated on launch"
-  }, [useWorktree, worktreeName])
+  }, [checkoutValue, worktreeName])
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -103,7 +186,7 @@ export function AgentCliPickerOverlay({
         <DialogHeader className="px-4 pt-4 pb-3">
           <DialogTitle>Launch an agent</DialogTitle>
           <DialogDescription>
-            Pick a provider. Optionally launch into a fresh git worktree.
+            Pick a provider and the checkout (Main or a worktree) to launch into.
           </DialogDescription>
         </DialogHeader>
 
@@ -174,34 +257,58 @@ export function AgentCliPickerOverlay({
           </div>
         ) : null}
 
-        <div
-          className="grid gap-3 border-t px-4 py-3"
-          data-yaade-agent-cli-worktree=""
-        >
-          <label className="flex items-center gap-2 text-sm">
-            <Checkbox
-              checked={useWorktree}
-              onCheckedChange={checked => setUseWorktree(checked === true)}
-              data-yaade-use-worktree=""
-            />
-            Use a git worktree
-          </label>
-          {useWorktree ? (
+        {resolvedProjectPath ? (
+          <div
+            className="grid gap-3 border-t px-4 py-3"
+            data-yaade-agent-cli-worktree=""
+          >
             <div className="grid gap-1.5">
-              <Label htmlFor="agent-worktree-name">Worktree name</Label>
-              <Input
-                id="agent-worktree-name"
-                value={worktreeName}
-                onChange={event => setWorktreeName(event.target.value)}
-                placeholder="Optional — e.g. feat/agent-task"
-                data-yaade-worktree-name=""
-              />
-              {previewHint ? (
-                <p className="text-3xs text-muted-foreground">{previewHint}</p>
-              ) : null}
+              <Label htmlFor="agent-checkout">Checkout</Label>
+              <Select value={checkoutValue} onValueChange={setCheckoutValue}>
+                <SelectTrigger
+                  id="agent-checkout"
+                  className="w-full"
+                  data-yaade-agent-checkout=""
+                >
+                  <SelectValue placeholder="Main" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={MAIN_VALUE} data-yaade-worktree-main="">
+                    Main
+                  </SelectItem>
+                  {worktrees.map(wt => (
+                    <SelectItem
+                      key={wt.path}
+                      value={wt.path}
+                      data-yaade-worktree-item={branchLabel(wt)}
+                    >
+                      {branchLabel(wt)}
+                    </SelectItem>
+                  ))}
+                  <SelectItem value={CREATE_VALUE} data-yaade-worktree-create="">
+                    Create worktree…
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
-          ) : null}
-        </div>
+            {checkoutValue === CREATE_VALUE ? (
+              <div className="grid gap-1.5">
+                <Label htmlFor="agent-worktree-name">Worktree name</Label>
+                <Input
+                  id="agent-worktree-name"
+                  value={worktreeName}
+                  onChange={event => setWorktreeName(event.target.value)}
+                  placeholder="Optional — e.g. feat/agent-task"
+                  data-yaade-worktree-name=""
+                  data-yaade-use-worktree=""
+                />
+                {previewHint ? (
+                  <p className="text-3xs text-muted-foreground">{previewHint}</p>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
 
         <div
           className="max-h-80 overflow-y-auto border-t"

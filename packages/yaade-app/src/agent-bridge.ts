@@ -102,7 +102,10 @@ export type YaadeAgentAPI = {
   createProjectSession?(input?: {
     title?: string
     worktree?: { branch: string; baseRef?: string }
-  }): Promise<{ id: string }>
+  }): Promise<{
+    id: string
+    createdWorktree?: { path: string; branch: string }
+  }>
   /** List project sessions for the current project (E2E). */
   listProjectSessions?(): Promise<Array<{ id: string; title: string }>>
   /** Open a project session by id (E2E). */

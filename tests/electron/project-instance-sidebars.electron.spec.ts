@@ -24,11 +24,12 @@ test.describe("project instance sidebars", () => {
       await expectSelectorVisible(page, '[data-yaade-instance-sidebar="terminals"]')
 
       await surface.locator("[data-yaade-instance-sidebar-new]").click()
+      await page.locator("[data-yaade-worktree-main]").click()
       await expectListRows(page, {
         panel: "project-terminals",
         minItems: 1,
         needle: "sample-workspace",
-        noResultsText: "No terminals in this worktree.",
+        noResultsText: "No terminals yet.",
       })
       await expect
         .poll(async () =>
@@ -37,11 +38,12 @@ test.describe("project instance sidebars", () => {
         .toBe(1)
 
       await execCommand(page, "terminal.new")
+      await page.locator("[data-yaade-worktree-main]").click()
       await expectListRows(page, {
         panel: "project-terminals",
         minItems: 2,
         needle: "sample-workspace",
-        noResultsText: "No terminals in this worktree.",
+        noResultsText: "No terminals yet.",
       })
 
       const items = surface.locator(
@@ -79,14 +81,14 @@ test.describe("project instance sidebars", () => {
         panel: "project-terminals",
         minItems: 1,
         needle: "sample-workspace",
-        noResultsText: "No terminals in this worktree.",
+        noResultsText: "No terminals yet.",
       })
     } finally {
       await app.close()
     }
   })
 
-  test("Agents tab hides sidebar until an agent is launched", async () => {
+  test("Agents tab keeps an instance sidebar before launch", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {
       await waitForProjectPage(page)
@@ -95,10 +97,7 @@ test.describe("project instance sidebars", () => {
         .toBe(0)
 
       await page.locator('[data-yaade-project-tab="agents"]').click()
-      await expectLocatorCount(
-        page.locator('[data-yaade-instance-sidebar="agents"]'),
-        0,
-      )
+      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="agents"]')
       await expectSelectorVisible(page, "[data-yaade-agents-empty]")
       await page.locator("[data-yaade-agents-empty-launch]").click()
       await expectLocatorVisible(
@@ -108,9 +107,11 @@ test.describe("project instance sidebars", () => {
         page.locator('input[placeholder="Search providers…"]'),
         0,
       )
-      await expectSelectorVisible(page, "[data-yaade-use-worktree]")
+      await expectSelectorVisible(page, "[data-yaade-agent-checkout]")
       await expectLocatorCount(page.locator("[data-yaade-worktree-name]"), 0)
-      await page.locator("[data-yaade-use-worktree]").click()
+      await page.locator("[data-yaade-agent-checkout]").click()
+      await expectSelectorVisible(page, "[data-yaade-worktree-main]")
+      await page.locator("[data-yaade-worktree-create]").click()
       await expectSelectorVisible(page, "[data-yaade-worktree-name]")
       await expectSelectorVisible(page, '[data-yaade-agent-cli-option="codex"]')
     } finally {

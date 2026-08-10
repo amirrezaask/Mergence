@@ -61,6 +61,12 @@ import {
   ContextMenuTrigger,
 } from "@yaade/ui/primitives"
 import {
+  CheckoutPicker,
+  checkoutLabelFromUri,
+  type CheckoutSelection,
+} from "../project/CheckoutPicker.js"
+import { createProjectSession } from "../project-session-client.js"
+import {
   CommandRegistry,
   KeymapService,
   WorkspaceManager,
@@ -84,6 +90,7 @@ import {
   type JetKeyBinding,
   type KeymapContext,
   type LaunchConfig,
+  type AgentRunInfo,
 } from "@yaade/workspace"
 import { createAgentBridge } from "../agent-bridge.js"
 import { resolveDirtyBufferClose } from "../editor/dirty-buffer-close.js"
@@ -562,8 +569,19 @@ export type MuxAppProps = {
 }
 
 export type MuxLaunchAction =
-  | { kind: "agent"; driverId: AgentCliDriver["id"] }
-  | { kind: "terminal" }
+  | {
+      kind: "agent"
+      driverId: AgentCliDriver["id"]
+      checkoutPath?: string
+      checkoutKey?: string
+      checkoutLabel?: string
+    }
+  | {
+      kind: "terminal"
+      checkoutPath?: string
+      checkoutKey?: string
+      checkoutLabel?: string
+    }
   | { kind: "neovim" }
   | { kind: "git" }
   | { kind: "editor"; filePath?: string; line?: number }
@@ -603,7 +621,6 @@ export function MuxApp({
   const sessionCwdPath = session.cwdPath
   const sessionProjectPath = session.projectPath
   const sessionTitle = session.title
-  const sessionWorktreeBranch = session.worktreeBranch
   const initialPayload = session.payload
 
   const workspaceManager = useMemo(
@@ -1656,12 +1673,25 @@ export function MuxApp({
 
   /** Open a terminal in the active window (fill empty, else split). */
   const openTerminalInActiveWindow = useCallback(
-    async (edge: "right" | "bottom" = "right") => {
+    async (
+      edge: "right" | "bottom" = "right",
+      options?: { rootUri?: string },
+    ) => {
       const w = ensureProjectWindow()
       if (listPaneLeaves(w.tree).length === 0 || !w.focusedPaneId) {
         if (!canAddTerminalPane(w.id)) return
-        const pane = allocTerminalPane()
+        const pane = allocTerminalPane(
+          options?.rootUri ? { rootUri: options.rootUri } : undefined,
+        )
         updateWindow(w.id, live => placeTerminalPane(live, pane))
+        return
+      }
+      if (options?.rootUri) {
+        if (!canAddTerminalPane(w.id)) return
+        const pane = allocTerminalPane({ rootUri: options.rootUri })
+        updateWindow(w.id, live =>
+          placeTerminalPane(live, pane, edge, w.focusedPaneId),
+        )
         return
       }
       await splitPane(w.id, w.focusedPaneId, edge)
@@ -1674,10 +1704,19 @@ export function MuxApp({
     async (
       driver: AgentCliDriver,
       launchRequestId = `agent-${Date.now()}-${driver.id}`,
+      checkout?: {
+        checkoutPath?: string
+        checkoutKey?: string
+        checkoutLabel?: string
+      },
     ): Promise<{ tabId: string; runId: string } | null> => {
       const w = ensureProjectWindow()
       if (!canAddTerminalPane(w.id)) return null
-      const rootUri = cwdUri()
+      const checkoutPath = checkout?.checkoutPath?.trim() || sessionProjectPath
+      const rootUri = pathToFileUri(checkoutPath)
+      const checkoutKey =
+        checkout?.checkoutKey?.trim() ||
+        (checkoutPath === sessionProjectPath ? "main" : checkoutPath)
       const api = window.yaade?.agents
       if (!api) throw new Error("Agent management is unavailable")
       const launched = await api.launch({
@@ -1685,7 +1724,8 @@ export function MuxApp({
         provider: driver.id,
         projectId,
         workspaceId: sessionId,
-        checkoutKey: session.checkoutKey,
+        checkoutKey,
+        checkoutPath,
         title: driver.label,
       })
       if (!launched.pty?.id || launched.run.processState !== "running") {
@@ -1718,12 +1758,122 @@ export function MuxApp({
       cwdUri,
       ensureProjectWindow,
       projectId,
-      session.checkoutKey,
+      sessionProjectPath,
       sessionId,
       updateWindow,
       workspace,
     ],
   )
+
+  /**
+   * Reconcile agents launched outside this Mux instance (for example from HQ)
+   * back into the project session layout. Agent runs are authoritative on the
+   * host; the layout is only a view of them, so an empty payload must not hide
+   * a still-running PTY.
+   */
+  const reconcileLiveAgentRuns = useCallback(
+    (runs: readonly AgentRunInfo[]) => {
+      const currentWindows = windowsRef.current
+      const currentWindow =
+        currentWindows.find(w => w.id === activeWindowIdRef.current) ??
+        currentWindows[0]
+      if (!currentWindow) return
+
+      let nextWindow = currentWindow
+      let changed = false
+      for (const run of runs) {
+        if (
+          run.workspaceId !== sessionId ||
+          !run.ptyId ||
+          (run.processState !== "running" && run.processState !== "starting")
+        ) {
+          continue
+        }
+
+        const tabId = terminalTabId(run.runId)
+        const existing = terminalSessionForTab(tabId)
+        if (existing) {
+          if (existing.ptyId !== run.ptyId) {
+            trackTerminalPtyId(tabId, run.ptyId)
+          }
+          if (!workspace.tabRegistry.get(tabId)) {
+            workspace.registerTab({
+              id: tabId,
+              kind: "terminal",
+              label: existing.agentTitle ?? run.title,
+            })
+          }
+        } else {
+          hydrateTerminalSession({
+            tabId,
+            cwdRootUri: pathToFileUri(run.checkoutPath),
+            ptyId: run.ptyId,
+            status: "running",
+            customLabel: run.title,
+            agentId: run.provider,
+            agentTitle: run.title,
+            agentDriverId: agentDriverIdForMode(run.provider, "cli"),
+          })
+          workspace.registerTab({
+            id: tabId,
+            kind: "terminal",
+            label: run.title,
+          })
+          changed = true
+        }
+
+        if (!listTerminalLeaves(nextWindow.tree).some(leaf => leaf.ptyTabId === tabId)) {
+          nextWindow = placeTerminalPane(
+            nextWindow,
+            {
+              ptyTabId: tabId,
+              label: run.title,
+              rootUri: pathToFileUri(run.checkoutPath),
+            },
+            "right",
+            nextWindow.focusedPaneId,
+          )
+          changed = true
+        }
+      }
+
+      if (!changed) return
+      const nextWindows = currentWindows.map(window =>
+        window.id === nextWindow.id ? nextWindow : window,
+      )
+      windowsRef.current = nextWindows
+      setWindows(nextWindows)
+      bumpSessions()
+    },
+    [sessionId, workspace],
+  )
+
+  useEffect(() => {
+    if (!layoutReady || !serverHydratedRef.current) return
+    const api = window.yaade?.agents
+    if (!api) return
+    let cancelled = false
+    const reconcile = () => {
+      void api.listLive(projectId).then(runs => {
+        if (!cancelled) reconcileLiveAgentRuns(runs)
+      }).catch(() => {
+        /* The project surface remains usable if live-agent reconciliation is unavailable. */
+      })
+    }
+    reconcile()
+    const off = api.onEvent(event => {
+      if (
+        event.type === "agents.run" &&
+        event.run?.workspaceId === sessionId
+      ) {
+        reconcile()
+      }
+    })
+    return () => {
+      cancelled = true
+      off?.()
+    }
+  }, [layoutReady, projectId, reconcileLiveAgentRuns, sessionId])
 
   const openGitSplit = useCallback(
     async (windowId: string, panelId: PanelId | null) => {
@@ -2290,6 +2440,8 @@ export function MuxApp({
   closePaneRef.current = closePane
   const openTerminalInActiveWindowRef = useRef(openTerminalInActiveWindow)
   openTerminalInActiveWindowRef.current = openTerminalInActiveWindow
+  const surfaceRef = useRef(surface)
+  surfaceRef.current = surface
   const openGitSplitRef = useRef(openGitSplit)
   openGitSplitRef.current = openGitSplit
   const openNeovimSplitRef = useRef(openNeovimSplit)
@@ -2461,6 +2613,21 @@ export function MuxApp({
     [getActiveDocument, openInPreferredEditor, workspace],
   )
 
+  const [terminalCheckoutOpen, setTerminalCheckoutOpen] = useState(false)
+  const [terminalDefaultBranch, setTerminalDefaultBranch] = useState("main")
+
+  useEffect(() => {
+    let cancelled = false
+    void window.yaade?.git
+      ?.defaultBranch(pathToFileUri(sessionProjectPath))
+      .then(branch => {
+        if (!cancelled && branch?.trim()) setTerminalDefaultBranch(branch.trim())
+      })
+      .catch(() => undefined)
+    return () => {
+      cancelled = true
+    }
+  }, [sessionProjectPath])
   const [keymapRevision, setKeymapRevision] = useState(0)
   const [commandRevision, setCommandRevision] = useState(0)
 
@@ -2481,14 +2648,21 @@ export function MuxApp({
         if (action.kind === "agent") {
           const driver = AGENT_CLI_DRIVERS.find(item => item.id === action.driverId)
           if (!driver) throw new Error(`Unknown agent provider: ${action.driverId}`)
-          const opened = await openAgentCliPane(driver, launchRequest.id)
+          const opened = await openAgentCliPane(driver, launchRequest.id, {
+            checkoutPath: action.checkoutPath,
+            checkoutKey: action.checkoutKey,
+            checkoutLabel: action.checkoutLabel,
+          })
           agentTabId = opened?.tabId ?? null
           agentRunId = opened?.runId ?? null
           if (!opened) {
             showYaadeToast("Could not open another terminal pane for that agent.")
           }
         } else if (action.kind === "terminal") {
-          await openTerminalInActiveWindow("right")
+          const rootUri = action.checkoutPath
+            ? pathToFileUri(action.checkoutPath)
+            : undefined
+          await openTerminalInActiveWindow("right", rootUri ? { rootUri } : undefined)
         } else if (action.kind === "git") {
           const window = ensureProjectWindow()
           await openGitSplit(window.id, window.focusedPaneId)
@@ -2563,6 +2737,10 @@ export function MuxApp({
       commands.register(
         "terminal.new",
         run(() => {
+          if (surfaceRef.current === "terminals") {
+            setTerminalCheckoutOpen(true)
+            return
+          }
           void openTerminalInActiveWindowRef.current("right")
         }),
         { id: "terminal.new", title: "New Terminal Pane", category: "Terminal" },
@@ -3661,27 +3839,40 @@ export function MuxApp({
   const agentSidebarItems = useMemo((): InstanceSidebarItem[] => {
     return agentInstanceTabIds.map(id => {
       const session = terminalSessionForTab(id)
+      const worktree = checkoutLabelFromUri(
+        sessionProjectPath,
+        session?.cwdRootUri ?? null,
+      )
       return {
         id,
         label: session?.agentTitle || paneTitle(id),
-        subtitle: session?.status ?? undefined,
+        subtitle: worktree,
         icon: <Bot className="size-3.5 shrink-0 text-muted-foreground" />,
       }
     })
-  }, [agentInstanceTabIds, paneTitle, terminalSessionsRevision])
+  }, [agentInstanceTabIds, paneTitle, sessionProjectPath, terminalSessionsRevision])
   const terminalSidebarItems = useMemo((): InstanceSidebarItem[] => {
     return terminalSurfaceLeaves.map(leaf => {
       const session = terminalSessionForTab(leaf.ptyTabId)
+      const worktree = checkoutLabelFromUri(
+        sessionProjectPath,
+        session?.cwdRootUri ?? null,
+      )
       return {
         id: leaf.ptyTabId,
         label: paneTitle(leaf.ptyTabId),
-        subtitle: session?.status ?? undefined,
+        subtitle: worktree,
         icon: (
           <SquareTerminal className="size-3.5 shrink-0 text-muted-foreground" />
         ),
       }
     })
-  }, [paneTitle, terminalSessionsRevision, terminalSurfaceLeaves])
+  }, [
+    paneTitle,
+    sessionProjectPath,
+    terminalSessionsRevision,
+    terminalSurfaceLeaves,
+  ])
 
   const paneBoxes = useMuxPaneBoxes(
     workspaceSurfaceRef,
@@ -4571,7 +4762,6 @@ export function MuxApp({
         data-yaade-mux=""
         data-yaade-session-id={sessionId}
         data-yaade-session-cwd={sessionCwdPath}
-        data-yaade-worktree-branch={sessionWorktreeBranch ?? undefined}
       >
         {!embedded && (onBackToProject || sessionTitle) ? (
           <div
@@ -4593,11 +4783,6 @@ export function MuxApp({
             <span className="truncate text-xs font-medium text-foreground">
               {sessionTitle}
             </span>
-            {sessionWorktreeBranch ? (
-              <span className="rounded-md border border-border px-1.5 py-0.5 font-mono text-3xs text-muted-foreground">
-                {sessionWorktreeBranch}
-              </span>
-            ) : null}
           </div>
         ) : null}
         <div
@@ -4605,43 +4790,41 @@ export function MuxApp({
           className="relative min-h-0 min-w-0 flex-1 overflow-hidden"
           data-yaade-mux-surface={surface ?? "full"}
         >
-              {surface === "agents" ? (
+          {surface === "agents" ? (
                 <div
                   ref={dockSurfaceRef}
                   className="absolute inset-0 flex min-h-0"
                   data-yaade-project-surface="agents"
                 >
-                  {agentSidebarItems.length > 0 ? (
-                    <InstanceSidebar
-                      dataPrefix="agents"
-                      title="Agents"
-                      titleIcon={
-                        <Bot className="size-3.5 shrink-0 text-muted-foreground" />
-                      }
-                      items={agentSidebarItems}
-                      activeId={focusAgentTabId}
-                      listPanelId="project-agents"
-                      emptyLabel="No agents running in this worktree."
-                      onSelect={tabId => {
-                        onSelectAgentTab?.(tabId)
-                      }}
-                      onNew={() => {
-                        onLaunchAgent?.()
-                      }}
-                      onClose={tabId => {
-                        if (!activeWindow) return
-                        const leaf = listTerminalLeaves(activeWindow.tree).find(
-                          l => l.ptyTabId === tabId,
-                        )
-                        if (!leaf) return
-                        void closePane(
-                          activeWindow.id,
-                          leaf.panelId,
-                          leaf.ptyTabId,
-                        )
-                      }}
-                    />
-                  ) : null}
+                  <InstanceSidebar
+                    dataPrefix="agents"
+                    title="Agents"
+                    titleIcon={
+                      <Bot className="size-3.5 shrink-0 text-muted-foreground" />
+                    }
+                    items={agentSidebarItems}
+                    activeId={focusAgentTabId}
+                    listPanelId="project-agents"
+                    emptyLabel="No agents running."
+                    onSelect={tabId => {
+                      onSelectAgentTab?.(tabId)
+                    }}
+                    onNew={() => {
+                      onLaunchAgent?.()
+                    }}
+                    onClose={tabId => {
+                      if (!activeWindow) return
+                      const leaf = listTerminalLeaves(activeWindow.tree).find(
+                        l => l.ptyTabId === tabId,
+                      )
+                      if (!leaf) return
+                      void closePane(
+                        activeWindow.id,
+                        leaf.panelId,
+                        leaf.ptyTabId,
+                      )
+                    }}
+                  />
                   <div className="relative min-h-0 min-w-0 flex-1">
                     {focusAgentTabId &&
                     agentInstanceTabIds.includes(focusAgentTabId) ? (
@@ -4677,7 +4860,7 @@ export function MuxApp({
                           <p>That agent is no longer running.</p>
                         ) : (
                           <div className="max-w-sm">
-                            <p>No agents running in this worktree.</p>
+                            <p>No agents running.</p>
                             {onLaunchAgent ? (
                               <Button
                                 className="mt-3"
@@ -4803,7 +4986,7 @@ export function MuxApp({
                     items={terminalSidebarItems}
                     activeId={focusedPtyTabId}
                     listPanelId="project-terminals"
-                    emptyLabel="No terminals in this worktree."
+                    emptyLabel="No terminals yet."
                     onSelect={tabId => {
                       if (!activeWindow) return
                       const leaf = listTerminalLeaves(activeWindow.tree).find(
@@ -4813,7 +4996,7 @@ export function MuxApp({
                       focusPane(activeWindow.id, leaf.panelId, leaf.ptyTabId)
                     }}
                     onNew={() => {
-                      void openTerminalInActiveWindow("right")
+                      setTerminalCheckoutOpen(true)
                     }}
                     onClose={tabId => {
                       if (!activeWindow) return
@@ -4860,7 +5043,7 @@ export function MuxApp({
                           variant="secondary"
                           size="sm"
                           onClick={() => {
-                            void openTerminalInActiveWindow("right")
+                            setTerminalCheckoutOpen(true)
                           }}
                         >
                           New terminal
@@ -5084,6 +5267,42 @@ export function MuxApp({
           />
         </Suspense>
       ) : null}
+
+
+      <CheckoutPicker
+        mode="dialog"
+        open={terminalCheckoutOpen}
+        onOpenChange={setTerminalCheckoutOpen}
+        projectPath={sessionProjectPath}
+        homeDir={homeDir}
+        defaultBranch={terminalDefaultBranch}
+        activeLabel="Main"
+        activeCwdPath={sessionProjectPath}
+        allowRemove={false}
+        dialogTitle="New terminal"
+        dialogDescription="Choose Main or a worktree for this shell."
+        onSelectCheckout={async (selection: CheckoutSelection) => {
+          await openTerminalInActiveWindow("right", {
+            rootUri: pathToFileUri(selection.cwdPath),
+          })
+        }}
+        onCreateWorktree={async input => {
+          const created = await createProjectSession({
+            rootPath: sessionProjectPath,
+            title: "Main",
+            worktree: input,
+          })
+          const wt = created.createdWorktree
+          if (!wt) throw new Error("Worktree was not created")
+          return {
+            cwdPath: wt.path,
+            title: wt.branch,
+            worktreeBranch: wt.branch,
+            worktreePath: wt.path,
+            checkoutKey: wt.path,
+          }
+        }}
+      />
 
       <ConfirmDialogHost />
       {editorRuntimeNeeded ? (

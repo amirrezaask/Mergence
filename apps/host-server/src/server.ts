@@ -837,10 +837,11 @@ async function handleHttp(
       const body = (await readJson(req)) as {
         rootPath?: string
         title?: string
-        /** Attach an existing checkout without running `git worktree add`. */
+        /** @deprecated Ignored — one session per project at the repo root. */
         cwdPath?: string
         worktreeBranch?: string | null
         worktreePath?: string | null
+        /** When set, create a git worktree only (session stays Main). */
         worktree?: { branch?: string; baseRef?: string; createBranch?: boolean }
       }
       const rootPath = typeof body.rootPath === "string" ? body.rootPath.trim() : ""
@@ -865,12 +866,11 @@ async function handleHttp(
         return
       }
 
-      let cwdPath = rootPath
-      let worktreeBranch: string | null = null
-      let worktreePath: string | null = null
+      let createdWorktree: { path: string; branch: string } | null = null
       const worktree = body.worktree
       if (worktree && typeof worktree.branch === "string" && worktree.branch.trim()) {
         const branch = worktree.branch.trim()
+        let worktreePath: string
         try {
           worktreePath = resolveWorktreePath({
             homeDir: runtime.homeDir,
@@ -907,15 +907,10 @@ async function handleHttp(
                 : undefined,
             createBranch: worktree.createBranch !== false,
           })
-          cwdPath = worktreePath
-          worktreeBranch = branch
+          createdWorktree = { path: worktreePath, branch }
         } catch (error) {
-          // A concurrent/idempotent request may have created the valid Git
-          // worktree before its workspace row was inserted. Adopt it instead
-          // of force-deleting shared state.
-          if (worktreePath && fs.existsSync(worktreePath) && fs.statSync(worktreePath).isDirectory()) {
-            cwdPath = worktreePath
-            worktreeBranch = branch
+          if (fs.existsSync(worktreePath) && fs.statSync(worktreePath).isDirectory()) {
+            createdWorktree = { path: worktreePath, branch }
           } else {
             sendJson(res, 400, {
               error: {
@@ -927,55 +922,24 @@ async function handleHttp(
             return
           }
         }
-      } else if (typeof body.cwdPath === "string" && body.cwdPath.trim()) {
-        const attachCwd = body.cwdPath.trim()
-        if (!pathAllowed(attachCwd, runtime.config.allowedRoots)) {
-          sendJson(res, 403, {
-            error: {
-              code: "PATH_OUTSIDE_ALLOWED_ROOTS",
-              message: "cwdPath outside allowed roots",
-              details: {},
-            },
-          })
-          return
-        }
-        cwdPath = attachCwd
-        if (typeof body.worktreeBranch === "string" && body.worktreeBranch.trim()) {
-          worktreeBranch = body.worktreeBranch.trim()
-        }
-        if (typeof body.worktreePath === "string" && body.worktreePath.trim()) {
-          const attachWt = body.worktreePath.trim()
-          if (!pathAllowed(attachWt, runtime.config.allowedRoots)) {
-            sendJson(res, 403, {
-              error: {
-                code: "PATH_OUTSIDE_ALLOWED_ROOTS",
-                message: "worktreePath outside allowed roots",
-                details: {},
-              },
-            })
-            return
-          }
-          worktreePath = attachWt
-        } else if (attachCwd !== rootPath) {
-          worktreePath = attachCwd
-        }
       }
 
       try {
-        const created = runtime.db.openProjectCheckout({
+        const session = runtime.db.ensureProjectSession({
           machine: runtime.machineHostname,
           projectPath: rootPath,
-          cwdPath,
           title:
             typeof body.title === "string" && body.title.trim()
               ? body.title.trim()
-              : worktreeBranch
-                ? worktreeBranch
-                : "Session",
-          worktreeBranch,
-          worktreePath,
+              : "Main",
         })
-        sendJson(res, 201, created)
+        sendJson(
+          res,
+          createdWorktree ? 201 : 200,
+          createdWorktree
+            ? { ...session, createdWorktree }
+            : session,
+        )
       } catch (error) {
         sendJson(res, 400, {
           error: {
@@ -996,39 +960,137 @@ async function handleHttp(
       checkoutKey?: string
       cwdPath?: string
       title?: string
-      worktreeBranch?: string | null
-      worktreePath?: string | null
     }
     const project = typeof body.projectId === "string" ? runtime.db.project(body.projectId) : null
     const rootPath = project?.rootPath ?? (typeof body.rootPath === "string" ? body.rootPath.trim() : "")
-    const checkoutKey = typeof body.checkoutKey === "string" ? body.checkoutKey.trim() : ""
-    const cwdPath = checkoutKey === "main" ? rootPath : (typeof body.cwdPath === "string" ? body.cwdPath.trim() : "")
-    if (!rootPath || !cwdPath) {
-      sendJson(res, 400, { error: { code: "INVALID_CHECKOUT", message: "project and checkout path required", details: {} } })
+    if (!rootPath) {
+      sendJson(res, 400, { error: { code: "INVALID_CHECKOUT", message: "project root required", details: {} } })
       return
     }
-    if (!pathAllowed(rootPath, runtime.config.allowedRoots) || !pathAllowed(cwdPath, runtime.config.allowedRoots)) {
-      sendJson(res, 403, { error: { code: "FORBIDDEN", message: "checkout outside allowed roots", details: {} } })
+    if (!pathAllowed(rootPath, runtime.config.allowedRoots)) {
+      sendJson(res, 403, { error: { code: "FORBIDDEN", message: "project outside allowed roots", details: {} } })
       return
     }
     try {
       const rootStat = fs.statSync(rootPath)
-      const cwdStat = fs.statSync(cwdPath)
-      if (!rootStat.isDirectory() || !cwdStat.isDirectory()) {
-        sendJson(res, 400, { error: { code: "NOT_DIRECTORY", message: "project and checkout must be directories", details: {} } })
+      if (!rootStat.isDirectory()) {
+        sendJson(res, 400, { error: { code: "NOT_DIRECTORY", message: "project must be a directory", details: {} } })
         return
       }
-      const session = runtime.db.openProjectCheckout({
+      // One session per project — open-checkout always returns Main.
+      const session = runtime.db.ensureProjectSession({
         machine: runtime.machineHostname,
         projectPath: rootPath,
-        cwdPath,
         title: typeof body.title === "string" ? body.title : undefined,
-        worktreeBranch: typeof body.worktreeBranch === "string" ? body.worktreeBranch : null,
-        worktreePath: typeof body.worktreePath === "string" ? body.worktreePath : null,
       })
       sendJson(res, 200, session)
     } catch (error) {
       sendJson(res, 400, { error: { code: "INVALID_CHECKOUT", message: error instanceof Error ? error.message : String(error), details: {} } })
+    }
+    return
+  }
+
+  if (pathname === "/api/v1/project-worktrees" && req.method === "DELETE") {
+    const body = (await readJson(req)) as {
+      rootPath?: string
+      worktreePath?: string
+    }
+    const rootPath = typeof body.rootPath === "string" ? body.rootPath.trim() : ""
+    const worktreePath =
+      typeof body.worktreePath === "string" ? body.worktreePath.trim() : ""
+    if (!rootPath || !worktreePath) {
+      sendJson(res, 400, {
+        error: {
+          code: "INVALID_WORKTREE",
+          message: "rootPath and worktreePath required",
+          details: {},
+        },
+      })
+      return
+    }
+    if (
+      !pathAllowed(rootPath, runtime.config.allowedRoots) ||
+      !pathAllowed(worktreePath, runtime.config.allowedRoots)
+    ) {
+      sendJson(res, 403, {
+        error: {
+          code: "PATH_OUTSIDE_ALLOWED_ROOTS",
+          message: "path outside allowed roots",
+          details: {},
+        },
+      })
+      return
+    }
+    const session = runtime.db.ensureProjectSession({
+      machine: runtime.machineHostname,
+      projectPath: rootPath,
+    })
+    const busyLeaves = runtime.db.listLeavesForCheckout(session.id, worktreePath)
+    const project = runtime.db.projects().find(p => {
+      try {
+        return fs.realpathSync(p.rootPath) === fs.realpathSync(rootPath)
+      } catch {
+        return p.rootPath === rootPath
+      }
+    })
+    const blockingAgents = runtime.agentRuns
+      .listLive(project?.id)
+      .filter(run => {
+        try {
+          return (
+            fs.realpathSync(run.checkoutPath) === fs.realpathSync(worktreePath)
+          )
+        } catch {
+          return run.checkoutPath === worktreePath
+        }
+      })
+      .map(run => ({ kind: "agent" as const, id: run.runId, title: run.title }))
+    const blockingTerminals = busyLeaves
+      .filter(leaf => leaf.ptyId && runtime.terminal.inspect(leaf.ptyId)?.status === "running")
+      .map(leaf => ({
+        kind: "terminal" as const,
+        id: leaf.ptyId!,
+        title: leaf.label ?? leaf.agentTitle ?? "Terminal",
+      }))
+    const dirtyEditors = runtime.db
+      .listEditorRecoveryBuffers(session.id)
+      .filter(buffer => {
+        try {
+          return pathAllowed(uriToPath(buffer.uri), [worktreePath])
+        } catch {
+          return false
+        }
+      })
+      .map(buffer => ({
+        kind: "editor" as const,
+        id: buffer.uri,
+        title: buffer.uri,
+      }))
+    const blockers = [...blockingAgents, ...blockingTerminals, ...dirtyEditors]
+    if (blockers.length > 0) {
+      const blockerNames = blockers.slice(0, 6).map(b => b.title).join(", ")
+      sendJson(res, 409, {
+        error: {
+          code: "WORKTREE_IN_USE",
+          message: `Worktree is in use by ${blockerNames}${blockers.length > 6 ? ` and ${blockers.length - 6} more` : ""}. Stop them first.`,
+          details: { blockers },
+        },
+      })
+      return
+    }
+    try {
+      await gitWorktreeRemove(pathToFileUri(rootPath), worktreePath, {
+        force: false,
+      })
+      sendJson(res, 200, { ok: true })
+    } catch (error) {
+      sendJson(res, 400, {
+        error: {
+          code: "WORKTREE_REMOVE_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+          details: {},
+        },
+      })
     }
     return
   }
@@ -1158,47 +1220,16 @@ async function handleHttp(
         return
       }
       const removeWorktree = url.searchParams.get("removeWorktree") === "1"
-      if (removeWorktree && existing.worktreePath) {
-        const blockingAgents = runtime.agentRuns
-          .listLive()
-          .filter(run => run.checkoutPath === existing.cwdPath)
-          .map(run => ({ kind: "agent", id: run.runId, title: run.title }))
-        const blockingTerminals = existing.payload.sessions
-          .filter(leaf => {
-            if (!leaf.ptyId) return false
-            return runtime.terminal.inspect(leaf.ptyId)?.status === "running"
-          })
-          .map(leaf => ({ kind: "terminal", id: leaf.ptyId!, title: leaf.label ?? "Terminal" }))
-        const dirtyEditors = runtime.db.listEditorRecoveryBuffers(existing.id)
-          .map(buffer => ({ kind: "editor", id: buffer.uri, title: buffer.uri }))
-        const blockers = [...blockingAgents, ...blockingTerminals, ...dirtyEditors]
-        if (blockers.length > 0) {
-          const blockerNames = blockers.slice(0, 6).map(blocker => blocker.title).join(", ")
-          sendJson(res, 409, {
-            error: {
-              code: "WORKTREE_IN_USE",
-              message: `Worktree is in use by ${blockerNames}${blockers.length > 6 ? ` and ${blockers.length - 6} more` : ""}. Stop them first.`,
-              details: { blockers },
-            },
-          })
-          return
-        }
-        try {
-          await gitWorktreeRemove(
-            pathToFileUri(existing.projectPath),
-            existing.worktreePath,
-            { force: false },
-          )
-        } catch (error) {
-          sendJson(res, 400, {
-            error: {
-              code: "WORKTREE_REMOVE_FAILED",
-              message: error instanceof Error ? error.message : String(error),
-              details: {},
-            },
-          })
-          return
-        }
+      if (removeWorktree) {
+        sendJson(res, 400, {
+          error: {
+            code: "WORKTREE_NOT_SESSION_SCOPED",
+            message:
+              "Worktrees are no longer tied to sessions. Use DELETE /api/v1/project-worktrees.",
+            details: {},
+          },
+        })
+        return
       }
       runtime.db.deleteProjectSession(sessionId)
       sendJson(res, 200, { ok: true })

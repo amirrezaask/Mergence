@@ -108,6 +108,86 @@ function parseLaunchArgsJson(value: string | null): unknown {
   }
 }
 
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null
+  return Object.fromEntries(Object.entries(value))
+}
+
+function maxPanelId(node: unknown): number {
+  const record = objectRecord(node)
+  if (!record) return 0
+  if (record.kind === "leaf") {
+    const panelId = objectRecord(record.panelId)
+    return typeof panelId?.id === "number" ? panelId.id : 0
+  }
+  const split = objectRecord(record.split)
+  if (!split || !Array.isArray(split.children)) return 0
+  let max = 0
+  for (const child of split.children) max = Math.max(max, maxPanelId(child))
+  return max
+}
+
+function remapPanelIds(
+  node: unknown,
+  nextPanelId: { value: number },
+): unknown | null {
+  const record = objectRecord(node)
+  if (!record) return null
+  if (record.kind === "leaf") {
+    const panelId = objectRecord(record.panelId)
+    if (!panelId || typeof panelId.id !== "number") return null
+    const id = nextPanelId.value++
+    return { ...record, panelId: { ...panelId, id } }
+  }
+  if (record.kind !== "row" && record.kind !== "column") return null
+  const split = objectRecord(record.split)
+  if (!split || !Array.isArray(split.children)) return null
+  const children = split.children
+    .map(child => remapPanelIds(child, nextPanelId))
+    .filter(child => child != null)
+  if (children.length === 0) return null
+  return { ...record, split: { ...split, children } }
+}
+
+/** Keep panes from checkout-scoped sessions reachable after the one-session migration. */
+function mergeProjectSessionLayouts(
+  base: ProjectSessionPayload["layout"],
+  extra: ProjectSessionPayload["layout"],
+): ProjectSessionPayload["layout"] {
+  const baseTree = objectRecord(base.tree)
+  const extraTree = objectRecord(extra.tree)
+  if (!extraTree) return base
+  const extraRoot = extraTree.root
+  if (!extraRoot) return base
+
+  const declaredNext =
+    typeof baseTree?.nextPanelId === "number" ? baseTree.nextPanelId : 1
+  const nextPanelId = {
+    value: Math.max(declaredNext, maxPanelId(baseTree?.root) + 1),
+  }
+  const remappedRoot = remapPanelIds(extraRoot, nextPanelId)
+  if (!remappedRoot) return base
+
+  const baseRoot = baseTree?.root
+  const root = baseRoot
+    ? {
+        kind: "row",
+        split: {
+          children: [baseRoot, remappedRoot],
+          ratios: [0.5, 0.5],
+        },
+      }
+    : remappedRoot
+  return {
+    ...base,
+    tree: {
+      ...(baseTree ?? {}),
+      root,
+      nextPanelId: nextPanelId.value,
+    },
+  }
+}
+
 /** Validate + normalize a PUT body. Returns null when structurally invalid. */
 export function parseSessionRosterBody(raw: unknown): SessionRoster | null {
   return tryDecodeSessionRoster(raw)
@@ -200,6 +280,7 @@ export class ProjectDatabase {
     `)
     this.migrateWorkspaceSessionsToProjectSessions()
     this.migrateCanonicalProjectSessions()
+    this.migrateOneSessionPerProject()
   }
 
   /**
@@ -252,6 +333,181 @@ export class ProjectDatabase {
           WHERE archived_at IS NULL;
       `)
       this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(10)").run()
+      this.db.exec("COMMIT")
+    } catch (error) {
+      try { this.db.exec("ROLLBACK") } catch { /* ignore */ }
+      throw error
+    }
+  }
+
+  /**
+   * Per-surface worktrees: one live session per project (cwd = repo root).
+   * Merge checkout-scoped sessions into Main, preserving leaf cwdRootUri values.
+   */
+  private migrateOneSessionPerProject(): void {
+    const migrated = this.db
+      .prepare("SELECT version FROM schema_migrations WHERE version=11")
+      .get() as { version: number } | undefined
+    const targetIndex = this.db
+      .prepare(
+        "SELECT name FROM sqlite_master WHERE type='index' AND name='project_sessions_one_active_project'",
+      )
+      .get() as { name: string } | undefined
+    // Version 11 was briefly emitted before the index migration was finalized.
+    // Verify the schema itself so those databases are repaired on next boot.
+    if (migrated && targetIndex) return
+
+    this.db.exec("BEGIN IMMEDIATE")
+    try {
+      const active = this.db.prepare(
+        `SELECT id, machine, project_path, cwd_path, title, worktree_path, payload_json,
+                created_at, updated_at
+           FROM project_sessions
+          WHERE archived_at IS NULL
+          ORDER BY updated_at DESC, created_at DESC, id DESC`,
+      ).all() as Array<{
+        id: string
+        machine: string
+        project_path: string
+        cwd_path: string
+        title: string
+        worktree_path: string | null
+        payload_json: string
+        created_at: string
+        updated_at: string
+      }>
+
+      type Group = {
+        machine: string
+        projectPath: string
+        rows: typeof active
+      }
+      const groups = new Map<string, Group>()
+      for (const row of active) {
+        const projectPath = this.canonicalizeRootPath(row.project_path)
+        const key = `${row.machine}\0${projectPath}`
+        const group = groups.get(key) ?? {
+          machine: row.machine,
+          projectPath,
+          rows: [],
+        }
+        group.rows.push({
+          ...row,
+          project_path: projectPath,
+          cwd_path: this.canonicalizeRootPath(row.cwd_path),
+          worktree_path: row.worktree_path
+            ? this.canonicalizeRootPath(row.worktree_path)
+            : null,
+        })
+        groups.set(key, group)
+      }
+
+      const now = new Date().toISOString()
+      const archive = this.db.prepare(
+        `UPDATE project_sessions
+            SET archived_at=COALESCE(archived_at, ?), updated_at=?
+          WHERE id=?`,
+      )
+      const normalizeSurvivor = this.db.prepare(
+        `UPDATE project_sessions
+            SET project_path=?, cwd_path=?, title=?,
+                worktree_branch=NULL, worktree_path=NULL,
+                payload_json=?, updated_at=?
+          WHERE id=?`,
+      )
+
+      for (const group of groups.values()) {
+        const main = group.rows.find(row => row.cwd_path === group.projectPath)
+        const survivor = main ?? group.rows[0]!
+        const losers = group.rows.filter(row => row.id !== survivor.id)
+
+        let payload = emptyProjectSessionPayload()
+        try {
+          const decoded = tryDecodeProjectSessionPayload(
+            JSON.parse(survivor.payload_json),
+          )
+          if (decoded) payload = decoded
+        } catch {
+          /* corrupt */
+        }
+
+        const seenTabs = new Set(payload.sessions.map(leaf => leaf.ptyTabId))
+        const gitRoots = { ...(payload.gitRoots ?? {}) }
+        const editorFiles = { ...(payload.editorFiles ?? {}) }
+        const editorViewStates = { ...(payload.editorViewStates ?? {}) }
+
+        for (const loser of losers) {
+          let loserPayload = emptyProjectSessionPayload()
+          try {
+            const decoded = tryDecodeProjectSessionPayload(
+              JSON.parse(loser.payload_json),
+            )
+            if (decoded) loserPayload = decoded
+          } catch {
+            /* corrupt */
+          }
+          payload = {
+            ...payload,
+            layout: mergeProjectSessionLayouts(
+              payload.layout,
+              loserPayload.layout,
+            ),
+          }
+          for (const leaf of loserPayload.sessions) {
+            if (seenTabs.has(leaf.ptyTabId)) continue
+            seenTabs.add(leaf.ptyTabId)
+            payload = {
+              ...payload,
+              sessions: [...payload.sessions, leaf],
+            }
+          }
+          if (loserPayload.gitRoots) {
+            for (const [tabId, rootUri] of Object.entries(loserPayload.gitRoots)) {
+              if (!(tabId in gitRoots)) gitRoots[tabId] = rootUri
+            }
+          }
+          if (loserPayload.editorFiles) {
+            for (const [tabId, file] of Object.entries(loserPayload.editorFiles)) {
+              if (!(tabId in editorFiles)) editorFiles[tabId] = file
+            }
+          }
+          if (loserPayload.editorViewStates) {
+            for (const [tabId, state] of Object.entries(
+              loserPayload.editorViewStates,
+            )) {
+              if (!(tabId in editorViewStates)) editorViewStates[tabId] = state
+            }
+          }
+          archive.run(now, now, loser.id)
+        }
+
+        const merged: ProjectSessionPayload = {
+          version: 2,
+          layout: payload.layout,
+          sessions: payload.sessions,
+          ...(Object.keys(gitRoots).length > 0 ? { gitRoots } : {}),
+          ...(Object.keys(editorFiles).length > 0 ? { editorFiles } : {}),
+          ...(Object.keys(editorViewStates).length > 0
+            ? { editorViewStates }
+            : {}),
+        }
+        normalizeSurvivor.run(
+          group.projectPath,
+          group.projectPath,
+          survivor.title.trim() || "Main",
+          JSON.stringify(this.normalizePayload(merged)),
+          now,
+          survivor.id,
+        )
+      }
+
+      this.db.exec(`
+        DROP INDEX IF EXISTS project_sessions_one_active_checkout;
+        CREATE UNIQUE INDEX IF NOT EXISTS project_sessions_one_active_project
+          ON project_sessions(machine, project_path)
+          WHERE archived_at IS NULL;
+      `)
+      this.db.prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(11)").run()
       this.db.exec("COMMIT")
     } catch (error) {
       try { this.db.exec("ROLLBACK") } catch { /* ignore */ }
@@ -943,8 +1199,9 @@ export class ProjectDatabase {
     const machine = input.machine.trim()
     if (!machine) throw new Error("invalid project session machine")
     const projectPath = this.canonicalizeRootPath(input.projectPath)
-    const cwdPath = this.canonicalizeRootPath(input.cwdPath)
-    const title = input.title.trim() || "Session"
+    // One session per project — cwd is always the project root.
+    const cwdPath = projectPath
+    const title = input.title.trim() || "Main"
     const payload = tryDecodeProjectSessionPayload(
       input.payload ?? emptyProjectSessionPayload(),
     )
@@ -952,14 +1209,14 @@ export class ProjectDatabase {
     const id = `ses-${randomUUID()}`
     const now = new Date().toISOString()
     this.openProject(projectPath)
-    // Compatibility path for callers that explicitly create a new named
-    // session: preserve its layout by archiving the older active checkout.
+    // Explicit create archives the previous live project session so callers
+    // that mint a fresh layout (tests, recovery) still get a clean row.
     this.db
       .prepare(
         `UPDATE project_sessions SET archived_at=?, updated_at=?
-          WHERE machine=? AND project_path=? AND cwd_path=? AND archived_at IS NULL`,
+          WHERE machine=? AND project_path=? AND archived_at IS NULL`,
       )
-      .run(now, now, machine, projectPath, cwdPath)
+      .run(now, now, machine, projectPath)
     this.db
       .prepare(
         `INSERT INTO project_sessions(
@@ -974,8 +1231,8 @@ export class ProjectDatabase {
         projectPath,
         cwdPath,
         title,
-        input.worktreeBranch ?? null,
-        input.worktreePath ?? null,
+        null,
+        null,
         JSON.stringify(this.normalizePayload(payload)),
         now,
         now,
@@ -985,26 +1242,66 @@ export class ProjectDatabase {
     return created
   }
 
-  /** Return the one active persistent workspace for this canonical checkout. */
+  /**
+   * Return the one active persistent workspace for this project (cwd = root).
+   * `cwdPath` / worktree fields are ignored — worktrees are per-pane, not sessions.
+   */
   openProjectCheckout(input: {
     machine: string
     projectPath: string
-    cwdPath: string
+    cwdPath?: string
     title?: string
     worktreeBranch?: string | null
     worktreePath?: string | null
   }): ProjectSession {
+    return this.ensureProjectSession({
+      machine: input.machine,
+      projectPath: input.projectPath,
+      title: input.title,
+    })
+  }
+
+  /** Idempotent Main session for a project. */
+  ensureProjectSession(input: {
+    machine: string
+    projectPath: string
+    title?: string
+  }): ProjectSession {
     const machine = input.machine.trim()
     if (!machine) throw new Error("invalid project session machine")
     const projectPath = fs.realpathSync(path.resolve(input.projectPath))
-    const cwdPath = fs.realpathSync(path.resolve(input.cwdPath))
     const existing = this.db.prepare(
       `SELECT id, machine, project_path, cwd_path, title, worktree_branch,
               worktree_path, payload_json, created_at, updated_at, archived_at
          FROM project_sessions
-        WHERE machine=? AND project_path=? AND cwd_path=? AND archived_at IS NULL`,
-    ).get(machine, projectPath, cwdPath) as Parameters<ProjectDatabase["mapProjectSession"]>[0] | undefined
-    if (existing) return this.mapProjectSession(existing)
+        WHERE machine=? AND project_path=? AND archived_at IS NULL`,
+    ).get(machine, projectPath) as Parameters<ProjectDatabase["mapProjectSession"]>[0] | undefined
+    if (existing) {
+      if (
+        existing.cwd_path !== projectPath ||
+        existing.worktree_branch != null ||
+        existing.worktree_path != null
+      ) {
+        const now = new Date().toISOString()
+        this.db
+          .prepare(
+            `UPDATE project_sessions
+                SET cwd_path=?, title=?, worktree_branch=NULL, worktree_path=NULL,
+                    updated_at=?
+              WHERE id=?`,
+          )
+          .run(
+            projectPath,
+            existing.title?.trim() || input.title?.trim() || "Main",
+            now,
+            existing.id,
+          )
+        const normalized = this.getProjectSession(existing.id)
+        if (!normalized) throw new Error("failed to normalize project session")
+        return normalized
+      }
+      return this.mapProjectSession(existing)
+    }
 
     const id = `ses-${randomUUID()}`
     const now = new Date().toISOString()
@@ -1016,25 +1313,48 @@ export class ProjectDatabase {
            worktree_path, payload_json, created_at, updated_at, archived_at
          ) VALUES(?,?,?,?,?,?,?,?,?,?,NULL)`,
       ).run(
-        id, machine, projectPath, cwdPath,
-        input.title?.trim() || input.worktreeBranch?.trim() || (cwdPath === projectPath ? "Main" : "Worktree"),
-        input.worktreeBranch ?? null,
-        input.worktreePath ? fs.realpathSync(path.resolve(input.worktreePath)) : (cwdPath === projectPath ? null : cwdPath),
-        JSON.stringify(this.normalizePayload(emptyProjectSessionPayload())), now, now,
+        id,
+        machine,
+        projectPath,
+        projectPath,
+        input.title?.trim() || "Main",
+        null,
+        null,
+        JSON.stringify(this.normalizePayload(emptyProjectSessionPayload())),
+        now,
+        now,
       )
     } catch (error) {
       const raced = this.db.prepare(
         `SELECT id, machine, project_path, cwd_path, title, worktree_branch,
                 worktree_path, payload_json, created_at, updated_at, archived_at
            FROM project_sessions
-          WHERE machine=? AND project_path=? AND cwd_path=? AND archived_at IS NULL`,
-      ).get(machine, projectPath, cwdPath) as Parameters<ProjectDatabase["mapProjectSession"]>[0] | undefined
+          WHERE machine=? AND project_path=? AND archived_at IS NULL`,
+      ).get(machine, projectPath) as Parameters<ProjectDatabase["mapProjectSession"]>[0] | undefined
       if (!raced) throw error
       return this.mapProjectSession(raced)
     }
     const created = this.getProjectSession(id)
     if (!created) throw new Error("failed to create project session")
     return created
+  }
+
+  /** Leaves whose cwdRootUri resolves under `checkoutPath` (busy worktree check). */
+  listLeavesForCheckout(
+    sessionId: string,
+    checkoutPath: string,
+  ): ProjectSession["payload"]["sessions"] {
+    const session = this.getProjectSession(sessionId)
+    if (!session) return []
+    const target = this.canonicalizeRootPath(checkoutPath)
+    return session.payload.sessions.filter(leaf => {
+      try {
+        const leafPath = this.canonicalizeRootPath(fileUriToPath(leaf.cwdRootUri))
+        return leafPath === target
+      } catch {
+        return false
+      }
+    })
   }
 
   updateProjectSessionPayload(

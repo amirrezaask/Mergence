@@ -143,6 +143,19 @@ test.describe("YAADE HQ", () => {
             .getAttribute("aria-selected"),
         )
         .toBe("true")
+      await expect
+        .poll(() =>
+          page.locator(
+            `[data-yaade-instance-sidebar-item="yaade:terminal:${agent.runId}"]`,
+          ).count(),
+        )
+        .toBe(1)
+      await expectListRows(page, {
+        panel: "project-agents",
+        minItems: 1,
+        needle: "Codex Alpha",
+        noResultsText: "No agents running.",
+      })
     } finally {
       await app.close()
       fs.rmSync(root, { recursive: true, force: true })
@@ -211,4 +224,5 @@ test.describe("YAADE HQ", () => {
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
+
 })

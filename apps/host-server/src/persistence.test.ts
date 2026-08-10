@@ -361,7 +361,9 @@ describe("ProjectDatabase session roster", () => {
       worktreePath: path.join(root, ".worktrees", "feat-x"),
     })
     assert.equal(created.title, "Feature work")
-    assert.equal(created.worktreeBranch, "feat/x")
+    assert.equal(created.worktreeBranch, null)
+    assert.equal(created.cwdPath, fs.realpathSync(root))
+    assert.equal(created.checkoutKey, "main")
 
     const listed = db.listProjectSessions("test-host", root)
     assert.ok(listed.some(s => s.id === created.id))
@@ -636,6 +638,130 @@ describe("ProjectDatabase canonical projects and checkouts", () => {
   afterEach(() => {
     db.close()
     fs.rmSync(dir, { recursive: true, force: true })
+  })
+
+  it("opens one Main session per project even when cwdPath differs", () => {
+    const root = path.join(dir, "project")
+    const wt = path.join(dir, "wt-feature")
+    fs.mkdirSync(root)
+    fs.mkdirSync(wt)
+    const a = db.openProjectCheckout({
+      machine: "host", projectPath: root, cwdPath: root,
+    })
+    const b = db.openProjectCheckout({
+      machine: "host", projectPath: root, cwdPath: wt,
+    })
+    assert.equal(a.id, b.id)
+    assert.equal(a.cwdPath, fs.realpathSync(root))
+    assert.equal(a.checkoutKey, "main")
+    assert.equal(a.worktreeBranch, null)
+    assert.equal(db.listProjectSessions("host", root).filter(row => !row.archivedAt).length, 1)
+  })
+
+  it("migration merges checkout-scoped sessions into one Main session", () => {
+    db.close()
+    fs.rmSync(dbPath, { force: true })
+    fs.rmSync(`${dbPath}-wal`, { force: true })
+    fs.rmSync(`${dbPath}-shm`, { force: true })
+    const root = path.join(dir, "merged-project")
+    const wt = path.join(dir, "merged-wt")
+    fs.mkdirSync(root)
+    fs.mkdirSync(wt)
+    const rootReal = fs.realpathSync(root)
+    const wtReal = fs.realpathSync(wt)
+    const raw = new DatabaseSync(dbPath)
+    raw.exec(`
+      CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
+      -- A pre-release build wrote v11 while leaving the checkout-scoped index.
+      INSERT INTO schema_migrations(version) VALUES(8),(9),(10),(11);
+      CREATE TABLE project_sessions(
+        id TEXT PRIMARY KEY, machine TEXT NOT NULL, project_path TEXT NOT NULL,
+        cwd_path TEXT NOT NULL, title TEXT NOT NULL, worktree_branch TEXT,
+        worktree_path TEXT, payload_json TEXT NOT NULL, created_at TEXT NOT NULL,
+        updated_at TEXT NOT NULL, archived_at TEXT
+      );
+      CREATE UNIQUE INDEX project_sessions_one_active_checkout
+        ON project_sessions(machine, project_path, cwd_path)
+        WHERE archived_at IS NULL;
+    `)
+    const mainPayload = JSON.stringify({
+      version: 2,
+      layout: {
+        tree: {
+          root: {
+            kind: "leaf",
+            panelId: { id: 1 },
+            view: { kind: "terminal", ptyTabId: "yaade:terminal:main" },
+          },
+          nextPanelId: 2,
+        },
+        focusedPaneId: 1,
+        zoomedPaneId: null,
+      },
+      sessions: [
+        { ptyTabId: "yaade:terminal:main", cwdRootUri: `file://${rootReal}` },
+      ],
+    })
+    const wtPayload = JSON.stringify({
+      version: 2,
+      layout: {
+        tree: {
+          root: {
+            kind: "leaf",
+            panelId: { id: 1 },
+            view: { kind: "terminal", ptyTabId: "yaade:terminal:wt" },
+          },
+          nextPanelId: 2,
+        },
+        focusedPaneId: 1,
+        zoomedPaneId: null,
+      },
+      sessions: [
+        { ptyTabId: "yaade:terminal:wt", cwdRootUri: `file://${wtReal}` },
+      ],
+    })
+    const insert = raw.prepare(
+      `INSERT INTO project_sessions(id,machine,project_path,cwd_path,title,worktree_branch,worktree_path,payload_json,created_at,updated_at,archived_at)
+       VALUES(?,?,?,?,?,?,?,?,?,?,NULL)`,
+    )
+    insert.run(
+      "ses-main",
+      "host",
+      rootReal,
+      rootReal,
+      "Main",
+      null,
+      null,
+      mainPayload,
+      "2026-01-01T00:00:00.000Z",
+      "2026-01-01T00:00:00.000Z",
+    )
+    insert.run(
+      "ses-wt",
+      "host",
+      rootReal,
+      wtReal,
+      "feature",
+      "feature",
+      wtReal,
+      wtPayload,
+      "2026-01-02T00:00:00.000Z",
+      "2026-01-02T00:00:00.000Z",
+    )
+    raw.close()
+    db = new ProjectDatabase(dbPath)
+    const rows = db.listProjectSessions("host", root)
+    assert.equal(rows.filter(row => !row.archivedAt).length, 1)
+    const survivor = rows.find(row => !row.archivedAt)!
+    assert.equal(survivor.id, "ses-main")
+    assert.equal(survivor.cwdPath, rootReal)
+    assert.equal(survivor.worktreeBranch, null)
+    const full = db.getProjectSession(survivor.id)!
+    assert.equal(full.payload.sessions.length, 2)
+    assert.ok(full.payload.sessions.some(leaf => leaf.ptyTabId.includes("wt")))
+    const mergedLayout = JSON.stringify(full.payload.layout.tree)
+    assert.match(mergedLayout, /yaade:terminal:main/)
+    assert.match(mergedLayout, /yaade:terminal:wt/)
   })
 
   it("opens a canonical project idempotently and has one active checkout", () => {
