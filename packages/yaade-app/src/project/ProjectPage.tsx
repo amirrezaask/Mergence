@@ -40,7 +40,6 @@ import {
   Code2,
   FolderKanban,
   GitBranch,
-  History,
   House,
   SquareTerminal,
 } from "lucide-react"
@@ -206,12 +205,13 @@ function ProjectNavigationDock({
         >
           <Button
             variant="ghost"
-            size="icon-sm"
+            size="sm"
             aria-label="Open HQ"
             onClick={onOpenHq}
-            className="rounded-xl"
+            className="gap-1.5 rounded-xl px-2.5"
           >
             <House />
+            <span className="hidden sm:inline">HQ</span>
           </Button>
           {projectSwitcher}
           <TabsList className="h-10 gap-0.5 rounded-xl bg-transparent p-0">
@@ -1188,10 +1188,10 @@ export function ProjectPage({
                     }}
                     onRequestSurface={next => {
                       if (next === "changes") {
-                        setHistoryMounted(false)
-                        setView("changes")
+                        setHistoryMounted(true)
+                        setView("history")
                         pushProjectRoute(location.pathname, {
-                          view: "changes",
+                          view: "history",
                           workspaceId: session?.id ?? null,
                           checkoutKey: checkoutRouteKey(activeCheckout),
                           agentRunId: null,

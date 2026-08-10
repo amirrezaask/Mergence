@@ -230,7 +230,7 @@ test.describe("YAADE HQ", () => {
         needle: "Codex Alpha",
         noResultsText: "No agents yet",
       })
-      await page.locator('[data-yaade-project-tab="changes"]').click()
+      await page.locator('[data-yaade-project-tab="history"]').click()
       await page.locator('[data-yaade-project-tab="agents"]').click()
       await page.reload()
       await waitForProjectPage(page)

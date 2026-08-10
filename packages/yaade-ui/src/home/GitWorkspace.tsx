@@ -617,7 +617,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         stagedCount={stagedCount}
         pendingAction={pendingAction}
         toolbarStart={toolbarStart}
-        hideCommit={unifiedHistory}
         onCommit={commit}
         onRemoteAction={action => {
           if (!rootUri || !api) return
@@ -654,6 +653,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
             rootUri={rootUri}
             hash={GIT_WORKING_TREE_ID}
             workingTree
+            onWorkingTreeChange={() => void refresh()}
             theme={theme}
             fontSize={fontSize}
           />

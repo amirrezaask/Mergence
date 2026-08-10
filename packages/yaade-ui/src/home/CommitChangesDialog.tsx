@@ -49,6 +49,7 @@ export type CommitChangesDialogProps = {
   rootUri: string
   hash: string
   workingTree?: boolean
+  onWorkingTreeChange?: () => void
   theme: YaadeTheme
   fontSize?: number
   /** Optional row metadata when already known from a history list. */
@@ -84,6 +85,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     rootUri,
     hash,
     workingTree = false,
+    onWorkingTreeChange,
     theme,
     fontSize = 13,
     commit,
@@ -173,6 +175,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
       setWorkingTreeEntries(snapshot.entries)
       setDetail(snapshot.detail)
+      onWorkingTreeChange?.()
     } catch (error) {
       setDetailError(error instanceof Error ? error.message : String(error))
     } finally {

@@ -78,7 +78,7 @@ test.describe("project page", () => {
     }
   })
 
-  test("a bare project URL registers the directory and lands on Changes/Main", async () => {
+  test("a bare project URL registers the directory and lands on Git/Main", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-project-route-"))
     const project = path.join(home, "repo")
     fs.mkdirSync(project, { recursive: true })
@@ -96,20 +96,19 @@ test.describe("project page", () => {
     try {
       await waitForProjectPage(page)
       const tabs = page.locator("[data-yaade-project-tab]")
-      await expect.poll(() => tabs.count()).toBe(5)
+      await expect.poll(() => tabs.count()).toBe(4)
       expect(
         await tabs.evaluateAll(items => items.map(item => item.textContent?.trim())),
       ).toEqual([
-        "Changes",
         "Agents",
         "Editors",
         "Terminals",
-        "History",
+        "Git",
       ])
       await expect
         .poll(() =>
           page
-            .locator('[data-yaade-project-tab="changes"]')
+            .locator('[data-yaade-project-tab="history"]')
             .getAttribute("aria-selected"),
         )
         .toBe("true")
@@ -119,7 +118,7 @@ test.describe("project page", () => {
       expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
       await page.locator('[data-yaade-project-tab="terminals"]').click()
       expect(await page.locator('[data-yaade-project-sidebar=""]').count()).toBe(0)
-      await page.locator('[data-yaade-project-tab="changes"]').click()
+      await page.locator('[data-yaade-project-tab="history"]').click()
       await expect
         .poll(async () =>
           (await page
@@ -127,9 +126,12 @@ test.describe("project page", () => {
             .textContent()) ?? "",
         )
         .toContain("Main")
-      const dock = page.locator('[data-yaade-project-dock]')
-      await dock.waitFor({ state: "visible" })
-      expect(await dock.locator('[data-yaade-notification-bell]').count()).toBe(0)
+    const dock = page.locator('[data-yaade-project-dock]')
+    await dock.waitFor({ state: "visible" })
+    await expect
+      .poll(async () => (await dock.getByRole("button", { name: "Open HQ" }).textContent()) ?? "")
+      .toContain("HQ")
+    expect(await dock.locator('[data-yaade-notification-bell]').count()).toBe(0)
       expect(await dock.getByRole("button", { name: "Settings" }).count()).toBe(0)
       expect(
         await page.locator('[data-yaade-shell="project"] [data-yaade-app-header]').count(),
@@ -302,7 +304,7 @@ test.describe("project page", () => {
       await page.locator('[data-yaade-project-tab="history"]').click()
       expect(
         await page.locator('[data-yaade-git-toolbar] [data-yaade-git-commit-trigger]').count(),
-      ).toBe(0)
+      ).toBe(1)
       await page
         .locator('[data-yaade-list-panel="git-history"] [data-yaade-git-working-tree]')
         .waitFor({ state: "visible", timeout: 15_000 })
@@ -316,7 +318,44 @@ test.describe("project page", () => {
               .textContent()) ?? "",
           { timeout: 5_000 },
         )
-        .toMatch(/Current changes/)
+        .toMatch(/Uncommitted/)
+
+      await page
+        .locator('[data-yaade-list-panel="git-history"] [data-yaade-git-working-tree]')
+        .click()
+      await page.locator("[data-yaade-commit-changes-dialog]").waitFor({
+        state: "visible",
+        timeout: 10_000,
+      })
+      await expectListRows(page, {
+        panel: "commit-changes-files",
+        minItems: 1,
+        needle: "note.txt",
+        noResultsText: "No files changed",
+      })
+      const stageNote = page.getByRole("checkbox", { name: "Stage note.txt" })
+      await stageNote.click()
+      await expect
+        .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
+        .toContain("note.txt")
+      await expect(
+        page.getByRole("checkbox", { name: "Unstage note.txt" }),
+      ).toBeVisible()
+      await page.getByRole("checkbox", { name: "Unstage note.txt" }).click()
+      await expect
+        .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
+        .toBe("")
+      await page.getByRole("checkbox", { name: "Stage note.txt" }).click()
+      await expect
+        .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
+        .toContain("note.txt")
+      await page.keyboard.press("Escape")
+      await page.locator("[data-yaade-commit-changes-dialog]").waitFor({
+        state: "hidden",
+      })
+      await expect(
+        page.locator('[data-yaade-git-toolbar] [data-yaade-git-commit-trigger]'),
+      ).toBeEnabled()
 
       await page
         .locator('[data-yaade-list-panel="git-history"] [data-yaade-list-item]')
@@ -358,6 +397,42 @@ test.describe("project page", () => {
           timeout: 10_000,
         })
         .toBeGreaterThan(80)
+    } finally {
+      await app.close()
+      fs.rmSync(home, { recursive: true, force: true })
+    }
+  })
+
+  test("Git refreshes uncommitted changes while visible", async () => {
+    const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-git-live-refresh-"))
+    const project = path.join(home, "repo")
+    fs.mkdirSync(project, { recursive: true })
+    fs.writeFileSync(path.join(project, "note.txt"), "one\n")
+    execSync(
+      "git init && git config user.email t@t && git config user.name t && git add . && git commit -m seed",
+      { cwd: project, stdio: "ignore" },
+    )
+
+    const { app, page } = await launchJet({
+      homeDir: home,
+      startPath: "/repo",
+      launchWithoutWorkspace: true,
+      projectPage: true,
+    })
+    try {
+      await waitForProjectPage(page)
+      const workingTree = page.locator(
+        '[data-yaade-list-panel="git-history"] [data-yaade-git-working-tree]',
+      )
+      await workingTree.waitFor({ state: "visible", timeout: 15_000 })
+      await expect
+        .poll(async () => (await workingTree.textContent()) ?? "")
+        .toContain("Working tree clean")
+
+      fs.appendFileSync(path.join(project, "note.txt"), "two\n")
+      await expect
+        .poll(async () => (await workingTree.textContent()) ?? "", { timeout: 10_000 })
+        .toContain("1 file changed")
     } finally {
       await app.close()
       fs.rmSync(home, { recursive: true, force: true })

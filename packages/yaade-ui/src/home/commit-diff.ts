@@ -1,4 +1,8 @@
-import type { GitCommitDetail, GitCommitFile } from "@yaade/shared"
+import type {
+  GitCommitDetail,
+  GitCommitFile,
+  GitStatusEntry,
+} from "@yaade/shared"
 import { fileUriToPath, pathToFileUri } from "@yaade/shared"
 
 export type CommitDiffContents = { original: string; modified: string }
@@ -6,20 +10,23 @@ export type CommitDiffContents = { original: string; modified: string }
 type GitApi = NonNullable<NonNullable<typeof window.yaade>["git"]>
 type FsApi = NonNullable<NonNullable<typeof window.yaade>["fs"]>
 
-export async function loadWorkingTreeDetail(
+export async function loadWorkingTreeSnapshot(
   api: GitApi,
   rootUri: string,
-): Promise<GitCommitDetail> {
+): Promise<{ detail: GitCommitDetail; entries: GitStatusEntry[] }> {
   const entries = await api.status(rootUri)
   return {
-    hash: "working-tree",
-    subject: "Uncommitted changes",
-    body: "",
-    files: entries.map(entry => ({
-      path: entry.path,
-      status: entry.worktreeStatus ?? entry.indexStatus ?? entry.status,
-      originalPath: entry.originalPath,
-    })),
+    entries,
+    detail: {
+      hash: "working-tree",
+      subject: "Uncommitted changes",
+      body: "",
+      files: entries.map(entry => ({
+        path: entry.path,
+        status: entry.worktreeStatus ?? entry.indexStatus ?? entry.status,
+        originalPath: entry.originalPath,
+      })),
+    },
   }
 }
 
