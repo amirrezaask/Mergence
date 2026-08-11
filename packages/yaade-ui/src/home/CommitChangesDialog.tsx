@@ -6,6 +6,7 @@ import type {
   GitStatusEntry,
   YaadeTheme,
 } from "@yaade/shared"
+import { fileUriToPath, pathToFileUri } from "@yaade/shared"
 import { CircleDotIcon, FileDiffIcon, HistoryIcon } from "lucide-react"
 
 import {
@@ -17,7 +18,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog.js"
 import { Button } from "@/components/ui/button.js"
-import { Checkbox } from "@/components/ui/checkbox.js"
 import {
   Empty,
   EmptyDescription,
@@ -31,12 +31,12 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable.js"
 import { Spinner } from "@/components/ui/spinner.js"
-import { cn } from "@/lib/utils.js"
 import {
   loadCommitDiffContents,
   loadWorkingTreeDiffContents,
   loadWorkingTreeSnapshot,
 } from "./commit-diff.js"
+import { PierreCommitFileTree } from "./pierre-commit-file-tree.js"
 import { YaadeDiffViewer } from "./YaadeDiffViewer.js"
 import { PierreDiffPool } from "./pierre-diff-pool.js"
 
@@ -70,15 +70,6 @@ function storedDiffStyle(): DiffStyle {
       : "unified"
   } catch {
     return "unified"
-  }
-}
-
-function displayPath(path: string): { name: string; parent: string } {
-  const separator = path.lastIndexOf("/")
-  if (separator < 0) return { name: path, parent: "" }
-  return {
-    name: path.slice(separator + 1),
-    parent: path.slice(0, separator),
   }
 }
 
@@ -261,6 +252,19 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const stagedCount = workingTreeEntries.filter(entry => entry.staged).length
   const unstagedCount = workingTreeEntries.filter(entry => entry.unstaged).length
 
+  const persistConflictResolution = async (contents: string) => {
+    if (!fsApi || !selectedFile || selectedFile.status !== "conflict") return
+    const rootPath = fileUriToPath(rootUri).replace(/[/\\]+$/, "")
+    const fileUri = pathToFileUri(`${rootPath}/${selectedFile.path.replace(/^[/\\]+/, "")}`)
+    try {
+      await fsApi.writeFile(fileUri, contents)
+      setDiffContents({ original: "", modified: contents })
+      onWorkingTreeChange?.()
+    } catch (error) {
+      setDiffError(error instanceof Error ? error.message : String(error))
+    }
+  }
+
   const fileList = detail ? (
     <aside
       data-yaade-list-panel="commit-changes-files"
@@ -274,69 +278,17 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
           {detail.body}
         </pre>
       ) : null}
-      <ul className="min-h-0 flex-1 overflow-auto px-1 pb-2">
-        {detail.files.length === 0 ? (
-          <li className="px-2 py-3 text-2xs text-muted-foreground">
-            No files changed in this commit.
-          </li>
-        ) : (
-          detail.files.map(file => {
-            const active = file.path === selectedFile?.path
-            const visiblePath = displayPath(file.path)
-            const workingTreeEntry = workingTreeEntries.find(item => item.path === file.path)
-            return (
-              <li key={`${file.status}:${file.path}`}>
-                <div className="flex items-start gap-2 px-2 py-1.5">
-                  {workingTree ? (
-                    <Checkbox
-                      checked={workingTreeEntry?.staged ?? false}
-                      disabled={workingTreePendingPath !== null}
-                      aria-label={`${workingTreeEntry?.staged ? "Unstage" : "Stage"} ${file.path}`}
-                      onCheckedChange={() => void toggleWorkingTreeStage(file)}
-                      className="mt-1 size-3.5 shrink-0"
-                    />
-                  ) : null}
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    data-yaade-list-item=""
-                    data-active={active ? "" : undefined}
-                    aria-pressed={active}
-                    title={file.path}
-                    onClick={() => setSelectedPath(file.path)}
-                    className={cn(
-                      "h-auto min-w-0 flex-1 shrink-0 items-start justify-start gap-2 rounded-sm p-0 text-left font-normal",
-                      active
-                        ? "text-foreground"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    <span
-                      className={cn(
-                        "w-3 shrink-0 text-center font-mono font-medium",
-                        statusColor(file.status),
-                      )}
-                      title={file.status}
-                    >
-                      {statusLetter(file.status)}
-                    </span>
-                    <span className="min-w-0 flex-1 font-mono">
-                      <span className="block truncate text-xs text-foreground">
-                        {visiblePath.name}
-                      </span>
-                      {visiblePath.parent ? (
-                        <span className="block truncate text-3xs text-muted-foreground">
-                          {visiblePath.parent}/
-                        </span>
-                      ) : null}
-                    </span>
-                  </Button>
-                </div>
-              </li>
-            )
-          })
-        )}
-      </ul>
+      <div className="min-h-0 flex-1 overflow-hidden px-1 pb-2">
+        <PierreCommitFileTree
+          files={detail.files}
+          workingTreeEntries={workingTreeEntries}
+          selectedPath={selectedFile?.path ?? null}
+          onSelectPath={setSelectedPath}
+          workingTree={workingTree}
+          pendingPath={workingTreePendingPath}
+          onToggleStage={file => void toggleWorkingTreeStage(file)}
+        />
+      </div>
     </aside>
   ) : null
 
@@ -371,6 +323,12 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
                 mode={effectiveDiffStyle}
                 theme={theme}
                 fontSize={fontSize}
+                conflict={selectedFile.status === "conflict"}
+                onConflictResolved={
+                  selectedFile.status === "conflict"
+                    ? contents => void persistConflictResolution(contents)
+                    : undefined
+                }
               />
             ) : (
               <CenteredEmpty
@@ -540,25 +498,4 @@ function CenteredEmpty({ title, description }: { title: string; description: str
       </EmptyHeader>
     </Empty>
   )
-}
-
-function statusLetter(status: GitCommitFile["status"]): string {
-  return status === "modified"
-    ? "M"
-    : status === "added"
-      ? "A"
-      : status === "deleted"
-        ? "D"
-        : status === "renamed"
-          ? "R"
-          : status === "untracked"
-            ? "U"
-            : "!"
-}
-
-function statusColor(status: GitCommitFile["status"]): string {
-  if (status === "conflict") return "text-git-conflict"
-  if (status === "deleted") return "text-git-deleted"
-  if (status === "added" || status === "untracked") return "text-git-added"
-  return "text-git-modified"
 }

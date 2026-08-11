@@ -299,12 +299,16 @@ test.describe("project page", () => {
         state: "visible",
         timeout: 10_000,
       })
-      await expectListRows(page, {
-        panel: "commit-changes-files",
-        minItems: 1,
-        needle: "note.txt",
-        noResultsText: "No files changed",
-      })
+      await expect
+        .poll(
+          async () =>
+            page
+              .locator('[data-yaade-list-panel="commit-changes-files"]')
+              .getByRole("treeitem", { name: /note\.txt/ })
+              .count(),
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThan(0)
       const changesDialog = page.locator("[data-yaade-commit-changes-dialog]")
       await changesDialog.getByRole("button", { name: /^Stage all/ }).click()
       await expect
@@ -336,16 +340,20 @@ test.describe("project page", () => {
         state: "visible",
         timeout: 10_000,
       })
-      await expectListRows(page, {
-        panel: "commit-changes-files",
-        minItems: 1,
-        needle: "note.txt",
-        noResultsText: "No files changed",
-      })
+      await expect
+        .poll(
+          async () =>
+            page
+              .locator('[data-yaade-list-panel="commit-changes-files"]')
+              .getByRole("treeitem", { name: /note\.txt/ })
+              .count(),
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThan(0)
 
       await page
-        .locator('[data-yaade-list-panel="commit-changes-files"] [data-yaade-list-item]')
-        .first()
+        .locator('[data-yaade-list-panel="commit-changes-files"]')
+        .getByRole("treeitem", { name: /note\.txt/ })
         .click()
 
       await expect

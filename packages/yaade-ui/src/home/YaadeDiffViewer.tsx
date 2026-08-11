@@ -1,6 +1,6 @@
 import { useMemo } from "react"
 import { DEFAULT_THEMES, parseDiffFromFile } from "@pierre/diffs"
-import { FileDiff, Virtualizer } from "@pierre/diffs/react"
+import { FileDiff, UnresolvedFile, Virtualizer } from "@pierre/diffs/react"
 import type { YaadeTheme } from "@yaade/shared"
 
 import { cn } from "@/lib/utils.js"
@@ -9,11 +9,22 @@ export type YaadeDiffViewerProps = {
   path: string
   original: string
   modified: string
-  /** Unified (stacked) or split (side-by-side). */
+  /** Unified (stacked) or split (side-by-side). Ignored for merge conflicts. */
   mode: "unified" | "split"
   theme: YaadeTheme
   /** Editor font size in px (default 13). */
   fontSize?: number
+  /**
+   * When true, `modified` is a working-tree file that may contain Git conflict
+   * markers — render via Pierre `UnresolvedFile` instead of a 2-way file diff.
+   */
+  conflict?: boolean
+  /**
+   * After the user picks Current / Incoming / Both, receive updated file
+   * contents. Update `modified` (and optionally write the working tree) so the
+   * viewer remounts with the resolved text.
+   */
+  onConflictResolved?: (contents: string) => void
   className?: string
 }
 
@@ -33,18 +44,55 @@ function contentCacheKey(side: "old" | "new", path: string, contents: string): s
 
 export { PierreDiffPool } from "./pierre-diff-pool.js"
 
+function pierreUnsafeCss(fontSize: number): string {
+  return [
+    // Custom element host defaults to inline — block + bounded width so
+    // Pierre's overflow-x:scroll on [data-code] can engage.
+    `:host { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }`,
+    // Default `1fr` tracks are minmax(auto, 1fr) and grow with long lines,
+    // which expands the host and gets clipped by our overflow-hidden parents.
+    `[data-diff], [data-file] { --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr); }`,
+    `[data-diff-type="split"][data-overflow="scroll"] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }`,
+    `pre, code { font-size: ${fontSize}px; font-family: var(--font-mono, 'Commit Mono', ui-monospace, monospace); }`,
+  ].join("\n")
+}
+
 /**
  * Read-only git file diff via `@pierre/diffs`.
  * Callers own chrome (path/status toolbar); Pierre’s file header is disabled.
  * Prefer wrapping ancestors in {@link PierreDiffPool}.
  *
+ * Conflicted working-tree files use {@link UnresolvedFile} so merge markers are
+ * parsed by Pierre instead of a naive HEAD↔worktree two-way diff.
+ *
  * Scroll + line virtualization live on `Virtualizer`; Shiki runs in the worker pool.
  */
 export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
-  const { path, original, modified, mode, theme, fontSize = 13, className } = props
+  const {
+    path,
+    original,
+    modified,
+    mode,
+    theme,
+    fontSize = 13,
+    conflict = false,
+    onConflictResolved,
+    className,
+  } = props
   const themeType = theme.scheme === "light" ? "light" : "dark"
 
+  const conflictFile = useMemo(() => {
+    if (!conflict) return null
+    const key = contentCacheKey("new", path, modified)
+    return {
+      name: path,
+      contents: modified,
+      cacheKey: `${key}:merge-conflict`,
+    }
+  }, [conflict, path, modified])
+
   const fileDiff = useMemo(() => {
+    if (conflict) return null
     const oldKey = contentCacheKey("old", path, original)
     const newKey = contentCacheKey("new", path, modified)
     const diff = parseDiffFromFile(
@@ -61,29 +109,28 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
     )
     diff.cacheKey = `${path}:${oldKey}:${newKey}`
     return diff
-  }, [path, original, modified])
+  }, [conflict, path, original, modified])
 
-  const options = useMemo(
+  const sharedOptions = useMemo(
     () => ({
       theme: DEFAULT_THEMES,
       themeType: themeType as "light" | "dark",
-      diffStyle: mode,
-      // Keep long lines on one row; scroll inside [data-code], not wrap.
       overflow: "scroll" as const,
       disableFileHeader: true,
       diffIndicators: "classic" as const,
-      unsafeCSS: [
-        // Custom element host defaults to inline — block + bounded width so
-        // Pierre's overflow-x:scroll on [data-code] can engage.
-        `:host { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }`,
-        // Default `1fr` tracks are minmax(auto, 1fr) and grow with long lines,
-        // which expands the host and gets clipped by our overflow-hidden parents.
-        `[data-diff], [data-file] { --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr); }`,
-        `[data-diff-type="split"][data-overflow="scroll"] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }`,
-        `pre, code { font-size: ${fontSize}px; font-family: var(--font-mono, 'Commit Mono', ui-monospace, monospace); }`,
-      ].join("\n"),
+      unsafeCSS: pierreUnsafeCss(fontSize),
+      // Built-in Current / Incoming / Both when no custom utility is supplied.
+      mergeConflictActionsType: "default" as const,
     }),
-    [themeType, mode, fontSize],
+    [themeType, fontSize],
+  )
+
+  const diffOptions = useMemo(
+    () => ({
+      ...sharedOptions,
+      diffStyle: mode,
+    }),
+    [sharedOptions, mode],
   )
 
   const metrics = useMemo(
@@ -101,6 +148,7 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
   return (
     <div
       data-yaade-pierre-diff=""
+      data-yaade-pierre-conflict={conflict ? "" : undefined}
       className={cn(
         "h-full min-h-0 w-full min-w-0 [&_diffs-container]:block [&_diffs-container]:h-full [&_diffs-container]:w-full [&_diffs-container]:min-w-0 [&_diffs-container]:max-w-full",
         className,
@@ -109,13 +157,78 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
       {/* Vertical scroll on Virtualizer; horizontal scroll stays on Pierre's
           [data-code] panes (overflow-x:hidden here so trackpad swipes aren't eaten). */}
       <Virtualizer className="h-full min-h-0 w-full min-w-0 overflow-x-hidden overflow-y-auto">
-        <FileDiff
-          fileDiff={fileDiff}
-          options={options}
-          metrics={metrics}
-          className="block h-full w-full min-w-0 max-w-full"
-        />
+        {conflict && conflictFile ? (
+          <UnresolvedFile
+            key={conflictFile.cacheKey}
+            file={conflictFile}
+            options={sharedOptions}
+            metrics={metrics}
+            className="block h-full w-full min-w-0 max-w-full"
+            renderMergeConflictUtility={
+              onConflictResolved
+                ? (action, getInstance) => (
+                    <ConflictResolveButtons
+                      conflictIndex={action.conflictIndex}
+                      getInstance={getInstance}
+                      onResolved={onConflictResolved}
+                    />
+                  )
+                : undefined
+            }
+          />
+        ) : fileDiff ? (
+          <FileDiff
+            fileDiff={fileDiff}
+            options={diffOptions}
+            metrics={metrics}
+            className="block h-full w-full min-w-0 max-w-full"
+          />
+        ) : null}
       </Virtualizer>
+    </div>
+  )
+}
+
+function ConflictResolveButtons(props: {
+  conflictIndex: number
+  getInstance: () =>
+    | {
+        resolveConflict(
+          index: number,
+          resolution: "current" | "incoming" | "both",
+        ): { file: { contents: string } } | undefined
+      }
+    | undefined
+  onResolved: (contents: string) => void
+}) {
+  const { conflictIndex, getInstance, onResolved } = props
+  const run = (resolution: "current" | "incoming" | "both") => {
+    const result = getInstance()?.resolveConflict(conflictIndex, resolution)
+    if (result?.file.contents != null) onResolved(result.file.contents)
+  }
+  return (
+    <div className="flex flex-wrap items-center gap-1" data-yaade-merge-conflict-actions="">
+      <button
+        type="button"
+        className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 text-3xs"
+        onClick={() => run("current")}
+      >
+        Current
+      </button>
+      <button
+        type="button"
+        className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 text-3xs"
+        onClick={() => run("incoming")}
+      >
+        Incoming
+      </button>
+      <button
+        type="button"
+        className="rounded-sm border border-border bg-secondary px-1.5 py-0.5 text-3xs"
+        onClick={() => run("both")}
+      >
+        Both
+      </button>
     </div>
   )
 }

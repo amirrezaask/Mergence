@@ -43,7 +43,7 @@ export default defineConfig({
             return "monaco"
           }
           if (id.includes("node_modules")) {
-            if (id.includes("@pierre/diffs")) return "diffs"
+          if (id.includes("@pierre/diffs") || id.includes("@pierre/trees")) return "diffs"
             if (id.includes("shiki") || id.includes("@shikijs")) return "shiki"
             if (id.includes("@xterm")) return "xterm"
           }

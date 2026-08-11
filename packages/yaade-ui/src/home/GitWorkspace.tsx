@@ -1452,6 +1452,7 @@ function DiffViewer(props: {
               mode={diffStyle}
               theme={theme}
               fontSize={fontSize}
+              conflict={selectedEntry?.status === "conflict"}
             />
           </Suspense>
         ) : (
@@ -1589,6 +1590,12 @@ async function loadGitDiffContents(
       ? await api.show(rootUri, selected.path, "HEAD")
       : await api.show(rootUri, selected.path, "INDEX")
     return { original: truncate(original), modified: "" }
+  }
+
+  // Merge conflicts: Pierre UnresolvedFile needs the conflicted working-tree blob.
+  if (entry?.status === "conflict") {
+    const modified = await fsApi.readFile(fileUri).catch(() => "")
+    return { original: "", modified: truncate(modified) }
   }
 
   if (selected.staged) {

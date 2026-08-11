@@ -62,6 +62,13 @@ export async function loadWorkingTreeDiffContents(
     })
   }
 
+  // Merge conflicts: feed the working-tree blob (with markers) to Pierre's
+  // UnresolvedFile. A HEAD↔worktree two-way diff hides conflict structure.
+  if (file.status === "conflict") {
+    const modified = await fsApi.readFile(fileUri).catch(() => "")
+    return capDiffContents({ original: "", modified })
+  }
+
   const [original, modified] = await Promise.all([
     api.show(rootUri, oldPath, "HEAD").catch(() => ""),
     fsApi.readFile(fileUri).catch(() => ""),
