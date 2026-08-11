@@ -35,6 +35,7 @@ import {
   SidebarProvider,
   requestConfirm,
   type ProjectWorkspaceSidebarProcess,
+  type ProjectWorkspaceSidebarSearch,
   type ProjectWorkspaceSidebarWorktree,
 } from "@yaade/ui"
 import { bundledThemeList } from "@yaade/ui/appearance"
@@ -55,6 +56,7 @@ import type {
   MuxLaunchRequest,
   MuxSurface,
 } from "../mux/MuxApp.js"
+import { formatAppDocumentTitle } from "../build-branding.js"
 import {
   projectRouteFromSearch,
   pushProjectRoute,
@@ -99,6 +101,15 @@ import {
   processStatusLabel,
   useProjectProcessSidebar,
 } from "./project-process-sidebar.js"
+import { useProjectSearchEntries } from "./use-project-search-entries.js"
+
+const ProjectSearchSurface = lazy(() => import("./ProjectSearchSurface.js"))
+import {
+  createProjectSearch,
+  getProjectSearch,
+  listProjectSearches,
+  removeProjectSearch,
+} from "./project-search-store.js"
 
 const GitWorkspace = lazy(() =>
   import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
@@ -331,7 +342,7 @@ export function ProjectPage({
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
   const [surfaceSelections, setSurfaceSelections] = useState<
-    Partial<Record<Exclude<ProjectView, "history">, ProjectSurfaceSelection>>
+    Partial<Record<Exclude<ProjectView, "history" | "search">, ProjectSurfaceSelection>>
   >({})
   const [historicalRun, setHistoricalRun] = useState<AgentRunInfo | null>(null)
   const [agentLookupComplete, setAgentLookupComplete] = useState(false)
@@ -381,7 +392,7 @@ export function ProjectPage({
   const title = workspaceDocumentTitle(projectPath, homeDir)
 
   useEffect(() => {
-    document.title = title
+    document.title = formatAppDocumentTitle(title)
   }, [title])
 
   useEffect(() => {
@@ -432,7 +443,7 @@ export function ProjectPage({
         sessions.filter(item => !item.archivedAt).map(item => item.id),
       )
       const next: Partial<
-        Record<Exclude<ProjectView, "history">, ProjectSurfaceSelection>
+        Record<Exclude<ProjectView, "history" | "search">, ProjectSurfaceSelection>
       > = {}
       for (const row of rows) {
         if (row.surface === "changes") {
@@ -1140,6 +1151,149 @@ export function ProjectPage({
     ],
   )
 
+  const searchEntries = useProjectSearchEntries(projectPath)
+  const activeSearchId =
+    view === "search"
+      ? projectRouteFromSearch().searchId ?? searchEntries[0]?.id ?? null
+      : null
+
+  const openSearchView = useCallback(
+    (searchId: string) => {
+      setView("search")
+      pushProjectRoute(location.pathname, {
+        view: "search",
+        workspaceId: session?.id ?? null,
+        checkoutKey: checkoutRouteKey(activeCheckout),
+        processId: null,
+        searchId,
+      })
+    },
+    [activeCheckout, session?.id],
+  )
+
+  const handleNewSearch = useCallback(() => {
+    const entry = createProjectSearch(projectPath)
+    openSearchView(entry.id)
+  }, [openSearchView, projectPath])
+
+  const handleCloseSearch = useCallback(
+    (searchId: string) => {
+      removeProjectSearch(projectPath, searchId)
+      if (activeSearchId !== searchId) return
+      const remaining = searchEntries.filter(entry => entry.id !== searchId)
+      if (remaining[0]) {
+        openSearchView(remaining[0].id)
+        return
+      }
+      setHistoryMounted(true)
+      setView("history")
+      pushProjectRoute(location.pathname, {
+        view: "history",
+        workspaceId: session?.id ?? null,
+        checkoutKey: checkoutRouteKey(activeCheckout),
+        processId: null,
+        searchId: null,
+      })
+    },
+    [
+      activeCheckout,
+      activeSearchId,
+      openSearchView,
+      projectPath,
+      searchEntries,
+      session?.id,
+    ],
+  )
+
+  const searchSidebarItems = useMemo<ProjectWorkspaceSidebarSearch[]>(
+    () =>
+      searchEntries.map(entry => ({
+        id: entry.id,
+        label: entry.query.trim() || "New search",
+        selected: activeSearchId === entry.id,
+        onSelect: () => openSearchView(entry.id),
+        onClose: () => handleCloseSearch(entry.id),
+      })),
+    [activeSearchId, handleCloseSearch, openSearchView, searchEntries],
+  )
+
+  const handleSearchSelectResult = useCallback(
+    (result: import("@yaade/shared").ProjectSearchResult) => {
+      const root = editorCheckout.cwdPath.replace(/\/+$/, "")
+      const relative = result.path.replace(/^\/+/, "")
+      const filePath = `${root}/${relative}`
+      void handleLaunchAction({
+        kind: "editor",
+        filePath,
+        line: result.line,
+        column: result.column,
+      })
+    },
+    [editorCheckout.cwdPath, handleLaunchAction],
+  )
+
+  useEffect(() => {
+    const onOpenProjectSearch = () => {
+      if (view === "search" && activeSearchId) {
+        openSearchView(activeSearchId)
+        return
+      }
+      if (searchEntries[0]) {
+        openSearchView(searchEntries[0].id)
+        return
+      }
+      handleNewSearch()
+    }
+    window.addEventListener("yaade:open-project-search", onOpenProjectSearch)
+    return () => {
+      window.removeEventListener("yaade:open-project-search", onOpenProjectSearch)
+    }
+  }, [
+    activeSearchId,
+    handleNewSearch,
+    openSearchView,
+    searchEntries,
+    view,
+  ])
+
+  useEffect(() => {
+    if (view !== "search") return
+    const routeId = projectRouteFromSearch().searchId
+    if (routeId && getProjectSearch(projectPath, routeId)) return
+    if (routeId && !getProjectSearch(projectPath, routeId)) {
+      const entry = createProjectSearch(projectPath)
+      replaceProjectRoute(location.pathname, {
+        view: "search",
+        workspaceId: session?.id ?? null,
+        checkoutKey: checkoutRouteKey(activeCheckout),
+        processId: null,
+        searchId: entry.id,
+      })
+      return
+    }
+    if (!routeId) {
+      const existing = listProjectSearches(projectPath)[0]
+      if (existing) {
+        replaceProjectRoute(location.pathname, {
+          view: "search",
+          workspaceId: session?.id ?? null,
+          checkoutKey: checkoutRouteKey(activeCheckout),
+          processId: null,
+          searchId: existing.id,
+        })
+        return
+      }
+      const entry = createProjectSearch(projectPath)
+      replaceProjectRoute(location.pathname, {
+        view: "search",
+        workspaceId: session?.id ?? null,
+        checkoutKey: checkoutRouteKey(activeCheckout),
+        processId: null,
+        searchId: entry.id,
+      })
+    }
+  }, [activeCheckout, projectPath, session?.id, view])
+
   const gitHistoryWorktrees = useMemo<ProjectWorkspaceSidebarWorktree[]>(
     () => [
       {
@@ -1294,6 +1448,8 @@ export function ProjectPage({
           gitHistoryError={worktreesError}
           onNewGitWorktree={() => setWorktreeCreateOpen(true)}
           processes={runningSidebarItems}
+          searches={searchSidebarItems}
+          onNewSearch={handleNewSearch}
           onOpenHq={onOpenHq}
           onOpenSettings={() => {
             if (session) {
@@ -1374,6 +1530,20 @@ export function ProjectPage({
                 activeCheckout={activeCheckout}
               />
             </ProjectSurfaceSlot>
+
+            {view === "search" && activeSearchId ? (
+              <ProjectSurfaceSlot
+                panel="search"
+                active
+                fallback="Loading search…"
+              >
+                <ProjectSearchSurface
+                  projectPath={projectPath}
+                  searchId={activeSearchId}
+                  onSelectResult={handleSearchSelectResult}
+                />
+              </ProjectSurfaceSlot>
+            ) : null}
 
             {session && (view === "editors" || view === "running") ? (
               <ProjectSurfaceSlot
@@ -1466,6 +1636,7 @@ export function ProjectPage({
               <ProjectSurfaceSlot panel="running" active fallback="Loading processes…">
                 <RunningProjectSurface
                   projectId={projectId}
+                  projectPath={projectPath}
                   selectedId={
                     projectRouteFromSearch().processId ??
                     surfaceSelections.running?.processId ??
@@ -1523,7 +1694,7 @@ export function ProjectPage({
       />
 
       {!session ? <Toaster position="bottom-right" /> : null}
-      {!session || view === "history" || view === "changes" ? (
+      {!session || view === "history" || view === "changes" || view === "search" ? (
         <ConfirmDialogHost />
       ) : null}
     </AppShell>

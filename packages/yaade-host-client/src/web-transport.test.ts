@@ -5,6 +5,7 @@ import {
   acceptHostEvent,
   createClientId,
   hostRealtimeReconnectDelay,
+  subscribeRealtimeWake,
   websocketUrl,
 } from "./web-transport.js"
 import {
@@ -64,6 +65,30 @@ test("reconnect delay doubles then caps at 10s", () => {
   assert.equal(Duration.toMillis(hostRealtimeReconnectDelay(5)), 8000)
   assert.equal(Duration.toMillis(hostRealtimeReconnectDelay(6)), 10_000)
   assert.equal(Duration.toMillis(hostRealtimeReconnectDelay(20)), 10_000)
+})
+
+test("foreground lifecycle wakes reconnect and replaces a backgrounded socket", () => {
+  class WakeDocument extends EventTarget {
+    visibilityState: DocumentVisibilityState = "visible"
+  }
+  const doc = new WakeDocument()
+  const target = new EventTarget()
+  const wakes: boolean[] = []
+  const dispose = subscribeRealtimeWake(replace => wakes.push(replace), doc, target)
+
+  target.dispatchEvent(new Event("focus"))
+  target.dispatchEvent(new Event("blur"))
+  target.dispatchEvent(new Event("focus"))
+  doc.visibilityState = "hidden"
+  doc.dispatchEvent(new Event("visibilitychange"))
+  doc.visibilityState = "visible"
+  doc.dispatchEvent(new Event("visibilitychange"))
+  target.dispatchEvent(new Event("online"))
+
+  assert.deepEqual(wakes, [true, true, true])
+  dispose()
+  target.dispatchEvent(new Event("focus"))
+  assert.deepEqual(wakes, [true, true, true])
 })
 
 test("hot path accepts terminal frames structurally", () => {

@@ -226,16 +226,23 @@ export async function fffGrep(
     const worker = await ensureFffIndex(rootUri)
     if (!worker) return null
     const mode = opts?.fuzzy ? "fuzzy" : opts?.regex ? "regex" : "plain"
+    const limit = clampSearchLimit(opts?.limit)
+    const cursorOffset = parseCursorOffset(opts?.cursor)
     try {
-      const result = await worker.request<{ items: FffWorkerGrepMatch[]; hasMore: boolean }>(
+      const result = await worker.request<{
+        items: FffWorkerGrepMatch[]
+        hasMore: boolean
+        nextCursorOffset: number | null
+      }>(
         "grep",
         {
           query,
           options: {
             mode,
             smartCase: !opts?.caseSensitive && !opts?.fuzzy,
-            pageSize: 200,
-            maxMatchesPerFile: 200,
+            pageSize: limit,
+            maxMatchesPerFile: Math.max(limit, 200),
+            ...(cursorOffset != null ? { cursorOffset } : {}),
           },
         },
         taskSignal,
@@ -256,12 +263,30 @@ export async function fffGrep(
           ranges,
         }
       })
-      return { items, truncated: result.hasMore }
+      const truncated = Boolean(result.hasMore || result.nextCursorOffset != null)
+      return {
+        items,
+        truncated,
+        nextCursor:
+          result.nextCursorOffset != null ? String(result.nextCursorOffset) : undefined,
+      }
     } catch (error) {
       if (taskSignal.aborted) disposeFffIndex(rootUri)
       throw error
     }
   }, signal)
+}
+
+function clampSearchLimit(limit: number | undefined): number {
+  if (limit == null || !Number.isFinite(limit)) return 500
+  return Math.max(1, Math.min(5000, Math.floor(limit)))
+}
+
+function parseCursorOffset(cursor: string | undefined): number | null {
+  if (cursor == null || cursor === "") return null
+  const value = Number(cursor)
+  if (!Number.isFinite(value) || value < 0) return null
+  return Math.floor(value)
 }
 
 export async function fffTrackAccess(

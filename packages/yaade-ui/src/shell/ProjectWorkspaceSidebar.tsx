@@ -1,5 +1,14 @@
 import { useState, type ReactNode } from "react"
-import { ChevronRight, Circle, GitBranch, House, Plus, Settings, X } from "lucide-react"
+import {
+  ChevronRight,
+  Circle,
+  GitBranch,
+  House,
+  Plus,
+  Search,
+  Settings,
+  X,
+} from "lucide-react"
 import {
   Collapsible,
   CollapsibleContent,
@@ -48,6 +57,14 @@ export type ProjectWorkspaceSidebarProcess = SidebarProcessItemData & {
   selected: boolean
 }
 
+export type ProjectWorkspaceSidebarSearch = {
+  id: string
+  label: string
+  selected: boolean
+  onSelect: () => void
+  onClose: () => void
+}
+
 export type ProjectWorkspaceSidebarProps = {
   projectName: string
   projectSwitcher?: ReactNode
@@ -56,6 +73,8 @@ export type ProjectWorkspaceSidebarProps = {
   gitHistoryError?: string | null
   onNewGitWorktree: () => void
   processes: readonly ProjectWorkspaceSidebarProcess[]
+  searches?: readonly ProjectWorkspaceSidebarSearch[]
+  onNewSearch?: () => void
   onOpenHq: () => void
   onOpenSettings: () => void
   /** Single Running launcher (+ shell & agent providers). */
@@ -178,6 +197,104 @@ function GitHistoryGroup({
   )
 }
 
+function SearchesGroup({
+  items,
+  onNew,
+}: {
+  items: readonly ProjectWorkspaceSidebarSearch[]
+  onNew: () => void
+}) {
+  const { isMobile, setOpenMobile } = useSidebar()
+  const [open, setOpen] = useState(true)
+
+  const select = (item: ProjectWorkspaceSidebarSearch) => {
+    item.onSelect()
+    if (isMobile) setOpenMobile(false)
+  }
+
+  return (
+    <Collapsible open={open} onOpenChange={setOpen} asChild>
+      <SidebarGroup
+        className="gap-1 py-2 group-data-[collapsible=icon]:hidden"
+        data-yaade-project-searches-group=""
+        data-state={open ? "open" : "closed"}
+      >
+        <CollapsibleTrigger asChild>
+          <SidebarGroupLabel className="cursor-pointer select-none pr-10 hover:bg-sidebar-accent hover:text-sidebar-accent-foreground">
+            <ChevronRight
+              className={cn(
+                "transition-transform duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]",
+                open && "rotate-90",
+              )}
+              aria-hidden
+            />
+            <Search aria-hidden />
+            <span>Searches</span>
+            <span className="ml-auto tabular-nums text-3xs text-sidebar-foreground/60">
+              {items.length}
+            </span>
+          </SidebarGroupLabel>
+        </CollapsibleTrigger>
+        <SidebarGroupAction
+          type="button"
+          aria-label="New search"
+          onClick={event => {
+            event.stopPropagation()
+            onNew()
+          }}
+          data-yaade-project-search-create=""
+        >
+          <Plus />
+        </SidebarGroupAction>
+        <CollapsibleContent>
+          <SidebarGroupContent data-yaade-list-panel="project-searches">
+            {items.length === 0 ? (
+              <div className="px-2 py-2 text-3xs text-sidebar-foreground/60">
+                No searches yet
+              </div>
+            ) : (
+              <SidebarMenu>
+                {items.map(item => (
+                  <SidebarMenuItem
+                    key={item.id}
+                    className="shrink-0"
+                    data-yaade-project-search-item={item.id}
+                    data-yaade-list-item=""
+                  >
+                    <SidebarMenuButton
+                      type="button"
+                      isActive={item.selected}
+                      tooltip={item.label}
+                      onClick={() => select(item)}
+                      className="h-auto min-h-8 py-1.5"
+                      aria-current={item.selected ? "page" : undefined}
+                    >
+                      <Search aria-hidden />
+                      <span className="truncate text-xs">{item.label}</span>
+                    </SidebarMenuButton>
+                    <SidebarMenuAction
+                      type="button"
+                      showOnHover
+                      aria-label={`Close search ${item.label}`}
+                      onClick={event => {
+                        event.stopPropagation()
+                        item.onClose()
+                      }}
+                      data-yaade-project-search-close={item.id}
+                    >
+                      <X />
+                    </SidebarMenuAction>
+                  </SidebarMenuItem>
+                ))}
+              </SidebarMenu>
+            )}
+          </SidebarGroupContent>
+        </CollapsibleContent>
+      </SidebarGroup>
+    </Collapsible>
+  )
+}
+
 function ProcessGroup({
   items,
   loading,
@@ -257,6 +374,8 @@ export function ProjectWorkspaceSidebar({
   gitHistoryError,
   onNewGitWorktree,
   processes,
+  searches = [],
+  onNewSearch,
   onOpenHq,
   onOpenSettings,
   launcher,
@@ -316,6 +435,12 @@ export function ProjectWorkspaceSidebar({
           onNew={onNewGitWorktree}
         />
         <SidebarSeparator />
+        {onNewSearch ? (
+          <>
+            <SearchesGroup items={searches} onNew={onNewSearch} />
+            <SidebarSeparator />
+          </>
+        ) : null}
         {showProcesses ? (
           <ProcessGroup
             items={processes}

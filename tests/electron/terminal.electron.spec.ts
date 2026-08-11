@@ -113,6 +113,121 @@ test.describe("electron terminal", () => {
     }
   })
 
+  test("foreground reconnect catches mounted terminals up from PTY replay", async () => {
+    const { app, page } = await launchJet()
+    try {
+      await page.addInitScript(() => {
+        const NativeWebSocket = window.WebSocket
+        const state = {
+          count: 0,
+          latest: null as WebSocket | null,
+        }
+        class TrackedWebSocket extends NativeWebSocket {
+          constructor(url: string | URL, protocols?: string | string[]) {
+            if (protocols === undefined) super(url)
+            else super(url, protocols)
+            if (String(url).includes("/ws?")) {
+              state.count += 1
+              state.latest = this
+            }
+          }
+        }
+        window.WebSocket = TrackedWebSocket
+        ;(
+          window as Window & {
+            __yaadeRealtimeProbe?: {
+              count: () => number
+            }
+          }
+        ).__yaadeRealtimeProbe = {
+          count: () => state.count,
+        }
+      })
+      await page.reload({ waitUntil: "domcontentloaded" })
+      await waitForMux(page)
+      await openMuxTerminal(page)
+      await showTerminal(page)
+
+      const panel = page.locator("[data-yaade-terminal-panel]")
+      const ptyId = await panel.getAttribute("data-yaade-terminal-pty-id")
+      expect(ptyId).toBeTruthy()
+      const socketCount = await page.evaluate(
+        () =>
+          (
+            window as Window & {
+              __yaadeRealtimeProbe?: { count: () => number }
+            }
+          ).__yaadeRealtimeProbe?.count() ?? 0,
+      )
+      expect(socketCount).toBeGreaterThan(0)
+
+      const marker = `yaade-refocus-replay-${Date.now()}`
+      await page.evaluate(
+        async ({ id, markerText }) => {
+          let visibility: DocumentVisibilityState = "hidden"
+          Object.defineProperty(document, "visibilityState", {
+            configurable: true,
+            get: () => visibility,
+          })
+          document.dispatchEvent(new Event("visibilitychange"))
+          visibility = "visible"
+          document.dispatchEvent(new Event("visibilitychange"))
+
+          const invoke = async (channel: string, args: unknown[]) => {
+            const response = await fetch("/api/v1/rpc", {
+              method: "POST",
+              headers: { "content-type": "application/json" },
+              body: JSON.stringify({ channel, args, clientId: "e2e-refocus-probe" }),
+            })
+            if (!response.ok) throw new Error(`RPC ${channel} failed: ${response.status}`)
+            return (await response.json()) as { value?: unknown }
+          }
+          await invoke("terminal:write", [id, `printf '\\n%s\\n' '${markerText}'\n`])
+
+          const deadline = performance.now() + 5_000
+          let markerReachedHost = false
+          while (performance.now() < deadline) {
+            const response = await invoke("terminal:attach", [id, 0])
+            const snapshot = response.value as
+              | { outputChunks?: string[]; output?: string }
+              | undefined
+            const output = snapshot?.outputChunks?.join("") ?? snapshot?.output ?? ""
+            if (output.includes(markerText)) {
+              markerReachedHost = true
+              break
+            }
+            await new Promise<void>(resolve => setTimeout(resolve, 20))
+          }
+          if (!markerReachedHost) throw new Error("terminal marker did not reach host replay")
+
+          window.dispatchEvent(new Event("focus"))
+        },
+        { id: ptyId!, markerText: marker },
+      )
+
+      await expect
+        .poll(
+          () =>
+            page.evaluate(
+              () =>
+                (
+                  window as Window & {
+                    __yaadeRealtimeProbe?: { count: () => number }
+                  }
+                ).__yaadeRealtimeProbe?.count() ?? 0,
+            ),
+          { timeout: 10_000 },
+        )
+        .toBeGreaterThan(socketCount)
+      await expect
+        .poll(async () => readTerminalText(page), { timeout: 10_000 })
+        .toContain(marker)
+      expect(await panel.getAttribute("data-yaade-terminal-pty-id")).toBe(ptyId)
+    } finally {
+      await app.close()
+    }
+  })
+
   test("preserves non-UTF-8 xterm binary input bytes", async () => {
     const { app, page } = await launchJet()
     try {
@@ -910,6 +1025,42 @@ test.describe("electron terminal", () => {
       const text = await readTerminalText(page)
       expect(text).toContain("'")
       expect(text).toContain("with spaces")
+    } finally {
+      await app.close()
+    }
+  })
+
+  test("accepts browser uri-list drops into the PTY", async () => {
+    const { app, page } = await launchJet()
+    try {
+      await showTerminal(page)
+      await focusTerminal(page)
+
+      const result = await page.evaluate(() => {
+        const panel = document.querySelector<HTMLElement>(
+          '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+        )
+        if (!panel) throw new Error("running terminal panel unavailable")
+        const rect = panel.getBoundingClientRect()
+        const dataTransfer = new DataTransfer()
+        dataTransfer.setData("text/uri-list", "file:///tmp/yaade-browser-drop.txt")
+        const eventInit: DragEventInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          dataTransfer,
+        }
+        panel.dispatchEvent(new DragEvent("dragover", eventInit))
+        const drop = new DragEvent("drop", eventInit)
+        panel.dispatchEvent(drop)
+        return { defaultPrevented: drop.defaultPrevented }
+      })
+
+      expect(result.defaultPrevented).toBe(true)
+      await expect
+        .poll(async () => readTerminalText(page), { timeout: 10_000 })
+        .toContain("yaade-browser-drop.txt")
     } finally {
       await app.close()
     }

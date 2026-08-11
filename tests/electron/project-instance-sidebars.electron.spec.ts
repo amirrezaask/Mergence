@@ -88,6 +88,45 @@ test.describe("project instance sidebars", () => {
     }
   })
 
+  test("browser uri-list drops reach the focused Running process PTY", async () => {
+    const { app, page } = await launchJet({ projectPage: true })
+    try {
+      await waitForProjectPage(page)
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="terminal"]').click()
+      await page.locator("[data-yaade-worktree-main]").click()
+      const panelSelector =
+        '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]'
+      await expectSelectorVisible(page, panelSelector)
+
+      const result = await page.evaluate(() => {
+        const target = document.querySelector<HTMLElement>(
+          '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+        )
+        if (!target) throw new Error("running process terminal unavailable")
+        const rect = target.getBoundingClientRect()
+        const dataTransfer = new DataTransfer()
+        dataTransfer.setData("text/uri-list", "file:///tmp/yaade-agent-browser-drop.txt")
+        const eventInit: DragEventInit = {
+          bubbles: true,
+          cancelable: true,
+          clientX: rect.left + rect.width / 2,
+          clientY: rect.top + rect.height / 2,
+          dataTransfer,
+        }
+        target.dispatchEvent(new DragEvent("dragover", eventInit))
+        const drop = new DragEvent("drop", eventInit)
+        target.dispatchEvent(drop)
+        return { defaultPrevented: drop.defaultPrevented }
+      })
+
+      expect(result.defaultPrevented).toBe(true)
+      await waitForTerminalText(page, "yaade-agent-browser-drop.txt")
+    } finally {
+      await app.close()
+    }
+  })
+
   test("Running keeps an agent launcher before launch", async () => {
     const { app, page } = await launchJet({ projectPage: true })
     try {

@@ -48,7 +48,9 @@ function pierreUnsafeCss(fontSize: number): string {
   return [
     // Custom element host defaults to inline — block + bounded width so
     // Pierre's overflow-x:scroll on [data-code] can engage.
-    `:host { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; }`,
+    `:host { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; background: transparent; color: var(--foreground); }`,
+    // Sit the diff on the workbench canvas — no raised panel fill behind hunks.
+    `[data-diff], [data-file], [data-code] { background: transparent !important; }`,
     // Default `1fr` tracks are minmax(auto, 1fr) and grow with long lines,
     // which expands the host and gets clipped by our overflow-hidden parents.
     `[data-diff], [data-file] { --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr); }`,

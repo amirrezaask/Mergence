@@ -5,7 +5,13 @@ import {
   type PropsWithChildren,
 } from "react"
 import { NotificationCenter } from "@yaade/ui/notifications"
-import { applyAgentStreamUnknown } from "../agent-snapshot-store.js"
+import {
+  applyAgentStreamUnknown,
+  listTrackedAgentSessionIds,
+  replaceAgentEvents,
+  setAgentSnapshot,
+} from "../agent-snapshot-store.js"
+import { applySessionTitleFromAgentEvent } from "../agent-session-title-bridge.js"
 import {
   useNotificationCenter,
   type NotificationCenterState,
@@ -27,6 +33,38 @@ export function SystemSignalsProvider({ children }: PropsWithChildren) {
         }),
       )
     })
+  }, [])
+
+  useEffect(() => {
+    const reconcileAgents = () => {
+      const api = window.yaade?.agents
+      if (!api) return
+      for (const sessionId of listTrackedAgentSessionIds()) {
+        void Promise.all([
+          api.getSnapshot(sessionId),
+          api.listEvents(sessionId, { limit: 500 }),
+        ]).then(([snapshot, events]) => {
+          if (snapshot) setAgentSnapshot(sessionId, snapshot)
+          replaceAgentEvents(sessionId, events)
+          for (const event of events) {
+            applySessionTitleFromAgentEvent({
+              type: "agents.event",
+              sessionId,
+              event,
+            })
+          }
+          window.dispatchEvent(
+            new CustomEvent("yaade:agent-signal", { detail: { sessionId } }),
+          )
+        }).catch(() => {
+          /* The next reconnect or explicit view refresh retries reconciliation. */
+        })
+      }
+    }
+    window.addEventListener("yaade:host-reconnected", reconcileAgents)
+    return () => {
+      window.removeEventListener("yaade:host-reconnected", reconcileAgents)
+    }
   }, [])
 
   return (

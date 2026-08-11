@@ -93,15 +93,28 @@ describe("search", { concurrency: false }, () => {
     }
   })
 
-  it("marks project results truncated at the 200-result cap", async () => {
+  it("pages project results with limit/cursor and marks truncated", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yaade-search-cap-"))
     const rootUri = pathToUri(dir)
     try {
       const content = Array.from({ length: 205 }, (_, index) => `needle ${index}`).join("\n")
       await fs.writeFile(path.join(dir, "many.txt"), content)
-      const result = await projectSearch(rootUri, "needle", { caseSensitive: true })
-      assert.equal(result.items.length, 200)
-      assert.equal(result.truncated, true)
+      const first = await projectSearch(rootUri, "needle", {
+        caseSensitive: true,
+        limit: 200,
+      })
+      assert.equal(first.items.length, 200)
+      assert.equal(first.truncated, true)
+      assert.ok(first.nextCursor)
+
+      const second = await projectSearch(rootUri, "needle", {
+        caseSensitive: true,
+        limit: 200,
+        cursor: first.nextCursor,
+      })
+      assert.equal(second.items.length, 5)
+      assert.equal(second.truncated, false)
+      assert.equal(second.items[0]?.line, 201)
     } finally {
       disposeSearchRoot(rootUri)
       await fs.rm(dir, { recursive: true, force: true })

@@ -53,8 +53,8 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
               className={cn(
                 "group relative flex max-w-40 min-w-0 shrink-0 items-center gap-0.5 rounded-sm border px-1.5",
                 active
-                  ? "border-border/80 bg-card/75 text-foreground shadow-sm"
-                  : "border-transparent bg-muted/30 text-foreground/70 hover:border-border/60 hover:bg-muted/55 hover:text-foreground",
+                  ? "border-border/50 bg-muted/60 text-foreground"
+                  : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground",
               )}
               onMouseDown={event => {
                 if (event.button === 1) {

@@ -297,7 +297,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       {selectedFile ? (
         <>
           <div
-            className="flex h-7 shrink-0 items-center gap-2 border-b border-border bg-card px-3"
+            className="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3"
           >
             <FileDiffIcon className="size-3.5 text-muted-foreground" aria-hidden />
             <span className="min-w-0 flex-1 truncate font-mono text-2xs">
@@ -438,7 +438,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
         </PierreDiffPool>
         {workingTree ? (
           <DialogFooter
-            className="shrink-0 border-t border-border bg-card/60 px-4 py-2 sm:flex-row sm:items-center sm:justify-between"
+            className="shrink-0 border-t border-border/60 bg-background/80 px-4 py-2 sm:flex-row sm:items-center sm:justify-between"
             data-yaade-working-tree-actions=""
           >
             <span className="font-mono text-2xs text-muted-foreground">

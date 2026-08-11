@@ -3,7 +3,6 @@ import { EXPLORER_TAB_ID, PROBLEMS_TAB_ID } from "@yaade/workspace"
 /** Persistent tiled tools. Renderers may land independently of the layout model. */
 export const MUX_TOOL_KINDS = [
   "explorer",
-  "search",
   "problems",
   "references",
   "definitions",
@@ -25,7 +24,6 @@ export type MuxToolPaneDefinition = {
 
 export const MUX_TOOL_PANES: readonly MuxToolPaneDefinition[] = [
   { kind: "explorer", tabId: EXPLORER_TAB_ID, label: "Explorer" },
-  { kind: "search", tabId: "yaade:tool:search", label: "Search" },
   { kind: "problems", tabId: PROBLEMS_TAB_ID, label: "Problems" },
   { kind: "references", tabId: "yaade:tool:references", label: "References" },
   { kind: "definitions", tabId: "yaade:tool:definitions", label: "Definitions" },

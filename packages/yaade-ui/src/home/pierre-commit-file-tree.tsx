@@ -164,10 +164,11 @@ export function PierreCommitFileTree(props: PierreCommitFileTreeProps) {
       className={cn("h-full min-h-0 w-full min-w-0 bg-transparent", className)}
       style={
         {
+          "--trees-theme-background": "transparent",
           "--trees-theme-list-active-selection-bg":
-            "color-mix(in oklab, var(--accent) 22%, transparent)",
+            "color-mix(in oklab, var(--muted) 70%, transparent)",
           "--trees-theme-list-hover-bg":
-            "color-mix(in oklab, var(--accent) 10%, transparent)",
+            "color-mix(in oklab, var(--muted) 45%, transparent)",
           "--trees-theme-focus-ring": "var(--ring)",
           "--trees-theme-git-modified": "var(--git-modified)",
           "--trees-theme-git-added": "var(--git-added)",
@@ -176,6 +177,7 @@ export function PierreCommitFileTree(props: PierreCommitFileTreeProps) {
           "--trees-theme-git-renamed": "var(--git-modified)",
           fontFamily: "var(--font-mono, 'Commit Mono', ui-monospace, monospace)",
           fontSize: "var(--yaade-fs-2xs)",
+          color: "var(--foreground)",
         } as CSSProperties
       }
       renderContextMenu={

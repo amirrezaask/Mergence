@@ -175,6 +175,23 @@ describe("bundled Yaade themes", () => {
       assert.equal(tokens.ring, tokens.primary)
       assert.equal(tokens.sidebarRing, tokens.primary)
       assert.notEqual(tokens.card, tokens.background)
+      // Soft graphite / zinc stack: sidebar sits near the canvas, not a pure-black well.
+      const parseLightness = (value: string) => {
+        const match = value.match(/^oklch\(([\d.]+)/)
+        assert.ok(match, `expected oklch lightness in ${value}`)
+        return Number(match[1])
+      }
+      const bgL = parseLightness(tokens.background)
+      const sidebarL = parseLightness(tokens.sidebar)
+      const cardL = parseLightness(tokens.card)
+      assert.ok(
+        Math.abs(sidebarL - bgL) <= 0.04,
+        `${themeId} sidebar/background ΔL must stay ≤ 0.04 (got ${Math.abs(sidebarL - bgL).toFixed(3)})`,
+      )
+      assert.ok(
+        Math.abs(cardL - bgL) <= 0.05,
+        `${themeId} card/background ΔL must stay ≤ 0.05 (got ${Math.abs(cardL - bgL).toFixed(3)})`,
+      )
       assert.equal(theme.colors.bg, toSrgbColor(tokens.background))
       assert.equal(theme.colors.panelRaised, toSrgbColor(tokens.card))
       assert.equal(theme.colors.error, toSrgbColor(tokens.destructive))

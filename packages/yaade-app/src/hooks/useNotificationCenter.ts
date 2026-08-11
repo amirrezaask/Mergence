@@ -203,7 +203,11 @@ export function useNotificationCenter(): NotificationCenterState {
       if (document.visibilityState === "visible") void refresh()
     }
     document.addEventListener("visibilitychange", onVis)
-    return () => document.removeEventListener("visibilitychange", onVis)
+    window.addEventListener("yaade:host-reconnected", onVis)
+    return () => {
+      document.removeEventListener("visibilitychange", onVis)
+      window.removeEventListener("yaade:host-reconnected", onVis)
+    }
   }, [refresh])
 
   const openFiltered: NotificationCenterState["openFiltered"] = opts => {

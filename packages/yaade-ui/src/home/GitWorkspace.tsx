@@ -28,7 +28,6 @@ import {
   ExternalLinkIcon,
   FileDiffIcon,
   GitBranchIcon,
-  HistoryIcon,
   MoreHorizontalIcon,
   RefreshCwIcon,
   RotateCcwIcon,
@@ -297,6 +296,12 @@ export function GitWorkspace(props: GitWorkspaceProps) {
 
   useEffect(() => {
     void refresh()
+  }, [refresh])
+
+  useEffect(() => {
+    const reconcile = () => void refresh()
+    window.addEventListener("yaade:host-reconnected", reconcile)
+    return () => window.removeEventListener("yaade:host-reconnected", reconcile)
   }, [refresh])
 
   /** Cheap history poll: full refresh only when tip/summary/status fingerprint changes. */
@@ -857,7 +862,7 @@ function GitToolbar(props: {
   return (
     <header
       data-yaade-git-toolbar=""
-      className="flex h-7 shrink-0 items-center justify-end gap-2 border-b border-border bg-card px-2"
+      className="flex h-7 shrink-0 items-center justify-end gap-2 border-b border-border/60 bg-background px-2"
     >
       <div className="flex shrink-0 items-center gap-1">
         {hideCommit ? null : (
@@ -1075,8 +1080,8 @@ function GitViewTab(props: { active: boolean; label: string; onSelect: () => voi
       className={cn(
         "h-5 rounded-sm border px-1.5 text-3xs leading-none",
         props.active
-          ? "border-border/80 bg-card/75 text-foreground shadow-sm"
-          : "border-transparent bg-muted/30 text-foreground/70 hover:border-border/60 hover:bg-muted/55 hover:text-foreground",
+          ? "border-border/50 bg-muted/60 text-foreground"
+          : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground",
       )}
       onClick={props.onSelect}
     >
@@ -1369,7 +1374,7 @@ function DiffViewer(props: {
     <div data-yaade-git-diff="" className="flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
       <div
         data-yaade-git-diff-toolbar=""
-        className="flex h-7 shrink-0 items-center gap-2 border-b border-border bg-card px-3"
+        className="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3"
       >
         {onBack ? (
           <Button
@@ -1656,7 +1661,7 @@ function HistoryList(props: {
   }, [hasNextPage, lastVisibleIndex, loading, onLoadMore, rowCount])
 
   return (
-    <div ref={scrollRef} data-yaade-list-panel="git-history" className="min-h-0 flex-1 overflow-auto p-2">
+    <div ref={scrollRef} data-yaade-list-panel="git-history" className="min-h-0 flex-1 overflow-auto px-1.5 py-1.5">
       {rowCount === 0 && loading ? (
         <CenteredStatus label="Loading commit history…" />
       ) : rowCount === 0 ? (
@@ -1679,16 +1684,15 @@ function HistoryList(props: {
                   data-active={active ? "" : undefined}
                   onClick={() => onSelect(GIT_WORKING_TREE_ID)}
                   className={cn(
-                    "absolute top-0 left-0 grid w-full shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center justify-normal gap-3 rounded-none border-b border-border/35 px-3 py-2 text-left font-normal",
+                    "absolute top-0 left-0 grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center justify-normal gap-2 rounded-md px-2.5 py-1.5 text-left font-normal",
                     active
-                      ? "bg-primary/10 before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-primary"
-                      : "hover:bg-accent/25",
+                      ? "bg-muted text-foreground"
+                      : "text-foreground/90 hover:bg-muted/50",
                   )}
                   style={{ height: item.size, transform: `translateY(${item.start}px)` }}
                 >
-                  <FileDiffIcon className="text-primary/80" aria-hidden />
                   <div className="min-w-0">
-                    <span className="block truncate text-xs text-foreground">
+                    <span className="block truncate text-xs">
                       Uncommitted
                     </span>
                     <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
@@ -1698,7 +1702,7 @@ function HistoryList(props: {
                     </span>
                   </div>
                   <div className="text-right font-mono text-3xs tabular-nums text-muted-foreground">
-                    <span className="block text-primary/90">HEAD</span>
+                    <span className="block">HEAD</span>
                   </div>
                 </Button>
               )
@@ -1715,28 +1719,30 @@ function HistoryList(props: {
                 data-active={active ? "" : undefined}
                 onClick={() => onSelect(commit.hash)}
                 className={cn(
-                  "absolute top-0 left-0 grid w-full shrink-0 grid-cols-[auto_minmax(0,1fr)_auto] items-center justify-normal gap-3 rounded-none border-b border-border/35 px-3 py-2 text-left font-normal",
+                  "absolute top-0 left-0 grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center justify-normal gap-2 rounded-md px-2.5 py-1.5 text-left font-normal",
                   active
-                    ? "bg-primary/10 before:absolute before:inset-y-1 before:left-0 before:w-0.5 before:bg-primary"
-                    : "hover:bg-accent/25",
+                    ? "bg-muted text-foreground"
+                    : "text-foreground/90 hover:bg-muted/50",
                 )}
                 style={{ height: item.size, transform: `translateY(${item.start}px)` }}
               >
-                <HistoryIcon className="text-primary/80" aria-hidden />
                 <div className="min-w-0">
-                  <span className="block truncate text-xs text-foreground">{commit.subject}</span>
-                  <span className="mt-0.5 block truncate text-3xs text-muted-foreground">{commit.author}</span>
+                  <span className="block truncate text-xs">{commit.subject}</span>
+                  <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
+                    {commit.author}
+                    <span className="mx-1 text-border">·</span>
+                    {dateFormatter.format(new Date(commit.authoredAt))}
+                  </span>
                 </div>
-                <div className="text-right font-mono text-3xs tabular-nums text-muted-foreground">
-                  <span className="block text-primary/90">{commit.shortHash}</span>
-                  <span className="block">{dateFormatter.format(new Date(commit.authoredAt))}</span>
-                </div>
+                <span className="font-mono text-3xs tabular-nums text-muted-foreground">
+                  {commit.shortHash}
+                </span>
               </Button>
             )
           })}
           {error ? <HistoryRetry error={error} onRetry={onRetry} /> : null}
           {loading ? (
-            <div className="absolute right-3 bottom-2 flex items-center gap-1.5 rounded-md bg-background/90 px-2 py-1 text-3xs text-muted-foreground shadow-sm">
+            <div className="absolute right-3 bottom-2 flex items-center gap-1.5 rounded-md border border-border/50 bg-background/95 px-2 py-1 text-3xs text-muted-foreground">
               <Spinner /> Loading more commits…
             </div>
           ) : null}

@@ -585,7 +585,11 @@ export class TerminalHost {
     }
   }
 
-  attach(id: string, clientId: string): TerminalAttachSnapshot | null {
+  attach(
+    id: string,
+    clientId: string,
+    afterSequence?: number,
+  ): TerminalAttachSnapshot | null {
     const entry = this.entries.get(id)
     if (!entry) return null
     // Client re-attached — cancel auto-dispose so replay stays available.
@@ -602,11 +606,21 @@ export class TerminalHost {
     if (entry.status === "exited") {
       this.scheduleDisposeAfterExit(entry)
     }
+    const outputChunks = entry.output.slice(entry.outputHead)
+    const replayFloor = entry.sequence - outputChunks.length + 1
+    const requestedSequence =
+      typeof afterSequence === "number" && Number.isFinite(afterSequence)
+        ? Math.max(0, Math.trunc(afterSequence))
+        : replayFloor - 1
+    const replayOffset = Math.min(
+      outputChunks.length,
+      Math.max(0, requestedSequence + 1 - replayFloor),
+    )
     return {
       id: entry.id,
       title: entry.title,
       // Slice the ring segments — do not join into one 2 MB string here.
-      outputChunks: entry.output.slice(entry.outputHead),
+      outputChunks: outputChunks.slice(replayOffset),
       output: "",
       lastSequence: entry.sequence,
       status: entry.status,

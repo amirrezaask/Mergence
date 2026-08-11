@@ -1057,7 +1057,11 @@ async function handleTerminal(
         typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0),
       )
     case "terminal:attach":
-      return runtime.terminal.attach(str(args[0], "id"), clientId)
+      return runtime.terminal.attach(
+        str(args[0], "id"),
+        clientId,
+        typeof args[1] === "number" ? args[1] : undefined,
+      )
     case "terminal:getCwd":
       return runtime.terminal.getCwd(str(args[0], "id"))
     case "terminal:getForegroundProcess":

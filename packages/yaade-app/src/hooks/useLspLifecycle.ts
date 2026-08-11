@@ -369,6 +369,30 @@ export function useLspLifecycle(
     }
   }, [bumpLspRevision, ensureLspForFileDeduped, ensureRuntime, workspace])
 
+  useEffect(() => {
+    const reconnectClients = () => {
+      const runtime = runtimeRef.current
+      if (!runtime?.manager || !runtime.manager.hasAnyConnection()) return
+      setLspStatus("restarting")
+      for (const connection of runtime.manager.listConnections()) {
+        runtime.router.releaseConnection(connection.id)
+        runtime.pool.releaseConnection(connection.id)
+      }
+      void Promise.all(
+        [...workspace.openBuffers].map(uri => ensureLspForFileDeduped(uri)),
+      ).then(() => {
+        setLspStatus(runtime.manager?.hasAnyConnection() ? "ready" : "idle")
+        bumpLspRevision()
+      }).catch(() => {
+        setLspStatus("disconnected")
+      })
+    }
+    window.addEventListener("yaade:host-reconnected", reconnectClients)
+    return () => {
+      window.removeEventListener("yaade:host-reconnected", reconnectClients)
+    }
+  }, [bumpLspRevision, ensureLspForFileDeduped, workspace])
+
   return {
     lspManager: runtimeRef.current?.manager ?? null,
     lspClientPool: runtimeRef.current?.pool ?? null,

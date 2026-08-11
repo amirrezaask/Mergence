@@ -80,6 +80,23 @@ export function pathsFromDataTransfer(dt: DataTransfer): string[] {
   return parseUriListText(uriList)
 }
 
+/**
+ * Browser file drags are not consistent about exposing the `Files` type.
+ * Chromium may expose a local file as `text/uri-list` or an absolute
+ * `text/plain` path instead, so use the same synchronous path parser for the
+ * dragover/drop gate.
+ */
+export function hasFileDropData(dt: DataTransfer): boolean {
+  if (Array.from(dt.types).includes("Files")) return true
+  if (
+    Array.from(dt.types).includes("text/uri-list") ||
+    Array.from(dt.types).includes("text/plain")
+  ) {
+    return pathsFromDataTransfer(dt).length > 0
+  }
+  return false
+}
+
 function parseUriListText(uriList: string): string[] {
   const paths: string[] = []
   if (!uriList) return paths

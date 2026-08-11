@@ -166,6 +166,54 @@ test("resumes a paused PTY when its websocket client reconnects", async () => {
   }
 })
 
+test("reattach returns only terminal output newer than the client sequence", async () => {
+  const terminal = new TerminalHost()
+  let resolveFirst: (() => void) | null = null
+  let resolveSecond: (() => void) | null = null
+  const firstOutput = new Promise<void>(resolve => {
+    resolveFirst = resolve
+  })
+  const secondOutput = new Promise<void>(resolve => {
+    resolveSecond = resolve
+  })
+  terminal.setEmit((channel, args) => {
+    if (channel !== "terminal:data") return
+    const data = String(args[1] ?? "")
+    if (data.includes("first")) resolveFirst?.()
+    if (data.includes("second")) resolveSecond?.()
+  })
+
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write('first'); setTimeout(() => process.stdout.write('second'), 100); setInterval(() => {}, 1e9)",
+        ],
+      },
+      "terminal-delta-replay-test",
+    )
+    await firstOutput
+    const initial = terminal.attach(created.id, "terminal-delta-replay-test")
+    assert.ok(initial)
+    assert.match(initial.outputChunks.join(""), /first/)
+
+    await secondOutput
+    const resumed = terminal.attach(
+      created.id,
+      "terminal-delta-replay-test",
+      initial.lastSequence,
+    )
+    assert.ok(resumed)
+    assert.doesNotMatch(resumed.outputChunks.join(""), /first/)
+    assert.match(resumed.outputChunks.join(""), /second/)
+  } finally {
+    terminal.stopAll()
+  }
+})
+
 test("create at capacity preserves every running terminal", async () => {
   const max = 3
   const terminal = new TerminalHost(max)

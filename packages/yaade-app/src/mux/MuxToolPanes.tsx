@@ -24,7 +24,6 @@ import {
   Lister,
   LocationList,
   ReferencesLocationList,
-  SearchLocationList,
   showYaadeToast,
   type ListerNode,
 } from "@yaade/ui"
@@ -168,32 +167,17 @@ function normalizeLocation(
 
 function ensureListDocument(
   workspace: WorkspaceService,
-  kind: "search" | "references" | "definitions",
+  kind: "references" | "definitions",
 ): ListDocument {
   const tool = muxToolPane(kind)
   const existing = workspace.listStore.get(tool.tabId)
   if (existing) return existing
-  const document: ListDocument =
-    kind === "search"
-      ? {
-          id: tool.tabId,
-          title: tool.label,
-          feed: "search",
-          items: [],
-          searchQuery: "",
-          searchCaseSensitive: false,
-          searchRegex: false,
-          searchFuzzy: false,
-          searchWholeWord: false,
-          searchLoading: false,
-          searchError: null,
-        }
-      : {
-          id: tool.tabId,
-          title: tool.label,
-          feed: kind,
-          items: [],
-        }
+  const document: ListDocument = {
+    id: tool.tabId,
+    title: tool.label,
+    feed: kind,
+    items: [],
+  }
   workspace.listStore.create(document)
   return document
 }
@@ -280,27 +264,6 @@ function AsyncLocationView(props: {
         }
       />
     </ToolFrame>
-  )
-}
-
-function SearchTool(props: MuxToolPanesProps) {
-  const document = ensureListDocument(props.workspace, "search")
-  return (
-    <div
-      className="h-full min-h-0"
-      data-yaade-tool-pane="search"
-      tabIndex={-1}
-    >
-      <SearchLocationList
-        listId={document.id}
-        workspace={props.workspace}
-        autoFocus
-        getSearchFolders={() => props.workspace.folders}
-        onOpenItem={item =>
-          props.onOpenLocation(item.fileUri, item.line, item.column)
-        }
-      />
-    </div>
   )
 }
 
@@ -942,8 +905,6 @@ function LspOutputTool(props: MuxToolPanesProps) {
 
 export function MuxToolPanes(props: MuxToolPanesProps) {
   switch (props.kind) {
-    case "search":
-      return <SearchTool {...props} />
     case "problems":
       return <ProblemsTool {...props} />
     case "references":

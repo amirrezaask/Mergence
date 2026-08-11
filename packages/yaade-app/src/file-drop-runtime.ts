@@ -1,6 +1,7 @@
 import type { FileSystemProvider, LaunchConfig } from "@yaade/workspace"
 import {
   handleDroppedPaths,
+  hasFileDropData,
   materializeDroppedFilesToTemp,
   pathsFromDataTransfer,
   pathsFromDataTransferAsync,
@@ -33,6 +34,8 @@ export type FileDropOptions = {
   onDragOverChange?: (active: boolean) => void
   /** Prefer matching drops under this project root when basenames collide. */
   activeWorkspacePath?: string | null
+  /** Install the listener for a focused process surface that only accepts terminal drops. */
+  terminalOnly?: boolean
 }
 
 /** Install HTML5 OS file-drop listeners. Returns disposer. */
@@ -41,10 +44,6 @@ export function installFileDrop(getOpts: () => FileDropOptions): () => void {
   if (typeof window !== "undefined") {
     window.__yaadeOsFileDropInstalled = true
   }
-  const isAgentDrop = (target: EventTarget | null) =>
-    target instanceof Element &&
-    Boolean(target.closest("[data-yaade-agent-drop-zone]"))
-
   const dropContext = (): ProcessDroppedPathsContext => {
     const ctx = getOpts()
     return {
@@ -63,13 +62,15 @@ export function installFileDrop(getOpts: () => FileDropOptions): () => void {
     getOpts().onDragOverChange?.(active)
   }
 
+  const eventDropZone = (e: DragEvent) => {
+    const pointZone = resolveDropZoneAtPoint(e.clientX, e.clientY)
+    if (pointZone !== "other") return pointZone
+    return resolveDropZoneFromElement(e.target instanceof Element ? e.target : null)
+  }
+
   const onDragEnter = (e: DragEvent) => {
-    if (!e.dataTransfer?.types.includes("Files")) return
-    if (isAgentDrop(e.target)) {
-      dragDepth = 0
-      setDragActive(false)
-      return
-    }
+    if (!e.dataTransfer || !hasFileDropData(e.dataTransfer)) return
+    if (getOpts().terminalOnly && eventDropZone(e) !== "terminal") return
     dragDepth++
     setDragActive(true)
   }
@@ -80,15 +81,22 @@ export function installFileDrop(getOpts: () => FileDropOptions): () => void {
   }
 
   const onDragOver = (e: DragEvent) => {
-    if (!e.dataTransfer?.types.includes("Files")) return
-    if (isAgentDrop(e.target)) return
+    if (!e.dataTransfer || !hasFileDropData(e.dataTransfer)) return
+    if (getOpts().terminalOnly && eventDropZone(e) !== "terminal") return
     e.preventDefault()
     e.dataTransfer.dropEffect = "copy"
   }
 
   const onDrop = (e: DragEvent) => {
-    if (!e.dataTransfer?.types.includes("Files")) return
-    if (isAgentDrop(e.target)) return
+    if (!e.dataTransfer || !hasFileDropData(e.dataTransfer)) return
+
+    const pointEl = document.elementFromPoint(e.clientX, e.clientY)
+    const target = pointEl instanceof Element ? pointEl : e.target instanceof Element ? e.target : null
+    const zoneFromPoint = resolveDropZoneAtPoint(e.clientX, e.clientY)
+    const zone =
+      zoneFromPoint !== "other" ? zoneFromPoint : resolveDropZoneFromElement(target)
+    if (getOpts().terminalOnly && zone !== "terminal") return
+
     e.preventDefault()
     e.stopPropagation()
     dragDepth = 0
@@ -99,12 +107,6 @@ export function installFileDrop(getOpts: () => FileDropOptions): () => void {
     // before any await or the browser clears files/uri-list.
     const files = [...dataTransfer.files]
     const syncPaths = pathsFromDataTransfer(dataTransfer)
-
-    const pointEl = document.elementFromPoint(e.clientX, e.clientY)
-    const target = pointEl instanceof Element ? pointEl : e.target instanceof Element ? e.target : null
-    const zoneFromPoint = resolveDropZoneAtPoint(e.clientX, e.clientY)
-    const zone =
-      zoneFromPoint !== "other" ? zoneFromPoint : resolveDropZoneFromElement(target)
 
     void (async () => {
       let paths =

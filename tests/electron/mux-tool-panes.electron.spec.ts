@@ -9,7 +9,7 @@ import {
 } from "./_launch.js"
 
 test.describe("persistent mux developer tools", () => {
-  test("opens Search and Buffer MRU from the planned prefix keys", async () => {
+  test("opens Buffer MRU from the planned prefix key", async () => {
     const { app, page } = await launchJet({ withTerminal: false })
     try {
       await page.evaluate(() => window.__yaadeAgent!.openFile("src/utils.ts"))
@@ -28,69 +28,7 @@ test.describe("persistent mux developer tools", () => {
         '[data-yaade-mux-pane="yaade:tool:buffers"][data-focused]',
       )
 
-      await pressMuxPrefix(page, "/")
-      await expectSelectorVisible(page, '[data-yaade-tool-pane="search"]')
-      const searchInput = page.getByRole("searchbox", {
-        name: "Search project",
-      })
-      await expect.poll(async () => searchInput.count()).toBe(1)
-      await searchInput.fill("Hello")
-      await page.evaluate(() =>
-        window.__yaadeAgent!.waitForListRows("yaade:tool:search", 1),
-      )
-      await expectListRows(page, {
-        panel: "yaade:tool:search",
-        minItems: 1,
-        needle: "src/utils.ts:2",
-        noResultsText: "No results",
-      })
-
-      const editorGroupsBefore = await page.evaluate(
-        () =>
-          window.__yaadeAgent!.getState().panels.filter(
-            panel => panel.kind === "editor",
-          ).length,
-      )
-      await searchInput.fill("function main")
-      await page.evaluate(() =>
-        window.__yaadeAgent!.waitForListRows("yaade:tool:search", 1),
-      )
-      await expectListRows(page, {
-        panel: "yaade:tool:search",
-        minItems: 1,
-        needle: "src/index.ts:3",
-        noResultsText: "No results",
-      })
-      await page
-        .locator(
-          '[data-yaade-list-panel="yaade:tool:search"] [data-yaade-list-item]',
-        )
-        .first()
-        .click()
-      await expect
-        .poll(() =>
-          page.evaluate(() => ({
-            openBuffers:
-              window.__yaadeAgent!.getEditorDiagnostics().editors.openBuffers,
-            editorGroups: window.__yaadeAgent!.getState().panels.filter(
-              panel => panel.kind === "editor",
-            ).length,
-          })),
-        )
-        .toEqual({
-          openBuffers: expect.arrayContaining([
-            expect.stringMatching(/\/src\/index\.ts$/),
-          ]),
-          editorGroups: editorGroupsBefore,
-        })
-
       const paneCount = await page.locator("[data-yaade-mux-pane]").count()
-      await pressMuxPrefix(page, "/")
-      await expect.poll(async () => page.locator("[data-yaade-mux-pane]").count()).toBe(
-        paneCount,
-      )
-      await expect.poll(async () => searchInput.evaluate(element => element === document.activeElement)).toBe(true)
-
       await pressMuxPrefix(page, "KeyB")
       await expectSelectorVisible(
         page,

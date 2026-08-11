@@ -1,14 +1,27 @@
-import { defineConfig } from "vite"
+import { defineConfig, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
+import { applyDevBuildBrandingToHtml } from "../../packages/yaade-app/src/build-branding-html.ts"
 
 const appRoot = path.resolve(__dirname, "../../packages/yaade-app")
 const uiRoot = path.resolve(__dirname, "../../packages/yaade-ui/src")
 
 const browserTargets = ["chrome107", "edge107", "firefox104", "safari16"]
 
-export default defineConfig({
+function yaadeBuildBranding(command: "build" | "serve"): Plugin {
+  return {
+    name: "yaade-build-branding",
+    transformIndexHtml(html) {
+      // `vite` / `vite --mode development` → badged favicon + DEV title seed.
+      // Production `vite build` keeps the release icons in index.html as-is.
+      if (command !== "serve") return html
+      return applyDevBuildBrandingToHtml(html)
+    },
+  }
+}
+
+export default defineConfig(({ command }) => ({
   base: "/",
   // Pierre @pierre/diffs worker is an ES module (code-splitting); iife fails the build.
   worker: {
@@ -44,6 +57,8 @@ export default defineConfig({
           }
           if (id.includes("node_modules")) {
           if (id.includes("@pierre/diffs") || id.includes("@pierre/trees")) return "diffs"
+            const shikiLang = /@shikijs\/langs\/dist\/([^/.]+)/.exec(id)?.[1]
+            if (shikiLang) return `shiki-lang-${shikiLang}`
             if (id.includes("shiki") || id.includes("@shikijs")) return "shiki"
             if (id.includes("@xterm")) return "xterm"
           }
@@ -52,6 +67,7 @@ export default defineConfig({
     },
   },
   plugins: [
+    yaadeBuildBranding(command),
     react({
       babel: {
         plugins: [["babel-plugin-react-compiler", {}]],
@@ -82,4 +98,4 @@ export default defineConfig({
     },
   },
   clearScreen: false,
-})
+}))

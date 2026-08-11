@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react"
+import { useCallback, useEffect, useState, type ReactNode } from "react"
 import type { HqAgentSummary, HqProjectSummary, ProjectSession } from "@yaade/rpc"
 import type { AgentCliDriver } from "@yaade/ui/agent-picker"
 import {
@@ -27,6 +27,8 @@ import {
 } from "@yaade/ui/primitives"
 import { AlertCircle } from "lucide-react"
 import type { YaadeAgentAPI } from "./agent-bridge.js"
+import { BuildModeBadge } from "./BuildModeBadge.js"
+import { formatAppDocumentTitle } from "./build-branding.js"
 import { HqPage, type KnownProject } from "./hq/HqPage.js"
 import { ProjectPage } from "./project/ProjectPage.js"
 import { preloadMuxApp } from "./mux/preload.js"
@@ -267,7 +269,9 @@ export function AppRoot() {
           ...loadedProject,
           rootPath: projectPathForHome(loadedProject.rootPath, homeDir),
         }
-        document.title = workspaceDocumentTitle(project.rootPath, homeDir)
+        document.title = formatAppDocumentTitle(
+          workspaceDocumentTitle(project.rootPath, homeDir),
+        )
 
         const sessionId = requestedRoute.workspaceId
         if (!sessionId) {
@@ -517,10 +521,11 @@ export function AppRoot() {
     }
   }, [backToProject, boot, hqCounts, openSession])
 
-  if (boot.status === "loading") return <AppBootSkeleton />
-
-  if (boot.status === "error") {
-    return (
+  let content: ReactNode
+  if (boot.status === "loading") {
+    content = <AppBootSkeleton />
+  } else if (boot.status === "error") {
+    content = (
       <div className="grid h-full place-items-center bg-background p-8 text-foreground" data-yaade-boot="error" role="alert">
         <Card className="w-full max-w-md text-left">
           <CardHeader><CardTitle>YAADE could not open this route</CardTitle></CardHeader>
@@ -542,10 +547,8 @@ export function AppRoot() {
         </Card>
       </div>
     )
-  }
-
-  if (boot.status === "hq") {
-    return (
+  } else if (boot.status === "hq") {
+    content = (
       <HqPage
         homeDir={boot.homeDir}
         onOpenProject={openKnownProject}
@@ -557,41 +560,48 @@ export function AppRoot() {
         onCountsChange={setHqCounts}
       />
     )
+  } else {
+    content = (
+      <ProjectPage
+        projectId={boot.project.id}
+        projectName={boot.project.name}
+        projectPath={boot.project.rootPath}
+        homeDir={boot.homeDir}
+        machineHostname={boot.machineHostname}
+        routeRevision={routeEpoch}
+        session={boot.session}
+        routeError={boot.routeError}
+        agentLaunchIntent={
+          pendingAgentLaunch?.projectId === boot.project.id
+            ? pendingAgentLaunch
+            : null
+        }
+        onAgentLaunchIntentHandled={intentId => {
+          clearHqAgentLaunch(intentId)
+          setPendingAgentLaunch(current =>
+            current?.id === intentId ? null : current,
+          )
+        }}
+        initialAgentFocusTabId={
+          pendingAgentFocusTabId ?? projectRouteFromSearch().processId
+        }
+        onInitialAgentFocusHandled={() => setPendingAgentFocusTabId(null)}
+        onOpenSession={openSession}
+        onClearSession={backToProject}
+        onNavigateProject={navigateProject}
+        onOpenHq={() => {
+          pushProjectUrl("/")
+          readRoute()
+        }}
+      />
+    )
   }
 
   return (
-    <ProjectPage
-      projectId={boot.project.id}
-      projectName={boot.project.name}
-      projectPath={boot.project.rootPath}
-      homeDir={boot.homeDir}
-      machineHostname={boot.machineHostname}
-      routeRevision={routeEpoch}
-      session={boot.session}
-      routeError={boot.routeError}
-      agentLaunchIntent={
-        pendingAgentLaunch?.projectId === boot.project.id
-          ? pendingAgentLaunch
-          : null
-      }
-      onAgentLaunchIntentHandled={intentId => {
-        clearHqAgentLaunch(intentId)
-        setPendingAgentLaunch(current =>
-          current?.id === intentId ? null : current,
-        )
-      }}
-      initialAgentFocusTabId={
-        pendingAgentFocusTabId ?? projectRouteFromSearch().processId
-      }
-      onInitialAgentFocusHandled={() => setPendingAgentFocusTabId(null)}
-      onOpenSession={openSession}
-      onClearSession={backToProject}
-      onNavigateProject={navigateProject}
-      onOpenHq={() => {
-        pushProjectUrl("/")
-        readRoute()
-      }}
-    />
+    <>
+      {content}
+      <BuildModeBadge />
+    </>
   )
 }
 

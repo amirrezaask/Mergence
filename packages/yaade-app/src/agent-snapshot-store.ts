@@ -54,6 +54,10 @@ export function getAgentEvents(sessionId: string): AgentEvent[] {
   return eventsBySession.get(sessionId) ?? []
 }
 
+export function listTrackedAgentSessionIds(): string[] {
+  return [...new Set([...snapshots.keys(), ...eventsBySession.keys()])]
+}
+
 export function setAgentSnapshot(
   sessionId: string,
   snapshot: Omit<AgentSessionSnapshot, "_internal">,
@@ -68,6 +72,12 @@ export function appendAgentEvent(sessionId: string, event: AgentEvent): void {
   list.push(event)
   if (list.length > 500) list.splice(0, list.length - 500)
   eventsBySession.set(sessionId, list)
+  notify(sessionId)
+}
+
+export function replaceAgentEvents(sessionId: string, events: AgentEvent[]): void {
+  const deduped = new Map(events.map(event => [event.id, event]))
+  eventsBySession.set(sessionId, [...deduped.values()].slice(-500))
   notify(sessionId)
 }
 

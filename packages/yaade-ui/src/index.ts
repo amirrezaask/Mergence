@@ -21,9 +21,14 @@ export {
   ProjectWorkspaceSidebar,
   type ProjectWorkspaceSidebarProcess,
   type ProjectWorkspaceSidebarProps,
+  type ProjectWorkspaceSidebarSearch,
   type ProjectWorkspaceSidebarView,
   type ProjectWorkspaceSidebarWorktree,
 } from "./shell/ProjectWorkspaceSidebar.js"
+export {
+  ProjectSearchPanel,
+  type ProjectSearchPanelProps,
+} from "./search/ProjectSearchPanel.js"
 export {
   ModalEditorTabBar,
   SessionHeaderChromeProvider,
@@ -72,7 +77,6 @@ export { QuickOpenOverlay, type QuickOpenWorkspace } from "./components/QuickOpe
 export { BufferListOverlay } from "./components/BufferListOverlay.js"
 export {
   LocationList,
-  SearchLocationList,
   ReferencesLocationList,
   DefinitionsLocationList,
   DiagnosticsLocationList,

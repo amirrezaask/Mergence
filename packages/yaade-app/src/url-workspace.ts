@@ -201,6 +201,7 @@ export const PROJECT_VIEWS = [
   "running",
   "editors",
   "history",
+  "search",
 ] as const
 
 export type ProjectView = (typeof PROJECT_VIEWS)[number]
@@ -210,6 +211,7 @@ export type ProjectRoute = {
   workspaceId: string | null
   checkoutKey: string | null
   processId: string | null
+  searchId: string | null
 }
 
 function nonEmptyParam(params: URLSearchParams, key: string): string | null {
@@ -241,6 +243,7 @@ export function projectRouteFromSearch(
     workspaceId,
     checkoutKey: nonEmptyParam(params, "checkout"),
     processId,
+    searchId: nonEmptyParam(params, "search"),
   }
 }
 
@@ -257,6 +260,9 @@ export function projectRouteUrl(
   }
   if (route.processId && route.view === "running") {
     params.set("process", route.processId)
+  }
+  if (route.searchId && route.view === "search") {
+    params.set("search", route.searchId)
   }
   const query = params.toString()
   return `${pathname || "/"}${query ? `?${query}` : ""}`

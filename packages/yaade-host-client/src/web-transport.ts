@@ -62,6 +62,62 @@ export function createClientId(
   return `client-${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
 }
 
+type RealtimeWakeTarget = {
+  addEventListener(type: string, listener: EventListener): void
+  removeEventListener(type: string, listener: EventListener): void
+}
+type RealtimeWakeDocument = RealtimeWakeTarget & {
+  readonly visibilityState: DocumentVisibilityState
+}
+
+/**
+ * Background tabs heavily throttle reconnect timers. Wake the realtime loop as
+ * soon as the page becomes usable again; a hidden→visible transition also
+ * replaces an apparently-open socket because a suspended network path can stay
+ * half-open until the next write.
+ */
+export function subscribeRealtimeWake(
+  onWake: (replaceOpenSocket: boolean) => void,
+  doc: RealtimeWakeDocument,
+  target: RealtimeWakeTarget,
+): () => void {
+  let wasHidden = doc.visibilityState === "hidden"
+  let wasBlurred = false
+  const onVisibilityChange = () => {
+    if (doc.visibilityState === "hidden") {
+      wasHidden = true
+      return
+    }
+    if (!wasHidden) return
+    wasHidden = false
+    onWake(true)
+  }
+  const onBlur = () => {
+    wasBlurred = true
+  }
+  const onFocus = () => {
+    if (!wasBlurred) return
+    wasBlurred = false
+    onWake(true)
+  }
+  const onPageShow = (event: Event) => {
+    if ("persisted" in event && event.persisted === true) onWake(true)
+  }
+  const onOnline = () => onWake(true)
+  doc.addEventListener("visibilitychange", onVisibilityChange)
+  target.addEventListener("blur", onBlur)
+  target.addEventListener("focus", onFocus)
+  target.addEventListener("pageshow", onPageShow)
+  target.addEventListener("online", onOnline)
+  return () => {
+    doc.removeEventListener("visibilitychange", onVisibilityChange)
+    target.removeEventListener("blur", onBlur)
+    target.removeEventListener("focus", onFocus)
+    target.removeEventListener("pageshow", onPageShow)
+    target.removeEventListener("online", onOnline)
+  }
+}
+
 /**
  * Host realtime WS client.
  *
@@ -80,8 +136,20 @@ export class WebHostTransport implements YaadeHostTransport {
   private readonly clientId = createClientId()
   private readonly pendingAborts = new Set<AbortController>()
   private loopFiber: Fiber.RuntimeFiber<void, never> | null = null
+  private reconnectRequested = false
+  private reconnectWake: (() => void) | null = null
+  private preservePendingOnReconnect = false
+  private readonly disposeRealtimeWake: (() => void) | null
 
   constructor() {
+    this.disposeRealtimeWake =
+      typeof document === "undefined" || typeof window === "undefined"
+        ? null
+        : subscribeRealtimeWake(
+            replaceOpenSocket => this.wakeRealtime(replaceOpenSocket),
+            document,
+            window,
+          )
     this.loopFiber = Effect.runFork(
       this.reconnectLoop().pipe(Effect.orDie, Effect.asVoid),
     )
@@ -169,6 +237,9 @@ export class WebHostTransport implements YaadeHostTransport {
 
   close(): void {
     this.closed = true
+    this.disposeRealtimeWake?.()
+    this.reconnectWake?.()
+    this.reconnectWake = null
     this.rejectPending(
       new HostDisconnectedError({ message: "host transport closed" }),
     )
@@ -188,14 +259,61 @@ export class WebHostTransport implements YaadeHostTransport {
       while (!self.closed) {
         yield* self.openSession()
         if (self.closed) return
+        const preservePending = self.preservePendingOnReconnect
+        self.preservePendingOnReconnect = false
         self.dispatch("connection:status", "disconnected")
-        self.rejectPending(
-          new HostDisconnectedError({ message: "host websocket disconnected" }),
-        )
+        if (!preservePending) {
+          self.rejectPending(
+            new HostDisconnectedError({ message: "host websocket disconnected" }),
+          )
+        }
         const delay = hostRealtimeReconnectDelay(self.reconnectAttempt++)
-        yield* Effect.sleep(delay)
+        if (self.reconnectRequested) {
+          self.reconnectRequested = false
+        } else {
+          yield* self.waitForReconnect(delay)
+          self.reconnectRequested = false
+        }
       }
     })
+  }
+
+  private waitForReconnect(delay: Duration.Duration): Effect.Effect<void> {
+    const self = this
+    return Effect.async<void>(resume => {
+      let finished = false
+      const finish = () => {
+        if (finished) return
+        finished = true
+        if (self.reconnectWake === finish) self.reconnectWake = null
+        resume(Effect.void)
+      }
+      const timer = setTimeout(finish, Duration.toMillis(delay))
+      self.reconnectWake = finish
+      return Effect.sync(() => {
+        finished = true
+        clearTimeout(timer)
+        if (self.reconnectWake === finish) self.reconnectWake = null
+      })
+    })
+  }
+
+  private wakeRealtime(replaceOpenSocket: boolean): void {
+    if (this.closed) return
+    const socket = this.socket
+    const socketOpen = socket?.readyState === WebSocket.OPEN
+    if (!replaceOpenSocket && socketOpen) return
+    this.reconnectRequested = true
+    if (
+      replaceOpenSocket &&
+      socket &&
+      (socket.readyState === WebSocket.OPEN ||
+        socket.readyState === WebSocket.CONNECTING)
+    ) {
+      this.preservePendingOnReconnect = true
+      socket.close(4000, "page returned to foreground")
+    }
+    this.reconnectWake?.()
   }
 
   private openSession(): Effect.Effect<void> {

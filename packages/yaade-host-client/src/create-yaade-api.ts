@@ -10,6 +10,17 @@ import {
 // attach handshake, so keeping a second multi-megabyte copy is wasteful.
 const MAX_BUFFERED_TERMINAL_CHARS = 64 * 1024
 
+type TerminalAttachResult = {
+  id: string
+  title?: string
+  outputChunks?: string[]
+  output: string
+  lastSequence: number
+  status: "running" | "exited"
+  exitCode?: number
+  signal?: number
+}
+
 /** Prefer WS fire-and-forget for hot terminal I/O; fall back to HTTP RPC. */
 function invokeTerminalHot(
   transport: YaadeHostTransport,
@@ -57,6 +68,106 @@ export function createYaadeApi(
   const terminalDataBuffers = new Map<string, BufferedTerminalData[]>()
   const terminalDataBufferSizes = new Map<string, number>()
   const terminalReplayFloors = new Map<string, number>()
+  const terminalResyncing = new Set<string>()
+  let realtimeConnected = false
+  let reconnectGeneration = 0
+  let hadRealtimeDisconnect = false
+
+  const bufferTerminalData = (id: string, data: string, sequence: number) => {
+    const pending = terminalDataBuffers.get(id) ?? []
+    pending.push({ data, sequence })
+    let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length
+    while (size > MAX_BUFFERED_TERMINAL_CHARS && pending.length > 1) {
+      size -= pending.shift()!.data.length
+    }
+    terminalDataBuffers.set(id, pending)
+    terminalDataBufferSizes.set(id, size)
+  }
+
+  const deliverTerminalData = (id: string, data: string) => {
+    const listeners = terminalDataListeners.get(id)
+    if (!listeners || listeners.size === 0) return false
+    listeners.forEach(cb => cb(data))
+    return true
+  }
+
+  const resyncTerminal = async (id: string, generation: number) => {
+    const afterSequence = terminalReplayFloors.get(id) ?? 0
+    try {
+      const result = await transport.invoke<TerminalAttachResult | null>(
+        "terminal:attach",
+        id,
+        afterSequence,
+      )
+      if (
+        generation !== reconnectGeneration ||
+        !realtimeConnected ||
+        !terminalResyncing.has(id)
+      ) {
+        return
+      }
+      if (!result) {
+        terminalResyncing.delete(id)
+        return
+      }
+      const chunks =
+        result.outputChunks && result.outputChunks.length > 0
+          ? result.outputChunks
+          : result.output
+            ? [result.output]
+            : []
+      const pending = terminalDataBuffers.get(id)
+      terminalDataBuffers.delete(id)
+      terminalDataBufferSizes.delete(id)
+      terminalReplayFloors.set(id, result.lastSequence)
+      terminalResyncing.delete(id)
+      for (const chunk of chunks) {
+        if (chunk && !deliverTerminalData(id, chunk)) {
+          bufferTerminalData(id, chunk, 0)
+        }
+      }
+      for (const chunk of pending ?? []) {
+        if (chunk.sequence > 0 && chunk.sequence <= result.lastSequence) continue
+        if (chunk.sequence > 0) terminalReplayFloors.set(id, chunk.sequence)
+        if (!deliverTerminalData(id, chunk.data)) {
+          bufferTerminalData(id, chunk.data, chunk.sequence)
+        }
+      }
+    } catch {
+      // Keep the terminal marked for resync. A later socket recovery will retry;
+      // normal HTTP errors remain owned by the connection lifecycle.
+    }
+  }
+
+  transport.on("connection:status", (...args: unknown[]) => {
+    const status = args[0]
+    if (status === "disconnected") {
+      realtimeConnected = false
+      hadRealtimeDisconnect = true
+      reconnectGeneration += 1
+      for (const id of terminalDataListeners.keys()) terminalResyncing.add(id)
+      return
+    }
+    if (status !== "connected") return
+    realtimeConnected = true
+    const generation = reconnectGeneration
+    for (const id of terminalResyncing) {
+      void resyncTerminal(id, generation)
+    }
+    if (hadRealtimeDisconnect && typeof window !== "undefined") {
+      hadRealtimeDisconnect = false
+      window.dispatchEvent(new Event("yaade:host-reconnected"))
+    }
+  })
+
+  transport.on("protocol:replay-gap", (...args: unknown[]) => {
+    if (typeof window === "undefined") return
+    window.dispatchEvent(
+      new CustomEvent("yaade:host-replay-gap", {
+        detail: { replayFloor: args[0], lastSequence: args[1] },
+      }),
+    )
+  })
 
   transport.on("lsp:crashed", (...args: unknown[]) => {
     const id = args[0] as string
@@ -91,19 +202,17 @@ export function createYaadeApi(
     const sequence = (args[2] as number | undefined) ?? 0
     const floor = terminalReplayFloors.get(id) ?? 0
     if (sequence > 0 && sequence <= floor) return
+    if (terminalResyncing.has(id)) {
+      bufferTerminalData(id, data, sequence)
+      return
+    }
+    if (sequence > 0) terminalReplayFloors.set(id, sequence)
     const listeners = terminalDataListeners.get(id)
     if (listeners && listeners.size > 0) {
       listeners.forEach(cb => cb(data))
       return
     }
-    const pending = terminalDataBuffers.get(id) ?? []
-    pending.push({ data, sequence })
-    let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length
-    while (size > MAX_BUFFERED_TERMINAL_CHARS && pending.length > 1) {
-      size -= pending.shift()!.data.length
-    }
-    terminalDataBuffers.set(id, pending)
-    terminalDataBufferSizes.set(id, size)
+    bufferTerminalData(id, data, sequence)
   })
   transport.on("terminal:exit", (...args: unknown[]) => {
     const id = args[0] as string
@@ -321,16 +430,10 @@ export function createYaadeApi(
     terminal: {
       create: (cwdUri, launch) => transport.invoke("terminal:create", cwdUri, launch),
       attach: async id => {
-        const result = await transport.invoke<{
-          id: string
-          title?: string
-          outputChunks?: string[]
-          output: string
-          lastSequence: number
-          status: "running" | "exited"
-          exitCode?: number
-          signal?: number
-        } | null>("terminal:attach", id)
+        const result = await transport.invoke<TerminalAttachResult | null>(
+          "terminal:attach",
+          id,
+        )
         if (result) {
           terminalReplayFloors.set(id, result.lastSequence)
           const pending = terminalDataBuffers.get(id)
@@ -364,6 +467,7 @@ export function createYaadeApi(
           terminalDataListeners.set(id, set)
         }
         set.add(callback)
+        if (!realtimeConnected) terminalResyncing.add(id)
         const pending = terminalDataBuffers.get(id)
         if (pending) {
           for (const chunk of pending) callback(chunk.data)

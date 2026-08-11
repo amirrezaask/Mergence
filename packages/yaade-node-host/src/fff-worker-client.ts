@@ -46,8 +46,19 @@ parentPort.on("message", async message => {
         totalMatched: result.value.totalMatched,
       }
     } else if (operation === "grep") {
-      const result = instance.grep(payload.query, payload.options)
+      const options = { ...(payload.options || {}) }
+      // GrepCursor is a branded { _offset } file-index cursor. Reconstruct it
+      // inline — createGrepCursor is not always re-exported from the package root,
+      // and finder.grep only reads cursor._offset.
+      if (typeof options.cursorOffset === "number") {
+        options.cursor = { __brand: "GrepCursor", _offset: options.cursorOffset }
+        delete options.cursorOffset
+      }
+      const result = instance.grep(payload.query, options)
       if (!result.ok) throw new Error(result.error)
+      const next = result.value.nextCursor
+      const nextOffset =
+        next && typeof next._offset === "number" ? next._offset : null
       value = {
         items: result.value.items.map(match => ({
           relativePath: match.relativePath,
@@ -56,7 +67,8 @@ parentPort.on("message", async message => {
           col: match.col,
           matchRanges: match.matchRanges,
         })),
-        hasMore: result.value.nextCursor !== null,
+        hasMore: nextOffset != null,
+        nextCursorOffset: nextOffset,
       }
     } else if (operation === "track") {
       instance.trackQuery(payload.query, payload.selectedPath)

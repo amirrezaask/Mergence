@@ -18,6 +18,8 @@ export type SearchPage<T> = {
   items: T[]
   /** True when a configured result/file cap stopped collection. */
   truncated: boolean
+  /** Opaque cursor for the next page when `truncated` is true. */
+  nextCursor?: string
 }
 
 export type SearchPathOptions = {
@@ -32,6 +34,10 @@ export type ProjectSearchOptions = SearchPathOptions & {
   regex?: boolean
   fuzzy?: boolean
   wholeWord?: boolean
+  /** Max matches to return in this page (default 500, max 5000). */
+  limit?: number
+  /** Opaque cursor from a previous truncated page. */
+  cursor?: string
 }
 
 export type FileSearchOptions = SearchPathOptions & {

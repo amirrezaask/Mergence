@@ -1,52 +1,74 @@
 import { expect, test } from "@playwright/test"
 import { expectListRows } from "../helpers/list.js"
 import {
-  expectLocatorContainsText,
   expectLocatorVisible,
 } from "../shell/assert.js"
 import { execCommand, launchJet, waitForMux } from "./_launch.js"
 
-test.describe("mux project search", () => {
-  test("cancels, previews, applies open-buffer replace, and undoes", async () => {
-    const { app, page } = await launchJet({ withTerminal: false })
+test.describe("project search", () => {
+  test("sidebar search lists hits and opens Monaco on click", async () => {
+    const { app, page } = await launchJet({
+      workspaceRel: "fixtures/non-git-search",
+      withTerminal: false,
+    })
     try {
       await waitForMux(page)
-      await page.evaluate(() => window.__yaadeAgent!.openFile("src/utils.ts"))
-      await page.evaluate(() => window.__yaadeAgent!.waitForEditor())
-      const buffer = () => page.evaluate(() =>
-        window.__yaadeAgent!.getEditorDiagnostics().models.entries.find(entry =>
-          entry.uri.endsWith("/src/utils.ts"),
-        ) ?? null,
-      )
-      await expect.poll(async () => (await buffer())?.content ?? null).toContain("Hello")
 
       await execCommand(page, "editor.projectSearch")
-      const palette = page.locator("[data-yaade-palette]")
-      await expectLocatorVisible(palette)
-      await palette.locator("input").first().fill("Hello")
-      await page.evaluate(() => window.__yaadeAgent!.waitForListRows("yaade:palette", 1))
+      await expectLocatorVisible(page.locator("[data-yaade-project-search-panel]"))
+      await expectLocatorVisible(page.locator("[data-yaade-project-searches-group]"))
+
+      const input = page.locator("[data-yaade-project-search-input]")
+      await input.fill("nonGitSearchFixture")
+      await expect
+        .poll(
+          async () =>
+            page.locator('[data-yaade-list-panel="project-search"] [data-yaade-list-item]').count(),
+          { timeout: 15_000 },
+        )
+        .toBeGreaterThanOrEqual(1)
       await expectListRows(page, {
-        panel: "yaade:palette",
+        panel: "project-search",
         minItems: 1,
-        needle: "src/utils.ts:2",
+        needle: "nonGitSearchFixture",
         noResultsText: "No matches.",
       })
+      await expectLocatorVisible(
+        page.locator('[data-yaade-project-search-hit="src/index.ts:1"]'),
+      )
+      await expectLocatorVisible(page.locator("[data-yaade-project-search-chunk]"))
+      await expect
+        .poll(async () =>
+          page
+            .locator('[data-yaade-project-search-file="src/index.ts"]')
+            .getAttribute("data-yaade-project-search-file-loaded"),
+        )
+        .toBe("1")
+      await expect
+        .poll(async () =>
+          page.locator('[data-yaade-project-search-chunk] [data-yaade-list-item]').count(),
+        )
+        .toBeGreaterThanOrEqual(1)
 
-      await page.getByLabel("Replace with").fill("Hi")
-      await page.getByRole("button", { name: "Preview 1", exact: true }).click()
-      await expectLocatorContainsText(palette, "Preview: 1 edits in 1 files.")
-      await page.getByRole("button", { name: "Apply", exact: true }).click()
+      await page
+        .locator('[data-yaade-list-panel="project-search"] [data-yaade-list-item]')
+        .first()
+        .click()
 
-      await expect.poll(async () => (await buffer())?.content ?? null).toContain("Hi, ${name}")
-      expect((await buffer())?.dirty).toBe(true)
-      expect(
-        await page.evaluate(() => window.__yaadeAgent!.readFixtureFile("src/utils.ts")),
-        "replace must not auto-save an open buffer",
-      ).toContain("Hello, ${name}")
+      await waitForMux(page)
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            window.__yaadeAgent!.getEditorDiagnostics().editors.openBuffers.some(uri =>
+              uri.endsWith("/src/index.ts"),
+            ),
+          ),
+        )
+        .toBe(true)
 
-      await page.getByRole("button", { name: "Undo replace", exact: true }).click()
-      await expect.poll(async () => (await buffer())?.content ?? null).toContain("Hello, ${name}")
-      await expect.poll(async () => (await buffer())?.dirty ?? null).toBe(false)
+      await expectLocatorVisible(
+        page.locator("[data-yaade-project-search-item]").first(),
+      )
     } finally {
       await app.close()
     }

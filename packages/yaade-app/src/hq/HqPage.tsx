@@ -60,6 +60,7 @@ import {
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
+import { formatAppDocumentTitle } from "../build-branding.js"
 import {
   loadProjectSession,
   saveProjectSessionPayload,
@@ -157,7 +158,7 @@ export function HqPage({
   const snapshot = overview.snapshot
 
   useEffect(() => {
-    document.title = "HQ · YAADE"
+    document.title = formatAppDocumentTitle("HQ · YAADE")
   }, [])
 
   useEffect(() => {

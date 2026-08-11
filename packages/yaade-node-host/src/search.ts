@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process"
 import path from "node:path"
+import { rgPath as bundledRgPath } from "@vscode/ripgrep"
 import type {
   FileSearchOptions,
   ProjectSearchOptions,
@@ -35,7 +36,6 @@ const IGNORE_GLOBS = [
 /** Cap ripgrep stdout so V8 never builds a multi-hundred-MB string (RangeError). */
 const MAX_RG_STDOUT_BYTES = 8 * 1024 * 1024
 const MAX_RG_STDERR_BYTES = 64 * 1024
-const MAX_RG_MATCH_RESULTS = 200
 const MAX_SEARCH_GLOBS = 64
 const MAX_SEARCH_GLOB_LENGTH = 512
 /** Default cap for project file lists returned to the UI / fuzzy open. */
@@ -62,7 +62,8 @@ function rootKey(rootUri: string): string {
 }
 
 function rgCommand(): string {
-  return process.env.YAADE_RG_PATH?.trim() || "rg"
+  // Prefer explicit override (tests / custom builds), else VS Code's bundled binary.
+  return process.env.YAADE_RG_PATH?.trim() || bundledRgPath || "rg"
 }
 
 function abortError(signal: AbortSignal): Error {
@@ -182,7 +183,7 @@ function spawnRgLines(
       if (signal.aborted) {
         rejectOnce(abortError(signal))
       } else if (errorCode(error) === "ENOENT") {
-        rejectOnce(new Error("ripgrep (rg) is not installed or not on PATH"))
+        rejectOnce(new Error("ripgrep (rg) is unavailable — install @vscode/ripgrep or set YAADE_RG_PATH"))
       } else {
         rejectOnce(error)
       }
@@ -449,6 +450,24 @@ export async function fileSearch(
   return { items: results.items, truncated: files.truncated || results.truncated }
 }
 
+/** Default / max matches returned per projectSearch page. */
+export const DEFAULT_PROJECT_SEARCH_LIMIT = 500
+export const MAX_PROJECT_SEARCH_LIMIT = 5000
+/** Safety cap on matches collected from a single file while streaming rg. */
+const MAX_RG_MATCHES_PER_FILE = 10_000
+
+function clampProjectSearchLimit(limit: number | undefined): number {
+  if (limit == null || !Number.isFinite(limit)) return DEFAULT_PROJECT_SEARCH_LIMIT
+  return Math.max(1, Math.min(MAX_PROJECT_SEARCH_LIMIT, Math.floor(limit)))
+}
+
+function parseRgCursorOffset(cursor: string | undefined): number {
+  if (cursor == null || cursor === "") return 0
+  const value = Number(cursor)
+  if (!Number.isFinite(value) || value < 0) return 0
+  return Math.floor(value)
+}
+
 export async function projectSearch(
   rootUri: string,
   query: string,
@@ -458,12 +477,13 @@ export async function projectSearch(
   throwIfAborted(signal)
   if (!query.trim()) return { items: [], truncated: false }
 
+  const limit = clampProjectSearchLimit(opts?.limit)
   const requiresRg = Boolean(
     opts?.wholeWord || opts?.include?.length || opts?.exclude?.length || opts?.caseSensitive,
   )
   if (!requiresRg && await isGitWorkspace(rootUri)) {
     try {
-      const fffResults = await fffGrep(rootUri, query, opts, signal)
+      const fffResults = await fffGrep(rootUri, query, { ...opts, limit }, signal)
       throwIfAborted(signal)
       if (fffResults) return fffResults
     } catch (error) {
@@ -472,8 +492,10 @@ export async function projectSearch(
     }
   }
 
+  const skip = parseRgCursorOffset(opts?.cursor)
   return runRg(rootUri, signal, async (cwd, taskSignal) => {
-    const args = ["--json", "--max-count", String(MAX_RG_MATCH_RESULTS)]
+    // --max-count is per-file in ripgrep; keep it high so total pagination owns the budget.
+    const args = ["--json", "--max-count", String(MAX_RG_MATCHES_PER_FILE)]
     if (!opts?.caseSensitive) args.push("-i")
     if (!opts?.regex) args.push("--fixed-strings")
     if (opts?.wholeWord) args.push("--word-regexp")
@@ -482,18 +504,32 @@ export async function projectSearch(
     args.push(query, ".")
 
     const results: ProjectSearchResult[] = []
+    let seen = 0
+    let moreAvailable = false
     const { stderr, code, stoppedEarly } = await spawnRgLines(args, cwd, line => {
       const match = parseRgJsonLine(line)
-      if (match) results.push(match)
-      return results.length <= MAX_RG_MATCH_RESULTS
+      if (!match) return true
+      if (seen < skip) {
+        seen += 1
+        return true
+      }
+      if (results.length >= limit) {
+        moreAvailable = true
+        return false
+      }
+      results.push(match)
+      seen += 1
+      return true
     }, taskSignal)
 
     if (!stoppedEarly && code !== 0 && code !== 1) {
       throw new Error(stderr.trim() || `rg exit ${code}`)
     }
+    const truncated = moreAvailable || (stoppedEarly && results.length >= limit)
     return {
-      items: results.slice(0, MAX_RG_MATCH_RESULTS),
-      truncated: stoppedEarly || results.length >= MAX_RG_MATCH_RESULTS,
+      items: results,
+      truncated,
+      nextCursor: truncated ? String(skip + results.length) : undefined,
     }
   })
 }

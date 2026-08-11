@@ -13,9 +13,6 @@ import type { PanelEvent } from "@yaade/panels"
 import type {
   AgentProvider,
   PanelId,
-  ProjectSearchOptions,
-  ProjectSearchResult,
-  SearchPage,
   YaadeTheme,
 } from "@yaade/shared"
 import {
@@ -163,6 +160,7 @@ import {
   useMuxPaneBoxesSync,
 } from "./MuxTerminalLayer.js"
 import { cwdUriFromTerminalTitle } from "./cwd-from-title.js"
+import { formatAppDocumentTitle } from "../build-branding.js"
 import {
   urlPathForProjectRoot,
   workspaceDocumentTitle,
@@ -590,7 +588,7 @@ export type MuxLaunchAction =
     }
   | { kind: "neovim" }
   | { kind: "git" }
-  | { kind: "editor"; filePath?: string; line?: number }
+  | { kind: "editor"; filePath?: string; line?: number; column?: number }
 
 export type MuxLaunchRequest = {
   id: string
@@ -721,7 +719,6 @@ export function MuxApp({
     0,
   )
   const [quickOpenOpen, setQuickOpenOpen] = useState(false)
-  const [projectSearchOpen, setProjectSearchOpen] = useState(false)
   const [saveAsUri, setSaveAsUri] = useState<string | null>(null)
   const [toolRevisions, bumpToolRevision] = useReducer(
     (revisions: Record<MuxToolKind, number>, kind: MuxToolKind) => ({
@@ -730,7 +727,6 @@ export function MuxApp({
     }),
     {
       explorer: 0,
-      search: 0,
       problems: 0,
       references: 0,
       definitions: 0,
@@ -760,9 +756,6 @@ export function MuxApp({
   const workspaceEditTransactionsRef = useRef<
     import("../editor/workspace-edit-transaction.js").WorkspaceEditTransactionService | null
   >(null)
-  const searchReplacePreviewRef = useRef<
-    import("../editor/workspace-edit-transaction.js").WorkspaceEditPreview | null
-  >(null)
   const explorerExpandedIdsRef = useRef<string[]>([])
   const closedEditorUrisRef = useRef<string[]>([])
   const hydratedEditorOwnersRef = useRef(
@@ -773,9 +766,6 @@ export function MuxApp({
     windowId: string
     panelId: PanelId
   } | null>(null)
-  const searchPreviewCommandRef = useRef<() => void>(() => {})
-  const searchApplyCommandRef = useRef<() => Promise<void>>(async () => {})
-  const searchUndoCommandRef = useRef<() => Promise<void>>(async () => {})
 
   const windowsRef = useRef(windows)
   windowsRef.current = windows
@@ -884,8 +874,13 @@ export function MuxApp({
   useEffect(() => {
     const rootUri = pathToFileUri(sessionCwdPath)
     const owner = { sessionId }
-    void window.yaade?.workspace?.activate(rootUri, owner)
+    const activate = () => {
+      void window.yaade?.workspace?.activate(rootUri, owner)
+    }
+    activate()
+    window.addEventListener("yaade:host-reconnected", activate)
     return () => {
+      window.removeEventListener("yaade:host-reconnected", activate)
       void window.yaade?.workspace?.deactivate?.(rootUri, owner)
     }
   }, [sessionCwdPath, sessionId])
@@ -1965,9 +1960,11 @@ export function MuxApp({
         reconcile()
       }
     })
+    window.addEventListener("yaade:host-reconnected", reconcile)
     return () => {
       cancelled = true
       off?.()
+      window.removeEventListener("yaade:host-reconnected", reconcile)
     }
   }, [layoutReady, projectId, reconcileLiveTerminalInstances, sessionId])
 
@@ -2246,7 +2243,7 @@ export function MuxApp({
         projectPathRef.current || folderPath,
         homeDirRef.current,
       )
-      document.title = titleBase
+      document.title = formatAppDocumentTitle(titleBase)
       setLayoutReady(true)
     },
     [workspace],
@@ -2769,12 +2766,19 @@ export function MuxApp({
         } else if (action.kind === "neovim") {
           const window = ensureProjectWindow()
           await openNeovimSplit(window.id, window.focusedPaneId)
-        } else if (action.filePath) {
-          openInPreferredEditor({
-            filePath: action.filePath,
-            line: action.line,
-            forceNewGroup: true,
-          })
+        } else if (action.kind === "editor") {
+          if (action.filePath) {
+            openInPreferredEditor({
+              filePath: action.filePath,
+              line: action.line,
+              column: action.column,
+            })
+          } else {
+            openEditorInFocused({
+              uri: `untitled:New File-${launchRequest.id}`,
+              forceNewGroup: true,
+            })
+          }
         } else {
           openEditorInFocused({
             uri: `untitled:New File-${launchRequest.id}`,
@@ -3160,42 +3164,14 @@ export function MuxApp({
       ),
       commands.register(
         "search.focus",
-        run(() => runToolPaneRef.current("search")),
+        run(() => {
+          window.dispatchEvent(new Event("yaade:open-project-search"))
+        }),
         {
           id: "search.focus",
           title: "Focus Search",
           category: "View",
           aliases: ["find in files", "project search", "grep"],
-          when: () => workspace.manager.hasFolders(),
-        },
-      ),
-      commands.register(
-        "search.previewReplace",
-        run(() => searchPreviewCommandRef.current()),
-        {
-          id: "search.previewReplace",
-          title: "Search: Preview Replace",
-          category: "Search",
-          when: () => workspace.manager.hasFolders(),
-        },
-      ),
-      commands.register(
-        "search.applyReplace",
-        async () => searchApplyCommandRef.current(),
-        {
-          id: "search.applyReplace",
-          title: "Search: Apply Replace Preview",
-          category: "Search",
-          when: () => searchReplacePreviewRef.current != null,
-        },
-      ),
-      commands.register(
-        "search.undoLastReplace",
-        async () => searchUndoCommandRef.current(),
-        {
-          id: "search.undoLastReplace",
-          title: "Search: Undo Last Replace",
-          category: "Search",
           when: () => workspace.manager.hasFolders(),
         },
       ),
@@ -3379,7 +3355,9 @@ export function MuxApp({
       ),
       commands.register(
         "editor.projectSearch",
-        run(() => setProjectSearchOpen(true)),
+        run(() => {
+          window.dispatchEvent(new Event("yaade:open-project-search"))
+        }),
         {
           id: "editor.projectSearch",
           title: "Search in Files",
@@ -3700,7 +3678,7 @@ export function MuxApp({
     return {
       ...EMPTY_KEYMAP_OVERLAYS,
       // Editor overlays share the quick-open gate so the global listener bails.
-      quickOpenOpen: quickOpenOpen || projectSearchOpen,
+      quickOpenOpen: quickOpenOpen,
       editorFocus: focusedKind === "editor",
       paletteOpen,
       cdOpen,
@@ -3713,7 +3691,6 @@ export function MuxApp({
     activeWindow,
     cdOpen,
     paletteOpen,
-    projectSearchOpen,
     quickOpenOpen,
     settingsOpen,
     terminalListOpen,
@@ -3982,9 +3959,11 @@ export function MuxApp({
     }
     tick()
     const handle = window.setInterval(tick, 2_000)
+    window.addEventListener("yaade:host-reconnected", tick)
     return () => {
       cancelled = true
       window.clearInterval(handle)
+      window.removeEventListener("yaade:host-reconnected", tick)
     }
   }, [mountedPtyIds, focusedPtyTabId, refreshForegroundProcess])
 
@@ -3993,8 +3972,7 @@ export function MuxApp({
     terminalListOpen ||
     settingsOpen ||
     cdOpen ||
-    quickOpenOpen ||
-    projectSearchOpen
+    quickOpenOpen
 
   const renderTerminal = useCallback(
     (ptyTabId: string, focused: boolean, slotVisible: boolean): ReactNode => {
@@ -4665,90 +4643,6 @@ export function MuxApp({
     [cwdUri, openToolLocation],
   )
 
-  const onProjectSearch = useCallback(
-    async (
-      query: string,
-      options: ProjectSearchOptions,
-      signal: AbortSignal,
-    ): Promise<SearchPage<ProjectSearchResult>> => {
-      const root = cwdUri()
-      const search =
-        typeof window !== "undefined" ? window.yaade?.search : undefined
-      if (!root || !search) return { items: [], truncated: false }
-      try {
-        return await search.project(root, query, options, signal)
-      } catch (error) {
-        if (signal.aborted) throw error
-        return { items: [], truncated: false }
-      }
-    },
-    [cwdUri],
-  )
-
-  const onProjectSearchPreviewReplace = useCallback(
-    async (results: ProjectSearchResult[], replacement: string) => {
-      const root = cwdUri()
-      if (!root) throw new Error("Workspace root is unavailable")
-      const [{ searchReplaceRequests }, transactions] = await Promise.all([
-        import("../editor/workspace-edit-transaction.js"),
-        getWorkspaceEditTransactions(),
-      ])
-      const preview = await transactions.preview(
-        searchReplaceRequests(root, results, replacement),
-      )
-      searchReplacePreviewRef.current = preview
-      return { fileCount: preview.files.length, editCount: preview.editCount }
-    },
-    [cwdUri, getWorkspaceEditTransactions],
-  )
-
-  const onProjectSearchApplyReplace = useCallback(async () => {
-    const preview = searchReplacePreviewRef.current
-    if (!preview) throw new Error("Preview the selected changes before applying them")
-    const transactions = await getWorkspaceEditTransactions()
-    await transactions.apply(preview)
-    searchReplacePreviewRef.current = null
-    showYaadeToast(
-      `Replaced ${preview.editCount} match${preview.editCount === 1 ? "" : "es"} in ${preview.files.length} file${preview.files.length === 1 ? "" : "s"}.`,
-    )
-  }, [getWorkspaceEditTransactions])
-
-  const onProjectSearchUndoReplace = useCallback(async () => {
-    const transactions = await getWorkspaceEditTransactions()
-    if (!(await transactions.undoLast())) {
-      showYaadeToast("There is no search replace transaction to undo.", {
-        variant: "warning",
-      })
-      return
-    }
-    showYaadeToast("Undid the last search replace transaction.")
-  }, [getWorkspaceEditTransactions])
-
-  searchPreviewCommandRef.current = () => {
-    const preview = searchReplacePreviewRef.current
-    if (!preview) {
-      setProjectSearchOpen(true)
-      showYaadeToast("Select search matches and a replacement to preview.")
-      return
-    }
-    showYaadeToast(
-      `Preview: ${preview.editCount} edit${preview.editCount === 1 ? "" : "s"} in ${preview.files.length} file${preview.files.length === 1 ? "" : "s"}.`,
-    )
-  }
-  searchApplyCommandRef.current = onProjectSearchApplyReplace
-  searchUndoCommandRef.current = onProjectSearchUndoReplace
-
-  const onProjectSearchSelect = useCallback(
-    (result: ProjectSearchResult) => {
-      openToolLocation(
-        resolveEditorUri(cwdUri(), result.path),
-        result.line,
-        result.column,
-      )
-    },
-    [cwdUri, openToolLocation],
-  )
-
   const paletteCommands = commands.list(getCommandContext()).map(c => ({
     id: c.id,
     title: c.title,
@@ -5166,7 +5060,6 @@ export function MuxApp({
       settingsOpen ||
       cdOpen ||
       quickOpenOpen ||
-      projectSearchOpen ||
       saveAsUri != null ? (
         <Suspense fallback={null}>
         <MuxOverlays
@@ -5207,13 +5100,6 @@ export function MuxApp({
           onQuickOpenOpenChange={setQuickOpenOpen}
           onQuickOpenSearch={onQuickOpenSearch}
           onQuickOpenSelect={onQuickOpenSelect}
-          projectSearchOpen={projectSearchOpen}
-          onProjectSearchOpenChange={setProjectSearchOpen}
-          onProjectSearch={onProjectSearch}
-          onProjectSearchSelect={onProjectSearchSelect}
-          onProjectSearchPreviewReplace={onProjectSearchPreviewReplace}
-          onProjectSearchApplyReplace={onProjectSearchApplyReplace}
-          onProjectSearchUndoReplace={onProjectSearchUndoReplace}
           saveAsOpen={saveAsUri != null}
           onSaveAsOpenChange={open => {
             if (!open) setSaveAsUri(null)

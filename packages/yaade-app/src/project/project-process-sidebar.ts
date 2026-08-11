@@ -55,9 +55,12 @@ export function useProjectProcessSidebar(
       }
       setProcesses(current => upsertByRevision(current, event.instance))
     })
+    const reconcile = () => void refresh().catch(() => undefined)
+    window.addEventListener("yaade:host-reconnected", reconcile)
     return () => {
       cancelled = true
       unsubscribe?.()
+      window.removeEventListener("yaade:host-reconnected", reconcile)
     }
   }, [projectId, refresh])
 

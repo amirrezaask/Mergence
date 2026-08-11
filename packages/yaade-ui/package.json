@@ -63,7 +63,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts src/home/commit-diff.test.ts"
+    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts src/home/commit-diff.test.ts src/search/search-chunks.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -111,6 +111,10 @@
     "rehype-sanitize": "^6.0.0",
     "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1",
+    "@shikijs/core": "4.3.0",
+    "@shikijs/langs": "4.3.0",
+    "@shikijs/themes": "4.3.0",
+    "shiki": "4.3.0",
     "sonner": "^2.0.7",
     "tailwind-merge": "^3.3.0",
     "tailwindcss-animate": "^1.0.7",

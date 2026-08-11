@@ -4,6 +4,7 @@ import { fileUriToPath } from "@yaade/shared"
 import type { FileSystemProvider } from "@yaade/workspace"
 import {
   findWorkspaceRoot,
+  hasFileDropData,
   pathsFromDataTransfer,
   resolveDroppedFilesAgainstWorkspaces,
   resolveDropZoneFromElement,
@@ -36,7 +37,13 @@ function fakeDataTransfer(opts: {
   return {
     files: files as unknown as FileList,
     items: [] as unknown as DataTransferItemList,
-    types: files.length || opts.uriList ? ["Files"] : [],
+    types: files.length
+      ? ["Files"]
+      : opts.uriList
+        ? ["text/uri-list"]
+        : opts.plain
+          ? ["text/plain"]
+          : [],
     getData(type: string) {
       if (type === "text/uri-list") return opts.uriList ?? ""
       if (type === "text/plain") return opts.plain ?? ""
@@ -88,6 +95,23 @@ describe("drop-files pathsFromDataTransfer", () => {
       }),
     )
     assert.deepEqual(paths, ["/tmp/a.ts"])
+  })
+})
+
+describe("drop-files hasFileDropData", () => {
+  it("accepts browser uri-list drags without a Files type", () => {
+    assert.equal(
+      hasFileDropData(fakeDataTransfer({ uriList: "file:///tmp/a.ts" })),
+      true,
+    )
+  })
+
+  it("accepts absolute browser text drags without swallowing normal text", () => {
+    assert.equal(
+      hasFileDropData(fakeDataTransfer({ plain: "/Users/me/project/a.ts" })),
+      true,
+    )
+    assert.equal(hasFileDropData(fakeDataTransfer({ plain: "hello" })), false)
   })
 })
 

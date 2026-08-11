@@ -1,10 +1,24 @@
 import { lazy, Suspense, useCallback, useEffect, useMemo, useState } from "react"
 import type { YaadeTheme } from "@yaade/shared"
-import { type TerminalInstanceInfo } from "@yaade/workspace"
+import { normalizeAbsPath, type TerminalInstanceInfo } from "@yaade/workspace"
 import { Circle, RotateCcw } from "lucide-react"
 import { Button } from "@yaade/ui/primitives"
 import { pathToFileUri } from "@yaade/shared"
 import { showYaadeToast } from "@yaade/ui/toast"
+import { useFileDrop } from "../use-file-drop.js"
+
+function projectFileSystem(): import("@yaade/workspace").FileSystemProvider {
+  const fs = window.yaade?.fs
+  if (!fs) throw new Error("window.yaade.fs not available")
+  const exists = fs.exists
+  return {
+    readFile: uri => fs.readFile(uri),
+    writeFile: (uri, content) => fs.writeFile(uri, content),
+    readDir: uri => fs.readDir(uri),
+    stat: uri => fs.stat(uri),
+    ...(exists ? { exists: uri => exists(uri) } : {}),
+  }
+}
 
 const TerminalPanel = lazy(() =>
   import("@yaade/ui/terminal").then(module => ({ default: module.TerminalPanel })),
@@ -81,9 +95,12 @@ function useProcessSurface<T extends { revision: number }>({
         upsertByRevision(current, adapter.idOf(event.item), event.item, adapter.idOf),
       )
     })
+    const reconcile = () => void refresh().catch(() => undefined)
+    window.addEventListener("yaade:host-reconnected", reconcile)
     return () => {
       cancelled = true
       unsubscribe?.()
+      window.removeEventListener("yaade:host-reconnected", reconcile)
     }
   }, [adapter, refresh])
 
@@ -220,11 +237,13 @@ function ProcessDetail({
 
 export function RunningProjectSurface({
   projectId,
+  projectPath,
   selectedId,
   theme,
   onSelect,
 }: {
   projectId: string
+  projectPath: string
   selectedId: string | null
   theme: YaadeTheme
   onSelect: (id: string | null) => void
@@ -263,6 +282,22 @@ export function RunningProjectSurface({
     adapter,
     selectedId,
     onSelect,
+  })
+
+  useFileDrop({
+    fs: projectFileSystem(),
+    knownWorkspacePaths: [projectPath, selected?.checkoutPath ?? ""]
+      .filter(Boolean)
+      .map(normalizeAbsPath),
+    activeWorkspacePath: normalizeAbsPath(selected?.checkoutPath ?? projectPath),
+    normalizePath: normalizeAbsPath,
+    terminalOnly: true,
+    openWorkspace: () => {},
+    addWorkspaceFolder: () => {},
+    openFile: () => {},
+    bootstrapFromLaunch: () => {},
+    openUntitledFromDrop: () => {},
+    setMessage: showYaadeToast,
   })
 
   return (

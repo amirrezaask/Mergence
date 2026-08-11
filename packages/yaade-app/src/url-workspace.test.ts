@@ -107,6 +107,7 @@ describe("url-workspace", () => {
       workspaceId: null,
       checkoutKey: null,
       processId: null,
+      searchId: null,
     })
     assert.equal(projectRouteFromSearch("?s=ses-1").view, "running")
     assert.equal(projectRouteFromSearch("?view=agents").view, "running")
@@ -152,8 +153,23 @@ describe("url-workspace", () => {
         workspaceId: null,
         checkoutKey: "wt-key",
         processId: null,
+        searchId: null,
       },
     )
+    assert.equal(
+      projectRouteUrl("/dev/yaade", {
+        view: "search",
+        searchId: "srch-1",
+      }),
+      "/dev/yaade?view=search&search=srch-1",
+    )
+    assert.deepEqual(projectRouteFromSearch("?view=search&search=srch-1"), {
+      view: "search",
+      workspaceId: null,
+      checkoutKey: null,
+      processId: null,
+      searchId: "srch-1",
+    })
     assert.equal(
       projectRouteUrl("/dev/yaade", {
         view: "running",
