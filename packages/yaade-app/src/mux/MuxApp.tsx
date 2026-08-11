@@ -64,6 +64,10 @@ import {
   checkoutLabelFromUri,
   type CheckoutSelection,
 } from "../project/CheckoutPicker.js"
+import {
+  ProcessLaunchMenu,
+  type ProcessLaunchSelection,
+} from "../project/ProjectLaunchMenus.js"
 import { createProjectSession } from "../project-session-client.js"
 import {
   CommandRegistry,
@@ -1792,6 +1796,55 @@ export function MuxApp({
     ],
   )
 
+  const createProcessWorktree = useCallback(
+    async (input: { branch: string }): Promise<CheckoutSelection> => {
+      const created = await createProjectSession({
+        rootPath: sessionProjectPath,
+        title: "Main",
+        worktree: input,
+      })
+      const worktree = created.createdWorktree
+      if (!worktree) throw new Error("Worktree was not created")
+      return {
+        cwdPath: worktree.path,
+        title: worktree.branch,
+        worktreeBranch: worktree.branch,
+        worktreePath: worktree.path,
+        checkoutKey: worktree.path,
+      }
+    },
+    [sessionProjectPath],
+  )
+
+  const launchProcessFromSidebar = useCallback(
+    (selection: ProcessLaunchSelection, checkout: CheckoutSelection) => {
+      setProcessPickerOpen(false)
+      if (selection.kind === "terminal") {
+        void openTerminalInActiveWindow("right", {
+          rootUri: pathToFileUri(checkout.cwdPath),
+        }).catch(error => {
+          showYaadeToast(
+            error instanceof Error ? error.message : "Could not open terminal",
+            { variant: "destructive" },
+          )
+        })
+        return
+      }
+
+      void openAgentCliPane(selection.driver, undefined, {
+        checkoutPath: checkout.cwdPath,
+        checkoutKey: checkout.checkoutKey,
+        checkoutLabel: checkout.title,
+      }).catch(error => {
+        showYaadeToast(
+          error instanceof Error ? error.message : "Could not launch agent",
+          { variant: "destructive" },
+        )
+      })
+    },
+    [openAgentCliPane, openTerminalInActiveWindow],
+  )
+
   /**
    * Reconcile terminal instances launched outside this Mux instance (for
    * example from HQ) back into the project session layout. Host instances are
@@ -2660,6 +2713,7 @@ export function MuxApp({
   )
 
   const [terminalCheckoutOpen, setTerminalCheckoutOpen] = useState(false)
+  const [processPickerOpen, setProcessPickerOpen] = useState(false)
   const [terminalDefaultBranch, setTerminalDefaultBranch] = useState("main")
 
   useEffect(() => {
@@ -4764,40 +4818,59 @@ export function MuxApp({
                   className="absolute inset-0 flex min-h-0"
                   data-yaade-project-surface="running"
                 >
-                  <InstanceSidebar
-                    dataPrefix="running"
-                    title="Running"
-                    items={runningSidebarItems}
-                    activeId={focusedPtyTabId}
-                    listPanelId="mux-running"
-                    emptyLabel="Nothing running."
-                    onSelect={tabId => {
-                      if (activeWindow) {
+                  {!embedded ? (
+                    <InstanceSidebar
+                      dataPrefix="running"
+                      title="Running"
+                      items={runningSidebarItems}
+                      activeId={focusedPtyTabId}
+                      listPanelId="mux-running"
+                      emptyLabel="Nothing running."
+                      newControl={
+                        <ProcessLaunchMenu
+                          projectPath={sessionProjectPath}
+                          open={processPickerOpen}
+                          onOpenChange={setProcessPickerOpen}
+                          onLaunch={launchProcessFromSidebar}
+                          onCreateWorktree={createProcessWorktree}
+                          trigger={
+                            <Button
+                              type="button"
+                              variant="secondary"
+                              size="xs"
+                              data-yaade-instance-sidebar-new=""
+                            >
+                              New
+                            </Button>
+                          }
+                        />
+                      }
+                      onSelect={tabId => {
+                        if (activeWindow) {
+                          const leaf = listTerminalLeaves(activeWindow.tree).find(
+                            l => l.ptyTabId === tabId,
+                          )
+                          if (leaf) {
+                            focusPane(activeWindow.id, leaf.panelId, leaf.ptyTabId)
+                          }
+                        }
+                        onSelectAgentTab?.(tabId)
+                      }}
+                      onNew={() => setProcessPickerOpen(true)}
+                      onClose={tabId => {
+                        if (!activeWindow) return
                         const leaf = listTerminalLeaves(activeWindow.tree).find(
                           l => l.ptyTabId === tabId,
                         )
-                        if (leaf) {
-                          focusPane(activeWindow.id, leaf.panelId, leaf.ptyTabId)
-                        }
-                      }
-                      onSelectAgentTab?.(tabId)
-                    }}
-                    onNew={() => {
-                      setTerminalCheckoutOpen(true)
-                    }}
-                    onClose={tabId => {
-                      if (!activeWindow) return
-                      const leaf = listTerminalLeaves(activeWindow.tree).find(
-                        l => l.ptyTabId === tabId,
-                      )
-                      if (!leaf) return
-                      void closePane(
-                        activeWindow.id,
-                        leaf.panelId,
-                        leaf.ptyTabId,
-                      )
-                    }}
-                  />
+                        if (!leaf) return
+                        void closePane(
+                          activeWindow.id,
+                          leaf.panelId,
+                          leaf.ptyTabId,
+                        )
+                      }}
+                    />
+                  ) : null}
                   <div className="relative min-h-0 min-w-0 flex-1">
                     {focusedPtyTabId &&
                     (terminalSurfacePtyIds.includes(focusedPtyTabId) ||
@@ -4836,17 +4909,18 @@ export function MuxApp({
                             : "Nothing running."}
                         </p>
                         <div className="flex flex-wrap items-center justify-center gap-2">
-                          {onLaunchAgent ? (
-                            <Button
-                              type="button"
-                              variant="secondary"
-                              size="sm"
-                              data-yaade-running-empty-launch-agent=""
-                              onClick={() => onLaunchAgent()}
-                            >
-                              Launch agent…
-                            </Button>
-                          ) : null}
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            data-yaade-running-empty-launch-agent=""
+                            onClick={() => {
+                              if (onLaunchAgent) onLaunchAgent()
+                              else setProcessPickerOpen(true)
+                            }}
+                          >
+                            Launch agent…
+                          </Button>
                           <Button
                             type="button"
                             variant="secondary"

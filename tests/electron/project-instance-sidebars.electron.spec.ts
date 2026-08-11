@@ -107,4 +107,31 @@ test.describe("project instance sidebars", () => {
       await app.close()
     }
   })
+
+  test("launching an agent on Main keeps a single project sidebar", async () => {
+    const { app, page } = await launchJet({ projectPage: true })
+    try {
+      await waitForProjectPage(page)
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="codex"]').click()
+      await page.locator("[data-yaade-worktree-main]").click()
+
+      // Even if Codex is unavailable, agent launch must not open a mux session
+      // that stacks a second Running sidebar on the project chrome.
+      await expect
+        .poll(async () => page.locator('[data-yaade-project-sidebar=""]').count())
+        .toBe(1)
+      await expect
+        .poll(
+          async () =>
+            page.locator('[data-yaade-instance-sidebar="running"]').count(),
+        )
+        .toBe(0)
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
+      expect(await page.locator('[data-yaade-mux]').count()).toBe(0)
+    } finally {
+      await app.close()
+    }
+  })
 })

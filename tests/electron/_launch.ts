@@ -247,6 +247,22 @@ export async function openMuxTerminal(
     // Restored sessions can hydrate their terminal after waitForMux resolves.
     // Do not wait exclusively for the empty picker in that transition window.
     if ((await terminal.count()) > 0) return
+    // Prefer the project process launcher — embedded mux no longer mounts a
+    // second InstanceSidebar, and project-scoped instances reconcile into mux.
+    if ((await projectNew.count()) > 0) {
+      await projectNew.first().click()
+      const shellProvider = page.locator('[data-yaade-agent-provider="terminal"]')
+      const providerDeadline = Date.now() + 3_000
+      while (Date.now() < providerDeadline && (await shellProvider.count()) === 0) {
+        await page.waitForTimeout(50)
+      }
+      if ((await shellProvider.count()) > 0) await shellProvider.click()
+      await confirmTerminalCheckout(page)
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
     if ((await emptyTile.count()) > 0) {
       await emptyTile.click()
       await confirmTerminalCheckout(page)
@@ -265,20 +281,6 @@ export async function openMuxTerminal(
     }
     if ((await sidebarNew.count()) > 0) {
       await sidebarNew.first().click()
-      await confirmTerminalCheckout(page)
-      await page.waitForSelector("[data-yaade-terminal-panel]", {
-        timeout: Math.max(1_000, deadline - Date.now()),
-      })
-      return
-    }
-    if ((await projectNew.count()) > 0) {
-      await projectNew.first().click()
-      const shellProvider = page.locator('[data-yaade-agent-provider="terminal"]')
-      const providerDeadline = Date.now() + 3_000
-      while (Date.now() < providerDeadline && (await shellProvider.count()) === 0) {
-        await page.waitForTimeout(50)
-      }
-      if ((await shellProvider.count()) > 0) await shellProvider.click()
       await confirmTerminalCheckout(page)
       await page.waitForSelector("[data-yaade-terminal-panel]", {
         timeout: Math.max(1_000, deadline - Date.now()),

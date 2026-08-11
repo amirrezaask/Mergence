@@ -7,11 +7,14 @@ import { launchJet, openMuxTerminal, waitForMux } from "./_launch.js"
  * focused pane). Tiled MuxPaneChrome controls/zoom are no longer shown there.
  */
 test.describe("mux chrome", () => {
-  test("Running surface shows instance sidebar and focused pane chrome", async () => {
+  test("Running surface shows project process sidebar and focused pane chrome", async () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-      await expectSelectorVisible(page, '[data-yaade-instance-sidebar="running"]')
+      await expectSelectorVisible(page, '[data-yaade-project-process-group="running"]')
+      expect(
+        await page.locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"]').count(),
+      ).toBe(0)
       await expectSelectorVisible(page, "[data-yaade-mux-pane-chrome]")
       await expect
         .poll(async () =>
@@ -37,15 +40,14 @@ test.describe("mux chrome", () => {
     const { app, page } = await launchJet()
     try {
       await waitForMux(page)
-      await page
-        .locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]')
-        .click()
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="terminal"]').click()
       await page.locator("[data-yaade-worktree-main]").click()
       await expect
         .poll(async () =>
           page
             .locator(
-              '[data-yaade-list-panel="mux-running"] [data-yaade-list-item]',
+              '[data-yaade-list-panel="project-running"] [data-yaade-list-item]',
             )
             .count(),
         )

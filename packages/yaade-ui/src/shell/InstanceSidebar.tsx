@@ -23,6 +23,7 @@ export type InstanceSidebarProps = {
   emptyLabel: string
   listPanelId: string
   newLabel?: string
+  newControl?: ReactNode
   className?: string
   /** Value for `data-yaade-instance-sidebar` (e.g. `agents`, `terminals`). */
   dataPrefix: string
@@ -39,6 +40,7 @@ export function InstanceSidebar({
   emptyLabel,
   listPanelId,
   newLabel = "New",
+  newControl,
   className,
   dataPrefix,
 }: InstanceSidebarProps) {
@@ -51,16 +53,18 @@ export function InstanceSidebar({
         <>
           {titleIcon}
           <span className="min-w-0 flex-1 truncate text-xs font-medium">{title}</span>
-          <Button
-            type="button"
-            variant="secondary"
-            size="xs"
-            data-yaade-instance-sidebar-new=""
-            onClick={onNew}
-          >
-            <Plus data-icon="inline-start" />
-            {newLabel}
-          </Button>
+          {newControl ?? (
+            <Button
+              type="button"
+              variant="secondary"
+              size="xs"
+              data-yaade-instance-sidebar-new=""
+              onClick={onNew}
+            >
+              <Plus data-icon="inline-start" />
+              {newLabel}
+            </Button>
+          )}
         </>
       }
       contentAs="nav"

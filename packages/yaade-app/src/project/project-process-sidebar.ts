@@ -64,6 +64,7 @@ export function useProjectProcessSidebar(
   const createTerminal = useCallback(async (checkout?: {
     checkoutKey: string
     checkoutPath: string
+    workspaceId?: string | null
   }) => {
     const api = window.yaade?.terminal
     if (!api) throw new Error("Terminal service unavailable")
@@ -71,6 +72,7 @@ export function useProjectProcessSidebar(
       projectId,
       checkoutKey: checkout?.checkoutKey ?? checkoutKey,
       checkoutPath: checkout?.checkoutPath ?? checkoutPath,
+      ...(checkout?.workspaceId ? { workspaceId: checkout.workspaceId } : {}),
     })
     setProcesses(current => upsertByRevision(current, instance))
     return instance.id

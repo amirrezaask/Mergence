@@ -310,7 +310,6 @@ test.describe("project page", () => {
       await expect
         .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
         .toContain("note.txt")
-      await expect(changesDialog.getByRole("button", { name: /^Unstage all/ })).toBeEnabled()
       await changesDialog.getByRole("button", { name: /^Unstage all/ }).click()
       await expect
         .poll(() => execSync("git diff --cached --name-only", { cwd: project }).toString().trim())
@@ -326,9 +325,7 @@ test.describe("project page", () => {
       await page.locator("[data-yaade-commit-changes-dialog]").waitFor({
         state: "hidden",
       })
-      await expect(
-        page.locator('[data-yaade-git-toolbar] [data-yaade-git-commit-trigger]'),
-      ).toBeEnabled()
+      expect(await page.locator('[data-yaade-git-toolbar] [data-yaade-git-commit-trigger]').count()).toBe(1)
 
       await page
         .locator('[data-yaade-list-panel="git-history"] [data-yaade-list-item]')

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
 import {
+  expectLocatorContainsText,
   expectLocatorVisible,
   expectSelectorVisible,
 } from "../shell/assert.js"
@@ -13,7 +14,7 @@ import {
 } from "./_launch.js"
 
 test.describe("mux shell", () => {
-  test("boots the Terminals surface with an instance sidebar", async () => {
+  test("boots the Terminals surface with the project process sidebar", async () => {
     const { app, page } = await launchJet({ withTerminal: false })
     try {
       await waitForMux(page)
@@ -24,19 +25,21 @@ test.describe("mux shell", () => {
       await expect
         .poll(async () => page.locator("[data-yaade-mux-tab]").count())
         .toBe(0)
+      // Embedded mux must not add a second Running rail beside the project sidebar.
+      expect(
+        await page.locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"]').count(),
+      ).toBe(0)
       await expectSelectorVisible(
         page,
-        '[data-yaade-mux] [data-yaade-instance-sidebar="running"]',
+        '[data-yaade-project-process-group="running"]',
       )
       await expectSelectorVisible(
         page,
         '[data-yaade-list-panel="project-running"]',
       )
-      await page
-        .locator(
-          '[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]',
-        )
-        .click()
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="terminal"]').click()
+      await page.locator("[data-yaade-worktree-main]").click()
       await expect
         .poll(async () => page.locator("[data-yaade-terminal-panel]").count())
         .toBe(1)
@@ -68,8 +71,11 @@ test.describe("mux shell", () => {
       )
       await expectSelectorVisible(
         page,
-        '[data-yaade-mux] [data-yaade-instance-sidebar="running"]',
+        '[data-yaade-project-process-group="running"]',
       )
+      expect(
+        await page.locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"]').count(),
+      ).toBe(0)
       await expect
         .poll(async () => surface.locator('[data-yaade-mux-pane-kind="terminal"]').count())
         .toBe(1)
@@ -672,20 +678,19 @@ test.describe("mux tiling", () => {
 
       await page.locator("[data-yaade-terminal-panel]").first().click()
       await page.keyboard.type("echo yaade-last-pane")
-      const tabId = await page
+      const instanceId = await page
         .locator(
           '[data-yaade-list-panel="project-running"] [data-yaade-instance-sidebar-item]',
         )
         .first()
         .getAttribute("data-yaade-instance-sidebar-item")
-      expect(tabId).toBeTruthy()
-      await page.locator(`[data-yaade-instance-sidebar-close="${tabId}"]`).click()
-      await page.getByRole("button", { name: "Close Pane" }).click()
+      expect(instanceId).toBeTruthy()
+      await page.locator(`[data-yaade-instance-sidebar-close="${instanceId}"]`).click()
 
-      // Empty terminals surface keeps New available.
+      // Project process close removes the Running row; New stays on the project sidebar.
       await expectSelectorVisible(
         page,
-        '[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]',
+        '[data-yaade-project-process-new="running"]',
       )
       await expect
         .poll(async () =>
@@ -696,10 +701,13 @@ test.describe("mux tiling", () => {
             .count(),
         )
         .toBe(0)
-      await page
-        .locator('[data-yaade-project-surface="running"]')
-        .getByRole("button", { name: "New terminal" })
-        .click()
+      await expectLocatorContainsText(
+        page.locator('[data-yaade-list-panel="project-running"]'),
+        "No processes yet",
+      )
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="terminal"]').click()
+      await page.locator("[data-yaade-worktree-main]").click()
       await expectSelectorVisible(page, "[data-yaade-terminal-panel]")
     } finally {
       await app.close()

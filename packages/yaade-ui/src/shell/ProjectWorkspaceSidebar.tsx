@@ -60,6 +60,7 @@ export type ProjectWorkspaceSidebarProps = {
   onOpenSettings: () => void
   /** Single Running launcher (+ shell & agent providers). */
   launcher?: ReactNode
+  showProcesses?: boolean
   loading?: boolean
   error?: string | null
   footer?: ReactNode
@@ -259,6 +260,7 @@ export function ProjectWorkspaceSidebar({
   onOpenHq,
   onOpenSettings,
   launcher,
+  showProcesses = true,
   loading,
   error,
   footer,
@@ -314,12 +316,14 @@ export function ProjectWorkspaceSidebar({
           onNew={onNewGitWorktree}
         />
         <SidebarSeparator />
-        <ProcessGroup
-          items={processes}
-          loading={loading}
-          error={error}
-          launcher={launcher}
-        />
+        {showProcesses ? (
+          <ProcessGroup
+            items={processes}
+            loading={loading}
+            error={error}
+            launcher={launcher}
+          />
+        ) : null}
       </SidebarContent>
 
       <SidebarFooter className="border-t border-sidebar-border">

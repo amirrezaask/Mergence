@@ -839,8 +839,6 @@ export function ProjectPage({
     }) => {
       let checkoutPath = input.checkoutPath ?? projectPath
       let checkoutKey = input.checkoutKey ?? "main"
-      let checkoutLabel = input.checkoutLabel ?? "Main"
-      let workspaceId = session?.id ?? null
 
       preferredSurfaceRef.current = "running"
       try {
@@ -857,27 +855,15 @@ export function ProjectPage({
           if (!wt) throw new Error("Worktree was not created")
           checkoutPath = wt.path
           checkoutKey = wt.path
-          checkoutLabel = wt.branch
-          workspaceId = created.id
-          if (!session) await onOpenSession(created.id)
-          else if (session.id !== created.id) await onOpenSession(created.id)
-        } else {
-          workspaceId = (await ensureProjectSession()).id
         }
 
-        const selection = {
-          workspaceId,
-          checkoutKey,
-          checkoutPath,
-        }
-        setSurfaceSelections(current => ({ ...current, running: selection }))
-        void saveProjectSurfaceState(projectId, "running", selection)
-
+        // Agents are project-scoped processes (same as terminals). Do not open a
+        // mux session here — that stacks InstanceSidebar on ProjectWorkspaceSidebar.
         const api = window.yaade?.terminal
-        if (!api || !workspaceId) throw new Error("Terminal service unavailable")
+        if (!api) throw new Error("Terminal service unavailable")
         const instance = await api.createInstance({
           projectId,
-          workspaceId,
+          ...(session?.id ? { workspaceId: session.id } : {}),
           provider: input.driverId,
           launchRequestId: input.requestId,
           checkoutKey,
@@ -885,17 +871,23 @@ export function ProjectPage({
           title: `${input.driverId.charAt(0).toUpperCase()}${input.driverId.slice(1)} agent`,
         })
         const processId = instance.id
-        const selected = { ...selection, processId, runId: processId }
-        setSurfaceSelections(current => ({ ...current, running: selected }))
-        void saveProjectSurfaceState(projectId, "running", selected)
+        const selection = {
+          workspaceId: session?.id ?? null,
+          checkoutKey,
+          checkoutPath,
+          processId,
+          runId: processId,
+        }
+        setSurfaceSelections(current => ({ ...current, running: selection }))
+        void saveProjectSurfaceState(projectId, "running", selection)
         setFocusAgentTabId(agentFocusTabId(processId))
         clearHqAgentLaunch(input.requestId)
         setLaunchRequest(null)
         onAgentLaunchIntentHandled?.(input.requestId)
         setView("running")
-        pushProjectRoute(location.pathname, {
+        replaceProjectRoute(location.pathname, {
           view: "running",
-          workspaceId: null,
+          workspaceId: session?.id ?? null,
           checkoutKey: checkoutKey === "main" ? null : checkoutKey,
           processId,
         })
@@ -906,14 +898,7 @@ export function ProjectPage({
         throw error
       }
     },
-    [
-      ensureProjectSession,
-      onAgentLaunchIntentHandled,
-      onOpenSession,
-      projectId,
-      projectPath,
-      session,
-    ],
+    [onAgentLaunchIntentHandled, projectId, projectPath, session],
   )
 
   const handleLaunchRequestHandled = useCallback(
@@ -1101,14 +1086,17 @@ export function ProjectPage({
         runId: processId,
         checkoutKey: checkout?.checkoutKey ?? activeCheckout.checkoutKey,
         checkoutPath: checkout?.checkoutPath ?? activeCheckout.cwdPath,
+        workspaceId: session?.id ?? null,
       }
       setSurfaceSelections(current => ({ ...current, running: selection }))
       void saveProjectSurfaceState(projectId, "running", selection)
       preferredSurfaceRef.current = "running"
+      setFocusAgentTabId(agentFocusTabId(processId))
       setView("running")
       replaceProjectRoute(location.pathname, {
         view: "running",
-        workspaceId: null,
+        // Keep an open mux session in the URL; otherwise stay process-scoped.
+        workspaceId: session?.id ?? null,
         checkoutKey: checkout
           ? checkoutRouteKey(
               checkoutFromPaths(
@@ -1122,7 +1110,7 @@ export function ProjectPage({
         processId,
       })
     },
-    [activeCheckout, projectId, projectPath, surfaceSelections.running],
+    [activeCheckout, projectId, projectPath, session, surfaceSelections.running],
   )
 
   const activeProcessId =
@@ -1220,6 +1208,7 @@ export function ProjectPage({
         const id = await processSidebar.createTerminal({
           checkoutKey: checkout.checkoutKey,
           checkoutPath: checkout.cwdPath,
+          workspaceId: session?.id ?? null,
         })
         handleProcessSelect(id, {
           checkoutKey: checkout.checkoutKey,
@@ -1232,7 +1221,7 @@ export function ProjectPage({
         )
       }
     },
-    [handleProcessSelect, processSidebar.createTerminal],
+    [handleProcessSelect, processSidebar.createTerminal, session],
   )
 
   const launchFromMenu = useCallback(
@@ -1419,7 +1408,6 @@ export function ProjectPage({
                     }
                     focusAgentTabId={view === "running" ? focusAgentTabId : null}
                     onBackToProject={onClearSession}
-                    onLaunchAgent={() => setProcessPickerOpen(true)}
                     onSelectAgentTab={tabId => {
                       preferredSurfaceRef.current = "running"
                       setFocusAgentTabId(tabId)

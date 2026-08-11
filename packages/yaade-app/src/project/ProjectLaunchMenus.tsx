@@ -279,7 +279,6 @@ export function ProcessLaunchMenu({
           </DropdownMenuSubTrigger>
           <DropdownMenuSubContent
             className="w-56 border-0"
-            onCloseAutoFocus={event => event.preventDefault()}
           >
             <CheckoutItems
               projectPath={projectPath}

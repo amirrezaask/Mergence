@@ -59,11 +59,10 @@ test.describe("per-surface worktrees", () => {
       expect(before.sessionCwd).not.toContain(".yaade/worktrees")
       const sessionId = before.sessionId
 
-      await page
-        .locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]')
-        .click()
-      const dialog = page.locator("[data-yaade-worktree-switcher-menu]")
-      await dialog.waitFor({ state: "visible" })
+      await page.locator('[data-yaade-project-process-new="running"]').click()
+      await page.locator('[data-yaade-agent-provider="terminal"]').click()
+      const dialog = page.locator("[data-yaade-process-launch-menu], [data-yaade-worktree-switcher-menu]")
+      await dialog.first().waitFor({ state: "visible" })
       await page.locator(`[data-yaade-worktree-item="${branch}"]`).click()
 
       await page.locator("[data-yaade-terminal-panel]").waitFor({
@@ -78,7 +77,7 @@ test.describe("per-surface worktrees", () => {
       await expect
         .poll(async () =>
           page
-            .locator('[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-list-item]')
+            .locator('[data-yaade-list-panel="project-running"] [data-yaade-list-item]')
             .first()
             .textContent(),
         )
