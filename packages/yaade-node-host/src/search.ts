@@ -478,10 +478,19 @@ export async function projectSearch(
   if (!query.trim()) return { items: [], truncated: false }
 
   const limit = clampProjectSearchLimit(opts?.limit)
-  const requiresRg = Boolean(
-    opts?.wholeWord || opts?.include?.length || opts?.exclude?.length || opts?.caseSensitive,
+  // Ripgrep is the primary content-search engine. It starts immediately, has
+  // mature ignore handling, and can be interrupted without rebuilding an
+  // index. Reserve FFF for its distinct fuzzy-search mode; using its cold
+  // index for ordinary literal searches makes broad queries slower and every
+  // superseded request can otherwise force an expensive index restart.
+  const canUseFffFuzzy = Boolean(
+    opts?.fuzzy &&
+      !opts.wholeWord &&
+      !opts.include?.length &&
+      !opts.exclude?.length &&
+      !opts.caseSensitive,
   )
-  if (!requiresRg && await isGitWorkspace(rootUri)) {
+  if (canUseFffFuzzy && await isGitWorkspace(rootUri)) {
     try {
       const fffResults = await fffGrep(rootUri, query, { ...opts, limit }, signal)
       throwIfAborted(signal)

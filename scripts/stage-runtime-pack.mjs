@@ -5,7 +5,7 @@
  * Default output: dist/runtime/
  *   yaade                  launcher → host-server on :4747 + static SPA
  *   web/                   Vite SPA dist
- *   backend/               esbuild bundles + native deps (node-pty, fff)
+ *   backend/               esbuild bundles + native deps (node-pty, fff, ripgrep)
  *   node/                  official Node binary (ABI-matched for natives)
  *
  * Override output: YAADE_PACK_DIR or first CLI arg.
@@ -61,7 +61,14 @@ const require = __yaadeCreateRequire(import.meta.url);
     target: "node22",
     packages: "bundle",
     banner,
-    external: ["node-pty", "@ff-labs/fff-node", "@ff-labs/fff-node/*"],
+    // @vscode/ripgrep must stay external: its JS require.resolve()'s the
+    // platform package (@vscode/ripgrep-<os>-<arch>) at runtime.
+    external: [
+      "node-pty",
+      "@ff-labs/fff-node",
+      "@ff-labs/fff-node/*",
+      "@vscode/ripgrep",
+    ],
     logLevel: "warning",
   }
   await esbuild.build({
@@ -79,6 +86,7 @@ function writeBackendPackageJson(backendDir) {
     type: "module",
     dependencies: {
       "@ff-labs/fff-node": "^0.9.6",
+      "@vscode/ripgrep": "1.18.0",
       "node-pty": "^1.1.0",
     },
   }
@@ -98,6 +106,39 @@ function installBackendNatives(backendDir) {
   // Fresh install against the Node we will ship (system Node during build — same major).
   run("npm", ["install", "--omit=dev", "--no-fund", "--no-audit"], backendDir)
   fixPackagedNodePtyPerms(backendDir)
+  // Ensure platform ripgrep binary is executable (tar extract can drop +x).
+  const rgBinName = process.platform === "win32" ? "rg.exe" : "rg"
+  const vscodeMods = path.join(backendDir, "node_modules", "@vscode")
+  if (fs.existsSync(vscodeMods)) {
+    for (const entry of fs.readdirSync(vscodeMods)) {
+      if (!entry.startsWith("ripgrep-")) continue
+      const rgBin = path.join(vscodeMods, entry, "bin", rgBinName)
+      if (fs.existsSync(rgBin)) fs.chmodSync(rgBin, 0o755)
+    }
+  }
+  // Fail the build if @vscode/ripgrep cannot resolve its platform binary.
+  const probe = spawnSync(
+    process.execPath,
+    [
+      "-e",
+      `import { rgPath } from "@vscode/ripgrep";
+import fs from "node:fs";
+if (!rgPath || !fs.existsSync(rgPath)) {
+  console.error("rgPath missing:", rgPath);
+  process.exit(1);
+}
+console.log("rgPath ok:", rgPath);
+`,
+    ],
+    { cwd: backendDir, encoding: "utf8" },
+  )
+  if (probe.status !== 0) {
+    console.error(probe.stderr || probe.stdout)
+    throw new Error(
+      `Bundled @vscode/ripgrep failed to resolve for ${process.platform}-${process.arch}`,
+    )
+  }
+  process.stdout.write(probe.stdout)
   console.log("Installed backend native deps")
 }
 

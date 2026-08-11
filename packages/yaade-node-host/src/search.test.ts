@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import fs from "node:fs/promises"
 import os from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import { describe, it } from "node:test"
 import { probeFffAvailable } from "./fff-service.js"
 import { pathToUri } from "./paths.js"
@@ -13,19 +12,26 @@ import {
   projectSearch,
 } from "./search.js"
 
-const repoRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../..")
-const sampleRootUri = pathToUri(path.join(repoRoot, "fixtures/sample-workspace"))
-
 describe("search", { concurrency: false }, () => {
   it("returns paged file and project results with match ranges", async () => {
-    const files = await fileSearch(sampleRootUri, "index", { pageSize: 10 })
-    assert.ok(files.items.length > 0)
-    assert.equal(typeof files.truncated, "boolean")
+    const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yaade-search-basic-"))
+    const rootUri = pathToUri(dir)
+    try {
+      await fs.mkdir(path.join(dir, "src"))
+      await fs.writeFile(path.join(dir, "src", "index.ts"), "export const ready = true\n")
 
-    const matches = await projectSearch(sampleRootUri, "export", { fuzzy: false })
-    assert.ok(matches.items.length > 0)
-    assert.equal(typeof matches.truncated, "boolean")
-    assert.ok(matches.items.every(item => item.ranges.length > 0))
+      const files = await fileSearch(rootUri, "index", { pageSize: 10 })
+      assert.ok(files.items.length > 0)
+      assert.equal(typeof files.truncated, "boolean")
+
+      const matches = await projectSearch(rootUri, "export", { fuzzy: false })
+      assert.ok(matches.items.length > 0)
+      assert.equal(typeof matches.truncated, "boolean")
+      assert.ok(matches.items.every(item => item.ranges.length > 0))
+    } finally {
+      disposeSearchRoot(rootUri)
+      await fs.rm(dir, { recursive: true, force: true })
+    }
   })
 
   it("indexes and refreshes Quick Open files outside git", async () => {
@@ -121,7 +127,7 @@ describe("search", { concurrency: false }, () => {
     }
   })
 
-  it("kills a superseded ripgrep process before starting the latest query", async () => {
+  it("uses cancellable ripgrep for default literal searches", async () => {
     const dir = await fs.mkdtemp(path.join(os.tmpdir(), "yaade-search-cancel-"))
     const rootUri = pathToUri(dir)
     const logPath = path.join(dir, "rg.log")
@@ -146,9 +152,9 @@ setTimeout(() => {
       await fs.writeFile(fakeRgPath, script, { mode: 0o755 })
       process.env.YAADE_RG_PATH = fakeRgPath
 
-      const first = projectSearch(rootUri, "first", { caseSensitive: true })
+      const first = projectSearch(rootUri, "first")
       await waitFor(async () => (await readIfPresent(logPath)).includes("start:first"))
-      const second = projectSearch(rootUri, "second", { caseSensitive: true })
+      const second = projectSearch(rootUri, "second")
 
       await assert.rejects(first, error => error instanceof Error && error.name === "AbortError")
       const latest = await second

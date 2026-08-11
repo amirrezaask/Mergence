@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test"
+import fs from "node:fs"
+import os from "node:os"
+import path from "node:path"
 import { expectListRows } from "../helpers/list.js"
 import {
   expectLocatorVisible,
@@ -33,6 +36,9 @@ test.describe("project search", () => {
         needle: "nonGitSearchFixture",
         noResultsText: "No matches.",
       })
+      await expect
+        .poll(() => page.getByRole("status", { name: "Loading" }).count())
+        .toBe(0)
       await expectLocatorVisible(
         page.locator('[data-yaade-project-search-hit="src/index.ts:1"]'),
       )
@@ -71,6 +77,51 @@ test.describe("project search", () => {
       )
     } finally {
       await app.close()
+    }
+  })
+
+  test("broad searches stop at a bounded page without a fake loading spinner", async () => {
+    const project = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-broad-search-"))
+    fs.writeFileSync(
+      path.join(project, "broad-results.txt"),
+      Array.from(
+        { length: 520 },
+        (_, index) => `broadNeedle result-row-${String(index).padStart(3, "0")}`,
+      ).join("\n"),
+    )
+
+    const { app, page } = await launchJet({
+      workspaceRel: project,
+      withTerminal: false,
+    })
+    try {
+      await waitForMux(page)
+      await execCommand(page, "editor.projectSearch")
+      await page.locator("[data-yaade-project-search-input]").fill("broadNeedle")
+
+      await expectListRows(page, {
+        panel: "project-search",
+        minItems: 2,
+        needle: "result-row-001",
+        noResultsText: "No matches.",
+      })
+      await expectLocatorVisible(
+        page.locator('[data-yaade-project-search-hit="broad-results.txt:1"]'),
+      )
+      await expectLocatorVisible(page.getByRole("button", { name: "Load more matches" }))
+      await expect
+        .poll(() => page.getByRole("status", { name: "Loading" }).count())
+        .toBe(0)
+      await expect
+        .poll(async () =>
+          (await page
+            .locator('[data-yaade-list-panel="project-search"]')
+            .textContent()) ?? "",
+        )
+        .not.toContain("Loading more matches")
+    } finally {
+      await app.close()
+      fs.rmSync(project, { recursive: true, force: true })
     }
   })
 })

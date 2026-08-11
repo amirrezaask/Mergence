@@ -297,20 +297,8 @@ export function ProjectSearchPanel({
   const visibleBuckets = buckets.slice(0, visibleCount)
   const hasMoreFiles = visibleCount < buckets.length
   const canFetchHostPage = Boolean(truncated && onLoadMore)
-  const showSentinel = hasMoreFiles || canFetchHostPage
+  const showMoreControl = hasMoreFiles || canFetchHostPage || loadingMore
   const remainingFiles = Math.max(0, buckets.length - visibleCount)
-
-  const setSentinelRef = useNearViewport(
-    scrollRef,
-    () => {
-      if (hasMoreFiles) {
-        setVisibleCount(count => Math.min(buckets.length, count + SEARCH_FILES_PAGE_SIZE))
-        return
-      }
-      if (canFetchHostPage) onLoadMore?.()
-    },
-    showSentinel && !loadingMore && !loading,
-  )
 
   const include = formatGlobs(options.include)
   const exclude = formatGlobs(options.exclude)
@@ -450,19 +438,38 @@ export function ProjectSearchPanel({
             onSelectLine={handleSelectLine}
           />
         ))}
-        {showSentinel ? (
+        {showMoreControl ? (
           <div
-            ref={setSentinelRef}
             className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-muted-foreground"
             data-yaade-project-search-sentinel=""
-            aria-hidden
           >
-            <Spinner className="size-3.5" />
-            {hasMoreFiles
-              ? `Loading ${Math.min(SEARCH_FILES_PAGE_SIZE, remainingFiles)} more file${
+            {hasMoreFiles ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() =>
+                  setVisibleCount(count =>
+                    Math.min(buckets.length, count + SEARCH_FILES_PAGE_SIZE),
+                  )
+                }
+              >
+                Show {Math.min(SEARCH_FILES_PAGE_SIZE, remainingFiles)} more file{
                   Math.min(SEARCH_FILES_PAGE_SIZE, remainingFiles) === 1 ? "" : "s"
-                }…`
-              : "Loading more matches…"}
+                }
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                disabled={loading || loadingMore}
+                onClick={onLoadMore}
+              >
+                {loadingMore ? <Spinner className="size-3.5" /> : null}
+                {loadingMore ? "Loading more matches…" : "Load more matches"}
+              </Button>
+            )}
           </div>
         ) : null}
       </div>

@@ -265,11 +265,12 @@ export function updateProjectSearch(
   const generation = (bucket.generations.get(searchId) ?? 0) + 1
   bucket.generations.set(searchId, generation)
 
-  const existingTimer = bucket.timers.get(searchId)
-  if (existingTimer) clearTimeout(existingTimer)
+  // Stop stale host work as soon as intent changes. Waiting for the next
+  // debounce to fire leaves a broad previous query consuming the single-root
+  // search slot and makes the replacement appear stuck.
+  abortEntry(bucket, searchId)
 
   if (!entry.query.trim()) {
-    abortEntry(bucket, searchId)
     entry.results = []
     entry.truncated = false
     entry.nextCursor = null

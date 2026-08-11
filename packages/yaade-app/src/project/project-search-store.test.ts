@@ -67,6 +67,7 @@ describe("project-search-store", () => {
       resolveFirst = resolve
     })
     const queries: string[] = []
+    let firstSignal: AbortSignal | undefined
     ;(globalThis as { window: unknown }).window = {
       yaade: {
         search: {
@@ -78,6 +79,7 @@ describe("project-search-store", () => {
           ) => {
             queries.push(query)
             if (query === "one") {
+              firstSignal = signal
               await firstGate
               if (signal?.aborted) throw new DOMException("Aborted", "AbortError")
               return { items: [], truncated: false }
@@ -102,6 +104,7 @@ describe("project-search-store", () => {
     updateProjectSearch(project, entry.id, { query: "one" })
     await new Promise(resolve => setTimeout(resolve, 130))
     updateProjectSearch(project, entry.id, { query: "two" })
+    assert.equal(firstSignal?.aborted, true)
     resolveFirst?.()
     await new Promise(resolve => setTimeout(resolve, 150))
 
