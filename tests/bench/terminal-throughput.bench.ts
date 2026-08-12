@@ -287,8 +287,8 @@ test("bench terminal-typing-under-flood", async () => {
       return panel?.dataset.yaadeTerminalRenderer ?? "unknown"
     })
     console.log(`[bench] terminal-under-flood renderer=${renderer}`)
-    // Prefer GPU; Dom is acceptable in headless CI without WebGL.
-    expect(["webgl", "canvas", "dom"]).toContain(renderer)
+    // Prefer WebGL; Dom is acceptable in headless CI without WebGL.
+    expect(["webgl", "dom"]).toContain(renderer)
 
     const samples = await page.evaluate(async () => {
           const panel = document.querySelector<HTMLElement>(

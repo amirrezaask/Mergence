@@ -341,11 +341,14 @@ export async function openThemePicker(page: ShellDriver): Promise<void> {
 export async function focusTerminal(page: ShellDriver): Promise<void> {
   await page.locator("[data-yaade-terminal-panel] .yaade-terminal-surface").click()
   await page.evaluate(() => {
-    const textarea = document.querySelector(
-      "[data-yaade-terminal-panel] .xterm-helper-textarea",
-    ) as HTMLTextAreaElement | null
-    textarea?.focus()
+    window.__yaadeAgent?.focusTerminal?.()
   })
+  // Best-effort DOM focus — xterm.focus() above is the authoritative path.
+  await page
+    .locator("[data-yaade-terminal-panel] .xterm-helper-textarea")
+    .first()
+    .focus({ timeout: 5_000 })
+    .catch(() => undefined)
 }
 
 export async function openSettings(page: ShellDriver): Promise<void> {

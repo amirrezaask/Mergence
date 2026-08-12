@@ -546,14 +546,20 @@ export async function gitCommitFiles(rootUri: string, hash: string): Promise<Git
   return { hash: safe, subject, body, files }
 }
 
-/** Apply a unified-diff patch to the index (hunk staging). */
+/**
+ * Apply a unified-diff patch.
+ * - `cached: true` (default) → index (`git apply --cached`) for stage/unstage hunks
+ * - `cached: false` → worktree for discard hunk (`git apply [--reverse]`)
+ */
 export async function gitApplyPatch(
   rootUri: string,
   patch: string,
-  opts?: { reverse?: boolean },
+  opts?: { reverse?: boolean; cached?: boolean },
 ): Promise<void> {
   if (!patch.trim()) return
-  const args = ["apply", "--cached", "--whitespace=nowarn", "--recount"]
+  const cached = opts?.cached !== false
+  const args = ["apply", "--whitespace=nowarn", "--recount"]
+  if (cached) args.push("--cached")
   if (opts?.reverse) args.push("--reverse")
   await runGitWithStdin(uriToPath(rootUri), args, patch)
 }

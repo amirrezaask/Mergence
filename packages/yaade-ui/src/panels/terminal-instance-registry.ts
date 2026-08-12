@@ -6,6 +6,10 @@ export function registerTerminalInstance(tabId: string, term: Terminal): void {
   instances.set(tabId, term)
 }
 
+export function getRegisteredTerminal(tabId: string): Terminal | undefined {
+  return instances.get(tabId)
+}
+
 export function unregisterTerminalInstance(tabId: string, term?: Terminal): void {
   if (term && instances.get(tabId) !== term) return
   instances.delete(tabId)
@@ -25,7 +29,7 @@ function resolveTerminal(tabId?: string): Terminal | undefined {
 
 /**
  * Buffer-backed terminal text for E2E / agent bridge.
- * WebGL/Canvas renderers do not keep readable `.xterm-rows` DOM text.
+ * WebGL renderer does not keep readable `.xterm-rows` DOM text.
  */
 export function readTerminalBufferText(tabId?: string): string {
   const term = resolveTerminal(tabId)
@@ -48,6 +52,29 @@ export function readTerminalDims(
   const term = resolveTerminal(tabId)
   if (!term) return null
   return { cols: term.cols, rows: term.rows }
+}
+
+/** Buffer viewportY (scroll position in lines) for E2E — xterm v6 scroll owner. */
+export function readTerminalViewportY(tabId?: string): number | null {
+  const term = resolveTerminal(tabId)
+  if (!term) return null
+  return term.buffer.active.viewportY
+}
+
+/** Scroll the active terminal by N lines (E2E / agent). */
+export function scrollTerminalLines(amount: number, tabId?: string): boolean {
+  const term = resolveTerminal(tabId)
+  if (!term || !Number.isFinite(amount) || amount === 0) return false
+  term.scrollLines(amount)
+  return true
+}
+
+/** Focus the active terminal via xterm.focus() (E2E). */
+export function focusRegisteredTerminal(tabId?: string): boolean {
+  const term = resolveTerminal(tabId)
+  if (!term) return false
+  term.focus()
+  return true
 }
 
 export function readTerminalCursor(

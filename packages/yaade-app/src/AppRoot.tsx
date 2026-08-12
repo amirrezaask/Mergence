@@ -8,6 +8,9 @@ import {
   readTerminalCellSize,
   readTerminalCursor,
   readTerminalDims,
+  readTerminalViewportY,
+  scrollTerminalLines,
+  focusRegisteredTerminal,
 } from "@yaade/ui/terminal-registry"
 import {
   clearHqAgentLaunch,
@@ -188,6 +191,9 @@ function basicAgentBridge(input: {
     getTerminalCellSize: tabId => readTerminalCellSize(tabId),
     getTerminalDims: tabId => readTerminalDims(tabId),
     getTerminalCursor: tabId => readTerminalCursor(tabId),
+    getTerminalViewportY: tabId => readTerminalViewportY(tabId),
+    scrollTerminalLines: (amount, tabId) => scrollTerminalLines(amount, tabId),
+    focusTerminal: tabId => focusRegisteredTerminal(tabId),
     findTerminalText: (needle, tabId) => findTerminalBufferMatch(needle, tabId),
     createProjectSession: input.createProjectSession,
     listProjectSessions: input.listProjectSessions,

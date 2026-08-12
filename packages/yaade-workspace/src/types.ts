@@ -299,7 +299,11 @@ export type JetElectronGit = {
   historyPage(rootUri: string, cursor?: string, pageSize?: number): Promise<GitHistoryPage>
   numstat(rootUri: string): Promise<GitNumstatEntry[]>
   commitFiles(rootUri: string, hash: string): Promise<GitCommitDetail>
-  applyPatch(rootUri: string, patch: string, opts?: { reverse?: boolean }): Promise<void>
+  applyPatch(
+    rootUri: string,
+    patch: string,
+    opts?: { reverse?: boolean; cached?: boolean },
+  ): Promise<void>
   worktreeList(rootUri: string): Promise<GitWorktree[]>
   worktreeAdd(
     rootUri: string,

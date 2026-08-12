@@ -92,7 +92,7 @@ export type GitService = {
   readonly applyPatch: (
     rootUri: string,
     patch: string,
-    opts?: { reverse?: boolean },
+    opts?: { reverse?: boolean; cached?: boolean },
   ) => Effect.Effect<void, GitCommandFailedError>
   readonly worktreeList: (rootUri: string) => Effect.Effect<GitWorktree[], GitCommandFailedError>
   readonly worktreeAdd: (

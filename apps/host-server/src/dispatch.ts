@@ -795,7 +795,7 @@ function handleGitEffect(
         return yield* git.commitFiles(rootUri, str(args[1], "hash"))
       case "git:applyPatch": {
         const patch = String(args[1] ?? "")
-        const opts = (args[2] as { reverse?: boolean } | undefined) ?? undefined
+        const opts = (args[2] as { reverse?: boolean; cached?: boolean } | undefined) ?? undefined
         yield* git.applyPatch(rootUri, patch, opts)
         return null
       }

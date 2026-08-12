@@ -31,7 +31,6 @@ import {
   MoreHorizontalIcon,
   RefreshCwIcon,
   RotateCcwIcon,
-  ScissorsIcon,
   SearchIcon,
   UploadIcon,
 } from "lucide-react"
@@ -81,6 +80,7 @@ import { showYaadeToast } from "@/toast.js"
 import { SessionHeaderChromePortal } from "./session-header-chrome.js"
 import { SidebarShell } from "../shell/SidebarShell.js"
 import { PierreDiffPool } from "./pierre-diff-pool.js"
+import { listApplyHunks } from "./pierre-hunk-patch.js"
 
 const CommitChangesDialog = lazy(() =>
   import("./CommitChangesDialog.js").then(module => ({
@@ -124,6 +124,9 @@ type GitWorkspaceProps = {
 }
 
 type DiffContents = {
+  /** Unified `git diff` text — preferred for PatchDiff + hunk apply. */
+  patch?: string
+  /** Two-file fallback (untracked / conflict / empty patch). */
   original: string
   modified: string
 }
@@ -182,8 +185,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const [workingTreeDialogOpen, setWorkingTreeDialogOpen] = useState(false)
   const [commitDialogOpen, setCommitDialogOpen] = useState(false)
   const [mobileDetail, setMobileDetail] = useState(false)
-  const [hunks, setHunks] = useState<DiffHunk[] | null>(null)
-  const [hunksLoading, setHunksLoading] = useState(false)
   const [containerWidth, setContainerWidth] = useState(0)
   const rootRef = useRef<HTMLElement>(null)
   const diffRequest = useRef(0)
@@ -373,7 +374,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   useEffect(() => {
     if (!rootUri || !api || !fsApi || !selected || !selectedDiffKey) {
       setDiffContents(null)
-      setHunks(null)
       return
     }
     const entry = entries.find(item => item.path === selected.path)
@@ -446,12 +446,6 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     setSelected({ path: match.path, staged: Boolean(match.staged && !match.unstaged) })
   }, [focusPath, entries])
 
-  // Hunk list is per-file; drop it whenever the selection changes so the
-  // dropdown re-fetches against the correct path/side on next open.
-  useEffect(() => {
-    setHunks(null)
-  }, [selected])
-
   useEffect(() => {
     setMobileDetail(false)
   }, [view])
@@ -505,33 +499,31 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     void runAction("Unstage all", () => api.unstage(rootUri, stagedPaths))
   }
 
-  const loadHunks = useCallback(async () => {
-    if (!rootUri || !api || !selected) {
-      setHunks(null)
-      return
-    }
-    setHunksLoading(true)
-    try {
-      const patch = await api.diff(rootUri, { path: selected.path, staged: selected.staged })
-      setHunks(parseDiffHunks(patch))
-    } catch (error) {
-      setHunks([])
-      showYaadeToast("Could not load hunks", {
-        variant: "destructive",
-        description: errorMessage(error),
-      })
-    } finally {
-      setHunksLoading(false)
-    }
-  }, [api, rootUri, selected])
-
-  const applyHunk = (hunk: DiffHunk) => {
-    if (!rootUri || !api || !selected) return
-    const reverse = selected.staged
-    void runAction(reverse ? "Unstage hunk" : "Stage hunk", () =>
-      api.applyPatch(rootUri, hunk.patch, { reverse }),
-    )
-  }
+  const applyHunkAction = useCallback(
+    (kind: "stage" | "unstage" | "discard", hunkIndex: number) => {
+      if (!rootUri || !api || !selected) return
+      const patch = diffContents?.patch
+      if (!patch?.trim()) return
+      const hunk = listApplyHunks(patch)[hunkIndex]
+      if (!hunk) return
+      if (kind === "stage") {
+        void runAction("Stage hunk", () =>
+          api.applyPatch(rootUri, hunk.patch, { cached: true }),
+        )
+        return
+      }
+      if (kind === "unstage") {
+        void runAction("Unstage hunk", () =>
+          api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: true }),
+        )
+        return
+      }
+      void runAction("Discard hunk", () =>
+        api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: false }),
+      )
+    },
+    [api, diffContents?.patch, rootUri, runAction, selected],
+  )
 
   const discardSelection = async (entry: GitStatusEntry) => {
     if (!rootUri || !api || entry.status === "untracked") return
@@ -611,10 +603,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       theme={theme}
       fontSize={fontSize}
       pending={pendingAction !== null}
-      hunks={hunks}
-      hunksLoading={hunksLoading}
-      onLoadHunks={() => void loadHunks()}
-      onApplyHunk={applyHunk}
+      onHunkAction={applyHunkAction}
       onBack={narrow ? () => setMobileDetail(false) : undefined}
       onDiffStyleChange={setAndPersistDiffStyle}
       onOpenFile={onOpenFile}
@@ -1334,10 +1323,7 @@ function DiffViewer(props: {
   theme: YaadeTheme
   fontSize: number
   pending: boolean
-  hunks: DiffHunk[] | null
-  hunksLoading: boolean
-  onLoadHunks: () => void
-  onApplyHunk: (hunk: DiffHunk) => void
+  onHunkAction: (kind: "stage" | "unstage" | "discard", hunkIndex: number) => void
   onBack?: () => void
   onDiffStyleChange: (style: DiffStyle) => void
   onOpenFile: (path: string) => void
@@ -1353,10 +1339,7 @@ function DiffViewer(props: {
     theme,
     fontSize,
     pending,
-    hunks,
-    hunksLoading,
-    onLoadHunks,
-    onApplyHunk,
+    onHunkAction,
     onBack,
     onDiffStyleChange,
     onOpenFile,
@@ -1368,8 +1351,14 @@ function DiffViewer(props: {
   }
   const hasDiff =
     diffContents != null &&
-    (diffContents.original.length > 0 || diffContents.modified.length > 0)
-  const canStageHunks = selectedEntry != null && selectedEntry.status !== "untracked" && hasDiff
+    ((diffContents.patch?.trim().length ?? 0) > 0 ||
+      diffContents.original.length > 0 ||
+      diffContents.modified.length > 0)
+  const canHunkActions =
+    selectedEntry != null &&
+    selectedEntry.status !== "untracked" &&
+    selectedEntry.status !== "conflict" &&
+    Boolean(diffContents?.patch?.trim())
   return (
     <div data-yaade-git-diff="" className="flex h-full min-h-0 flex-col overflow-hidden bg-transparent">
       <div
@@ -1390,16 +1379,6 @@ function DiffViewer(props: {
           <FileDiffIcon className="text-muted-foreground" aria-hidden />
         )}
         <span className="min-w-0 flex-1 truncate font-mono text-2xs">{selected.path}</span>
-        {canStageHunks ? (
-          <HunkMenu
-            staged={selected.staged}
-            hunks={hunks}
-            loading={hunksLoading}
-            pending={pending}
-            onOpen={onLoadHunks}
-            onApply={onApplyHunk}
-          />
-        ) : null}
         <Button type="button" variant="secondary" size="xs" disabled={pending} onClick={() => onToggleStage(selected)}>
           {selected.staged ? "Unstage file" : "Stage file"}
         </Button>
@@ -1452,12 +1431,30 @@ function DiffViewer(props: {
           <Suspense fallback={<CenteredStatus label="Preparing diff…" />}>
             <YaadeDiffViewer
               path={selected.path}
+              patch={diffContents.patch}
               original={diffContents.original}
               modified={diffContents.modified}
               mode={diffStyle}
               theme={theme}
               fontSize={fontSize}
               conflict={selectedEntry?.status === "conflict"}
+              hunkActions={
+                canHunkActions
+                  ? {
+                      staged: selected.staged,
+                      disabled: pending,
+                      onStageHunk: selected.staged
+                        ? undefined
+                        : index => onHunkAction("stage", index),
+                      onUnstageHunk: selected.staged
+                        ? index => onHunkAction("unstage", index)
+                        : undefined,
+                      onDiscardHunk: selected.staged
+                        ? undefined
+                        : index => onHunkAction("discard", index),
+                    }
+                  : undefined
+              }
             />
           </Suspense>
         ) : (
@@ -1472,96 +1469,6 @@ function DiffViewer(props: {
         )}
       </div>
     </div>
-  )
-}
-
-type DiffHunk = { header: string; patch: string; added: number; deleted: number }
-
-/** Split a single-file unified diff into per-hunk patches ready for `git apply`. */
-function parseDiffHunks(patch: string): DiffHunk[] {
-  const lines = patch.split("\n")
-  const headerEnd = lines.findIndex(line => line.startsWith("@@"))
-  if (headerEnd < 0) return []
-  const fileHeader = lines.slice(0, headerEnd).join("\n")
-  const hunks: DiffHunk[] = []
-  let start = -1
-  const flush = (end: number) => {
-    if (start < 0) return
-    const hunkLines = lines.slice(start, end)
-    const header = (hunkLines[0] ?? "").trim()
-    let added = 0
-    let deleted = 0
-    for (const line of hunkLines) {
-      if (line.startsWith("+") && !line.startsWith("+++")) added++
-      else if (line.startsWith("-") && !line.startsWith("---")) deleted++
-    }
-    let body = `${fileHeader}\n${hunkLines.join("\n")}`
-    if (!body.endsWith("\n")) body += "\n"
-    hunks.push({ header, patch: body, added, deleted })
-  }
-  for (let i = headerEnd; i < lines.length; i++) {
-    if (lines[i]!.startsWith("@@")) {
-      flush(i)
-      start = i
-    }
-  }
-  flush(lines.length)
-  return hunks
-}
-
-function HunkMenu(props: {
-  staged: boolean
-  hunks: DiffHunk[] | null
-  loading: boolean
-  pending: boolean
-  onOpen: () => void
-  onApply: (hunk: DiffHunk) => void
-}) {
-  const { staged, hunks, loading, pending, onOpen, onApply } = props
-  const verb = staged ? "Unstage" : "Stage"
-  return (
-    <DropdownMenu
-      onOpenChange={open => {
-        if (open) onOpen()
-      }}
-    >
-      <DropdownMenuTrigger asChild>
-        <Button type="button" variant="ghost" size="xs" disabled={pending} aria-label={`${verb} hunks`}>
-          <ScissorsIcon data-icon="inline-start" />
-          Hunks
-        </Button>
-      </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="max-h-80 w-72 overflow-auto">
-        <DropdownMenuLabel>{verb} hunks</DropdownMenuLabel>
-        <DropdownMenuSeparator />
-        {loading ? (
-          <div className="flex items-center gap-2 px-2 py-1.5 text-2xs text-muted-foreground">
-            <Spinner /> Loading hunks…
-          </div>
-        ) : !hunks || hunks.length === 0 ? (
-          <div className="px-2 py-1.5 text-2xs text-muted-foreground">
-            No hunks to {verb.toLowerCase()}.
-          </div>
-        ) : (
-          hunks.map((hunk, index) => (
-            <DropdownMenuItem
-              key={`${index}:${hunk.header}`}
-              className="flex flex-col items-start gap-0.5"
-              onSelect={() => onApply(hunk)}
-            >
-              <span className="flex w-full items-center justify-between gap-2 font-mono text-3xs">
-                <span className="min-w-0 truncate">{hunk.header}</span>
-                <span className="shrink-0 tabular-nums">
-                  <span className="text-git-added">+{hunk.added}</span>{" "}
-                  <span className="text-git-deleted">−{hunk.deleted}</span>
-                </span>
-              </span>
-              <span className="text-3xs text-muted-foreground">{verb} this hunk</span>
-            </DropdownMenuItem>
-          ))
-        )}
-      </DropdownMenuContent>
-    </DropdownMenu>
   )
 }
 
@@ -1590,17 +1497,27 @@ async function loadGitDiffContents(
     }
   }
 
+  // Merge conflicts: Pierre UnresolvedFile needs the conflicted working-tree blob.
+  if (entry?.status === "conflict") {
+    const modified = await fsApi.readFile(fileUri).catch(() => "")
+    return { original: "", modified: truncate(modified) }
+  }
+
+  // Patch-sourced view so Pierre hunk indexes match `git apply` payloads.
+  try {
+    const patch = await api.diff(rootUri, { path: selected.path, staged: selected.staged })
+    if (patch.trim()) {
+      return { patch: truncate(patch), original: "", modified: "" }
+    }
+  } catch {
+    /* fall through to two-file load */
+  }
+
   if (entry?.status === "deleted") {
     const original = selected.staged
       ? await api.show(rootUri, selected.path, "HEAD")
       : await api.show(rootUri, selected.path, "INDEX")
     return { original: truncate(original), modified: "" }
-  }
-
-  // Merge conflicts: Pierre UnresolvedFile needs the conflicted working-tree blob.
-  if (entry?.status === "conflict") {
-    const modified = await fsApi.readFile(fileUri).catch(() => "")
-    return { original: "", modified: truncate(modified) }
   }
 
   if (selected.staged) {

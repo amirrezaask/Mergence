@@ -17,6 +17,9 @@ import {
   readTerminalCellSize,
   readTerminalCursor,
   readTerminalDims,
+  readTerminalViewportY,
+  scrollTerminalLines,
+  focusRegisteredTerminal,
 } from "@yaade/ui/terminal-registry"
 
 export type JetAgentState = {
@@ -73,7 +76,7 @@ export type YaadeAgentAPI = {
   dropFilesOnTerminal(paths: string[]): Promise<boolean>
   /** Open dropped absolute paths in the editor (same path as OS file-drop → editor zone). */
   dropFilesOnEditor(paths: string[]): Promise<boolean>
-  /** Buffer-backed terminal text (WebGL/Canvas-safe; E2E). */
+  /** Buffer-backed terminal text (WebGL-safe; E2E). */
   getTerminalText(tabId?: string): string
   /** Cell height in CSS px from the active terminal renderer (E2E). */
   getTerminalCellHeight(tabId?: string): number
@@ -83,6 +86,12 @@ export type YaadeAgentAPI = {
   getTerminalDims(tabId?: string): { cols: number; rows: number } | null
   /** Buffer cursor cell + hidden flag (WebGL-safe; E2E). */
   getTerminalCursor(tabId?: string): { x: number; y: number; hidden: boolean } | null
+  /** Buffer viewportY scroll line (xterm v6 DomScrollableElement; E2E). */
+  getTerminalViewportY(tabId?: string): number | null
+  /** Scroll the active terminal by N lines (E2E). */
+  scrollTerminalLines(amount: number, tabId?: string): boolean
+  /** Focus the active terminal via xterm.focus() (E2E). */
+  focusTerminal(tabId?: string): boolean
   /** Visible buffer match for click/hover targeting (E2E). */
   findTerminalText(
     needle: string,
@@ -418,6 +427,15 @@ export function createAgentBridge(ctx: () => AgentBridgeContext): YaadeAgentAPI 
     },
     getTerminalCursor(tabId) {
       return readTerminalCursor(tabId)
+    },
+    getTerminalViewportY(tabId) {
+      return readTerminalViewportY(tabId)
+    },
+    scrollTerminalLines(amount, tabId) {
+      return scrollTerminalLines(amount, tabId)
+    },
+    focusTerminal(tabId) {
+      return focusRegisteredTerminal(tabId)
     },
     findTerminalText(needle, tabId) {
       return findTerminalBufferMatch(needle, tabId)

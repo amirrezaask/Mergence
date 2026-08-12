@@ -1,19 +1,44 @@
 import { useMemo } from "react"
-import { DEFAULT_THEMES, parseDiffFromFile } from "@pierre/diffs"
-import { FileDiff, UnresolvedFile, Virtualizer } from "@pierre/diffs/react"
+import {
+  DEFAULT_THEMES,
+  getSingularPatch,
+  parseDiffFromFile,
+  type DiffLineAnnotation,
+} from "@pierre/diffs"
+import { FileDiff, PatchDiff, UnresolvedFile, Virtualizer } from "@pierre/diffs/react"
 import type { YaadeTheme } from "@yaade/shared"
 
 import { cn } from "@/lib/utils.js"
+import {
+  buildHunkActionAnnotations,
+  hunkIndexForLine,
+  type HunkActionMeta,
+} from "./pierre-hunk-patch.js"
+
+export type YaadeHunkActions = {
+  /** Staged area → Unstage only; unstaged → Stage + Discard. */
+  staged: boolean
+  disabled?: boolean
+  onStageHunk?: (hunkIndex: number) => void
+  onUnstageHunk?: (hunkIndex: number) => void
+  onDiscardHunk?: (hunkIndex: number) => void
+}
 
 export type YaadeDiffViewerProps = {
   path: string
-  original: string
-  modified: string
   /** Unified (stacked) or split (side-by-side). Ignored for merge conflicts. */
   mode: "unified" | "split"
   theme: YaadeTheme
   /** Editor font size in px (default 13). */
   fontSize?: number
+  /**
+   * Preferred for git staging: render via Pierre `PatchDiff` so hunk indexes
+   * match `listApplyHunks` / `git apply` payloads from the same string.
+   */
+  patch?: string
+  /** Two-file view (commit dialog, untracked). Ignored when `patch` is set. */
+  original?: string
+  modified?: string
   /**
    * When true, `modified` is a working-tree file that may contain Git conflict
    * markers — render via Pierre `UnresolvedFile` instead of a 2-way file diff.
@@ -25,6 +50,8 @@ export type YaadeDiffViewerProps = {
    * viewer remounts with the resolved text.
    */
   onConflictResolved?: (contents: string) => void
+  /** Inline hunk Stage / Unstage / Discard (patch-sourced diffs only). */
+  hunkActions?: YaadeHunkActions
   className?: string
 }
 
@@ -56,32 +83,42 @@ function pierreUnsafeCss(fontSize: number): string {
     `[data-diff], [data-file] { --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr); }`,
     `[data-diff-type="split"][data-overflow="scroll"] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }`,
     `pre, code { font-size: ${fontSize}px; font-family: var(--font-mono, 'Commit Mono', ui-monospace, monospace); }`,
+    // Hunk action chips in annotation / gutter slots.
+    `[data-yaade-hunk-actions] { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0; }`,
+    `[data-yaade-hunk-actions] button { font: inherit; font-size: 0.77rem; line-height: 1.2; border-radius: 0.25rem; border: 1px solid var(--border); background: var(--secondary); color: var(--foreground); padding: 0.125rem 0.375rem; cursor: pointer; }`,
+    `[data-yaade-hunk-actions] button:hover { background: var(--accent); }`,
+    `[data-yaade-hunk-actions] button:disabled { opacity: 0.5; cursor: not-allowed; }`,
+    `[data-yaade-hunk-actions] button[data-variant="destructive"] { color: var(--destructive); }`,
   ].join("\n")
 }
 
 /**
- * Read-only git file diff via `@pierre/diffs`.
+ * Git file diff via `@pierre/diffs`.
  * Callers own chrome (path/status toolbar); Pierre’s file header is disabled.
  * Prefer wrapping ancestors in {@link PierreDiffPool}.
  *
- * Conflicted working-tree files use {@link UnresolvedFile} so merge markers are
- * parsed by Pierre instead of a naive HEAD↔worktree two-way diff.
+ * Staging view should pass `patch` (from `git diff`) so rendering and
+ * `git apply` share one hunk model. Commit / untracked views keep two-file
+ * `original`/`modified`. Conflicts use {@link UnresolvedFile}.
  *
  * Scroll + line virtualization live on `Virtualizer`; Shiki runs in the worker pool.
  */
 export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
   const {
     path,
-    original,
-    modified,
     mode,
     theme,
     fontSize = 13,
+    patch,
+    original = "",
+    modified = "",
     conflict = false,
     onConflictResolved,
+    hunkActions,
     className,
   } = props
   const themeType = theme.scheme === "light" ? "light" : "dark"
+  const usePatch = Boolean(patch?.trim()) && !conflict
 
   const conflictFile = useMemo(() => {
     if (!conflict) return null
@@ -93,8 +130,19 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
     }
   }, [conflict, path, modified])
 
+  const patchFileDiff = useMemo(() => {
+    if (!usePatch || !patch?.trim()) return null
+    try {
+      const diff = getSingularPatch(patch)
+      diff.cacheKey = `patch:${path}:${contentCacheKey("new", path, patch)}`
+      return diff
+    } catch {
+      return null
+    }
+  }, [usePatch, patch, path])
+
   const fileDiff = useMemo(() => {
-    if (conflict) return null
+    if (conflict || usePatch) return null
     const oldKey = contentCacheKey("old", path, original)
     const newKey = contentCacheKey("new", path, modified)
     const diff = parseDiffFromFile(
@@ -111,7 +159,12 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
     )
     diff.cacheKey = `${path}:${oldKey}:${newKey}`
     return diff
-  }, [conflict, path, original, modified])
+  }, [conflict, usePatch, path, original, modified])
+
+  const hunkAnnotations = useMemo((): DiffLineAnnotation<HunkActionMeta>[] | undefined => {
+    if (!patchFileDiff || !hunkActions) return undefined
+    return buildHunkActionAnnotations(patchFileDiff)
+  }, [patchFileDiff, hunkActions])
 
   const sharedOptions = useMemo(
     () => ({
@@ -123,8 +176,9 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
       unsafeCSS: pierreUnsafeCss(fontSize),
       // Built-in Current / Incoming / Both when no custom utility is supplied.
       mergeConflictActionsType: "default" as const,
+      enableGutterUtility: Boolean(hunkActions && patchFileDiff),
     }),
-    [themeType, fontSize],
+    [themeType, fontSize, hunkActions, patchFileDiff],
   )
 
   const diffOptions = useMemo(
@@ -147,10 +201,40 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
     [fontSize],
   )
 
+  const renderHunkAnnotation = (annotation: DiffLineAnnotation<HunkActionMeta>) => {
+    if (!hunkActions || annotation.metadata == null) return null
+    return (
+      <HunkActionButtons
+        hunkIndex={annotation.metadata.hunkIndex}
+        actions={hunkActions}
+      />
+    )
+  }
+
+  const renderGutterUtility =
+    hunkActions && patchFileDiff
+      ? (
+          getHoveredLine: () =>
+            | { lineNumber: number; side: "additions" | "deletions" }
+            | undefined,
+        ) => {
+          const hovered = getHoveredLine()
+          if (!hovered) return null
+          const hunkIndex = hunkIndexForLine(
+            patchFileDiff,
+            hovered.lineNumber,
+            hovered.side,
+          )
+          if (hunkIndex == null) return null
+          return <HunkActionButtons hunkIndex={hunkIndex} actions={hunkActions} gutter />
+        }
+      : undefined
+
   return (
     <div
       data-yaade-pierre-diff=""
       data-yaade-pierre-conflict={conflict ? "" : undefined}
+      data-yaade-pierre-patch={usePatch ? "" : undefined}
       className={cn(
         "h-full min-h-0 w-full min-w-0 [&_diffs-container]:block [&_diffs-container]:h-full [&_diffs-container]:w-full [&_diffs-container]:min-w-0 [&_diffs-container]:max-w-full",
         className,
@@ -178,6 +262,17 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
                 : undefined
             }
           />
+        ) : usePatch && patch ? (
+          <PatchDiff
+            key={patchFileDiff?.cacheKey ?? `patch:${path}`}
+            patch={patch}
+            options={diffOptions}
+            metrics={metrics}
+            className="block h-full w-full min-w-0 max-w-full"
+            lineAnnotations={hunkAnnotations}
+            renderAnnotation={hunkActions ? renderHunkAnnotation : undefined}
+            renderGutterUtility={renderGutterUtility}
+          />
         ) : fileDiff ? (
           <FileDiff
             fileDiff={fileDiff}
@@ -187,6 +282,66 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
           />
         ) : null}
       </Virtualizer>
+    </div>
+  )
+}
+
+function HunkActionButtons(props: {
+  hunkIndex: number
+  actions: YaadeHunkActions
+  gutter?: boolean
+}) {
+  const { hunkIndex, actions, gutter = false } = props
+  const disabled = Boolean(actions.disabled)
+  return (
+    <div
+      data-yaade-hunk-actions=""
+      data-yaade-hunk-index={String(hunkIndex)}
+      data-yaade-hunk-gutter={gutter ? "" : undefined}
+      className="inline-flex items-center gap-1"
+    >
+      {actions.staged ? (
+        <button
+          type="button"
+          data-yaade-hunk-action="unstage"
+          disabled={disabled || !actions.onUnstageHunk}
+          onClick={event => {
+            event.preventDefault()
+            event.stopPropagation()
+            actions.onUnstageHunk?.(hunkIndex)
+          }}
+        >
+          Unstage
+        </button>
+      ) : (
+        <>
+          <button
+            type="button"
+            data-yaade-hunk-action="stage"
+            disabled={disabled || !actions.onStageHunk}
+            onClick={event => {
+              event.preventDefault()
+              event.stopPropagation()
+              actions.onStageHunk?.(hunkIndex)
+            }}
+          >
+            Stage
+          </button>
+          <button
+            type="button"
+            data-yaade-hunk-action="discard"
+            data-variant="destructive"
+            disabled={disabled || !actions.onDiscardHunk}
+            onClick={event => {
+              event.preventDefault()
+              event.stopPropagation()
+              actions.onDiscardHunk?.(hunkIndex)
+            }}
+          >
+            Discard
+          </button>
+        </>
+      )}
     </div>
   )
 }

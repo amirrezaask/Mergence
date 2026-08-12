@@ -39,6 +39,7 @@ import {
 import { PierreCommitFileTree } from "./pierre-commit-file-tree.js"
 import { YaadeDiffViewer } from "./YaadeDiffViewer.js"
 import { PierreDiffPool } from "./pierre-diff-pool.js"
+import { listApplyHunks } from "./pierre-hunk-patch.js"
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -59,7 +60,13 @@ export type CommitChangesDialogProps = {
   commit?: Pick<GitCommit, "shortHash" | "author" | "authoredAt" | "subject">
 }
 
-type DiffContents = { original: string; modified: string }
+type DiffContents = {
+  patch?: string
+  /** Prefer unstaged hunks when both sides are dirty. */
+  hunkStaged?: boolean
+  original: string
+  modified: string
+}
 type DiffStyle = "unified" | "split"
 const BULK_ACTION = "__bulk__"
 
@@ -214,12 +221,35 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     const request = ++diffRequest.current
     setDiffLoading(true)
     setDiffError(null)
-    const diffPromise = workingTree
-      ? fsApi
-        ? loadWorkingTreeDiffContents(api, fsApi, rootUri, file)
-        : Promise.reject(new Error("Filesystem access is unavailable."))
-      : loadCommitDiffContents(api, rootUri, hash, file)
-    void diffPromise
+    const load = async (): Promise<DiffContents> => {
+      if (workingTree) {
+        const entry = workingTreeEntries.find(row => row.path === file.path)
+        const preferStaged = Boolean(entry?.staged && !entry.unstaged)
+        if (entry && entry.status !== "untracked" && entry.status !== "conflict") {
+          try {
+            const patch = await api.diff(rootUri, {
+              path: file.path,
+              staged: preferStaged,
+            })
+            if (patch.trim()) {
+              return {
+                patch,
+                hunkStaged: preferStaged,
+                original: "",
+                modified: "",
+              }
+            }
+          } catch {
+            /* fall through to two-file */
+          }
+        }
+        if (!fsApi) throw new Error("Filesystem access is unavailable.")
+        const sides = await loadWorkingTreeDiffContents(api, fsApi, rootUri, file)
+        return { ...sides, hunkStaged: preferStaged }
+      }
+      return loadCommitDiffContents(api, rootUri, hash, file)
+    }
+    void load()
       .then(contents => {
         if (request !== diffRequest.current) return
         setDiffContents(contents)
@@ -242,7 +272,40 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     selectedFile?.originalPath,
     fsApi,
     workingTree,
+    workingTreeEntries,
   ])
+
+  const applyHunkAction = async (
+    kind: "stage" | "unstage" | "discard",
+    hunkIndex: number,
+  ) => {
+    if (!api || !workingTree || !diffContents?.patch?.trim()) return
+    const hunk = listApplyHunks(diffContents.patch)[hunkIndex]
+    if (!hunk) return
+    setWorkingTreePendingPath(selectedFile?.path ?? BULK_ACTION)
+    try {
+      if (kind === "stage") {
+        await api.applyPatch(rootUri, hunk.patch, { cached: true })
+      } else if (kind === "unstage") {
+        await api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: true })
+      } else {
+        await api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: false })
+      }
+      const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
+      setWorkingTreeEntries(snapshot.entries)
+      setDetail(snapshot.detail)
+      setSelectedPath(current =>
+        snapshot.detail.files.some(file => file.path === current)
+          ? current
+          : snapshot.detail.files[0]?.path ?? null,
+      )
+      onWorkingTreeChange?.()
+    } catch (error) {
+      setDiffError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setWorkingTreePendingPath(null)
+    }
+  }
 
   const subject = detail?.subject ?? commit?.subject ?? (workingTree ? "Uncommitted changes" : "Commit")
   const shortHash = workingTree ? "WORKTREE" : commit?.shortHash ?? hash.slice(0, 7)
@@ -315,9 +378,12 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
             ) : diffError ? (
               <CenteredEmpty title="Failed to load diff" description={diffError} />
             ) : diffContents &&
-              (diffContents.original.length > 0 || diffContents.modified.length > 0) ? (
+              ((diffContents.patch?.trim().length ?? 0) > 0 ||
+                diffContents.original.length > 0 ||
+                diffContents.modified.length > 0) ? (
               <YaadeDiffViewer
                 path={selectedFile.path}
+                patch={diffContents.patch}
                 original={diffContents.original}
                 modified={diffContents.modified}
                 mode={effectiveDiffStyle}
@@ -327,6 +393,26 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
                 onConflictResolved={
                   selectedFile.status === "conflict"
                     ? contents => void persistConflictResolution(contents)
+                    : undefined
+                }
+                hunkActions={
+                  workingTree &&
+                  diffContents.patch?.trim() &&
+                  selectedFile.status !== "untracked" &&
+                  selectedFile.status !== "conflict"
+                    ? {
+                        staged: Boolean(diffContents.hunkStaged),
+                        disabled: workingTreePendingPath !== null,
+                        onStageHunk: diffContents.hunkStaged
+                          ? undefined
+                          : index => void applyHunkAction("stage", index),
+                        onUnstageHunk: diffContents.hunkStaged
+                          ? index => void applyHunkAction("unstage", index)
+                          : undefined,
+                        onDiscardHunk: diffContents.hunkStaged
+                          ? undefined
+                          : index => void applyHunkAction("discard", index),
+                      }
                     : undefined
                 }
               />

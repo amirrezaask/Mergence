@@ -1,19 +1,19 @@
 import type { IDisposable, Terminal } from "@xterm/xterm"
-import { CanvasAddon } from "@xterm/addon-canvas"
 import { WebglAddon } from "@xterm/addon-webgl"
 
-export type TerminalGpuRendererKind = "webgl" | "canvas" | "dom"
+export type TerminalGpuRendererKind = "webgl" | "dom"
 
 export type TerminalGpuRendererHandle = {
   kind: TerminalGpuRendererKind
-  /** Prefer WebGL when true; drop to Canvas when false (hidden / unfocused). */
+  /** Prefer WebGL when true; drop to Dom when false (hidden / unfocused). */
   setHighPerformance: (enabled: boolean) => void
   dispose: () => void
 }
 
 /**
- * Prefer WebGL for agent/TUI paint storms; fall back to Canvas, then DomRenderer.
- * DomRenderer stays the last resort when GPU contexts fail (headless CI, context loss).
+ * Prefer WebGL for agent/TUI paint storms; fall back to DomRenderer.
+ * DomRenderer is the last resort when WebGL fails (headless CI, context loss).
+ * xterm v6 removed the Canvas addon — WebGL or Dom only.
  * Call `setHighPerformance(false)` when the pane is off-screen to release the WebGL context.
  */
 export function attachTerminalGpuRenderer(term: Terminal): TerminalGpuRendererHandle {
@@ -39,21 +39,10 @@ export function attachTerminalGpuRenderer(term: Terminal): TerminalGpuRendererHa
     active = null
   }
 
-  const tryCanvas = (): boolean => {
+  const useDom = () => {
     clearActive()
-    try {
-      const canvas = new CanvasAddon()
-      term.loadAddon(canvas)
-      active = canvas
-      kind = "canvas"
-      syncPanelAttr()
-      return true
-    } catch {
-      clearActive()
-      kind = "dom"
-      syncPanelAttr()
-      return false
-    }
+    kind = "dom"
+    syncPanelAttr()
   }
 
   const tryWebgl = (): boolean => {
@@ -68,8 +57,7 @@ export function attachTerminalGpuRenderer(term: Terminal): TerminalGpuRendererHa
           /* ignore */
         }
         active = null
-        if (!tryCanvas()) kind = "dom"
-        syncPanelAttr()
+        useDom()
       })
       term.loadAddon(webgl)
       active = webgl
@@ -77,15 +65,15 @@ export function attachTerminalGpuRenderer(term: Terminal): TerminalGpuRendererHa
       syncPanelAttr()
       return true
     } catch {
-      clearActive()
-      return tryCanvas()
+      useDom()
+      return false
     }
   }
 
   const applyMode = () => {
     if (disposed) return
     if (highPerformance) tryWebgl()
-    else tryCanvas()
+    else useDom()
   }
 
   applyMode()

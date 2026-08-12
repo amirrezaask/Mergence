@@ -17,6 +17,7 @@ import { createTerminalInputWriter } from "./terminal-input-writer.js"
 import { createTerminalOutputWriter } from "./terminal-output-writer.js"
 import { attachTerminalGpuRenderer } from "./terminal-gpu-renderer.js"
 import {
+  getRegisteredTerminal,
   registerTerminalInstance,
   unregisterTerminalInstance,
 } from "./terminal-instance-registry.js"
@@ -188,38 +189,22 @@ function readTerminalCursorBlink(): boolean {
 type ScrollSnapshot = {
   atBottom: boolean
   line: number
-  scrollTop: number
 }
 
-function captureScrollSnapshot(term: XTerm, container: HTMLElement): ScrollSnapshot {
+function captureScrollSnapshot(term: XTerm): ScrollSnapshot {
   const buf = term.buffer.active
-  const viewport = container.querySelector<HTMLElement>(".xterm-viewport")
-  const scrollTop = viewport?.scrollTop ?? 0
-  const maxScroll = viewport ? Math.max(0, viewport.scrollHeight - viewport.clientHeight) : 0
+  const line = buf.baseY + buf.viewportY
+  const maxLine = Math.max(0, buf.length - term.rows)
   return {
-    atBottom: maxScroll <= 1 || scrollTop >= maxScroll - 1,
-    line: buf.baseY + buf.viewportY,
-    scrollTop,
+    atBottom: maxLine <= 0 || line >= maxLine - 1,
+    line,
   }
 }
 
-function restoreScrollSnapshot(
-  term: XTerm,
-  container: HTMLElement,
-  snapshot: ScrollSnapshot,
-  scrollMotion: TerminalScrollMotion,
-): void {
-  if (snapshot.atBottom) {
-    term.scrollToBottom()
-  } else {
-    term.scrollToLine(Math.max(0, snapshot.line))
-  }
-  const viewport = container.querySelector<HTMLElement>(".xterm-viewport")
-  if (viewport) {
-    const max = Math.max(0, viewport.scrollHeight - viewport.clientHeight)
-    viewport.scrollTop = Math.min(snapshot.scrollTop, max)
-  }
-  scrollMotion.sync()
+function restoreScrollSnapshot(term: XTerm, snapshot: ScrollSnapshot): void {
+  // xterm v6 scroll lives in DomScrollableElement — use public buffer APIs only.
+  if (snapshot.atBottom) term.scrollToBottom()
+  else term.scrollToLine(Math.max(0, snapshot.line))
 }
 
 /** Fit xterm to container. Returns true when cols/rows changed (PTY resize needed). */
@@ -243,14 +228,14 @@ function fitWhenReady(
   }
   const prevCols = session.term.cols
   const prevRows = session.term.rows
-  const snapshot = captureScrollSnapshot(session.term, container)
+  const snapshot = captureScrollSnapshot(session.term)
   session.fit.fit()
   session.lastFitWidth = width
   session.lastFitHeight = height
   if (!cellMetricsValid(session.term)) return false
   if (session.term.cols <= 0 || session.term.rows <= 0) return false
   const changed = session.term.cols !== prevCols || session.term.rows !== prevRows
-  if (changed) restoreScrollSnapshot(session.term, container, snapshot, session.scrollMotion)
+  if (changed) restoreScrollSnapshot(session.term, snapshot)
   return changed
 }
 
@@ -323,6 +308,11 @@ function writeTerminalOutput(term: XTerm, data: string, onPainted?: () => void):
 }
 
 function focusTerminalInput(tabId: string): void {
+  const term = getRegisteredTerminal(tabId)
+  if (term) {
+    term.focus()
+    return
+  }
   const docked = document.querySelector<HTMLElement>(
     `[data-yaade-tab-slot="${tabId}"] [data-yaade-terminal-panel]`,
   )
@@ -448,6 +438,8 @@ export function TerminalPanel({
       // inactive outline/bar while the pane is blurred.
       cursorInactiveStyle: "none",
       scrollback: 5_000,
+      // xterm v6 DomScrollableElement — match --yaade-motion-scroll (160ms).
+      smoothScrollDuration: 160,
       // Never convert LF→CRLF; progress bars and TUI apps rely on raw \\r.
       convertEol: false,
       // OSC 8 hyperlinks — Cmd/Ctrl-click opens (same as scanned http(s) URLs).
@@ -456,7 +448,7 @@ export function TerminalPanel({
     const fit = new FitAddon()
     term.loadAddon(fit)
     term.open(container)
-    // WebGL (Canvas fallback) — DomRenderer cannot keep up with agent TUI floods.
+    // WebGL (Dom fallback) — DomRenderer cannot keep up with agent TUI floods.
     // Keep WebGL for the lifetime of a mounted panel; visibility only trims scrollback.
     const gpuRenderer = attachTerminalGpuRenderer(term)
     gpuRenderer.setHighPerformance(true)
@@ -478,7 +470,7 @@ export function TerminalPanel({
       term,
       fit,
       ptyId: null,
-      scrollMotion: new TerminalScrollMotion(term, container),
+      scrollMotion: new TerminalScrollMotion(term),
       wantedCols: term.cols,
       wantedRows: term.rows,
       resizeInFlight: false,
@@ -558,8 +550,8 @@ export function TerminalPanel({
 
     let lastCursorHiddenAttr = ""
     const syncCursorHiddenAttr = () => {
-      // Keep the data attr in sync for E2E + Dom CSS. GPU renderers already
-      // honor DECCTCEM in the canvas; Dom uses the CSS rule on `.xterm-cursor`.
+      // Keep the data attr in sync for E2E + Dom CSS. WebGL already
+      // honors DECCTCEM on its canvas; Dom uses the CSS rule on `.xterm-cursor`.
       // Skip writes when unchanged — attr churn forces style recalc.
       const panel = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
       if (!panel) return
@@ -858,7 +850,7 @@ export function TerminalPanel({
     setDisplayExitCode(exitCode)
   }, [status, exitCode, sessionGeneration])
 
-  // Keep WebGL for all mounted terminals — tearing WebGL↔Canvas on visibility
+  // Keep WebGL for all mounted terminals — tearing WebGL↔Dom on visibility
   // (LRU / slot hide) caused flash and input hitch. Only trim scrollback off-slot.
   useEffect(() => {
     gpuRendererRef.current?.setHighPerformance(true)
