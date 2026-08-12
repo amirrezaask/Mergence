@@ -22,7 +22,8 @@ function asCliProvider(provider: string): CliAgentProvider {
     provider === "codex" ||
     provider === "cursor" ||
     provider === "opencode" ||
-    provider === "grok"
+    provider === "grok" ||
+    provider === "pi"
   ) {
     return provider
   }

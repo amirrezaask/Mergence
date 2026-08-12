@@ -561,6 +561,12 @@ export type MuxAppProps = {
   editorWorkspacePath?: string
   /** Surface chrome supplied by the project page. */
   editorToolbar?: ReactNode
+  /** Reports semantic code-navigation opens so the project shell can own history. */
+  onNavigateEditorLocation?: (location: {
+    uri: string
+    line?: number
+    column?: number
+  }) => void
   /** Agent leaf tab id (`yaade:terminal:…`) for the Agents surface. */
   focusAgentTabId?: string | null
   /** One-shot action requested by the project cockpit after session hydration. */
@@ -588,7 +594,14 @@ export type MuxLaunchAction =
     }
   | { kind: "neovim" }
   | { kind: "git" }
-  | { kind: "editor"; filePath?: string; line?: number; column?: number }
+  | {
+      kind: "editor"
+      filePath?: string
+      line?: number
+      column?: number
+      /** Clean preview tabs are replaced by the next preview open. */
+      preview?: boolean
+    }
 
 export type MuxLaunchRequest = {
   id: string
@@ -609,6 +622,7 @@ export function MuxApp({
   surface = null,
   editorWorkspacePath,
   editorToolbar,
+  onNavigateEditorLocation,
   focusAgentTabId = null,
   launchRequest = null,
   onLaunchRequestHandled,
@@ -652,6 +666,7 @@ export function MuxApp({
   >(() => {})
 
   const [layoutReady, setLayoutReady] = useState(false)
+  const [serverHydrated, setServerHydrated] = useState(false)
   const [paletteOpen, setPaletteOpen] = useState(false)
   const [terminalListOpen, setTerminalListOpen] = useState(false)
   const [settingsOpen, setSettingsOpen] = useState(false)
@@ -691,7 +706,8 @@ export function MuxApp({
             provider !== "codex" &&
             provider !== "cursor" &&
             provider !== "opencode" &&
-            provider !== "grok")
+            provider !== "grok" &&
+            provider !== "pi")
         ) {
           continue
         }
@@ -713,6 +729,7 @@ export function MuxApp({
   const [editorFiles, setEditorFiles] = useState<
     Record<string, { uri: string; line?: number; column?: number }>
   >({})
+  const previewEditorTabRef = useRef<string | null>(null)
   /** Metadata-only revision; dirty truth lives in WorkspaceService. */
   const [editorDirtyRevision, bumpEditorDirtyRevision] = useReducer(
     (revision: number) => revision + 1,
@@ -2319,6 +2336,7 @@ export function MuxApp({
       const finishBoot = () => {
         if (cancelled) return
         serverHydratedRef.current = true
+        setServerHydrated(true)
         bootstrappedRef.current = true
       }
 
@@ -2336,6 +2354,7 @@ export function MuxApp({
     })()
     return () => {
       cancelled = true
+      setServerHydrated(false)
       // StrictMode remounts reset React state (layoutReady) but keep refs.
       // Allow the next mount to re-run boot so waitForReady cannot hang.
       bootstrappedRef.current = false
@@ -2729,7 +2748,7 @@ export function MuxApp({
   const [commandRevision, setCommandRevision] = useState(0)
 
   useEffect(() => {
-    if (!layoutReady || !serverHydratedRef.current || !launchRequest) return
+    if (!layoutReady || !serverHydrated || !launchRequest) return
     if (!claimMuxLaunchRequest(handledLaunchIdsRef.current, launchRequest.id)) {
       // Module-level claim already taken (StrictMode remount). Clear the
       // request without relaunching so HQ intent cannot strand forever.
@@ -2768,11 +2787,33 @@ export function MuxApp({
           await openNeovimSplit(window.id, window.focusedPaneId)
         } else if (action.kind === "editor") {
           if (action.filePath) {
+            const nextUri = canonicalizeFileUri(pathToFileUri(action.filePath))
+            const previousPreview = previewEditorTabRef.current
+            if (
+              action.preview &&
+              previousPreview &&
+              !sameFileTab(previousPreview, nextUri)
+            ) {
+              if (editorIsDirty(previousPreview)) {
+                previewEditorTabRef.current = null
+              } else {
+                const live = windowsRef.current.find(window =>
+                  Boolean(findPanelWithTab(window.tree, previousPreview)),
+                )
+                const panel = live
+                  ? findPanelWithTab(live.tree, previousPreview)
+                  : null
+                if (live && panel) {
+                  await closeEditorTab(live.id, panel, previousPreview)
+                }
+              }
+            }
             openInPreferredEditor({
               filePath: action.filePath,
               line: action.line,
               column: action.column,
             })
+            previewEditorTabRef.current = action.preview ? nextUri : null
           } else {
             openEditorInFocused({
               uri: `untitled:New File-${launchRequest.id}`,
@@ -2797,6 +2838,7 @@ export function MuxApp({
     ensureProjectWindow,
     launchRequest,
     layoutReady,
+    serverHydrated,
     onLaunchRequestHandled,
     openAgentCliPane,
     openEditorInFocused,
@@ -2804,6 +2846,8 @@ export function MuxApp({
     openInPreferredEditor,
     openNeovimSplit,
     openTerminalInActiveWindow,
+    closeEditorTab,
+    editorIsDirty,
   ])
 
   // Stable command registrations for overlays / mux actions.
@@ -3188,7 +3232,7 @@ export function MuxApp({
       ),
       commands.register(
         "references.focus",
-        run(() => runToolPaneRef.current("references")),
+        run(() => void runActiveEditorAction("editor.action.goToReferences")),
         {
           id: "references.focus",
           title: "Find References",
@@ -3199,7 +3243,7 @@ export function MuxApp({
       ),
       commands.register(
         "definitions.focus",
-        run(() => runToolPaneRef.current("definitions")),
+        run(() => void runActiveEditorAction("editor.action.revealDefinition")),
         {
           id: "definitions.focus",
           title: "Show Definitions",
@@ -3276,7 +3320,7 @@ export function MuxApp({
       ),
       commands.register(
         "editor.action.goToReferences",
-        run(() => runToolPaneRef.current("references")),
+        run(() => void runActiveEditorAction("editor.action.goToReferences")),
         {
           id: "editor.action.goToReferences",
           title: "Go to References",
@@ -3286,7 +3330,7 @@ export function MuxApp({
       ),
       commands.register(
         "editor.action.revealDefinition",
-        run(() => runToolPaneRef.current("definitions")),
+        run(() => void runActiveEditorAction("editor.action.revealDefinition")),
         {
           id: "editor.action.revealDefinition",
           title: "Go to Definition",
@@ -3296,7 +3340,10 @@ export function MuxApp({
       ),
       commands.register(
         "editor.navigateBack",
-        run(() => navigateJumpHistory("back")),
+        run(() => {
+          if (embedded) history.back()
+          else navigateJumpHistory("back")
+        }),
         {
           id: "editor.navigateBack",
           title: "Go Back",
@@ -3306,7 +3353,10 @@ export function MuxApp({
       ),
       commands.register(
         "editor.navigateForward",
-        run(() => navigateJumpHistory("forward")),
+        run(() => {
+          if (embedded) history.forward()
+          else navigateJumpHistory("forward")
+        }),
         {
           id: "editor.navigateForward",
           title: "Go Forward",
@@ -3849,6 +3899,8 @@ export function MuxApp({
       label:
         workspace.tabRegistry.get(tabId)?.label ?? editorLabelFromUri(tabId),
       dirty: editorIsDirty(tabId),
+      preview:
+        previewEditorTabRef.current === tabId && !editorIsDirty(tabId),
     }))
   }, [activeWindow, editorIsDirty, layoutEpoch, workspace.tabRegistry])
 
@@ -4003,7 +4055,8 @@ export function MuxApp({
                   provider === "codex" ||
                   provider === "cursor" ||
                   provider === "opencode" ||
-                  provider === "grok")
+                  provider === "grok" ||
+                  provider === "pi")
               ) {
                 void window.yaade?.notifications?.bindSession({
                   sessionId: tabId,
@@ -5162,6 +5215,7 @@ export function MuxApp({
             )}
             applyWorkspaceEditTransaction={applyLspWorkspaceEditTransaction}
             onOpenFile={(uri, _path, line, column) => {
+              onNavigateEditorLocation?.({ uri, line, column })
               openEditorInFocusedRef.current({ uri, line, column })
             }}
             onReady={handleLspReady}

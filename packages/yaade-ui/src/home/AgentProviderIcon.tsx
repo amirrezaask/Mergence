@@ -5,6 +5,7 @@ import {
   GrokIcon,
   OpenAI,
   OpenCodeIcon,
+  PiIcon,
   type Icon,
 } from "./provider-icons.js"
 import { cn } from "@/lib/utils.js"
@@ -30,9 +31,11 @@ export function AgentProviderIcon({
           ? OpenAI
           : id === "opencode"
             ? OpenCodeIcon
-            : id === "grok"
-              ? GrokIcon
-              : null
+            : id === "pi"
+              ? PiIcon
+              : id === "grok"
+                ? GrokIcon
+                : null
   return IconComp ? (
     <IconComp className={cls} aria-hidden />
   ) : (

@@ -119,6 +119,7 @@ const PROVIDERS: readonly AgentProvider[] = [
   "cursor",
   "opencode",
   "grok",
+  "pi",
 ]
 
 const PROVIDER_BINARIES: Record<AgentProvider, string> = {
@@ -127,6 +128,7 @@ const PROVIDER_BINARIES: Record<AgentProvider, string> = {
   cursor: "cursor-agent",
   opencode: "opencode",
   grok: "grok",
+  pi: "pi",
 }
 
 const TELEMETRY_GRACE_MS = 10_000

@@ -83,12 +83,14 @@ export function SearchCodeChunk({
   chunk,
   highlight = true,
   onSelectLine,
+  selectedLine = null,
 }: {
   path: string
   chunk: SearchResultChunk
   /** When false, skip Shiki until the card is near the viewport / file text is ready. */
   highlight?: boolean
-  onSelectLine: (line: SearchChunkLine) => void
+  onSelectLine: (line: SearchChunkLine, disposition?: "preview" | "pinned") => void
+  selectedLine?: number | null
 }) {
   const [tokens, setTokens] = useState<ThemedToken[][] | null>(null)
 
@@ -122,11 +124,15 @@ export function SearchCodeChunk({
             role="option"
             data-yaade-list-item=""
             data-yaade-project-search-hit={line.match ? `${path}:${line.line}` : undefined}
+            data-selected={selectedLine === line.line ? "" : undefined}
             className={cn(
               "grid w-full shrink-0 grid-cols-[2.75rem_minmax(0,1fr)] text-left hover:bg-accent/50 focus-visible:bg-accent/50 focus-visible:outline-none",
               line.match && "bg-warning/5",
+              selectedLine === line.line && "bg-accent ring-1 ring-inset ring-ring/50",
             )}
-            onClick={() => onSelectLine(line)}
+            onClick={event =>
+              onSelectLine(line, event.detail > 1 ? "pinned" : "preview")
+            }
           >
             <span className="select-none border-r border-border/50 px-2 py-0.5 text-right text-muted-foreground tabular-nums">
               {line.line}

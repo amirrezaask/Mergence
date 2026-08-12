@@ -88,6 +88,7 @@ const PROVIDERS: readonly AgentProvider[] = [
   "cursor",
   "opencode",
   "grok",
+  "pi",
 ]
 
 const FINAL_TRANSCRIPT_BYTES = 256 * 1024

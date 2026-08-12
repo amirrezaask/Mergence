@@ -22,6 +22,7 @@ const AGENT_COMMANDS: Record<string, AgentProvider> = {
   cursor: "cursor",
   opencode: "opencode",
   grok: "grok",
+  pi: "pi",
 }
 
 export function inferAgentProvider(
@@ -33,7 +34,8 @@ export function inferAgentProvider(
     explicit === "codex" ||
     explicit === "cursor" ||
     explicit === "opencode" ||
-    explicit === "grok"
+    explicit === "grok" ||
+    explicit === "pi"
   ) {
     return explicit
   }
@@ -153,7 +155,7 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
   const agents: HqAgentSummary[] = []
   // Terminal instances are the single process roster. Provider-flagged rows
   // are agent CLIs; activity/telemetry live on the same row.
-  const liveProcesses = runtime.terminalInstances.listLive()
+  const liveProcesses = runtime.terminalInstances?.listLive?.() ?? []
   for (const run of liveProcesses) {
     if (!run.provider || !run.ptyId) continue
     const inspected = runtime.terminal.inspect(run.ptyId)

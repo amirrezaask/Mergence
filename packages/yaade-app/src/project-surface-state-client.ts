@@ -4,6 +4,15 @@ export type ProjectSurface =
   | "editors"
   | "agents"
   | "terminals"
+  | "search"
+
+export type PersistedProjectSearch = {
+  id: string
+  query: string
+  options: import("@yaade/shared").ProjectSearchOptions
+  checkoutPath: string
+  checkoutKey: string
+}
 
 export type ProjectSurfaceSelection = {
   workspaceId?: string | null
@@ -14,6 +23,10 @@ export type ProjectSurfaceSelection = {
   runId?: string | null
   /** @deprecated Prefer processId */
   terminalId?: string | null
+  searchTabs?: PersistedProjectSearch[]
+  activeSearchId?: string | null
+  searchRailOpen?: boolean
+  searchRailWidth?: number
 }
 
 export type ProjectSurfaceStateRow = {

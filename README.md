@@ -2,7 +2,7 @@
 
 **Mission Control for AI coding agents.**
 
-YAADE is a web app for running and watching CLI coding agents across your projects. Pick a repo, launch Codex / Claude / Cursor / OpenCode / Grok in a real PTY, keep sessions alive, and jump back in when they need you.
+YAADE is a web app for running and watching CLI coding agents across your projects. Pick a repo, launch Codex / Claude / Cursor / OpenCode / Grok / Pi in a real PTY, keep sessions alive, and jump back in when they need you.
 
 No chat wrapper. No fake agent API. Agents are the same CLIs you already use — just hosted in one place.
 
@@ -32,6 +32,7 @@ Launch the real binary in the project directory:
 | OpenCode | `opencode`     |
 | Cursor   | `cursor-agent` |
 | Grok     | `grok`         |
+| Pi       | `pi`           |
 
 Resume support for providers that expose a session id (Codex, Claude, Cursor).
 

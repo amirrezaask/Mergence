@@ -6,6 +6,7 @@ export const HqAgentProvider = Schema.Literal(
   "cursor",
   "opencode",
   "grok",
+  "pi",
 )
 export type HqAgentProvider = Schema.Schema.Type<typeof HqAgentProvider>
 

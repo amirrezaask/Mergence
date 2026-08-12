@@ -812,15 +812,34 @@ describe("ProjectDatabase canonical projects and checkouts", () => {
       surface: "agents",
       state: { workspaceId: "ses-agent" },
     })
+    db.putProjectSurfaceState({
+      projectId: project.id,
+      machine: "host",
+      surface: "search",
+      state: {
+        activeSearchId: "srch-1",
+        searchTabs: [{
+          id: "srch-1",
+          query: "needle",
+          options: {},
+          checkoutPath: root,
+          checkoutKey: "main",
+        }],
+      },
+    })
 
     assert.equal(second.revision, first.revision + 1)
     const rows = db.projectSurfaceState(project.id, "host")
-    assert.equal(rows.length, 3)
+    assert.equal(rows.length, 4)
     assert.equal(rows.find(row => row.surface === "changes")?.state.checkoutKey, "wt-2")
     assert.equal(rows.find(row => row.surface === "terminals")?.state.workspaceId, "ses-terminal")
     assert.equal(
       rows.find(row => row.surface === "agents")?.state.workspaceId,
       "ses-agent",
+    )
+    assert.equal(
+      rows.find(row => row.surface === "search")?.state.activeSearchId,
+      "srch-1",
     )
   })
 

@@ -17,7 +17,7 @@ export function ProjectSearchSurface({
 }: {
   projectPath: string
   searchId: string
-  onSelectResult: (result: ProjectSearchResult) => void
+  onSelectResult: (result: ProjectSearchResult, disposition?: "preview" | "pinned") => void
 }) {
   const entry = useSyncExternalStore(
     subscribeProjectSearches,
@@ -50,11 +50,11 @@ export function ProjectSearchSurface({
     async (relativePath: string) => {
       const fs = window.yaade?.fs
       if (!fs?.readFile) throw new Error("File read is unavailable")
-      const root = projectPath.replace(/\/+$/, "")
+      const root = (entry?.checkoutPath ?? projectPath).replace(/\/+$/, "")
       const rel = relativePath.replace(/^\/+/, "")
       return fs.readFile(pathToFileUri(`${root}/${rel}`))
     },
-    [projectPath],
+    [entry?.checkoutPath],
   )
 
   if (!entry) {
@@ -74,7 +74,7 @@ export function ProjectSearchSurface({
       loading={entry.loading}
       loadingMore={entry.loadingMore}
       error={entry.error}
-      projectPath={projectPath}
+      projectPath={entry.checkoutPath}
       readFile={readFile}
       onQueryChange={onQueryChange}
       onOptionsChange={onOptionsChange}

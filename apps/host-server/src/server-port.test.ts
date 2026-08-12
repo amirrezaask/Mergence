@@ -69,8 +69,11 @@ describe("startHostServer port fallback", () => {
     const started = await startHostServer(config)
     cleanups.push(() => started.close())
 
-    assert.equal(started.port, preferred + 1)
-    assert.equal(config.port, preferred + 1)
+    // Other test servers may occupy one or more subsequent ports while the
+    // test runner executes files concurrently; the contract is to advance,
+    // not to use a specific adjacent port.
+    assert.ok(started.port > preferred)
+    assert.equal(config.port, started.port)
 
     const health = await fetch(`http://${host}:${started.port}/health`)
     assert.equal(health.ok, true)

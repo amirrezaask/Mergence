@@ -2,7 +2,7 @@ import { defineConfig, type Plugin } from "vite"
 import react from "@vitejs/plugin-react"
 import tailwindcss from "@tailwindcss/vite"
 import path from "node:path"
-import { applyDevBuildBrandingToHtml } from "../../packages/yaade-app/src/build-branding-html.ts"
+import { applyDevBuildBrandingToHtml } from "../../packages/yaade-app/src/build-branding-html.js"
 
 const appRoot = path.resolve(__dirname, "../../packages/yaade-app")
 const uiRoot = path.resolve(__dirname, "../../packages/yaade-ui/src")

@@ -37,7 +37,7 @@ export type ProjectSearchPanelProps = {
   readFile: (relativePath: string) => Promise<string>
   onQueryChange: (query: string) => void
   onOptionsChange: (options: ProjectSearchOptions) => void
-  onSelectResult: (result: ProjectSearchResult) => void
+  onSelectResult: (result: ProjectSearchResult, disposition?: "preview" | "pinned") => void
   /** Fetch the next host result page when the list is truncated. */
   onLoadMore?: () => void
   className?: string
@@ -133,13 +133,20 @@ function FileResultCard({
   onRequestFile,
   onSelectResult,
   onSelectLine,
+  selectedResult,
 }: {
   bucket: SearchPathBucket
   fileText: string | undefined
   scrollRootRef: RefObject<Element | null>
   onRequestFile: (path: string) => void
-  onSelectResult: (result: ProjectSearchResult) => void
-  onSelectLine: (path: string, line: SearchChunkLine, primary: ProjectSearchResult) => void
+  onSelectResult: (result: ProjectSearchResult, disposition?: "preview" | "pinned") => void
+  onSelectLine: (
+    path: string,
+    line: SearchChunkLine,
+    primary: ProjectSearchResult,
+    disposition?: "preview" | "pinned",
+  ) => void
+  selectedResult: { path: string; line: number } | null
 }) {
   const [expanded, setExpanded] = useState(true)
   const [showAll, setShowAll] = useState(false)
@@ -177,11 +184,11 @@ function FileResultCard({
   return (
     <section
       ref={setCardRef}
-      className="border-b border-border/60 px-3 py-3"
+      className="border-b border-border/60 px-3 py-1.5"
       data-yaade-project-search-file={group.path}
       data-yaade-project-search-file-loaded={fileText != null ? "1" : "0"}
     >
-      <header className="mb-2 flex min-w-0 items-center gap-2">
+      <header className="mb-1.5 flex min-w-0 items-center gap-2">
         <button
           type="button"
           className="flex min-w-0 flex-1 items-center gap-1.5 text-left"
@@ -225,7 +232,12 @@ function FileResultCard({
                 path={group.path}
                 chunk={chunk}
                 highlight={active && fileText != null}
-                onSelectLine={line => onSelectLine(group.path, line, chunk.primary)}
+                onSelectLine={(line, disposition) =>
+                  onSelectLine(group.path, line, chunk.primary, disposition)
+                }
+                selectedLine={
+                  selectedResult?.path === group.path ? selectedResult.line : null
+                }
               />
             </div>
           ))}
@@ -276,6 +288,10 @@ export function ProjectSearchPanel({
   const scrollRef = useRef<HTMLDivElement>(null)
   const buckets = useMemo(() => groupSearchResultsByPath(results), [results])
   const [visibleCount, setVisibleCount] = useState(SEARCH_FILES_PAGE_SIZE)
+  const [selectedResult, setSelectedResult] = useState<{
+    path: string
+    line: number
+  } | null>(null)
   const resultsKey = useMemo(
     () => `${projectPath}\0${query}\0${JSON.stringify(options)}`,
     [options, projectPath, query],
@@ -314,6 +330,18 @@ export function ProjectSearchPanel({
     return () => window.cancelAnimationFrame(frame)
   }, [])
 
+  useEffect(() => {
+    const focusSelection = () => {
+      const selected = scrollRef.current?.querySelector<HTMLElement>(
+        '[data-yaade-list-item][data-selected]',
+      )
+      selected?.scrollIntoView({ block: "center" })
+      selected?.focus({ preventScroll: true })
+    }
+    window.addEventListener("yaade:focus-search-result", focusSelection)
+    return () => window.removeEventListener("yaade:focus-search-result", focusSelection)
+  }, [])
+
   const patchOptions = (patch: ProjectSearchOptions) => {
     onOptionsChange({ ...options, ...patch })
   }
@@ -322,7 +350,9 @@ export function ProjectSearchPanel({
     path: string,
     line: SearchChunkLine,
     primary: ProjectSearchResult,
+    disposition: "preview" | "pinned" = "preview",
   ) => {
+    setSelectedResult({ path, line: line.line })
     onSelectResult({
       ...primary,
       path,
@@ -330,7 +360,7 @@ export function ProjectSearchPanel({
       column: line.ranges[0]?.startColumn ?? 1,
       preview: line.text,
       ranges: line.ranges.length > 0 ? line.ranges : primary.ranges,
-    })
+    }, disposition)
   }
 
   return (
@@ -436,6 +466,7 @@ export function ProjectSearchPanel({
             onRequestFile={ensureFile}
             onSelectResult={onSelectResult}
             onSelectLine={handleSelectLine}
+            selectedResult={selectedResult}
           />
         ))}
         {showMoreControl ? (

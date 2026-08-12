@@ -212,6 +212,15 @@ export type ProjectRoute = {
   checkoutKey: string | null
   processId: string | null
   searchId: string | null
+  filePath: string | null
+  line: number | null
+  column: number | null
+  searchQuery: string | null
+}
+
+function positiveIntParam(params: URLSearchParams, key: string): number | null {
+  const value = Number(params.get(key))
+  return Number.isInteger(value) && value > 0 ? value : null
 }
 
 function nonEmptyParam(params: URLSearchParams, key: string): string | null {
@@ -244,6 +253,10 @@ export function projectRouteFromSearch(
     checkoutKey: nonEmptyParam(params, "checkout"),
     processId,
     searchId: nonEmptyParam(params, "search"),
+    filePath: nonEmptyParam(params, "file"),
+    line: positiveIntParam(params, "line"),
+    column: positiveIntParam(params, "column"),
+    searchQuery: nonEmptyParam(params, "q"),
   }
 }
 
@@ -261,11 +274,25 @@ export function projectRouteUrl(
   if (route.processId && route.view === "running") {
     params.set("process", route.processId)
   }
-  if (route.searchId && route.view === "search") {
+  if (route.searchId && (route.view === "search" || route.view === "editors")) {
     params.set("search", route.searchId)
   }
+  if (route.searchQuery && (route.view === "search" || route.view === "editors")) {
+    params.set("q", route.searchQuery)
+  }
+  if (route.filePath && route.view === "editors") params.set("file", route.filePath)
+  if (route.line && route.view === "editors") params.set("line", String(route.line))
+  if (route.column && route.view === "editors") params.set("column", String(route.column))
   const query = params.toString()
   return `${pathname || "/"}${query ? `?${query}` : ""}`
+}
+
+/** Fired after push/replace so SPA listeners can re-read `location` (pushState has no popstate). */
+export const PROJECT_ROUTE_EVENT = "yaade:project-route"
+
+function notifyProjectRouteChange(): void {
+  if (typeof window === "undefined") return
+  window.dispatchEvent(new Event(PROJECT_ROUTE_EVENT))
 }
 
 /** SPA navigation for a project surface, checkout, workspace, or agent run. */
@@ -277,6 +304,7 @@ export function pushProjectRoute(
   const next = projectRouteUrl(pathname, route)
   if (`${location.pathname}${location.search}` === next) return
   history.pushState({ projectRoute: route }, "", next)
+  notifyProjectRouteChange()
 }
 
 /** Update selection within the current project surface without adding a history entry. */
@@ -288,6 +316,7 @@ export function replaceProjectRoute(
   const next = projectRouteUrl(pathname, route)
   if (`${location.pathname}${location.search}` === next) return
   history.replaceState({ projectRoute: route }, "", next)
+  notifyProjectRouteChange()
 }
 
 /** Build `pathname?s=<sessionId>` (or bare pathname when sessionId is null). */

@@ -29,7 +29,7 @@ describe("notificationLaunchForProviderSync", () => {
   })
 
   it("uses osc/plugin for providers without session --settings", () => {
-    for (const provider of ["opencode", "grok"] as const) {
+    for (const provider of ["opencode", "grok", "pi"] as const) {
       const launch = notificationLaunchForProviderSync(provider, provider, context)
       assert.ok(launch.driver === "osc" || launch.driver === "plugin")
       assert.equal(launch.env.YAADE_PROVIDER, provider)
@@ -58,6 +58,7 @@ describe("notificationLaunchForProviderSync", () => {
       "cursor",
       "opencode",
       "grok",
+      "pi",
     ] as const) {
       const command = provider === "cursor" ? "cursor-agent" : provider
       const launch = notificationLaunchForProviderSync(provider, command, context)

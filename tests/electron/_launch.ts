@@ -120,6 +120,15 @@ export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise
   let attemptedOpen = false
   let sessionParamWaitStarted: number | null = null
   while (Date.now() < deadline) {
+    if ((await page.locator('[data-yaade-search-results="fullscreen"]').count()) > 0) {
+      try {
+        await page.evaluate(() => window.__yaadeAgent!.waitForReady())
+        return
+      } catch {
+        await page.waitForTimeout(150)
+        continue
+      }
+    }
     if ((await page.locator("[data-yaade-mux]").count()) > 0) {
       try {
         await page.evaluate(() => window.__yaadeAgent!.waitForReady())

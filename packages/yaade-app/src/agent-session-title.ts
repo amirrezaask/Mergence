@@ -13,6 +13,7 @@ const GENERIC_AGENT_TITLES = new Set([
   "cursor agent",
   "grok",
   "opencode",
+  "pi",
   "terminal",
 ])
 

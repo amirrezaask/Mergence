@@ -69,7 +69,8 @@ function asAgentProvider(value: string | null | undefined): AgentProvider | null
     value === "codex" ||
     value === "cursor" ||
     value === "opencode" ||
-    value === "grok"
+    value === "grok" ||
+    value === "pi"
   ) {
     return value
   }
@@ -256,7 +257,7 @@ export class AgentTelemetryService {
         const current = (binding?.sessionTitle ?? ctx.sessionTitle ?? "").trim()
         const generic =
           !current ||
-          /^(cursor|claude|codex|opencode|grok|agent|terminal|cursor agent)$/i.test(
+          /^(cursor|claude|codex|opencode|grok|pi|agent|terminal|cursor agent)$/i.test(
             current,
           )
         if (title && generic) {

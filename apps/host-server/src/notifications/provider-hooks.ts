@@ -21,6 +21,7 @@ const PROVIDERS = new Set<AgentProvider>([
   "codex",
   "opencode",
   "grok",
+  "pi",
   "shell",
   "system",
 ])

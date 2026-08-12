@@ -1,6 +1,12 @@
 /** Provider-independent ADE telemetry event kinds. */
 
-export type AgentProvider = "claude" | "codex" | "cursor" | "opencode" | "grok"
+export type AgentProvider =
+  | "claude"
+  | "codex"
+  | "cursor"
+  | "opencode"
+  | "grok"
+  | "pi"
 
 export type AgentEventKind =
   | "process.started"

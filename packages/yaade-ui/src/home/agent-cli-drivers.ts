@@ -40,6 +40,12 @@ export const AGENT_CLI_DRIVERS: readonly AgentCliDriver[] = [
     description: "xAI Grok CLI",
     command: "grok",
   },
+  {
+    id: "pi",
+    label: "Pi",
+    description: "Pi coding agent CLI",
+    command: "pi",
+  },
 ] as const
 
 export function agentCliDriverById(

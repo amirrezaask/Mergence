@@ -5,6 +5,7 @@ import { codexDriver } from "./codex.js"
 import { cursorDriver } from "./cursor.js"
 import { opencodeDriver } from "./opencode.js"
 import { grokDriver } from "./grok.js"
+import { piDriver } from "./pi.js"
 
 const DRIVERS: Record<AgentProvider, CliAgentDriver> = {
   claude: claudeDriver,
@@ -12,6 +13,7 @@ const DRIVERS: Record<AgentProvider, CliAgentDriver> = {
   cursor: cursorDriver,
   opencode: opencodeDriver,
   grok: grokDriver,
+  pi: piDriver,
 }
 
 export function getCliAgentDriver(provider: AgentProvider): CliAgentDriver {
@@ -28,4 +30,5 @@ export {
   cursorDriver,
   opencodeDriver,
   grokDriver,
+  piDriver,
 }

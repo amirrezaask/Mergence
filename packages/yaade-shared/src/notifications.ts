@@ -8,6 +8,7 @@ export type AgentProvider =
   | "codex"
   | "opencode"
   | "grok"
+  | "pi"
   | "shell"
   | "system"
 

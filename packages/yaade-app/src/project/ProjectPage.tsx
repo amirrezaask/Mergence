@@ -13,6 +13,7 @@ import type {
   ProjectSession,
 } from "@yaade/rpc"
 import {
+  fileUriToPath,
   pathToFileUri,
   type GitWorktree,
   type YaadeTheme,
@@ -44,9 +45,13 @@ import {
 } from "@yaade/ui/primitives"
 import { showYaadeToast, Toaster } from "@yaade/ui/toast"
 import {
+  ArrowLeft,
+  ArrowRight,
   ChevronsUpDown,
   FolderKanban,
+  PanelLeft,
   Plus,
+  X,
 } from "lucide-react"
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
 import { useHqOverview } from "../hooks/useHqOverview.js"
@@ -109,6 +114,7 @@ import {
   getProjectSearch,
   listProjectSearches,
   removeProjectSearch,
+  restoreProjectSearches,
 } from "./project-search-store.js"
 
 const GitWorkspace = lazy(() =>
@@ -187,6 +193,13 @@ function checkoutFromPaths(
 
 function checkoutRouteKey(checkout: ActiveCheckout): string | null {
   return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
+}
+
+function safeCodeRelativePath(value: string): string | null {
+  if (!value || value.startsWith("/") || value.includes("\\")) return null
+  const parts = value.split("/").filter(part => part && part !== ".")
+  if (parts.length === 0 || parts.some(part => part === "..")) return null
+  return parts.join("/")
 }
 
 function projectWorktreeLabel(worktree: GitWorktree): string {
@@ -350,6 +363,12 @@ export function ProjectPage({
   const [historyMounted, setHistoryMounted] = useState(
     () => projectRouteFromSearch().view === "history",
   )
+  const [searchRailOpen, setSearchRailOpen] = useState(
+    () =>
+      projectRouteFromSearch().view === "search" ||
+      Boolean(projectRouteFromSearch().searchId),
+  )
+  const [surfaceStateLoaded, setSurfaceStateLoaded] = useState(false)
   const [activeCheckout, setActiveCheckout] = useState<ActiveCheckout>(() =>
     mainCheckout(projectPath),
   )
@@ -375,6 +394,7 @@ export function ProjectPage({
     },
   )
   const launchSequenceRef = useRef(0)
+  const restoredEditorLocationRef = useRef<string | null>(null)
   const preferredSurfaceRef = useRef<MuxSurface | null>(
     (() => {
       if (!session) return null
@@ -398,6 +418,12 @@ export function ProjectPage({
   useEffect(() => {
     const route = projectRouteFromSearch()
     setView(route.view)
+    if (route.searchId || route.view === "search") setSearchRailOpen(true)
+    if (route.searchId && !route.filePath) {
+      window.requestAnimationFrame(() => {
+        window.dispatchEvent(new Event("yaade:focus-search-result"))
+      })
+    }
     if (route.view === "history") setHistoryMounted(true)
     if (route.view === "running") {
       setSurfaceSelections(current => ({
@@ -412,7 +438,32 @@ export function ProjectPage({
   }, [routeRevision])
 
   useEffect(() => {
+    const route = projectRouteFromSearch()
+    const relative = route.filePath ? safeCodeRelativePath(route.filePath) : null
+    if (!session || route.view !== "editors" || !relative) {
+      restoredEditorLocationRef.current = null
+      return
+    }
+    const key = `${route.checkoutKey ?? "main"}\0${relative}\0${route.line ?? 1}\0${route.column ?? 1}`
+    if (restoredEditorLocationRef.current === key) return
+    restoredEditorLocationRef.current = key
+    const root = editorCheckout.cwdPath.replace(/\/+$/, "")
+    launchSequenceRef.current += 1
+    setLaunchRequest({
+      id: `route-${Date.now()}-${launchSequenceRef.current}`,
+      action: {
+        kind: "editor",
+        filePath: `${root}/${relative}`,
+        line: route.line ?? undefined,
+        column: route.column ?? undefined,
+        preview: true,
+      },
+    })
+  }, [editorCheckout.cwdPath, routeRevision, session, view])
+
+  useEffect(() => {
     setDefaultBranch("main")
+    setSurfaceStateLoaded(false)
     setActiveCheckout(mainCheckout(projectPath))
     setEditorCheckout(mainCheckout(projectPath))
   }, [projectPath])
@@ -446,6 +497,23 @@ export function ProjectPage({
         Record<Exclude<ProjectView, "history" | "search">, ProjectSurfaceSelection>
       > = {}
       for (const row of rows) {
+        if (row.surface === "search") {
+          const tabs = Array.isArray(row.state.searchTabs)
+            ? row.state.searchTabs.filter(
+                tab =>
+                  tab &&
+                  typeof tab.id === "string" &&
+                  typeof tab.query === "string" &&
+                  typeof tab.checkoutPath === "string" &&
+                  typeof tab.checkoutKey === "string",
+              )
+            : []
+          restoreProjectSearches(projectPath, tabs)
+          if (typeof row.state.searchRailOpen === "boolean") {
+            setSearchRailOpen(row.state.searchRailOpen)
+          }
+          continue
+        }
         if (row.surface === "changes") {
           const path =
             typeof row.state.checkoutPath === "string" && row.state.checkoutPath.trim()
@@ -493,6 +561,7 @@ export function ProjectPage({
         }
       }
       setSurfaceSelections(next)
+      setSurfaceStateLoaded(true)
 
       const route = projectRouteFromSearch()
       const savedEditor = next.editors
@@ -1153,28 +1222,35 @@ export function ProjectPage({
 
   const searchEntries = useProjectSearchEntries(projectPath)
   const activeSearchId =
-    view === "search"
+    view === "search" || view === "editors"
       ? projectRouteFromSearch().searchId ?? searchEntries[0]?.id ?? null
       : null
 
   const openSearchView = useCallback(
-    (searchId: string) => {
+    async (searchId: string) => {
+      const next = await ensureProjectSession()
       setView("search")
+      setSearchRailOpen(true)
+      const entry = getProjectSearch(projectPath, searchId)
       pushProjectRoute(location.pathname, {
         view: "search",
-        workspaceId: session?.id ?? null,
-        checkoutKey: checkoutRouteKey(activeCheckout),
+        workspaceId: next.id,
+        checkoutKey: entry?.checkoutKey === "main" ? null : entry?.checkoutKey,
         processId: null,
         searchId,
+        searchQuery: entry?.query || null,
       })
     },
-    [activeCheckout, session?.id],
+    [ensureProjectSession, projectPath],
   )
 
   const handleNewSearch = useCallback(() => {
-    const entry = createProjectSearch(projectPath)
-    openSearchView(entry.id)
-  }, [openSearchView, projectPath])
+    const entry = createProjectSearch(projectPath, {
+      checkoutPath: editorCheckout.cwdPath,
+      checkoutKey: editorCheckout.checkoutKey,
+    })
+    void openSearchView(entry.id)
+  }, [editorCheckout, openSearchView, projectPath])
 
   const handleCloseSearch = useCallback(
     (searchId: string) => {
@@ -1182,9 +1258,10 @@ export function ProjectPage({
       if (activeSearchId !== searchId) return
       const remaining = searchEntries.filter(entry => entry.id !== searchId)
       if (remaining[0]) {
-        openSearchView(remaining[0].id)
+        void openSearchView(remaining[0].id)
         return
       }
+      setSearchRailOpen(false)
       setHistoryMounted(true)
       setView("history")
       pushProjectRoute(location.pathname, {
@@ -1211,35 +1288,75 @@ export function ProjectPage({
         id: entry.id,
         label: entry.query.trim() || "New search",
         selected: activeSearchId === entry.id,
-        onSelect: () => openSearchView(entry.id),
+        onSelect: () => void openSearchView(entry.id),
         onClose: () => handleCloseSearch(entry.id),
       })),
     [activeSearchId, handleCloseSearch, openSearchView, searchEntries],
   )
 
   const handleSearchSelectResult = useCallback(
-    (result: import("@yaade/shared").ProjectSearchResult) => {
-      const root = editorCheckout.cwdPath.replace(/\/+$/, "")
-      const relative = result.path.replace(/^\/+/, "")
-      const filePath = `${root}/${relative}`
-      void handleLaunchAction({
-        kind: "editor",
-        filePath,
-        line: result.line,
-        column: result.column,
+    async (
+      result: import("@yaade/shared").ProjectSearchResult,
+      disposition: "preview" | "pinned" = "preview",
+    ) => {
+      const nextSession = await ensureProjectSession()
+      const search = activeSearchId
+        ? getProjectSearch(projectPath, activeSearchId)
+        : null
+      const checkout = search
+        ? checkoutFromPaths(
+            projectPath,
+            search.checkoutPath,
+            checkoutLabelForPath(projectPath, search.checkoutPath),
+            search.checkoutKey,
+          )
+        : editorCheckout
+      if (!sameCheckoutPath(checkout.cwdPath, editorCheckout.cwdPath)) {
+        persistEditorCheckout(checkout)
+      }
+      const relative = safeCodeRelativePath(result.path.replace(/^\/+/, ""))
+      if (!relative) return
+      const root = checkout.cwdPath.replace(/\/+$/, "")
+      const line = result.line > 0 ? result.line : 1
+      const column = result.column > 0 ? result.column : 1
+      restoredEditorLocationRef.current = `${checkoutRouteKey(checkout) ?? "main"}\0${relative}\0${line}\0${column}`
+      preferredSurfaceRef.current = "editors"
+      setSearchRailOpen(true)
+      setView("editors")
+      launchSequenceRef.current += 1
+      setLaunchRequest({
+        id: `search-${Date.now()}-${launchSequenceRef.current}`,
+        action: {
+          kind: "editor",
+          filePath: `${root}/${relative}`,
+          line,
+          column,
+          preview: disposition !== "pinned",
+        },
+      })
+      pushProjectRoute(location.pathname, {
+        view: "editors",
+        workspaceId: nextSession.id,
+        checkoutKey: checkoutRouteKey(checkout),
+        processId: null,
+        searchId: activeSearchId,
+        searchQuery: search?.query || null,
+        filePath: relative,
+        line,
+        column,
       })
     },
-    [editorCheckout.cwdPath, handleLaunchAction],
+    [activeSearchId, editorCheckout, ensureProjectSession, persistEditorCheckout, projectPath],
   )
 
   useEffect(() => {
     const onOpenProjectSearch = () => {
-      if (view === "search" && activeSearchId) {
-        openSearchView(activeSearchId)
+      if (searchRailOpen && activeSearchId) {
+        void openSearchView(activeSearchId)
         return
       }
       if (searchEntries[0]) {
-        openSearchView(searchEntries[0].id)
+        void openSearchView(searchEntries[0].id)
         return
       }
       handleNewSearch()
@@ -1253,21 +1370,28 @@ export function ProjectPage({
     handleNewSearch,
     openSearchView,
     searchEntries,
-    view,
+    searchRailOpen,
   ])
 
   useEffect(() => {
-    if (view !== "search") return
+    if (!surfaceStateLoaded) return
+    if (view !== "search" && !(view === "editors" && searchRailOpen)) return
     const routeId = projectRouteFromSearch().searchId
     if (routeId && getProjectSearch(projectPath, routeId)) return
     if (routeId && !getProjectSearch(projectPath, routeId)) {
-      const entry = createProjectSearch(projectPath)
+      const entry = createProjectSearch(projectPath, {
+        id: routeId,
+        checkoutPath: editorCheckout.cwdPath,
+        checkoutKey: editorCheckout.checkoutKey,
+        query: projectRouteFromSearch().searchQuery ?? "",
+      })
       replaceProjectRoute(location.pathname, {
         view: "search",
         workspaceId: session?.id ?? null,
         checkoutKey: checkoutRouteKey(activeCheckout),
         processId: null,
         searchId: entry.id,
+        searchQuery: projectRouteFromSearch().searchQuery,
       })
       return
     }
@@ -1283,7 +1407,11 @@ export function ProjectPage({
         })
         return
       }
-      const entry = createProjectSearch(projectPath)
+      const entry = createProjectSearch(projectPath, {
+        checkoutPath: editorCheckout.cwdPath,
+        checkoutKey: editorCheckout.checkoutKey,
+        query: projectRouteFromSearch().searchQuery ?? "",
+      })
       replaceProjectRoute(location.pathname, {
         view: "search",
         workspaceId: session?.id ?? null,
@@ -1292,7 +1420,37 @@ export function ProjectPage({
         searchId: entry.id,
       })
     }
-  }, [activeCheckout, projectPath, session?.id, view])
+  }, [activeCheckout, editorCheckout, projectPath, searchRailOpen, session?.id, surfaceStateLoaded, view])
+
+  useEffect(() => {
+    if (!surfaceStateLoaded) return
+    if (searchEntries.length === 0 && !searchRailOpen) return
+    void saveProjectSurfaceState(projectId, "search", {
+      searchTabs: searchEntries.map(entry => ({
+        id: entry.id,
+        query: entry.query,
+        options: entry.options,
+        checkoutPath: entry.checkoutPath,
+        checkoutKey: entry.checkoutKey,
+      })),
+      activeSearchId,
+      searchRailOpen,
+    })
+  }, [activeSearchId, projectId, searchEntries, searchRailOpen, surfaceStateLoaded])
+
+  useEffect(() => {
+    if ((view !== "editors" && view !== "search") || !activeSearchId) return
+    const entry = getProjectSearch(projectPath, activeSearchId)
+    const route = projectRouteFromSearch()
+    const query = entry?.query.trim() || null
+    if (route.searchQuery === query) return
+    replaceProjectRoute(location.pathname, {
+      ...route,
+      view,
+      searchQuery: query,
+    })
+  }, [activeSearchId, projectPath, searchEntries, view])
+
 
   const gitHistoryWorktrees = useMemo<ProjectWorkspaceSidebarWorktree[]>(
     () => [
@@ -1481,6 +1639,7 @@ export function ProjectPage({
                   title="Go to project"
                   data-yaade-project-switcher=""
                 >
+
                   <FolderKanban data-icon="inline-start" />
                   <span className="truncate font-semibold">{projectName}</span>
                   <ChevronsUpDown

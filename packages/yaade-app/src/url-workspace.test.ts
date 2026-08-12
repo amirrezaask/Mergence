@@ -108,6 +108,10 @@ describe("url-workspace", () => {
       checkoutKey: null,
       processId: null,
       searchId: null,
+      filePath: null,
+      line: null,
+      column: null,
+      searchQuery: null,
     })
     assert.equal(projectRouteFromSearch("?s=ses-1").view, "running")
     assert.equal(projectRouteFromSearch("?view=agents").view, "running")
@@ -154,6 +158,10 @@ describe("url-workspace", () => {
         checkoutKey: "wt-key",
         processId: null,
         searchId: null,
+        filePath: null,
+        line: null,
+        column: null,
+        searchQuery: null,
       },
     )
     assert.equal(
@@ -169,7 +177,38 @@ describe("url-workspace", () => {
       checkoutKey: null,
       processId: null,
       searchId: "srch-1",
+      filePath: null,
+      line: null,
+      column: null,
+      searchQuery: null,
     })
+    assert.equal(
+      projectRouteUrl("/dev/yaade", {
+        view: "editors",
+        workspaceId: "ses-1",
+        checkoutKey: "wt-key",
+        searchId: "srch-1",
+        searchQuery: "createRouter",
+        filePath: "src/router.ts",
+        line: 42,
+        column: 7,
+      }),
+      "/dev/yaade?view=editors&s=ses-1&checkout=wt-key&search=srch-1&q=createRouter&file=src%2Frouter.ts&line=42&column=7",
+    )
+    assert.deepEqual(
+      projectRouteFromSearch("?view=editors&s=ses-1&checkout=wt-key&search=srch-1&q=createRouter&file=src%2Frouter.ts&line=42&column=7"),
+      {
+        view: "editors",
+        workspaceId: "ses-1",
+        checkoutKey: "wt-key",
+        processId: null,
+        searchId: "srch-1",
+        searchQuery: "createRouter",
+        filePath: "src/router.ts",
+        line: 42,
+        column: 7,
+      },
+    )
     assert.equal(
       projectRouteUrl("/dev/yaade", {
         view: "running",

@@ -22,7 +22,7 @@ function tempProject(): string {
 }
 
 describe("installProjectHooksForProvider", () => {
-  it("writes Codex / Cursor / OpenCode project hooks and no-ops Claude / Grok", () => {
+  it("writes Codex / Cursor / OpenCode project hooks and no-ops Claude / Grok / Pi", () => {
     const root = tempProject()
     const dataDir = path.join(root, "data")
 

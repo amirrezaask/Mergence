@@ -7,6 +7,7 @@ import {
   loadMoreProjectSearch,
   removeProjectSearch,
   resetProjectSearchesForTests,
+  restoreProjectSearches,
   updateProjectSearch,
 } from "./project-search-store.js"
 
@@ -172,5 +173,33 @@ describe("project-search-store", () => {
     assert.equal(after?.truncated, false)
     assert.equal(after?.results[1]?.path, "b.ts")
     assert.equal(calls, 2)
+  })
+
+  it("searches and restores against the tab checkout", async () => {
+    const project = "/tmp/project"
+    const roots: string[] = []
+    ;(globalThis as { window: unknown }).window = {
+      yaade: {
+        search: {
+          project: async (root: string) => {
+            roots.push(root)
+            return { items: [], truncated: false }
+          },
+        },
+      },
+    }
+    restoreProjectSearches(project, [{
+      id: "srch-restored",
+      query: "needle",
+      options: { wholeWord: true },
+      checkoutPath: "/tmp/project-worktree",
+      checkoutKey: "feature",
+    }])
+    await new Promise(resolve => setTimeout(resolve, 20))
+    const restored = getProjectSearch(project, "srch-restored")
+    assert.equal(restored?.checkoutPath, "/tmp/project-worktree")
+    assert.equal(restored?.checkoutKey, "feature")
+    assert.equal(restored?.options.wholeWord, true)
+    assert.equal(roots[0], "file:///tmp/project-worktree")
   })
 })

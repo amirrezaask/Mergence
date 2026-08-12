@@ -140,6 +140,7 @@ test.describe("project instance sidebars", () => {
       await expectSelectorVisible(page, "[data-yaade-process-launch-menu]")
       await expectSelectorVisible(page, '[data-yaade-agent-provider="terminal"]')
       await expectSelectorVisible(page, '[data-yaade-agent-provider="codex"]')
+      await expectSelectorVisible(page, '[data-yaade-agent-provider="pi"]')
       await page.locator('[data-yaade-agent-provider="codex"]').click()
       await expectSelectorVisible(page, "[data-yaade-worktree-main]")
     } finally {

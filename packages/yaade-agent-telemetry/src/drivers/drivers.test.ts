@@ -4,6 +4,7 @@ import { claudeDriver } from "../drivers/claude.js"
 import { codexDriver } from "../drivers/codex.js"
 import { cursorDriver } from "../drivers/cursor.js"
 import { opencodeDriver } from "../drivers/opencode.js"
+import { piDriver } from "../drivers/pi.js"
 import type { NativeHookInput } from "../types/driver.js"
 
 function input(
@@ -301,6 +302,27 @@ describe("cursorDriver.normalizeHookEvent", () => {
       }),
     )
     assert.equal(events.length, 0)
+  })
+})
+
+describe("piDriver", () => {
+  it("reports process-only capabilities and does not invent telemetry", async () => {
+    assert.equal(piDriver.getCapabilities().sessionLifecycle, false)
+    assert.deepEqual(
+      piDriver.normalizeHookEvent(
+        input("pi", { type: "session.started", session_id: "pi-1" }),
+      ),
+      [],
+    )
+    const install = await piDriver.installHooks({
+      sessionId: "s",
+      projectRoot: "/tmp",
+      ingestUrl: "http://127.0.0.1:4747/api/v1/notifications/ingest?provider=pi&sessionId=s",
+      provider: "pi",
+      origin: "http://127.0.0.1:4747",
+    })
+    assert.equal(install.driver, "osc")
+    assert.equal(install.env.YAADE_PROVIDER, "pi")
   })
 })
 

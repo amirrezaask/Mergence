@@ -72,6 +72,7 @@ export {
   cursorDriver,
   opencodeDriver,
   grokDriver,
+  piDriver,
 } from "./drivers/registry.js"
 
 export {

@@ -3,6 +3,9 @@ import { pathToFileUri } from "@yaade/shared"
 
 export type ProjectSearchEntry = {
   id: string
+  /** Absolute checkout root used for search, snippets, and result opens. */
+  checkoutPath: string
+  checkoutKey: string
   query: string
   options: ProjectSearchOptions
   results: ProjectSearchResult[]
@@ -84,6 +87,21 @@ export function listProjectSearches(projectPath: string): readonly ProjectSearch
   return bucket.listSnapshot
 }
 
+export type PersistedProjectSearchEntry = Pick<
+  ProjectSearchEntry,
+  "id" | "query" | "options" | "checkoutPath" | "checkoutKey"
+>
+
+export function restoreProjectSearches(
+  projectPath: string,
+  entries: readonly PersistedProjectSearchEntry[],
+): void {
+  if (listProjectSearches(projectPath).length > 0) return
+  for (const entry of entries.slice().reverse()) {
+    createProjectSearch(projectPath, entry)
+  }
+}
+
 export function getProjectSearch(
   projectPath: string,
   searchId: string,
@@ -97,13 +115,24 @@ export function getProjectSearchRevision(projectPath: string): number {
   return buckets.get(projectPath)?.revision ?? 0
 }
 
-export function createProjectSearch(projectPath: string): ProjectSearchEntry {
+export function createProjectSearch(
+  projectPath: string,
+  input: {
+    id?: string
+    checkoutPath?: string
+    checkoutKey?: string
+    query?: string
+    options?: ProjectSearchOptions
+  } = {},
+): ProjectSearchEntry {
   const bucket = bucketFor(projectPath)
   const now = Date.now()
   const entry: ProjectSearchEntry = {
-    id: allocSearchId(),
-    query: "",
-    options: {},
+    id: input.id ?? allocSearchId(),
+    checkoutPath: input.checkoutPath ?? projectPath,
+    checkoutKey: input.checkoutKey ?? "main",
+    query: input.query ?? "",
+    options: { ...input.options },
     results: [],
     truncated: false,
     nextCursor: null,
@@ -117,6 +146,11 @@ export function createProjectSearch(projectPath: string): ProjectSearchEntry {
   bucket.order = [entry.id, ...bucket.order]
   refreshListSnapshot(bucket)
   notify()
+  if (entry.query.trim()) {
+    const generation = 1
+    bucket.generations.set(entry.id, generation)
+    void runSearch(projectPath, entry.id, generation, "replace")
+  }
   return entry
 }
 
@@ -196,7 +230,7 @@ async function runSearch(
 
   try {
     const pageOrItems = await search.project(
-      pathToFileUri(projectPath),
+      pathToFileUri(entry.checkoutPath),
       query,
       {
         ...entry.options,
@@ -250,6 +284,8 @@ export function updateProjectSearch(
   patch: {
     query?: string
     options?: ProjectSearchOptions
+    checkoutPath?: string
+    checkoutKey?: string
   },
 ): ProjectSearchEntry | null {
   const bucket = buckets.get(projectPath)
@@ -257,6 +293,8 @@ export function updateProjectSearch(
   if (!bucket || !entry) return null
 
   if (patch.query !== undefined) entry.query = patch.query
+  if (patch.checkoutPath !== undefined) entry.checkoutPath = patch.checkoutPath
+  if (patch.checkoutKey !== undefined) entry.checkoutKey = patch.checkoutKey
   if (patch.options !== undefined) {
     entry.options = { ...entry.options, ...patch.options }
   }

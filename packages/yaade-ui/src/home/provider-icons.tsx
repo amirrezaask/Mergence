@@ -61,6 +61,21 @@ export const OpenCodeIcon: Icon = (props) => (
   </svg>
 );
 
+/** Pi coding agent mark. */
+export const PiIcon: Icon = ({ className, ...props }) => (
+  <svg
+    {...props}
+    viewBox="0 0 800 800"
+    className={cn("fill-black dark:fill-white", className)}
+  >
+    <path
+      fillRule="evenodd"
+      d="M165.29 165.29h352.07V400H400v117.36H282.65v117.36H165.29V165.29Zm117.36 117.36v117.36H400V282.65H282.65Z"
+    />
+    <path d="M517.36 400h117.36v234.72H517.36z" />
+  </svg>
+);
+
 /** Brand glyph for a CLI agent provider (Codex/Claude/Cursor/…). */
 export function sessionProviderIcon(
   agentId: SessionProvider | null | undefined,
@@ -70,6 +85,7 @@ export function sessionProviderIcon(
   if (agentId === "cursor") return CursorIcon
   if (agentId === "codex") return OpenAI
   if (agentId === "opencode") return OpenCodeIcon
+  if (agentId === "pi") return PiIcon
   if (agentId === "grok") return GrokIcon
   return null
 }

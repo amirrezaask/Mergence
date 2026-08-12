@@ -200,7 +200,7 @@ export type JetElectronTerminal = {
     checkoutKey?: string
     checkoutPath?: string
     title?: string
-    provider?: "claude" | "codex" | "cursor" | "opencode" | "grok"
+    provider?: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
     workspaceId?: string
     launchRequestId?: string
     args?: string[]
@@ -219,7 +219,7 @@ export type TerminalInstanceInfo = {
   checkoutKey: string
   checkoutPath: string
   title: string
-  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | null
+  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null
   launchRequestId: string | null
   ptyId: string | null
   nativeSessionId: string | null
@@ -378,7 +378,7 @@ export type JetElectronNotifications = {
 
 export type JetElectronAgents = {
   listProviders(refresh?: boolean): Promise<Array<{
-    provider: "claude" | "codex" | "cursor" | "opencode" | "grok"
+    provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
     available: boolean
     binary: string
     version: string | null
@@ -387,7 +387,7 @@ export type JetElectronAgents = {
   }>>
   launch(req: {
     launchRequestId: string
-    provider: "claude" | "codex" | "cursor" | "opencode" | "grok"
+    provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
     projectId: string
     workspaceId: string
     checkoutKey?: string
@@ -450,7 +450,7 @@ export type AgentRunInfo = {
   runId: string
   launchRequestId: string
   generation: number
-  provider: "claude" | "codex" | "cursor" | "opencode" | "grok"
+  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
   projectId: string
   workspaceId: string
   checkoutKey: string

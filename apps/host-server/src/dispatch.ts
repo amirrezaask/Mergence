@@ -445,13 +445,14 @@ async function handleAgents(
 
 function parseAgentProvider(
   value: string,
-): "claude" | "codex" | "cursor" | "opencode" | "grok" | null {
+): "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null {
   if (
     value === "claude" ||
     value === "codex" ||
     value === "cursor" ||
     value === "opencode" ||
-    value === "grok"
+    value === "grok" ||
+    value === "pi"
   ) {
     return value
   }

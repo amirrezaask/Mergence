@@ -221,9 +221,13 @@ export function AppRoot() {
   const readRoute = useCallback(() => setRouteEpoch(value => value + 1), [])
 
   useEffect(() => {
-    const onPop = () => readRoute()
-    window.addEventListener("popstate", onPop)
-    return () => window.removeEventListener("popstate", onPop)
+    const onRoute = () => readRoute()
+    window.addEventListener("popstate", onRoute)
+    window.addEventListener("yaade:project-route", onRoute)
+    return () => {
+      window.removeEventListener("popstate", onRoute)
+      window.removeEventListener("yaade:project-route", onRoute)
+    }
   }, [readRoute])
 
   useEffect(() => {

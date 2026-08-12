@@ -15,6 +15,7 @@ export type SessionProvider =
   | "codex"
   | "opencode"
   | "grok"
+  | "pi"
 
 export type SessionCardModel = {
   id: string
@@ -64,6 +65,7 @@ export function detectSessionProvider(
     return "cursor"
   }
   if (cmd === "grok" || cmd.endsWith("/grok")) return "grok"
+  if (cmd === "pi" || cmd.endsWith("/pi")) return "pi"
   return undefined
 }
 
@@ -83,6 +85,8 @@ export function providerDisplayLabel(
       return "OpenCode"
     case "grok":
       return "Grok"
+    case "pi":
+      return "Pi"
     default:
       return kind === "agent" ? "Agent" : "Terminal"
   }

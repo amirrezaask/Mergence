@@ -6,6 +6,7 @@ export type ModalEditorBuffer = {
   tabId: string
   label: string
   dirty: boolean
+  preview?: boolean
 }
 
 export type ModalEditorTabBarProps = {
@@ -56,6 +57,7 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
                   ? "border-border/50 bg-muted/60 text-foreground"
                   : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground",
               )}
+              data-preview={buffer.preview ? "" : undefined}
               onMouseDown={event => {
                 if (event.button === 1) {
                   event.preventDefault()
@@ -72,7 +74,10 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
                 aria-label={`${buffer.label}${buffer.dirty ? ", unsaved changes" : ""}`}
                 data-dirty={buffer.dirty ? "" : undefined}
                 tabIndex={active ? 0 : -1}
-                className="min-w-0 flex-1 truncate text-left text-3xs font-medium leading-none outline-none focus-visible:underline focus-visible:underline-offset-2"
+                className={cn(
+                  "min-w-0 flex-1 truncate text-left text-3xs font-medium leading-none outline-none focus-visible:underline focus-visible:underline-offset-2",
+                  buffer.preview && "italic",
+                )}
                 onClick={() => onActivateBuffer(buffer.tabId)}
                 title={buffer.label}
               >

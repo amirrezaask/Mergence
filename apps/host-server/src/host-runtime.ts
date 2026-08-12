@@ -49,7 +49,8 @@ function asAgentProvider(value: string | null | undefined): AgentProvider | null
     value === "codex" ||
     value === "cursor" ||
     value === "opencode" ||
-    value === "grok"
+    value === "grok" ||
+    value === "pi"
   ) {
     return value
   }

@@ -375,6 +375,7 @@ export function detectAgentCliProviderFromCommand(
     return "cursor"
   }
   if (cmd === "grok" || cmd.endsWith("/grok")) return "grok"
+  if (cmd === "pi" || cmd.endsWith("/pi")) return "pi"
   return undefined
 }
 
@@ -386,7 +387,8 @@ export function isAgentCliProvider(
     value === "claude" ||
     value === "opencode" ||
     value === "cursor" ||
-    value === "grok"
+    value === "grok" ||
+    value === "pi"
   )
 }
 
