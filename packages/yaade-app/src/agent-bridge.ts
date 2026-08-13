@@ -42,6 +42,10 @@ export type JetAgentState = {
   route: "hq" | "project" | "session"
   sessionId: string | null
   sessionCwd: string | null
+  activeSessionId?: string | null
+  activeToolUseId?: string | null
+  sessions?: readonly unknown[]
+  toolUses?: readonly unknown[]
   hqCounts?: { projects: number; agents: number; attention: number; unread: number }
 }
 
@@ -121,6 +125,13 @@ export type YaadeAgentAPI = {
   openProjectSession?(sessionId: string): Promise<void>
   /** Return to the project page (E2E). */
   backToProject?(): Promise<void>
+  /** Session Tool shell controls (E2E). */
+  createSession?(): Promise<void>
+  selectSession?(sessionId: string): Promise<void>
+  createToolUse?(kind: "agent" | "terminal" | "search"): Promise<void>
+  selectToolUse?(toolUseId: string): Promise<void>
+  closeToolUse?(toolUseId: string): Promise<void>
+  closeSession?(sessionId: string, mode?: "keep-running" | "stop-tools"): Promise<void>
 }
 
 export type AgentBridgeContext = {

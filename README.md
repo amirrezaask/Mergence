@@ -1,29 +1,51 @@
 # YAADE
 
-**Mission Control for AI coding agents.**
+**Browser IDE for local or remote machines — Session tabs with composable ToolUses.**
 
-YAADE is a web app for running and watching CLI coding agents across your projects. Pick a repo, launch Codex / Claude / Cursor / OpenCode / Grok / Pi in a real PTY, keep sessions alive, and jump back in when they need you.
+YAADE opens at `/` with top-level **Session** tabs. Each Session is an ordered
+collection of **ToolUses** (Agent, Terminal, Search). Project and checkout
+belong to each ToolUse, never to the Session. Layout and PTYs live on the host,
+so closing a browser tab does not kill shells.
 
-No chat wrapper. No fake agent API. Agents are the same CLIs you already use — just hosted in one place.
+```
+http://localhost:5174/              → Session shell (tabs + ToolUse sidebar)
+http://localhost:5174/?s=ses-…&u=use-… → deep-link a Session + ToolUse
+```
+
+Legacy project-path URLs and mux workspaces remain available for one release of
+compatibility; the primary product surface is the Session shell.
 
 ---
 
 ## What it does
 
-### Home — project mission control
-- Browse projects as a catalog, not a file tree
-- See live session cards per project (status, agent, last activity)
-- Start a blank shell or an agent session in a few clicks
-- Persist multi-root project lists across reloads
+### Sessions
+- Top tab strip of Sessions (`+` creates an empty Session)
+- Sidebar lists ToolUses with type, title, status, project, and checkout
+- Sidebar header shortcuts create Search, Agent, or Terminal immediately
+- Each tool pane configures project, worktree, and kind-specific options via comboboxes
+- Changing project or agent provider restarts the underlying process; the change itself does not fail
+- Selecting a ToolUse renders only that ToolUse in the main viewport
+- Closing a Session with live tools offers Keep running / Stop tools / Cancel
+- Archived Sessions restore from the Session switcher (`Ctrl-a w` / palette)
 
-### Terminal sessions
-- Full PTY terminals (via `node-pty`) in modal workspaces
-- Multiple terminal tabs per session
-- Reopen any past session from its home card
-- Escape / go-home returns you to Mission Control without killing the session
+### Tools (v1)
+| Tool | Behavior |
+| --- | --- |
+| **AgentTool** | Launches a supported agent CLI in a PTY |
+| **TerminalTool** | Launches a shell in a PTY |
+| **SearchTool** | Host-owned project content search with durable per-file context cards; selecting a result opens its source location in Monaco |
+
+Agent and Terminal share the existing PTY path (`terminal:data` binary frames,
+attach replay, flow control). Search streams bounded result batches via
+`tools:event` and persists rows for reconnect.
+
+### Checkout isolation
+Each ToolUse picks Main, an existing worktree, or an isolated branch worktree
+under `~/.yaade/worktrees/`. Two ToolUses in one Session may target different
+projects and worktrees. Branches never switch Main as a side effect.
 
 ### Agent CLIs (PTY)
-Launch the real binary in the project directory:
 
 | Agent    | Binary         |
 | -------- | -------------- |
@@ -34,140 +56,52 @@ Launch the real binary in the project directory:
 | Grok     | `grok`         |
 | Pi       | `pi`           |
 
-Resume support for providers that expose a session id (Codex, Claude, Cursor).
-
-### Session workspace
-Inside a session modal you get more than a dumb terminal:
-- Terminal tabs + session switcher
-- Optional Monaco editor pane (open / edit files without leaving the session)
-- Project todos
-- Git / explorer dialogs when you need them
-
-### Notifications
-- In-app notification center for agent stop / activity hooks
-- Provider ingest endpoint for Codex / Claude Stop events
-- Bell + timeline so background agents can ping you when they finish
-
-### Appearance
-- Dark / light color schemes
-- Bundled themes + theme picker
-- Zoom and shell settings, persisted locally
-
-### Keyboard-first shell
-Useful defaults (macOS `Mod` = ⌘):
-
-| Action            | Shortcut      |
-| ----------------- | ------------- |
-| New session       | `Mod-n`       |
-| Switch session    | `Mod-k`       |
-| Quick open        | `Mod-p`       |
-| Command palette   | `Mod-Shift-p` |
-| Settings          | `Mod-,`       |
-| Toggle sidebar    | `Mod-b`       |
-| Go home           | `Mod-Shift-h` / `Esc` |
-| Show terminal     | `Ctrl-\``     |
-
 ---
 
-## Architecture
+## Keyboard
 
-TypeScript only — **no Rust, no Tauri**.
+Prefix: **`Ctrl-a`** (press twice to send literal `^A` into a terminal).
 
-| Layer | Role |
-| ----- | ---- |
-| Vite SPA (`@yaade/app` + `@yaade/ui`) | Mission Control UI, session modals, themes |
-| `@yaade/host-server` | Effect host — FS, PTY, git, search, LSP, notifications |
-| `@yaade/node-host` | Node implementations (PTY, FS, git, …) |
+| Chord | Action |
+| --- | --- |
+| `Ctrl-a c` | New Session |
+| `Ctrl-a t` | New ToolUse |
+| `Ctrl-a w` | Switch Session |
+| `Ctrl-a j` / `k` | Next / previous ToolUse |
+| `Ctrl-a x` | Close ToolUse |
+| `Ctrl-a Shift-X` | Close Session |
+| `Ctrl-a p` | Session switcher / palette |
+| `Ctrl-a ,` | Settings |
 
-Renderer talks to the host over HTTP RPC (`/api/v1/rpc`) + WebSocket (`/ws`).
-
-```
-Browser
-        │  HTTP + WS
-        ▼
-  host-server (:4747)
-        │
-        ▼
-  node-host (PTY, FS, git, LSP, …)
-```
-
----
-
-## Quick start
-
-```bash
-pnpm install
-pnpm dev          # host-server + Vite
-```
-
-Open the Vite URL (proxies `/api` and `/ws` to the host).
-
-The dev startup registers `ide.local` to loopback, so the app is also available
-at `http://ide.local:5174`. The first startup may ask for administrator access
-to update the system hosts file. Set `JET_SKIP_LOCAL_HOST=1` to skip that step.
-
-**Browser-first projects:** each browser tab is one project. Pathnames are home-relative — `http://localhost:5174/dev/consultation` opens `~/dev/consultation` as the initial terminal cwd (you can still `cd` freely). Layout and panes persist on the host keyed by machine hostname + absolute path. There is no in-app window tab strip — use browser tabs to juggle projects.
-
-Some OS/browser-reserved shortcuts (`Mod-t`, `Mod-n`, `Mod-w`, `Mod-k`, `Mod-,`) may not reach the page in a normal Chrome tab.
-
-### Production build
-
-```bash
-pnpm build              # SPA + self-extracting server binary
-pnpm build:server       # same (compatibility alias)
-
-./dist/yaade              # serve SPA + API on http://127.0.0.1:4747
-./dist/yaade /path/repo   # open workspace at path
-./dist/yaade --open       # also open the default browser
-```
-
-Artifacts:
-- `dist/yaade` — single-file self-extracting server (scp + run)
-- `dist/runtime/` — unpacked runtime (SEF source)
-
-Host stays loopback-only; on a remote machine use SSH `-L 4747:127.0.0.1:4747`.
+Direct: `Mod-Shift-p`, `Mod-,`.
 
 ---
 
 ## Develop
 
 ```bash
+pnpm install
+pnpm dev          # host-server + Vite
 pnpm -r typecheck
-pnpm test           # unit tests across packages
-pnpm test:e2e       # Playwright against TS host (Chromium)
-pnpm test:bench     # UX latency budgets
+pnpm test
+pnpm test:e2e     # Playwright web E2E
+pnpm test:bench
+pnpm build
 ```
 
-Headed E2E:
+Focused Tool Session E2E:
 
 ```bash
-YAADE_HEADED=1 pnpm test:e2e
+pnpm exec playwright test --project=web-e2e tests/electron/tool-sessions.electron.spec.ts
 ```
 
 ---
 
-## Monorepo map
+## Security note
 
-```
-apps/
-  yaade/            Vite frontend shell
-  host-server/      Effect host (HTTP/WS + PTY)
-packages/
-  yaade-app/        React app wiring
-  yaade-ui/         Home, modals, overlays, themes
-  yaade-node-host/  Node FS / git / PTY / LSP bridge
-  yaade-host-client/Effect client + Promise shim
-  yaade-rpc/        Shared IPC schemas
-  yaade-shared/     URIs, theme types, primitives
-  yaade-workspace/  Workspace + tab registry
-  yaade-monaco/     Monaco editor host (session modal)
-  yaade-agents/     Agent CLI id helpers
-tests/
-  electron/             Shared Playwright UI specs (web E2E)
-```
+There is **no authentication** on HTTP or WS yet. Startup refuses a non-loopback
+bind; paths are gated by `allowedRoots` (default `$HOME`). A shared-secret token
+on HTTP + WS is required before shipping remote.
 
----
-
-## Policy
-
-Host IPC and desktop shell are TypeScript. Do not add Rust crates, Cargo, or Tauri to this repo.
+See [AGENTS.md](AGENTS.md) for architecture invariants and [NEXT.md](NEXT.md)
+for the migration checklist.

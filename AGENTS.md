@@ -6,30 +6,30 @@ Guide for AI agents and contributors working in this repo.
 
 **YAADE is a browser-only IDE for a local or remote machine.**
 
-The user points a browser at a host and a project path. That tab opens a
-**project landing page** (recent sessions). Opening a session mounts a tiling,
-paned workspace — terminals, Neovim, git — optionally backed by a git worktree.
-Layouts persist server-side per session and restore on reload.
+The app opens at `/` as a **Session shell**: top-level Session tabs, each an
+ordered collection of **ToolUses** (Agent / Terminal / Search). Project and
+checkout belong to each ToolUse. Opening a ToolUse mounts its renderer in the
+main viewport — terminals keep PTYs alive on the host across tab switches and
+reloads.
 
 ```
-http://localhost:5174/dev/yaade              → project page (Overview / Worktrees / History)
-http://localhost:5174/dev/yaade?s=ses-…      → that session's mux workspace
+http://localhost:5174/                     → Session shell
+http://localhost:5174/?s=ses-…&u=use-…     → Session + ToolUse deep link
+http://localhost:5174/dev/yaade            → legacy project path (compat)
+http://localhost:5174/dev/yaade?s=ses-…    → legacy project-session (compat)
 ```
 
-Three consequences drive every design decision in this repo:
+Three consequences still drive every design decision:
 
-1. **The URL is the project; `?s=` is the session.** One browser tab = one
-   project. Sessions are first-class: N per project, each with its own cwd
-   (project root or worktree), layout, and PTYs. Enter a session from the
-   Worktrees picker (Main / existing / create). To open a second project you
-   open a second browser tab.
+1. **`/?s=&u=` is the Session identity.** One browser tab can hold many
+   Sessions; each ToolUse owns its own project/checkout. Legacy
+   “pathname = project” URLs remain for one release of compatibility.
 2. **The browser is a hostile host.** It owns most keyboard chords, it can kill
    the tab at any moment, and it gives us no native window. See
    [Keyboard architecture](#keyboard-architecture) — this is the single most
    common source of bugs in this codebase.
 3. **The host outlives the tab.** PTYs live in the host process, not the page.
-   Closing or reloading a tab must not kill a shell. Project ↔ session
-   transitions use `pushState`/`popstate` so PTYs survive SPA navigation.
+   Closing or reloading a tab must not kill a shell.
 
 **Hard policy: no Rust / no Tauri / no Electron.** The host is TypeScript
 (`apps/host-server` + `@yaade/node-host`). Do not add `.rs`, `Cargo.toml`, Tauri
@@ -37,20 +37,18 @@ crates, or an Electron shell.
 
 ### Product status (2026-08)
 
-The app pivoted from Mission Control → bare mux → **session-based IDE** (project
-page + session workspaces). Consequences you will trip over:
+The app pivoted from Mission Control → bare mux → project/session IDE →
+**Tool Session shell** (Sessions + ToolUses). Consequences you will trip over:
 
 | Thing | Status |
 | --- | --- |
-| `packages/yaade-app/src/AppRoot.tsx` | **Router.** Mounted by `main.tsx`; chooses ProjectPage vs MuxApp. |
-| `packages/yaade-app/src/project/` | Project landing (Overview / Worktrees picker / History). |
-| `packages/yaade-app/src/mux/MuxApp.tsx` | **Session workspace.** Session-scoped; cwd from `session.cwdPath`. |
+| `packages/yaade-app/src/AppRoot.tsx` | **Router.** `/` (+ home-relative legacy paths) → `ToolSessionApp`; `/_project/*` and HQ → legacy shell. |
+| `packages/yaade-app/src/tools/` | **Primary shell.** Sessions, ToolUses, in-pane combobox config, renderers. |
+| `packages/yaade-app/src/project/` | Legacy project landing — kept for `/_project` compat; do not extend. |
+| `packages/yaade-app/src/mux/MuxApp.tsx` | Legacy session workspace — kept for `/_project` compat; do not extend. |
 | `packages/yaade-app/src/App.tsx` (~3.3k lines) | **Legacy Mission Control. Not mounted.** Kept for reference; do not extend. |
-| `packages/yaade-app/src/index.ts` | Exports `MuxApp as YaadeApp` — the name is legacy. |
-| ~29 specs under `tests/electron/` | `describe.skip` — they target the removed Mission Control shell. |
-| `MuxTabStrip`, `PanelTabBar` | Built, exported, **zero imports**. Dead. |
-| `@yaade/monaco`, `@yaade/lsp` | **Wired in mux** via lazy `MuxEditorPane` + `MuxLspHost`. Keep optional chunks out of the startup graph. |
-| Agents / Terminals project tabs | **Instance sidebar + single focused PTY** (`InstanceSidebar`). Not tiled dock views. |
+| `tests/electron/tool-sessions.electron.spec.ts` | Required Session/ToolUse parity suite (18 scenarios). |
+| `NEXT.md` | Migration plan; cutover deletes of project/mux wait until remaining legacy specs are retired. |
 
 When a task touches something in the "legacy / dead" rows, ask before
 extending it — deleting is usually the right answer.
@@ -78,7 +76,7 @@ yaade/
 │   ├── yaade-monaco/           Monaco editor host + model registry (lazy in mux)
 │   ├── yaade-lsp/              Language server client pool → Monaco providers (lazy)
 │   ├── yaade-ui/               Panel dock, TerminalPanel, overlays, themes
-│   └── yaade-app/              Root React app — MuxApp shell
+│   └── yaade-app/              Root React app — ToolSessionApp (+ legacy mux/project)
 ├── tests/
 │   ├── electron/               E2E specs (Playwright `web-e2e` project)
 │   ├── shell/                  launchWeb() against the TS host
@@ -458,6 +456,12 @@ window.__yaadeAgent.getPerfMeasures() // User Timing measures (jet:*)
    was last compiled. If a typecheck error mentions a symbol that clearly exists,
    suspect a stale `dist/` before editing the export list.
 6. **Commits** — only when the user asks.
+7. **No setup panes.** Creating a ToolUse mounts its renderer immediately.
+   Project, checkout, provider, and other options are comboboxes in that pane.
+   Do not add a pre-launch form, dialog, or staged wizard.
+   Changing project or agent provider must persist, then restart the underlying
+   process. Never fail that RPC for a stale revision. A failed relaunch marks
+   the ToolUse failed but does not roll back the new project/provider.
 
 ---
 
@@ -526,26 +530,17 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 | File | Why |
 | --- | --- |
 | `packages/yaade-app/src/main.tsx` | Entry: `createWebTransport` → `window.yaade`, mounts `AppRoot` |
-| `packages/yaade-app/src/AppRoot.tsx` | Project vs session routing, `?s=`, project-page agent stub |
-| `packages/yaade-app/src/project/ProjectPage.tsx` | Project landing: Overview / Worktrees / History |
-| `packages/yaade-app/src/mux/MuxApp.tsx` | Session shell: commands, keymap, layout, persistence |
-| `packages/yaade-app/src/mux/MuxEditorPane.tsx` | Monaco host per editor group; model reuse across tabs |
-| `packages/yaade-app/src/mux/layout.ts` | `placeOrPushEditorTab` — tab vs new editor group |
-| `packages/yaade-app/src/project-session-client.ts` | Debounced PUT `/api/v1/project-sessions/:id` |
-| `packages/yaade-app/src/mux/mux-keymap.ts` | Prefix key + binding table (single source of truth) |
-| `packages/yaade-app/src/url-workspace.ts` | URL ↔ project root + session search helpers |
-| `packages/yaade-app/src/hooks/useGlobalKeymap.ts` | Global key dispatch |
-| `packages/yaade-workspace/src/browser-reserved-keys.ts` | Which chords the browser steals |
-| `packages/yaade-workspace/src/context-keys.ts` | Chord matching, `when` clauses |
-| `packages/yaade-app/src/mux/MuxTerminalLayer.tsx` | Why terminals survive retiling |
-| `packages/yaade-ui/src/panels/TerminalPanel.tsx` | xterm mount, fit, PTY attach |
-| `packages/yaade-ui/src/dock/PanelDock.tsx` | Docking UI + viewport measure |
-| `packages/yaade-panels/src/tree.ts` | Split/tab model |
-| `apps/host-server/src/server.ts` | HTTP + WS routing, project-sessions API |
-| `apps/host-server/src/persistence.ts` | SQLite schema, `ptyId` stripping, migration |
-| `apps/host-server/src/worktree-path.ts` | `~/.yaade/worktrees/…` path derivation |
+| `packages/yaade-app/src/AppRoot.tsx` | `/` → ToolSessionApp; legacy routes otherwise |
+| `packages/yaade-app/src/tools/ToolSessionApp.tsx` | Session shell composition |
+| `packages/yaade-app/src/tools/tool-store.ts` | Normalized browser store (no PTY bytes) |
+| `packages/yaade-app/src/tools/tool-session-routing.ts` | `/?s=&u=` parse/build |
+| `packages/yaade-rpc/src/tool-session.ts` | Session/ToolUse contracts |
+| `apps/host-server/src/tools/service.ts` | Host ToolService orchestration |
+| `apps/host-server/src/tool-session-store.ts` | SQLite Sessions/ToolUses |
+| `packages/yaade-app/src/mux/MuxApp.tsx` | Legacy mux shell (compat) |
+| `packages/yaade-app/src/project/ProjectPage.tsx` | Legacy project landing (compat) |
 | `packages/yaade-node-host/src/terminal.ts` | PTY batching, flow control, replay |
-| `packages/yaade-node-host/src/git.ts` | Git + worktree CLI wrappers |
+| `packages/yaade-node-host/src/search.ts` | Ripgrep/FFF search engine |
 
 ---
 
@@ -562,3 +557,6 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 - Putting terminal output or editor document text in React state.
 - Calling Node APIs from lower packages (use `window.yaade` / `@yaade/host-client`).
 - Adding Rust / Cargo / Tauri / Electron back into the repo.
+- Adding a setup pane, launch wizard, or staged form before a ToolUse renderer mounts.
+- Failing a project or agent-provider combobox change. Persist the new value,
+  restart the PTY, return the ToolUse. Do not throw `ToolUseConflict` on that path.

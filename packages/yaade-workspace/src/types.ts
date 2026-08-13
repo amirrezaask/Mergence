@@ -12,7 +12,7 @@ import type {
   ProjectSearchOptions,
   ProjectSearchResult,
   SearchPage,
-} from "@yaade/shared"
+} from "@yaade/shared";
 import type {
   EmptyTrashResult,
   LanguageServerDefinition,
@@ -26,8 +26,22 @@ import type {
   TextFileReadResult,
   TextFileWriteOptions,
   TextFileWriteResult,
-  TrashEntry
-} from "@yaade/rpc"
+  TrashEntry,
+  AppSession,
+  CreateToolUse,
+  ProjectTarget,
+  ToolEvent,
+  ToolUse,
+  SessionId,
+  ToolUseId,
+  UpdateToolUseInput,
+  UpdateToolUseContext,
+  ReorderSessions,
+  ReorderToolUses,
+  ArchiveSession,
+  RestoreSession,
+  ArchiveToolUse,
+} from "@yaade/rpc";
 
 export type {
   EmptyTrashResult,
@@ -43,74 +57,74 @@ export type {
   TextFileWriteOptions,
   TextFileWriteResult,
   TrashEntry,
-} from "@yaade/rpc"
+} from "@yaade/rpc";
 
 export type WorkspaceFile = {
-  uri: string
-  path: string
-  name: string
-  languageId: string
-  isDirty: boolean
-}
+  uri: string;
+  path: string;
+  name: string;
+  languageId: string;
+  isDirty: boolean;
+};
 
 export type WorkspaceEntry = {
-  uri: string
-  name: string
-  isDirectory: boolean
-}
+  uri: string;
+  name: string;
+  isDirectory: boolean;
+};
 
 export type WorkspaceStat = {
-  uri: string
-  isDirectory: boolean
-  size: number
-}
+  uri: string;
+  isDirectory: boolean;
+  size: number;
+};
 
-export type WorkspaceFileChangeKind = "created" | "changed" | "deleted"
+export type WorkspaceFileChangeKind = "created" | "changed" | "deleted";
 
 export type WorkspaceRoot = {
-  uri: string
-  name: string
-  path: string
-}
+  uri: string;
+  name: string;
+  path: string;
+};
 
 export interface FileSystemProvider {
-  readFile(uri: string): Promise<string>
-  writeFile(uri: string, content: string): Promise<void>
-  readTextFile?(uri: string): Promise<TextFileReadResult>
+  readFile(uri: string): Promise<string>;
+  writeFile(uri: string, content: string): Promise<void>;
+  readTextFile?(uri: string): Promise<TextFileReadResult>;
   writeTextFile?(
     uri: string,
     content: string,
     options: TextFileWriteOptions,
-  ): Promise<TextFileWriteResult>
-  readDir(uri: string): Promise<WorkspaceEntry[]>
-  stat(uri: string): Promise<WorkspaceStat>
+  ): Promise<TextFileWriteResult>;
+  readDir(uri: string): Promise<WorkspaceEntry[]>;
+  stat(uri: string): Promise<WorkspaceStat>;
   /** Expected-miss probe. Unlike `stat`, a missing path resolves to false. */
-  exists?(uri: string): Promise<boolean>
+  exists?(uri: string): Promise<boolean>;
 }
 
 export type JetElectronFS = FileSystemProvider & {
-  readTextFile(uri: string): Promise<TextFileReadResult>
+  readTextFile(uri: string): Promise<TextFileReadResult>;
   writeTextFile(
     uri: string,
     content: string,
     options: TextFileWriteOptions,
-  ): Promise<TextFileWriteResult>
-  showOpenFolderDialog(): Promise<string | null>
-  showSaveFileDialog(defaultPath?: string): Promise<string | null>
+  ): Promise<TextFileWriteResult>;
+  showOpenFolderDialog(): Promise<string | null>;
+  showSaveFileDialog(defaultPath?: string): Promise<string | null>;
   /** Persist a browser File blob under OS temp; returns absolute path for PTY paste. */
-  writeTempDrop?(name: string, contentBase64: string): Promise<string>
-  createFile(uri: string): Promise<WorkspaceStat>
-  mkdir(uri: string): Promise<WorkspaceStat>
-  rename(sourceUri: string, targetUri: string): Promise<WorkspaceStat>
-  trash(uri: string): Promise<TrashEntry>
-  restoreTrash(id: string, targetUri?: string): Promise<RestoreTrashResult>
-  listTrash(): Promise<TrashEntry[]>
-  emptyTrash(): Promise<EmptyTrashResult>
-  watchWorkspace?(rootUri: string): Promise<void>
+  writeTempDrop?(name: string, contentBase64: string): Promise<string>;
+  createFile(uri: string): Promise<WorkspaceStat>;
+  mkdir(uri: string): Promise<WorkspaceStat>;
+  rename(sourceUri: string, targetUri: string): Promise<WorkspaceStat>;
+  trash(uri: string): Promise<TrashEntry>;
+  restoreTrash(id: string, targetUri?: string): Promise<RestoreTrashResult>;
+  listTrash(): Promise<TrashEntry[]>;
+  emptyTrash(): Promise<EmptyTrashResult>;
+  watchWorkspace?(rootUri: string): Promise<void>;
   onFileChanged?(
     callback: (uri: string, kind: WorkspaceFileChangeKind) => void,
-  ): () => void
-}
+  ): () => void;
+};
 
 export type JetElectronSearch = {
   project(
@@ -118,112 +132,174 @@ export type JetElectronSearch = {
     query: string,
     opts?: ProjectSearchOptions,
     signal?: AbortSignal,
-  ): Promise<SearchPage<ProjectSearchResult>>
-  listFiles(rootUri: string, signal?: AbortSignal): Promise<SearchPage<string>>
+  ): Promise<SearchPage<ProjectSearchResult>>;
+  listFiles(rootUri: string, signal?: AbortSignal): Promise<SearchPage<string>>;
   fileSearch(
     rootUri: string,
     query: string,
     opts?: FileSearchOptions,
     signal?: AbortSignal,
-  ): Promise<SearchPage<string>>
-  trackFileAccess?(rootUri: string, query: string, path: string): Promise<void>
-  isScanReady?(rootUri: string): Promise<boolean>
-  isSupported?(rootUri: string): Promise<boolean>
-}
+  ): Promise<SearchPage<string>>;
+  trackFileAccess?(rootUri: string, query: string, path: string): Promise<void>;
+  isScanReady?(rootUri: string): Promise<boolean>;
+  isSupported?(rootUri: string): Promise<boolean>;
+};
 
 export type JetTaskSpawnRequest = {
-  id: string
-  command: string
-  args: string[]
-  cwd: string
-}
+  id: string;
+  command: string;
+  args: string[];
+  cwd: string;
+};
+
+export type ToolSessionSnapshot = {
+  session: AppSession;
+  toolUses: ToolUse[];
+};
+
+export type ToolCheckoutTarget = {
+  kind: "main" | "worktree";
+  path: string;
+  branch: string | null;
+};
+
+export type JetElectronTools = {
+  listSessions(includeArchived?: boolean): Promise<ToolSessionSnapshot[]>;
+  reorderSessions(command: ReorderSessions): Promise<AppSession[]>;
+  archiveSession(command: ArchiveSession): Promise<AppSession>;
+  restoreSession(command: RestoreSession): Promise<AppSession>;
+  createSession(title?: string): Promise<AppSession>;
+  renameSession(sessionId: SessionId, title: string): Promise<AppSession>;
+  getSession(
+    sessionId: SessionId,
+  ): Promise<{ session: AppSession; toolUses: ToolUse[] } | null>;
+  createUse(command: CreateToolUse): Promise<ToolUse>;
+  getUse(toolUseId: ToolUseId): Promise<ToolUse | null>;
+  reorderUses(command: ReorderToolUses): Promise<ToolUse[]>;
+  updateUseInput(command: UpdateToolUseInput): Promise<ToolUse>;
+  updateUseContext(command: UpdateToolUseContext): Promise<ToolUse>;
+  listSearchResults(
+    toolUseId: ToolUseId,
+    resultRevision: number,
+    cursor?: number,
+    limit?: number,
+  ): Promise<ProjectSearchResult[]>;
+  loadMore(
+    toolUseId: ToolUseId,
+    resultRevision: number,
+    cursor?: number,
+    limit?: number,
+  ): Promise<ProjectSearchResult[]>;
+  selectUse(sessionId: SessionId, toolUseId?: ToolUseId): Promise<AppSession>;
+  cancelUse(toolUseId: ToolUseId, revision: number): Promise<ToolUse>;
+  restartUse(toolUseId: ToolUseId, revision: number): Promise<ToolUse>;
+  archiveUse(command: ArchiveToolUse): Promise<ToolUse>;
+  renameUse(toolUseId: ToolUseId, title: string): Promise<ToolUse>;
+  listCheckoutTargets(projectId: string): Promise<ToolCheckoutTarget[]>;
+  onEvent(callback: (event: ToolEvent) => void): () => void;
+  listProjects(): Promise<ProjectTarget[]>;
+};
 
 export type JetElectronTasks = {
-  spawn(req: JetTaskSpawnRequest): Promise<{ exitCode: number; output: string }>
-}
+  spawn(
+    req: JetTaskSpawnRequest,
+  ): Promise<{ exitCode: number; output: string }>;
+};
 
 export type JetElectronLSP = {
-  resolve(request: LspResolveRequest): Promise<ResolvedLanguageServerTarget | null>
-  start(target: ResolvedLanguageServerTarget): Promise<LspStartResult>
-  stop(id: string): Promise<void>
-  listDefinitions(): Promise<LanguageServerDefinition[]>
-  logs(request?: LspLogRequest): Promise<LspLogEntry[]>
-  onLifecycle(cb: (event: LspLifecycleEvent) => void): () => void
+  resolve(
+    request: LspResolveRequest,
+  ): Promise<ResolvedLanguageServerTarget | null>;
+  start(target: ResolvedLanguageServerTarget): Promise<LspStartResult>;
+  stop(id: string): Promise<void>;
+  listDefinitions(): Promise<LanguageServerDefinition[]>;
+  logs(request?: LspLogRequest): Promise<LspLogEntry[]>;
+  onLifecycle(cb: (event: LspLifecycleEvent) => void): () => void;
   /** Compatibility signal for consumers that only need the failed session id. */
-  onCrashed(cb: (id: string) => void): () => void
-}
+  onCrashed(cb: (id: string) => void): () => void;
+};
 
 export type JetElectronTerminal = {
   create(
     cwdUri: string,
     launch?: {
-      command?: string
-      args?: string[]
-      env?: Record<string, string>
-      cols?: number
-      rows?: number
+      command?: string;
+      args?: string[];
+      env?: Record<string, string>;
+      cols?: number;
+      rows?: number;
     },
-  ): Promise<{ id: string; title?: string }>
+  ): Promise<{ id: string; title?: string }>;
   attach(id: string): Promise<{
-    id: string
-    title?: string
+    id: string;
+    title?: string;
     /** Ring segments for attach replay (preferred). */
-    outputChunks?: string[]
+    outputChunks?: string[];
     /** Legacy joined form; may be empty when outputChunks is set. */
-    output: string
-    lastSequence: number
-    status: "running" | "exited"
-    exitCode?: number
-    signal?: number
-  } | null>
-  write(id: string, data: string): Promise<void>
-  writeBinary(id: string, dataBase64: string): Promise<void>
-  resize(id: string, cols: number, rows: number): Promise<void>
+    output: string;
+    lastSequence: number;
+    status: "running" | "exited";
+    exitCode?: number;
+    signal?: number;
+  } | null>;
+  write(id: string, data: string): Promise<void>;
+  writeBinary(id: string, dataBase64: string): Promise<void>;
+  resize(id: string, cols: number, rows: number): Promise<void>;
   /**
    * Acknowledge that `charCount` chars from `terminal:data` have been parsed
    * by xterm. Host uses this for PTY pause/resume flow control.
    */
-  acknowledgeData(id: string, charCount: number): Promise<void>
+  acknowledgeData(id: string, charCount: number): Promise<void>;
   /**
    * Live working directory of the PTY process as a `file://` URI.
    * Prefers OS introspection of the foreground process, then OSC 7, then spawn cwd.
    */
-  getCwd(id: string): Promise<string | null>
+  getCwd(id: string): Promise<string | null>;
   /** Basename of the foreground process under this PTY (e.g. `nvim`, `fish`). */
-  getForegroundProcess(id: string): Promise<string | null>
-  onData(id: string, callback: (data: string) => void): () => void
-  onExit(cb: (id: string, exitCode: number, signal?: number) => void): () => void
-  dispose(id: string): Promise<void>
-  listInstances(projectId: string): Promise<TerminalInstanceInfo[]>
+  getForegroundProcess(id: string): Promise<string | null>;
+  onData(id: string, callback: (data: string) => void): () => void;
+  onExit(
+    cb: (id: string, exitCode: number, signal?: number) => void,
+  ): () => void;
+  dispose(id: string): Promise<void>;
+  listInstances(projectId: string): Promise<TerminalInstanceInfo[]>;
   createInstance(req: {
-    projectId: string
-    checkoutKey?: string
-    checkoutPath?: string
-    title?: string
-    provider?: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
-    workspaceId?: string
-    launchRequestId?: string
-    args?: string[]
-  }): Promise<TerminalInstanceInfo>
-  restartInstance(req: { id: string; generation: number }): Promise<TerminalInstanceInfo | null>
-  closeInstance(req: { id: string; generation: number }): Promise<TerminalInstanceInfo | null>
-  getInstanceTranscript(id: string): Promise<{ output: string; truncated: boolean } | null>
-  onInstanceEvent(callback: (event: TerminalInstanceEvent) => void): () => void
-}
+    projectId: string;
+    checkoutKey?: string;
+    checkoutPath?: string;
+    title?: string;
+    provider?: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+    workspaceId?: string;
+    launchRequestId?: string;
+    args?: string[];
+  }): Promise<TerminalInstanceInfo>;
+  restartInstance(req: {
+    id: string;
+    generation: number;
+  }): Promise<TerminalInstanceInfo | null>;
+  closeInstance(req: {
+    id: string;
+    generation: number;
+  }): Promise<TerminalInstanceInfo | null>;
+  getInstanceTranscript(
+    id: string,
+  ): Promise<{ output: string; truncated: boolean } | null>;
+  onInstanceEvent(callback: (event: TerminalInstanceEvent) => void): () => void;
+};
 
 export type TerminalInstanceInfo = {
-  id: string
-  generation: number
-  projectId: string
-  workspaceId: string | null
-  checkoutKey: string
-  checkoutPath: string
-  title: string
-  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null
-  launchRequestId: string | null
-  ptyId: string | null
-  nativeSessionId: string | null
-  processState: "starting" | "running" | "exited" | "failed" | "disconnected"
+  id: string;
+  generation: number;
+  projectId: string;
+  workspaceId: string | null;
+  checkoutKey: string;
+  checkoutPath: string;
+  title: string;
+  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null;
+  launchRequestId: string | null;
+  ptyId: string | null;
+  nativeSessionId: string | null;
+  processState: "starting" | "running" | "exited" | "failed" | "disconnected";
   activityState:
     | "starting"
     | "working"
@@ -231,29 +307,33 @@ export type TerminalInstanceInfo = {
     | "waiting_for_permission"
     | "waiting_for_user"
     | "idle"
-    | "failed"
-  telemetryState: "connecting" | "connected" | "degraded" | "process_only"
-  createdAt: string
-  startedAt: string | null
-  lastActivityAt: string | null
-  endedAt: string | null
-  exitCode: number | null
-  endReason: string | null
-  telemetryError: string | null
-  revision: number
-}
+    | "failed";
+  telemetryState: "connecting" | "connected" | "degraded" | "process_only";
+  createdAt: string;
+  startedAt: string | null;
+  lastActivityAt: string | null;
+  endedAt: string | null;
+  exitCode: number | null;
+  endReason: string | null;
+  telemetryError: string | null;
+  revision: number;
+};
 
 export type TerminalInstanceEvent = {
-  type: "terminal.instance"
-  kind: "instance.created" | "instance.updated" | "instance.ended" | "instance.removed"
-  instance: TerminalInstanceInfo
-}
+  type: "terminal.instance";
+  kind:
+    | "instance.created"
+    | "instance.updated"
+    | "instance.ended"
+    | "instance.removed";
+  instance: TerminalInstanceInfo;
+};
 
 export type LaunchConfig = {
-  workspacePath: string
-  filePath?: string
-  source?: "default" | "explicit" | "external"
-}
+  workspacePath: string;
+  filePath?: string;
+  source?: "default" | "explicit" | "external";
+};
 
 /**
  * Identifies one mux session's workspace lease within the current host client.
@@ -261,62 +341,76 @@ export type LaunchConfig = {
  * can retain the same root independently.
  */
 export type WorkspaceLeaseIdentity = {
-  sessionId: string
-}
+  sessionId: string;
+};
 
 export type JetElectronWorkspace = {
-  activate(rootUri: string, owner: WorkspaceLeaseIdentity): Promise<{ ok: boolean }>
+  activate(
+    rootUri: string,
+    owner: WorkspaceLeaseIdentity,
+  ): Promise<{ ok: boolean }>;
   deactivate?(
     rootUri: string,
     owner: WorkspaceLeaseIdentity,
-  ): Promise<{ ok: boolean }>
-  onFileIndex(callback: (rootUri: string, files: string[]) => void): () => void
-  onSearchReady?(callback: (rootUri: string) => void): () => void
-}
+  ): Promise<{ ok: boolean }>;
+  onFileIndex(callback: (rootUri: string, files: string[]) => void): () => void;
+  onSearchReady?(callback: (rootUri: string) => void): () => void;
+};
 
 export type JetElectronGit = {
-  isRepo(rootUri: string): Promise<boolean>
-  status(rootUri: string): Promise<GitStatusEntry[]>
-  diff(rootUri: string, opts?: { path?: string; staged?: boolean }): Promise<string>
-  show(rootUri: string, path: string, ref: "HEAD" | "INDEX" | string): Promise<string>
+  isRepo(rootUri: string): Promise<boolean>;
+  status(rootUri: string): Promise<GitStatusEntry[]>;
+  diff(
+    rootUri: string,
+    opts?: { path?: string; staged?: boolean },
+  ): Promise<string>;
+  show(
+    rootUri: string,
+    path: string,
+    ref: "HEAD" | "INDEX" | string,
+  ): Promise<string>;
   commitFileContents(
     rootUri: string,
     hash: string,
     file: { path: string; status: string; originalPath?: string },
-  ): Promise<{ original: string; modified: string }>
-  branch(rootUri: string): Promise<string | null>
-  summary(rootUri: string): Promise<GitRepositorySummary>
-  branches(rootUri: string): Promise<string[]>
-  stage(rootUri: string, paths: string[]): Promise<void>
-  unstage(rootUri: string, paths: string[]): Promise<void>
-  discard(rootUri: string, paths: string[]): Promise<void>
-  commit(rootUri: string, summary: string, body?: string): Promise<void>
-  checkout(rootUri: string, branch: string): Promise<void>
-  fetch(rootUri: string): Promise<void>
-  pull(rootUri: string): Promise<void>
-  push(rootUri: string): Promise<void>
-  history(rootUri: string, limit?: number): Promise<GitCommit[]>
-  historyPage(rootUri: string, cursor?: string, pageSize?: number): Promise<GitHistoryPage>
-  numstat(rootUri: string): Promise<GitNumstatEntry[]>
-  commitFiles(rootUri: string, hash: string): Promise<GitCommitDetail>
+  ): Promise<{ original: string; modified: string }>;
+  branch(rootUri: string): Promise<string | null>;
+  summary(rootUri: string): Promise<GitRepositorySummary>;
+  branches(rootUri: string): Promise<string[]>;
+  stage(rootUri: string, paths: string[]): Promise<void>;
+  unstage(rootUri: string, paths: string[]): Promise<void>;
+  discard(rootUri: string, paths: string[]): Promise<void>;
+  commit(rootUri: string, summary: string, body?: string): Promise<void>;
+  checkout(rootUri: string, branch: string): Promise<void>;
+  fetch(rootUri: string): Promise<void>;
+  pull(rootUri: string): Promise<void>;
+  push(rootUri: string): Promise<void>;
+  history(rootUri: string, limit?: number): Promise<GitCommit[]>;
+  historyPage(
+    rootUri: string,
+    cursor?: string,
+    pageSize?: number,
+  ): Promise<GitHistoryPage>;
+  numstat(rootUri: string): Promise<GitNumstatEntry[]>;
+  commitFiles(rootUri: string, hash: string): Promise<GitCommitDetail>;
   applyPatch(
     rootUri: string,
     patch: string,
     opts?: { reverse?: boolean; cached?: boolean },
-  ): Promise<void>
-  worktreeList(rootUri: string): Promise<GitWorktree[]>
+  ): Promise<void>;
+  worktreeList(rootUri: string): Promise<GitWorktree[]>;
   worktreeAdd(
     rootUri: string,
     worktreePath: string,
     opts: { branch: string; baseRef?: string; createBranch?: boolean },
-  ): Promise<GitWorktree>
+  ): Promise<GitWorktree>;
   worktreeRemove(
     rootUri: string,
     worktreePath: string,
     opts?: { force?: boolean },
-  ): Promise<void>
-  defaultBranch(rootUri: string): Promise<string | null>
-}
+  ): Promise<void>;
+  defaultBranch(rootUri: string): Promise<string | null>;
+};
 
 export type OpenInAppId =
   | "vscode"
@@ -329,171 +423,194 @@ export type OpenInAppId =
   | "kitty"
   | "ghostty"
   | "xcode"
-  | "intellij"
+  | "intellij";
 
 export type JetElectronShell = {
-  openInApp(appId: OpenInAppId, rootUri: string): Promise<{ ok: boolean }>
-  revealInFolder(rootUri: string): Promise<{ ok: boolean }>
-}
+  openInApp(appId: OpenInAppId, rootUri: string): Promise<{ ok: boolean }>;
+  revealInFolder(rootUri: string): Promise<{ ok: boolean }>;
+};
 
 export type JetElectronNotifications = {
   list(
     req?: import("@yaade/shared").ListNotificationsRequest,
-  ): Promise<import("@yaade/shared").ListNotificationsResponse>
-  counts(): Promise<import("@yaade/shared").NotificationCounts>
-  get(id: string): Promise<import("@yaade/shared").AppNotification | null>
-  ingest(
-    req: import("@yaade/shared").IngestNotificationRequest,
-  ): Promise<{
-    notification: import("@yaade/shared").AppNotification | null
-    created: boolean
-    updated: boolean
-    deduped: boolean
-    skipped: boolean
-    skipReason?: string
-  }>
-  markRead(id: string): Promise<import("@yaade/shared").AppNotification | null>
-  markUnread(id: string): Promise<import("@yaade/shared").AppNotification | null>
-  dismiss(id: string): Promise<import("@yaade/shared").AppNotification | null>
-  restore(id: string): Promise<import("@yaade/shared").AppNotification | null>
-  acknowledge(id: string): Promise<import("@yaade/shared").AppNotification | null>
+  ): Promise<import("@yaade/shared").ListNotificationsResponse>;
+  counts(): Promise<import("@yaade/shared").NotificationCounts>;
+  get(id: string): Promise<import("@yaade/shared").AppNotification | null>;
+  ingest(req: import("@yaade/shared").IngestNotificationRequest): Promise<{
+    notification: import("@yaade/shared").AppNotification | null;
+    created: boolean;
+    updated: boolean;
+    deduped: boolean;
+    skipped: boolean;
+    skipReason?: string;
+  }>;
+  markRead(id: string): Promise<import("@yaade/shared").AppNotification | null>;
+  markUnread(
+    id: string,
+  ): Promise<import("@yaade/shared").AppNotification | null>;
+  dismiss(id: string): Promise<import("@yaade/shared").AppNotification | null>;
+  restore(id: string): Promise<import("@yaade/shared").AppNotification | null>;
+  acknowledge(
+    id: string,
+  ): Promise<import("@yaade/shared").AppNotification | null>;
   markAllRead(
     req?: import("@yaade/shared").MarkAllNotificationsReadRequest,
-  ): Promise<import("@yaade/shared").NotificationCounts>
-  unreadBySession(): Promise<Record<string, number>>
+  ): Promise<import("@yaade/shared").NotificationCounts>;
+  unreadBySession(): Promise<Record<string, number>>;
   markSessionUnread(
     sessionId: string,
-  ): Promise<import("@yaade/shared").AppNotification | null>
-  getPreferences(): Promise<import("@yaade/shared").NotificationPreferences>
+  ): Promise<import("@yaade/shared").AppNotification | null>;
+  getPreferences(): Promise<import("@yaade/shared").NotificationPreferences>;
   setPreferences(
     prefs: Partial<import("@yaade/shared").NotificationPreferences>,
-  ): Promise<import("@yaade/shared").NotificationPreferences>
+  ): Promise<import("@yaade/shared").NotificationPreferences>;
   bindSession(
     req: import("@yaade/shared").BindNotificationSessionRequest,
-  ): Promise<{ ok: boolean }>
+  ): Promise<{ ok: boolean }>;
   onEvent(
     callback: (event: import("@yaade/shared").NotificationStreamEvent) => void,
-  ): () => void
-}
+  ): () => void;
+};
 
 export type JetElectronAgents = {
-  listProviders(refresh?: boolean): Promise<Array<{
-    provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
-    available: boolean
-    binary: string
-    version: string | null
-    capabilities: import("@yaade/agents").AgentDriverCapabilities
-    error: string | null
-  }>>
+  listProviders(refresh?: boolean): Promise<
+    Array<{
+      provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+      available: boolean;
+      binary: string;
+      version: string | null;
+      capabilities: import("@yaade/agents").AgentDriverCapabilities;
+      error: string | null;
+    }>
+  >;
   launch(req: {
-    launchRequestId: string
-    provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
-    projectId: string
-    workspaceId: string
-    checkoutKey?: string
-    checkoutPath?: string
-    title?: string
-    args?: string[]
+    launchRequestId: string;
+    provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+    projectId: string;
+    workspaceId: string;
+    checkoutKey?: string;
+    checkoutPath?: string;
+    title?: string;
+    args?: string[];
   }): Promise<{
-    run: AgentRunInfo
-    pty: { id: string; title: string | null } | null
-  }>
-  stop(req: { runId: string; generation?: number }): Promise<AgentRunInfo | null>
-  close(req: { runId: string; generation?: number }): Promise<AgentRunInfo | null>
-  listLive(projectId?: string): Promise<AgentRunInfo[]>
-  listProject(projectId: string): Promise<AgentRunInfo[]>
-  get(runId: string): Promise<AgentRunInfo | null>
-  getTranscript(runId: string): Promise<{ output: string; truncated: boolean } | null>
-  listActivity(opts?: { limit?: number; cursor?: string; projectId?: string }): Promise<{
-    runs: AgentRunInfo[]
-    nextCursor: string | null
-  }>
+    run: AgentRunInfo;
+    pty: { id: string; title: string | null } | null;
+  }>;
+  stop(req: {
+    runId: string;
+    generation?: number;
+  }): Promise<AgentRunInfo | null>;
+  close(req: {
+    runId: string;
+    generation?: number;
+  }): Promise<AgentRunInfo | null>;
+  listLive(projectId?: string): Promise<AgentRunInfo[]>;
+  listProject(projectId: string): Promise<AgentRunInfo[]>;
+  get(runId: string): Promise<AgentRunInfo | null>;
+  getTranscript(
+    runId: string,
+  ): Promise<{ output: string; truncated: boolean } | null>;
+  listActivity(opts?: {
+    limit?: number;
+    cursor?: string;
+    projectId?: string;
+  }): Promise<{
+    runs: AgentRunInfo[];
+    nextCursor: string | null;
+  }>;
   getSnapshot(
     sessionId: string,
-  ): Promise<import("@yaade/agents").AgentSessionSnapshot | null>
+  ): Promise<import("@yaade/agents").AgentSessionSnapshot | null>;
   listEvents(
     sessionId: string,
     opts?: { limit?: number; before?: string },
-  ): Promise<import("@yaade/agents").AgentEvent[]>
+  ): Promise<import("@yaade/agents").AgentEvent[]>;
   ingestNative(req: {
-    provider: string
-    sessionId: string
-    payload: unknown
-    processId?: string
-    projectId?: string
-    focusedSessionId?: string | null
-    appFocused?: boolean
+    provider: string;
+    sessionId: string;
+    payload: unknown;
+    processId?: string;
+    projectId?: string;
+    focusedSessionId?: string | null;
+    appFocused?: boolean;
   }): Promise<{
-    eventCount: number
-    snapshot: import("@yaade/agents").AgentSessionSnapshot | null
-    nativeSessionId: string | null
-  }>
+    eventCount: number;
+    snapshot: import("@yaade/agents").AgentSessionSnapshot | null;
+    nativeSessionId: string | null;
+  }>;
   installProjectHooks(req: {
-    provider: string
-    projectRoot: string
-  }): Promise<{ written: string[] }>
+    provider: string;
+    projectRoot: string;
+  }): Promise<{ written: string[] }>;
   onEvent(
     callback: (event: {
-      type: "agents.snapshot" | "agents.event" | "agents.run"
-      sessionId: string
-      snapshot?: import("@yaade/agents").AgentSessionSnapshot
-      nativeSessionId?: string
-      event?: import("@yaade/agents").AgentEvent
-      kind?: "run.created" | "run.updated" | "run.ended"
-      run?: AgentRunInfo
+      type: "agents.snapshot" | "agents.event" | "agents.run";
+      sessionId: string;
+      snapshot?: import("@yaade/agents").AgentSessionSnapshot;
+      nativeSessionId?: string;
+      event?: import("@yaade/agents").AgentEvent;
+      kind?: "run.created" | "run.updated" | "run.ended";
+      run?: AgentRunInfo;
     }) => void,
-  ): () => void
-}
-
+  ): () => void;
+};
 
 export type AgentRunInfo = {
-  runId: string
-  launchRequestId: string
-  generation: number
-  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi"
-  projectId: string
-  workspaceId: string
-  checkoutKey: string
-  checkoutPath: string
-  title: string
-  ptyId: string | null
-  nativeSessionId: string | null
-  processState: "reserved" | "starting" | "running" | "exited" | "disconnected"
-  activityState: "starting" | "working" | "running_tool" | "waiting_for_permission" | "waiting_for_user" | "idle" | "failed"
-  telemetryState: "connecting" | "connected" | "degraded" | "process_only"
-  createdAt: string
-  startedAt: string | null
-  lastActivityAt: string | null
-  endedAt: string | null
-  exitCode: number | null
-  endReason: string | null
-  telemetryError: string | null
-  revision: number
-}
+  runId: string;
+  launchRequestId: string;
+  generation: number;
+  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+  projectId: string;
+  workspaceId: string;
+  checkoutKey: string;
+  checkoutPath: string;
+  title: string;
+  ptyId: string | null;
+  nativeSessionId: string | null;
+  processState: "reserved" | "starting" | "running" | "exited" | "disconnected";
+  activityState:
+    | "starting"
+    | "working"
+    | "running_tool"
+    | "waiting_for_permission"
+    | "waiting_for_user"
+    | "idle"
+    | "failed";
+  telemetryState: "connecting" | "connected" | "degraded" | "process_only";
+  createdAt: string;
+  startedAt: string | null;
+  lastActivityAt: string | null;
+  endedAt: string | null;
+  exitCode: number | null;
+  endReason: string | null;
+  telemetryError: string | null;
+  revision: number;
+};
 
 export type YaadeHostAPI = {
-  fs: JetElectronFS
-  search: JetElectronSearch
-  lsp: JetElectronLSP
-  terminal?: JetElectronTerminal
-  tasks?: JetElectronTasks
-  workspace?: JetElectronWorkspace
-  git?: JetElectronGit
-  shell?: JetElectronShell
-  notifications?: JetElectronNotifications
-  agents?: JetElectronAgents
-  getLaunchConfig?(): Promise<LaunchConfig | null>
-  getHomeDir?(): Promise<string>
-  loadGlobalYaadercScanRoots?(): Promise<string[]>
-  onLaunch?(cb: (config: LaunchConfig) => void): () => void
-  recordStartup?(record: Record<string, unknown>): Promise<string>
-  getStartupLogPath?(): Promise<string>
-}
+  fs: JetElectronFS;
+  search: JetElectronSearch;
+  lsp: JetElectronLSP;
+  terminal?: JetElectronTerminal;
+  tasks?: JetElectronTasks;
+  workspace?: JetElectronWorkspace;
+  git?: JetElectronGit;
+  shell?: JetElectronShell;
+  notifications?: JetElectronNotifications;
+  agents?: JetElectronAgents;
+  tools?: JetElectronTools;
+  getLaunchConfig?(): Promise<LaunchConfig | null>;
+  getHomeDir?(): Promise<string>;
+  loadGlobalYaadercScanRoots?(): Promise<string[]>;
+  onLaunch?(cb: (config: LaunchConfig) => void): () => void;
+  recordStartup?(record: Record<string, unknown>): Promise<string>;
+  getStartupLogPath?(): Promise<string>;
+};
 
 declare global {
   interface Window {
-    yaade?: YaadeHostAPI
+    yaade?: YaadeHostAPI;
   }
 }
 
-export type PanelViewKind = PanelView["kind"]
+export type PanelViewKind = PanelView["kind"];

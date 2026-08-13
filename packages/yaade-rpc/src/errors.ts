@@ -1,4 +1,5 @@
 import { Data } from "effect"
+import type { ToolSessionError } from "./tool-session.js"
 
 /** Host / shared wire error codes (stable JSON). */
 export type HostErrorCode =
@@ -117,6 +118,7 @@ export type HostRpcError =
   | InvalidRpcPayloadError
   | HostDisconnectedError
   | GitCommandFailedError
+  | ToolSessionError
 
 export function hostErrorHttpStatus(error: HostRpcError): number {
   switch (error._tag) {
@@ -148,7 +150,27 @@ export function hostErrorWire(error: HostRpcError): {
           expectedVersion: error.expectedVersion,
           actualVersion: error.actualVersion,
         }
-      : {}
+      : error._tag === "ProjectTargetUnavailable"
+        ? { projectPath: error.projectPath, toolError: error._tag }
+        : error._tag === "PathOutsideRoots"
+          ? { ...(error.path ? { path: error.path } : {}) }
+          : error._tag === "ToolUseConflict"
+          ? {
+              toolUseId: error.toolUseId,
+              expectedRevision: error.expectedRevision,
+              actualRevision: error.actualRevision,
+            }
+          : error._tag === "SessionNotFound"
+            ? { sessionId: error.sessionId }
+            : error._tag === "ToolUseNotFound"
+            ? { toolUseId: error.toolUseId }
+            : error._tag === "InvalidToolInput" ||
+                error._tag === "InvalidToolCommand" ||
+                error._tag === "CheckoutResolutionFailed"
+              ? { toolError: error._tag }
+              : error._tag === "ToolRuntimeFailure"
+                ? { toolError: error._tag, toolUseId: error.toolUseId }
+                : {}
   return {
     code: error.code,
     message: error.message,

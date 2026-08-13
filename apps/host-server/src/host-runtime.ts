@@ -23,7 +23,9 @@ import {
 } from "./agents/index.js"
 import type { ProjectDatabase } from "./persistence.js"
 import { TerminalInstanceService } from "./terminal-instances.js"
+import { ToolSessionStore } from "./tool-session-store.js"
 import { WorkspaceHost } from "./workspace.js"
+import { ToolService } from "./tools/service.js"
 
 export type HostRuntime = {
   config: HostConfig
@@ -40,6 +42,8 @@ export type HostRuntime = {
   agents: AgentTelemetryService
   agentRuns: AgentRunService
   terminalInstances: TerminalInstanceService
+  toolSessions: ToolSessionStore
+  toolService: ToolService | null
   hookQueueTimer: ReturnType<typeof setInterval>
 }
 
@@ -102,6 +106,8 @@ export function createRuntime(
     events.emit("terminal-instances:event", [streamEvent])
   })
   terminalInstances = processInstances
+  // Construct after terminal persistence so migration 15 can correlate existing PTYs.
+  const toolSessions = new ToolSessionStore(db.raw(), os.hostname())
 
   terminal.setEmit((channel, args) => {
     events.emit(channel, args)
@@ -126,6 +132,7 @@ export function createRuntime(
         replay?.truncated ?? false,
       )
       handleTerminalExit(notifications, agents, processInstances, agentRuns, ptyId, exitCode)
+      runtime.toolService?.onProcessExit(ptyId)
     }
   })
 
@@ -150,8 +157,12 @@ export function createRuntime(
     agents,
     agentRuns: runService,
     terminalInstances: processInstances,
+    toolSessions,
+    toolService: null,
     hookQueueTimer,
   }
+  runtime.toolService = new ToolService(runtime)
+  runtime.toolService.reconcile()
   try {
     db.addProject(config.launchConfig.workspacePath)
   } catch {
@@ -318,5 +329,6 @@ export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
   runtime.events.emit("server:shuttingDown", [])
   runtime.workspace.stopAll()
   clearInterval(runtime.hookQueueTimer)
+  await runtime.toolService?.close()
   runtime.terminal.stopAll()
 }

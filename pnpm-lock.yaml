@@ -171,6 +171,9 @@ importers:
       '@effect/rpc':
         specifier: 0.73.0
         version: 0.73.0(@effect/platform@0.97.1(effect@3.22.1))(effect@3.22.1)
+      '@tanstack/react-virtual':
+        specifier: ^3.13.6
+        version: 3.14.5(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
       '@yaade/agents':
         specifier: workspace:*
         version: link:../yaade-agents

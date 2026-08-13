@@ -48,6 +48,27 @@ export const HOST_CHANNELS = new Set([
   "search:trackFileAccess",
   "search:isScanReady",
   "search:isSupported",
+  "tools:listSessions",
+  "tools:createSession",
+  "tools:renameSession",
+  "tools:reorderSessions",
+  "tools:archiveSession",
+  "tools:restoreSession",
+  "tools:getSession",
+  "tools:createUse",
+  "tools:updateUseInput",
+  "tools:updateUseContext",
+  "tools:reorderUses",
+  "tools:selectUse",
+  "tools:getUse",
+  "tools:listSearchResults",
+  "tools:loadMore",
+  "tools:cancelUse",
+  "tools:restartUse",
+  "tools:archiveUse",
+  "tools:renameUse",
+  "tools:listProjects",
+  "tools:listCheckoutTargets",
   "workspace:activate",
   "workspace:deactivate",
   "lsp:start",
@@ -75,7 +96,7 @@ export const HOST_CHANNELS = new Set([
   "yaade:getLaunchConfig",
   "yaade:getHomeDir",
   "yaade:loadGlobalYaadercScanRoots",
-])
+]);
 
 /** @deprecated Use HOST_CHANNELS */
-export const RUST_HOST_CHANNELS = HOST_CHANNELS
+export const RUST_HOST_CHANNELS = HOST_CHANNELS;

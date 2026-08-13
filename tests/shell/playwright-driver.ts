@@ -23,6 +23,10 @@ class PlaywrightLocator implements ShellLocator {
     return this.pw.first().fill(value)
   }
 
+  selectOption(options: { index?: number; value?: string }): Promise<void> {
+    return this.pw.first().selectOption(options).then(() => undefined)
+  }
+
   press(key: string): Promise<void> {
     return this.pw.first().press(key)
   }

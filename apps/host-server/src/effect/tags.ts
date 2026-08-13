@@ -6,6 +6,8 @@ import type { EventHub } from "../events.js"
 import type { HostRuntime } from "../host-runtime.js"
 import type { NotificationService } from "../notifications/index.js"
 import type { ProjectDatabase } from "../persistence.js"
+import type { ToolSessionStore } from "../tool-session-store.js"
+import type { ToolService } from "../tools/service.js"
 import type { WorkspaceHost } from "../workspace.js"
 
 export class HostConfigTag extends Context.Tag("yaade/HostConfig")<
@@ -35,6 +37,16 @@ export { GitServiceTag, type GitService } from "./git.js"
 export class TerminalHostTag extends Context.Tag("yaade/TerminalHost")<
   TerminalHostTag,
   TerminalHost
+>() {}
+
+export class ToolServiceTag extends Context.Tag("yaade/ToolService")<
+  ToolServiceTag,
+  ToolService
+>() {}
+
+export class ToolSessionStoreTag extends Context.Tag("yaade/ToolSessionStore")<
+  ToolSessionStoreTag,
+  ToolSessionStore
 >() {}
 
 export class WorkspaceHostTag extends Context.Tag("yaade/WorkspaceHost")<

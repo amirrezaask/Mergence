@@ -55,6 +55,7 @@ export type ShellDriver = {
 export type ShellLocator = {
   click(options?: { timeout?: number; button?: "left" | "right" | "middle" }): Promise<void>
   fill(value: string): Promise<void>
+  selectOption(options: { index?: number; value?: string }): Promise<void>
   press(key: string): Promise<void>
   focus(): Promise<void>
   hover(): Promise<void>

@@ -57,6 +57,7 @@ import {
   projectRouteUrl,
 } from "./url-workspace.js"
 import { openServerProject } from "./server-projects.js"
+import { ToolSessionApp } from "./tools/ToolSessionApp.js"
 
 type HqCounts = { projects: number; agents: number; attention: number; unread: number }
 type PendingAgentLaunch = HqAgentLaunchIntent
@@ -134,6 +135,12 @@ function basicAgentBridge(input: {
   listProjectSessions?: YaadeAgentAPI["listProjectSessions"]
   openProjectSession?: YaadeAgentAPI["openProjectSession"]
   backToProject?: YaadeAgentAPI["backToProject"]
+  createSession?: YaadeAgentAPI["createSession"]
+  selectSession?: YaadeAgentAPI["selectSession"]
+  createToolUse?: YaadeAgentAPI["createToolUse"]
+  selectToolUse?: YaadeAgentAPI["selectToolUse"]
+  closeToolUse?: YaadeAgentAPI["closeToolUse"]
+  closeSession?: YaadeAgentAPI["closeSession"]
 }): YaadeAgentAPI {
   const workspace = input.workspace
   return {
@@ -199,10 +206,65 @@ function basicAgentBridge(input: {
     listProjectSessions: input.listProjectSessions,
     openProjectSession: input.openProjectSession,
     backToProject: input.backToProject,
+    createSession: input.createSession,
+    selectSession: input.selectSession,
+    createToolUse: input.createToolUse,
+    selectToolUse: input.selectToolUse,
+    closeToolUse: input.closeToolUse,
+    closeSession: input.closeSession,
   }
 }
 
+function shouldRewriteLegacyProjectPath(pathname: string): boolean {
+  if (pathname === "/" || pathname.startsWith("/_project/") || isHqPathname(pathname)) return false
+  if (pathname.startsWith("/api") || pathname.startsWith("/ws") || pathname.startsWith("/health")) return false
+  if (pathname.startsWith("/@") || pathname.startsWith("/node_modules") || pathname.startsWith("/src") || pathname.startsWith("/assets")) {
+    return false
+  }
+  // Home-relative project URLs from the pre-Session shell rewrite into the
+  // global Session route; migrated ToolUses are restored by host hydrate.
+  return pathname.startsWith("/")
+}
+
 export function AppRoot() {
+  const [route, setRoute] = useState(() => ({ pathname: location.pathname }))
+
+  useEffect(() => {
+    if (!shouldRewriteLegacyProjectPath(location.pathname)) return
+    const search = location.search
+    const next = search ? `/${search}` : "/"
+    history.replaceState(null, "", next)
+    setRoute({ pathname: "/" })
+  }, [])
+
+  useEffect(() => {
+    const onRoute = () => setRoute({ pathname: location.pathname })
+    window.addEventListener("popstate", onRoute)
+    window.addEventListener("yaade:project-route", onRoute)
+    return () => {
+      window.removeEventListener("popstate", onRoute)
+      window.removeEventListener("yaade:project-route", onRoute)
+    }
+  }, [])
+
+  useEffect(() => {
+    if (route.pathname !== "/") return
+    // The global Session shell is not project-scoped, but keep one legacy
+    // workspace marker so existing browser harness bootstrapping can observe
+    // readiness while the compatibility bridge is still mounted.
+    window.__yaadeAgent = basicAgentBridge({ route: "hq", workspace: "/" })
+    return () => {
+      if (window.__yaadeAgent?.getState().route === "hq") delete window.__yaadeAgent
+    }
+  }, [route.pathname])
+
+  if (route.pathname === "/" || shouldRewriteLegacyProjectPath(route.pathname)) {
+    return <ToolSessionApp />
+  }
+  return <LegacyAppRoot />
+}
+
+function LegacyAppRoot() {
   const [boot, setBoot] = useState<BootState>({ status: "loading" })
   const [routeEpoch, setRouteEpoch] = useState(0)
   const [hqCounts, setHqCounts] = useState<HqCounts>({

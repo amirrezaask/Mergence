@@ -28,3 +28,27 @@ test("generic host invokes preserve structured conflict codes", async () => {
     globalThis.fetch = originalFetch
   }
 })
+
+test("tool RPC errors decode their typed details", async () => {
+  const originalFetch = globalThis.fetch
+  globalThis.fetch = async () => new Response(JSON.stringify({
+    error: {
+      code: "CONFLICT",
+      message: "stale tool use",
+      details: { toolUseId: "use-a", expectedRevision: 2, actualRevision: 3 },
+    },
+  }), { status: 409, headers: { "content-type": "application/json" } })
+  try {
+    const error = await Effect.runPromise(
+      Effect.flip(invokeHostRpc("test-client", "tools:cancelUse", ["use-a", 2])),
+    )
+    assert.equal(error._tag, "ToolUseConflict")
+    if (error._tag === "ToolUseConflict") {
+      assert.equal(error.toolUseId, "use-a")
+      assert.equal(error.expectedRevision, 2)
+      assert.equal(error.actualRevision, 3)
+    }
+  } finally {
+    globalThis.fetch = originalFetch
+  }
+})

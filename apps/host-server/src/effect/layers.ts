@@ -19,13 +19,15 @@ import {
   NotificationServiceTag,
   PerfHostTag,
   ProjectDatabaseTag,
+  ToolSessionStoreTag,
+  ToolServiceTag,
   TerminalHostTag,
   WorkspaceHostTag,
 } from "./tags.js"
 
 const EVENT_HUB_CAPACITY = 1024
 
-export type HostLayerServices = HostRuntimeTag | LspHostTag | GitServiceTag
+export type HostLayerServices = HostRuntimeTag | LspHostTag | ToolSessionStoreTag | ToolServiceTag | GitServiceTag
 
 /** Open SQLite project DB for the lifetime of an Effect Scope. */
 export function makeProjectDatabaseScoped(
@@ -100,8 +102,24 @@ export function makeHostLayers(
     LspHostTag,
     Effect.map(HostRuntimeTag, runtime => runtime.lsp),
   )
-  const runtimeWithLsp = Layer.provideMerge(runtimeLayer)(lspFromRuntime)
-  return Layer.mergeAll(runtimeWithLsp, GitServiceLive)
+  const toolsFromRuntime = Layer.effect(
+    ToolSessionStoreTag,
+    Effect.map(HostRuntimeTag, runtime => runtime.toolSessions),
+  )
+  const toolServiceFromRuntime = Layer.effect(
+    ToolServiceTag,
+    Effect.flatMap(HostRuntimeTag, runtime =>
+      runtime.toolService
+        ? Effect.succeed(runtime.toolService)
+        : Effect.die("ToolService was not initialized"),
+    ),
+  )
+  const runtimeWithServices = Layer.provideMerge(
+    Layer.provideMerge(
+      Layer.provideMerge(runtimeLayer)(lspFromRuntime),
+    )(toolsFromRuntime),
+  )(toolServiceFromRuntime)
+  return Layer.mergeAll(runtimeWithServices, GitServiceLive)
 }
 
 /** Layer from an existing HostRuntime (e.g. tests — caller owns terminal/db lifetime). */
@@ -112,6 +130,11 @@ export function hostRuntimeLayer(runtime: HostRuntime): Layer.Layer<HostLayerSer
     Layer.succeed(ProjectDatabaseTag, runtime.db),
     Layer.succeed(NotificationServiceTag, runtime.notifications),
     Layer.succeed(TerminalHostTag, runtime.terminal),
+    Layer.succeed(ToolSessionStoreTag, runtime.toolSessions),
+    Layer.succeed(
+      ToolServiceTag,
+      runtime.toolService ?? (() => { throw new Error("ToolService is not initialized") })(),
+    ),
     Layer.succeed(WorkspaceHostTag, runtime.workspace),
     Layer.succeed(PerfHostTag, runtime.perf),
     Layer.succeed(LspHostTag, runtime.lsp),
