@@ -25,11 +25,6 @@ const FONT_SIZE_STEP = 2
 const DEFAULT_SIDEBAR_WIDTH = 300
 const MIN_SIDEBAR_WIDTH = 240
 const MAX_SIDEBAR_WIDTH = 480
-const LEGACY_LIGHT_THEME_IDS = new Set(["tokyonight-day"])
-const LEGACY_DARK_THEME_IDS = new Set([
-  "tokyonight-night",
-  "tokyonight-storm",
-])
 
 export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   themeId: defaultThemeId,
@@ -61,8 +56,6 @@ export function normalizeThemeId(
   fallbackScheme: ColorScheme = "dark",
 ): string {
   if (typeof value === "string") {
-    if (LEGACY_LIGHT_THEME_IDS.has(value)) return defaultThemeIdForScheme("light")
-    if (LEGACY_DARK_THEME_IDS.has(value)) return defaultThemeIdForScheme("dark")
     const resolved = getThemeById(value)
     if (resolved.id === value) return resolved.id
   }

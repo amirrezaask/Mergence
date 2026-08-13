@@ -37,6 +37,7 @@ export function MuxLspHost(props: {
   onReady: (lifecycle: MuxLspController | null) => void
   applyWorkspaceEditTransaction?: JetLspWorkspaceDeps["applyWorkspaceEditTransaction"]
   processCwdUri?: string
+  onStatusChange?: (status: LspStatus) => void
 }) {
   const {
     resolveLspClient,
@@ -51,6 +52,10 @@ export function MuxLspHost(props: {
   })
   const statusRef = useRef(lspStatus)
   statusRef.current = lspStatus
+
+  useEffect(() => {
+    props.onStatusChange?.(lspStatus)
+  }, [lspStatus, props.onStatusChange])
 
   const restart = useCallback(
     async (uri: string) => {

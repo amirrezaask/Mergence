@@ -40,6 +40,7 @@ import {
   EmptyTitle,
 } from "@yaade/ui/primitives";
 import { WhichKeyPanel } from "@yaade/ui";
+import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js";
 import { createToolClient, type ToolClient } from "./tool-client.js";
@@ -53,12 +54,15 @@ import { type AgentProvider } from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
+import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import {
   TOOL_SESSION_DIRECT_BINDINGS,
   TOOL_SESSION_PREFIX,
   TOOL_SESSION_PREFIX_BINDINGS,
 } from "./tool-session-keymap.js";
+
+const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
 
@@ -110,7 +114,13 @@ function markPerformance(name: string): void {
 }
 
 export function ToolSessionApp() {
-  const { activeTheme } = useAppearanceSettings();
+  const {
+    activeTheme,
+    appearanceSettings,
+    fontSize,
+    resetAppearanceSettings,
+    setAppearanceSettings,
+  } = useAppearanceSettings();
   const [client] = useState<ToolClient>(() => createToolClient());
   const snapshot = useSyncExternalStore(
     client.store.subscribe,
@@ -121,6 +131,8 @@ export function ToolSessionApp() {
   const [closeChoice, setCloseChoice] = useState<CloseChoice>();
   const [actionError, setActionError] = useState<string | undefined>();
   const [switcherOpen, setSwitcherOpen] = useState(false);
+  const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [archivedSessions, setArchivedSessions] = useState<
     readonly import("@yaade/rpc").AppSession[]
   >([]);
@@ -268,7 +280,10 @@ export function ToolSessionApp() {
   );
 
   const createTool = useCallback(
-    async (nextKind: ToolKind = "terminal") => {
+    async (
+      nextKind: ToolKind = "terminal",
+      requestedProvider?: AgentProvider,
+    ) => {
       if (!activeSession) return;
       setActionError(undefined);
       try {
@@ -285,9 +300,17 @@ export function ToolSessionApp() {
         let provider: AgentProvider = "codex";
         if (nextKind === "agent") {
           const list = await window.yaade?.agents?.listProviders?.();
-          const preferred = list?.find((item) => item.available);
+          const preferred = requestedProvider
+            ? list?.find(
+                (item) => item.provider === requestedProvider && item.available,
+              )
+            : list?.find((item) => item.available);
           if (!preferred || !isAgentProvider(preferred.provider)) {
-            setActionError("No agent CLI is available on this host.");
+            setActionError(
+              requestedProvider
+                ? `${requestedProvider} is not available on this host.`
+                : "No agent CLI is available on this host.",
+            );
             return;
           }
           provider = preferred.provider;
@@ -304,7 +327,9 @@ export function ToolSessionApp() {
                 }
               : nextKind === "git"
                 ? { _tag: "GitToolInput", kind: "git" }
-                : { _tag: "TerminalToolInput", kind: "terminal" };
+                : nextKind === "editor"
+                  ? { _tag: "EditorToolInput", kind: "editor" }
+                  : { _tag: "TerminalToolInput", kind: "terminal" };
         const command: CreateToolUse = {
           _tag: "CreateToolUse",
           sessionId: activeSession.id,
@@ -546,7 +571,43 @@ export function ToolSessionApp() {
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (switcherOpen || closeChoice) return;
+      if (switcherOpen || toolUseSwitcherOpen || settingsOpen || closeChoice) return;
+      const primary = event.metaKey || event.ctrlKey;
+      if (
+        primary &&
+        !event.shiftKey &&
+        !event.altKey &&
+        (event.key.toLowerCase() === "k" || event.code === "KeyK")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        setToolUseSwitcherOpen(true);
+        return;
+      }
+      if (
+        primary &&
+        !event.shiftKey &&
+        !event.altKey &&
+        (selected?.kind === "search" || selected?.kind === "editor") &&
+        (event.key.toLowerCase() === "p" || event.code === "KeyP")
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        window.dispatchEvent(new Event("yaade:quick-open"));
+        return;
+      }
+      if (
+        primary &&
+        !event.shiftKey &&
+        !event.altKey &&
+        event.key === ","
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        setSettingsOpen(true);
+        return;
+      }
+
       const target = event.target as HTMLElement | null;
       const inEditable = Boolean(
         target?.closest("input, textarea, [contenteditable=true]"),
@@ -579,16 +640,6 @@ export function ToolSessionApp() {
         void refreshArchived().then(() => setSwitcherOpen(true));
         return;
       }
-      if (
-        !prefixPendingRef.current &&
-        event.key === "," &&
-        (event.metaKey || event.ctrlKey)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        return;
-      }
-
       if (
         !prefixPendingRef.current &&
         event.ctrlKey &&
@@ -655,6 +706,7 @@ export function ToolSessionApp() {
         requestCloseSession(activeSession.id);
       if (binding.command === "ui.showCommandPalette")
         void refreshArchived().then(() => setSwitcherOpen(true));
+      if (binding.command === "settings.show") setSettingsOpen(true);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -668,8 +720,10 @@ export function ToolSessionApp() {
     runToolAction,
     selectTool,
     selected,
+    settingsOpen,
     snapshot.usesById,
     switcherOpen,
+    toolUseSwitcherOpen,
     useIds,
   ]);
 
@@ -742,6 +796,7 @@ export function ToolSessionApp() {
         activeSessionId={snapshot.activeSessionId}
         onSelect={selectSession}
         onClose={requestCloseSession}
+        onOpenSettings={() => setSettingsOpen(true)}
         onCreate={() => void createSession()}
         onRename={(id, title) => void renameSession(id, title)}
         onReorder={(ids) => void reorderSessions(ids)}
@@ -776,6 +831,7 @@ export function ToolSessionApp() {
                 viewportIds.includes(use.id),
               )}
               theme={activeTheme}
+              fontSize={fontSize}
               projects={projects}
               results={snapshot.searchResultsByUseId.get(selected.id) ?? []}
               onContextChange={updateToolContext}
@@ -838,6 +894,7 @@ export function ToolSessionApp() {
         onSelect={selectTool}
         onContextChange={updateToolContext}
         onProviderChange={updateToolProvider}
+        onAddAgent={(provider) => void createTool("agent", provider)}
         onAddKind={(kind) => void createTool(kind)}
         onClose={(use) => void runToolAction("archive", use)}
         onRename={(use, title) => void renameToolUse(use, title)}
@@ -846,6 +903,15 @@ export function ToolSessionApp() {
       {prefixPending ? (
         <WhichKeyPanel prefix={TOOL_SESSION_PREFIX} entries={whichKeyEntries} />
       ) : null}
+      <ToolUseSwitcher
+        open={toolUseSwitcherOpen}
+        onOpenChange={setToolUseSwitcherOpen}
+        sessionsById={snapshot.sessionsById}
+        usesById={snapshot.usesById}
+        activeToolUseId={snapshot.activeToolUseId}
+        runtimeTitles={runtimeTitles}
+        onSelect={selectTool}
+      />
       <SessionSwitcher
         open={switcherOpen}
         onOpenChange={setSwitcherOpen}
@@ -855,6 +921,18 @@ export function ToolSessionApp() {
         onSelect={(session) => selectSession(session.id)}
         onRestore={(session) => void restoreSession(session)}
       />
+      {settingsOpen ? (
+        <Suspense fallback={null}>
+          <SettingsOverlay
+            open
+            onOpenChange={setSettingsOpen}
+            settings={appearanceSettings}
+            onSettingsChange={setAppearanceSettings}
+            themes={bundledThemeList}
+            onReset={resetAppearanceSettings}
+          />
+        </Suspense>
+      ) : null}
       <CloseSessionDialog
         sessionId={closeChoice?.sessionId}
         onCancel={() => setCloseChoice(undefined)}
@@ -898,6 +976,7 @@ function ToolUseViewport(props: {
   readonly selected: ToolUse;
   readonly processUses: readonly ToolUse[];
   readonly theme: YaadeTheme;
+  readonly fontSize: number;
   readonly projects: readonly ProjectTarget[];
   readonly results: readonly import("@yaade/rpc").ProjectSearchResult[];
   readonly onAction: (
@@ -924,6 +1003,7 @@ function ToolUseViewport(props: {
       key={use.id}
       use={use}
       theme={props.theme}
+      fontSize={props.fontSize}
       projects={props.projects}
       results={use.id === props.selected.id ? props.results : []}
       onContextChange={(project, checkout) =>
@@ -988,6 +1068,7 @@ function rendererFor(
 function SelectedToolUse(props: {
   use: ToolUse;
   theme: YaadeTheme;
+  fontSize: number;
   projects: readonly ProjectTarget[];
   results: readonly import("@yaade/rpc").ProjectSearchResult[];
   visible?: boolean;
@@ -1019,6 +1100,7 @@ function SelectedToolUse(props: {
       <Renderer
         use={use}
         theme={props.theme}
+        fontSize={props.fontSize}
         toolbar={null}
         projects={props.projects}
         onContextChange={props.onContextChange}

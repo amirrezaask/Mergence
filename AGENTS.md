@@ -47,7 +47,7 @@ The app pivoted from Mission Control → bare mux → project/session IDE →
 | `packages/yaade-app/src/project/` | Legacy project landing — kept for `/_project` compat; do not extend. |
 | `packages/yaade-app/src/mux/MuxApp.tsx` | Legacy session workspace — kept for `/_project` compat; do not extend. |
 | `packages/yaade-app/src/App.tsx` (~3.3k lines) | **Legacy Mission Control. Not mounted.** Kept for reference; do not extend. |
-| `tests/electron/tool-sessions.electron.spec.ts` | Required Session/ToolUse parity suite (18 scenarios). |
+| `tests/electron/tool-sessions.electron.spec.ts` | Required Session/ToolUse parity suite (19 scenarios). |
 | `NEXT.md` | Migration plan; cutover deletes of project/mux wait until remaining legacy specs are retired. |
 
 When a task touches something in the "legacy / dead" rows, ask before

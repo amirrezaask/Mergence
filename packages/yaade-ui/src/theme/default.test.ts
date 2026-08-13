@@ -68,10 +68,20 @@ const themeIds = [
   "catppuccin-macchiato",
   "catppuccin-frappe",
   "catppuccin-latte",
+  "tokyonight-night",
+  "tokyonight-storm",
+  "tokyonight-moon",
+  "tokyonight-day",
+  "rose-pine",
+  "rose-pine-moon",
+  "rose-pine-dawn",
+  "ayu-dark",
+  "ayu-mirage",
+  "ayu-light",
 ]
 
 describe("bundled Yaade themes", () => {
-  it("registers Default and Catppuccin themes", () => {
+  it("registers every bundled palette flavor", () => {
     assert.equal(defaultThemeId, "default-dark")
     assert.deepEqual(
       bundledThemeList.map(theme => theme.id),
@@ -84,7 +94,7 @@ describe("bundled Yaade themes", () => {
     assert.equal(getThemeById(null).id, "default-dark")
     assert.equal(getThemeById("missing").id, "default-dark")
     assert.equal(getThemeById("glass-blue").id, "default-dark")
-    assert.equal(getThemeById("ayu-dark").id, "default-dark")
+    assert.equal(getThemeById("ayu-dark").id, "ayu-dark")
   })
 
   it("maps color schemes to matching Default themes", () => {
@@ -94,7 +104,38 @@ describe("bundled Yaade themes", () => {
     assert.equal(siblingThemeForScheme("default-light", "dark").id, "default-dark")
     assert.equal(siblingThemeForScheme("catppuccin-mocha", "light").id, "catppuccin-latte")
     assert.equal(siblingThemeForScheme("catppuccin-latte", "dark").id, "catppuccin-mocha")
-    assert.equal(siblingThemeForScheme("tokyonight-night", "light").id, "default-light")
+    assert.equal(siblingThemeForScheme("tokyonight-night", "light").id, "tokyonight-day")
+    assert.equal(siblingThemeForScheme("rose-pine", "light").id, "rose-pine-dawn")
+    assert.equal(siblingThemeForScheme("ayu-dark", "light").id, "ayu-light")
+  })
+
+  it("uses official palette values across shell, Git, Monaco, and terminal tokens", () => {
+    const catppuccin = getThemeById("catppuccin-mocha")
+    assert.equal(catppuccin.tokens.background, "#1e1e2e")
+    assert.equal(catppuccin.highlights.keyword, "#cba6f7")
+    assert.equal(catppuccin.terminal?.cursor, "#f5e0dc")
+    assert.equal(catppuccin.terminalAnsi?.red, "#f38ba8")
+
+    const tokyo = getThemeById("tokyonight-night")
+    assert.equal(tokyo.tokens.background, "#1a1b26")
+    assert.equal(tokyo.tokens.gitAdded, "#41a6b5")
+    assert.equal(tokyo.highlights.function, "#7aa2f7")
+    assert.equal(tokyo.terminal?.background, "#16161e")
+    assert.equal(tokyo.terminalAnsi?.cyan, "#7dcfff")
+
+    const rosePine = getThemeById("rose-pine")
+    assert.equal(rosePine.tokens.background, "#191724")
+    assert.equal(rosePine.tokens.gitDeleted, "#eb6f92")
+    assert.equal(rosePine.highlights.string, "#f6c177")
+    assert.equal(rosePine.terminal?.background, "#191724")
+    assert.equal(rosePine.terminalAnsi?.magenta, "#c4a7e7")
+
+    const ayu = getThemeById("ayu-mirage")
+    assert.equal(ayu.tokens.background, "#242936")
+    assert.equal(ayu.tokens.gitModified, "#73d0ff")
+    assert.equal(ayu.highlights.keyword, "#ffa659")
+    assert.equal(ayu.terminal?.background, "#1f2430")
+    assert.equal(ayu.terminalAnsi?.yellow, "#ffcd66")
   })
 
   it("provides shell, editor, terminal, source, and swatch metadata for every theme", () => {

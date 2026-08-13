@@ -17,12 +17,44 @@ export type WebSocketTransports = {
   writer: MessageWriter
 }
 
-export async function createWebSocketTransports(transportUrl: string): Promise<WebSocketTransports> {
+export const LSP_WEBSOCKET_CONNECT_TIMEOUT_MS = 10_000
+
+export async function createWebSocketTransports(
+  transportUrl: string,
+  timeoutMs = LSP_WEBSOCKET_CONNECT_TIMEOUT_MS,
+): Promise<WebSocketTransports> {
   const url = resolveLspWebSocketUrl(transportUrl)
   const webSocket = await new Promise<WebSocket>((resolve, reject) => {
     const socket = new WebSocket(url)
-    socket.onopen = () => resolve(socket)
-    socket.onerror = () => reject(new Error(`WebSocket failed: ${url}`))
+    let settled = false
+    const finish = (result: { socket: WebSocket } | { error: Error }) => {
+      if (settled) return
+      settled = true
+      window.clearTimeout(timer)
+      socket.removeEventListener("open", onOpen)
+      socket.removeEventListener("error", onError)
+      socket.removeEventListener("close", onClose)
+      if ("error" in result) {
+        try {
+          socket.close()
+        } catch {
+          /* already closed */
+        }
+        reject(result.error)
+      } else {
+        resolve(result.socket)
+      }
+    }
+    const onOpen = () => finish({ socket })
+    const onError = () => finish({ error: new Error(`WebSocket failed: ${url}`) })
+    const onClose = () => finish({ error: new Error(`WebSocket closed before connecting: ${url}`) })
+    const timer = window.setTimeout(
+      () => finish({ error: new Error(`WebSocket connection timed out: ${url}`) }),
+      timeoutMs,
+    )
+    socket.addEventListener("open", onOpen)
+    socket.addEventListener("error", onError)
+    socket.addEventListener("close", onClose)
   })
   const socket = toSocket(webSocket)
   return {

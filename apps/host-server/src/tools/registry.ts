@@ -1,7 +1,7 @@
 import type { ToolKind } from "@yaade/rpc"
 import type { ToolDriver } from "./model.js"
 
-const TOOL_KINDS: readonly ToolKind[] = ["agent", "terminal", "search", "git"]
+const TOOL_KINDS: readonly ToolKind[] = ["agent", "terminal", "search", "git", "editor"]
 
 /** Closed v1 registry. Adding a public tool requires changing this list. */
 export class ToolRegistry {

@@ -49,6 +49,9 @@ export function serverSupports(capabilities: ServerCapabilities, method: string)
     case "textDocument/inlayHint": return capabilityEnabled(capabilities.inlayHintProvider)
     case "textDocument/documentHighlight": return capabilityEnabled(capabilities.documentHighlightProvider)
     case "textDocument/codeLens": return capabilities.codeLensProvider != null
+    case "textDocument/prepareCallHierarchy": return capabilityEnabled(capabilities.callHierarchyProvider)
+    case "textDocument/prepareTypeHierarchy": return capabilityEnabled(capabilities.typeHierarchyProvider)
+    case "workspace/symbol": return capabilityEnabled(capabilities.workspaceSymbolProvider)
     default: return false
   }
 }

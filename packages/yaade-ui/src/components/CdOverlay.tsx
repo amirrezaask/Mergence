@@ -368,10 +368,13 @@ export function CdOverlay({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="overflow-hidden border-border bg-popover p-0 text-popover-foreground shadow-lg"
+        className="max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl backdrop-blur-none"
         motion="instant"
+        placement="quick-input"
         size="wide"
         showCloseButton={false}
+        data-yaade-quick-input=""
+        data-yaade-file-lister=""
       >
         <DialogTitle className="sr-only">{title}</DialogTitle>
         <DialogDescription className="sr-only">{description}</DialogDescription>
@@ -383,7 +386,8 @@ export function CdOverlay({
         >
           <div
             data-slot="command-input-wrapper"
-            className="flex items-center gap-2 border-b border-border px-3 py-2"
+            data-yaade-quick-input-field=""
+            className="m-1.5 flex h-8 items-center gap-2 rounded-sm border border-input bg-background px-2 shadow-xs focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
           >
             <SearchIcon className="size-4 shrink-0 text-muted-foreground" aria-hidden />
             <div className="relative min-w-0 flex-1">
@@ -449,7 +453,7 @@ export function CdOverlay({
                     applyCompletion(highlightedEntry as DirEntry)
                   }
                 }}
-                className="border-0 bg-transparent font-mono text-sm shadow-none focus-visible:ring-0"
+                className="h-full border-0 bg-transparent p-0 font-mono text-sm shadow-none focus-visible:ring-0"
                 aria-controls="yaade-cd-list"
               />
               {ghostCompletion ? (
@@ -468,7 +472,7 @@ export function CdOverlay({
               size="sm"
               disabled={!canSubmit}
               onClick={submit}
-              className="h-8 gap-1.5 whitespace-nowrap"
+              className="h-7 gap-1.5 whitespace-nowrap"
             >
               {primaryHint}
               <KeyBindingKbd binding={formatKeyBinding("Mod-Enter")} />
@@ -476,7 +480,7 @@ export function CdOverlay({
           </div>
           <CommandList
             id="yaade-cd-list"
-            className="max-h-[var(--yaade-overlay-list-max,22rem)]"
+            className="max-h-[min(var(--yaade-overlay-list-max),calc(100dvh-var(--yaade-quick-input-top)-7rem))] border-t border-border/70 py-1"
           >
             {error ? (
               <div className="px-3 py-2 text-sm text-muted-foreground">{error}</div>

@@ -25,11 +25,11 @@ describe("resolveCssLengthPx", () => {
 
   it("keeps the single-line palette contract denser than detail rows", () => {
     assert.equal(readPaletteRowHeight("single"), 32.5)
-    assert.equal(readPaletteRowHeight("detail"), 45.5)
+    assert.equal(readPaletteRowHeight("detail"), 39)
     assert.equal(resolveCssLengthPx("2.5rem", 10, 2.5), 25)
-    assert.equal(resolveCssLengthPx("3.5rem", 10, 3.5), 35)
+    assert.equal(resolveCssLengthPx("3rem", 10, 3), 30)
     assert.equal(resolveCssLengthPx("2.5rem", 24, 2.5), 60)
-    assert.equal(resolveCssLengthPx("3.5rem", 24, 3.5), 84)
+    assert.equal(resolveCssLengthPx("3rem", 24, 3), 72)
   })
 })
 

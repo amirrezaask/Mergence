@@ -30,6 +30,10 @@ function isPKey(event: PrimaryShortcutEvent): boolean {
   return event.key.toLowerCase() === "p" || event.code === "KeyP"
 }
 
+function isSKey(event: PrimaryShortcutEvent): boolean {
+  return event.key.toLowerCase() === "s" || event.code === "KeyS"
+}
+
 export function isPrimaryQuickOpenShortcut(
   event: PrimaryShortcutEvent,
   platform: string,
@@ -46,6 +50,14 @@ export function isPrimaryCommandPaletteShortcut(
   return isPrimaryModifier(event, platform)
 }
 
+export function isPrimarySaveShortcut(
+  event: PrimaryShortcutEvent,
+  platform: string,
+): boolean {
+  if (event.altKey || event.shiftKey || !isSKey(event)) return false
+  return isPrimaryModifier(event, platform)
+}
+
 export function interceptPrimaryQuickOpenShortcut(
   event: InterceptablePrimaryShortcutEvent,
   platform: string,
@@ -55,6 +67,18 @@ export function interceptPrimaryQuickOpenShortcut(
   event.preventDefault()
   event.stopPropagation()
   if (!event.repeat) onQuickOpen()
+  return true
+}
+
+export function interceptPrimarySaveShortcut(
+  event: InterceptablePrimaryShortcutEvent,
+  platform: string,
+  onSave: () => void,
+): boolean {
+  if (!isPrimarySaveShortcut(event, platform)) return false
+  event.preventDefault()
+  event.stopPropagation()
+  if (!event.repeat) onSave()
   return true
 }
 

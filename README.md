@@ -3,7 +3,7 @@
 **Browser IDE for local or remote machines — Session tabs with composable ToolUses.**
 
 YAADE opens at `/` with top-level **Session** tabs. Each Session is an ordered
-collection of **ToolUses** (Agent, Terminal, Search, Git History). Project and checkout
+collection of **ToolUses** (Editor, Git History, Agent, Terminal, Search). Every session opens with Editor and Git History tabs. Project and checkout
 belong to each ToolUse, never to the Session. Layout and PTYs live on the host,
 so closing a browser tab does not kill shells.
 
@@ -21,10 +21,10 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 
-- Top tab strip of Sessions (`+` creates an empty Session)
+- Top tab strip of Sessions (`+` creates a Session with Editor and Git History tabs); the left-side gear opens Settings
 - A horizontal ToolUse taskbar is docked at the bottom of the screen, with high-contrast selection and semantic status; each tool pane retains its project and checkout context
-- Titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
-- Taskbar shortcuts create Search, Agent, Terminal, or Git History immediately
+- ToolUse tab titles include the project name (for example, `yaade: Git History`) and stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
+- Every Session starts with Editor and Git History tabs; all ToolUse tabs can be reordered or closed
 - Each ToolUse tab opens a context popover for project, worktree, and kind-specific options (project names are shown; IDs remain internal)
 - Changing project or agent provider restarts the underlying process; the change itself does not fail
 - Selecting a ToolUse renders only that ToolUse in the main viewport
@@ -37,8 +37,9 @@ compatibility; the primary product surface is the Session shell.
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **AgentTool**    | Launches a supported agent CLI in a PTY                                                                                       |
 | **TerminalTool** | Launches a shell in a PTY                                                                                                     |
-| **SearchTool**   | Host-owned project content search with durable per-file context cards; selecting a result opens its source location in Monaco |
-| **GitHistoryTool** | Opens the active checkout's virtualized commit history, including uncommitted changes and commit diffs |
+| **SearchTool**   | Host-owned project content search with durable per-file context cards; source opens in syntax-highlighted Monaco with breadcrumbs, a token-themed Pierre file tree on the right, and VS Code-style Quick Open |
+| **EditorTool** | Opens the active checkout in the Monaco editor and file explorer; one tab is created per Session |
+| **GitHistoryTool** | Opens the active checkout's virtualized commit history, including uncommitted changes and commit diffs; one tab is created per Session |
 
 Git History is an interactive repository surface backed by the host's existing native Git API; it does not launch a PTY. Agent and Terminal share the existing PTY path (`terminal:data` binary frames,
 attach replay, flow control). Search streams bounded result batches via
@@ -73,12 +74,27 @@ Prefix: **`Ctrl-a`** (press twice to send literal `^A` into a terminal).
 | `Ctrl-a t`       | New ToolUse                |
 | `Ctrl-a w`       | Switch Session             |
 | `Ctrl-a j` / `k` | Next / previous ToolUse    |
-| `Ctrl-a x`       | Close ToolUse              |
+| `Ctrl-a x`       | Close ToolUse |
 | `Ctrl-a Shift-X` | Close Session              |
 | `Ctrl-a p`       | Session switcher / palette |
 | `Ctrl-a ,`       | Settings                   |
 
-Direct: `Mod-Shift-p`, `Mod-,`.
+Direct:
+
+| Chord | Action |
+| --- | --- |
+| `Cmd-k` / `Ctrl-k` | Switch between current ToolUses across every visible Session |
+| `Cmd-p` / `Ctrl-p` | Quick-open a project file in EditorTool or SearchTool, with or without an open file |
+| `Mod-Shift-p` | Open the Session switcher / palette |
+| `Mod-,` | Settings |
+
+### Appearance
+
+Settings applies one palette consistently to the app shell, Monaco, Git states,
+terminals, and every ToolUse. Bundled families include all four Catppuccin
+flavors, Tokyo Night (Night, Storm, Moon, Day), Rosé Pine (main, Moon, Dawn),
+and Ayu (Dark, Mirage, Light). The Terminal font picker selects any installed
+monospace face for terminals, Monaco, and code UI text.
 
 ---
 

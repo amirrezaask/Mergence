@@ -1,8 +1,10 @@
 import { expect, test } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import type { ShellDriver } from "../shell/driver.js";
+import { createMockLspHarness } from "../../apps/host-server/mocks/mock-lsp-harness.js";
 import { launchWeb } from "../shell/launch-web.js";
 import {
   expectContainsText,
@@ -151,27 +153,73 @@ async function createTerminalViaApi(
   return id;
 }
 
-/** 1 */ test("boots a visible Session and empty ToolUse state", async () => {
+/** 1 */ test("boots a visible Session with Editor and Git tabs", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
+    await expectSelectorVisible(page, '[role="tablist"] [role="tab"]');
+    const projectName = await page.evaluate(() => {
+      const use = window.__yaadeAgent!.getState().toolUses?.[0];
+      return use?.context?.project?.projectName ?? "";
+    });
+    expect(projectName).toBeTruthy();
+    await expectLocatorCount(
+      page.locator('[data-yaade-tool-tabs] [data-yaade-tool-use]'),
+      2,
+    );
     await expectContainsText(
       page,
-      '[data-yaade-shell="tool-session"]',
-      "What do you want to run?",
+      '[data-yaade-tool-tabs]',
+      `${projectName}: Editor`,
     );
-    await expectSelectorVisible(page, '[role="tablist"] [role="tab"]');
-    await expectLocatorCount(page.locator('[data-slot="empty"] button'), 0);
+    await expectContainsText(
+      page,
+      '[data-yaade-tool-tabs]',
+      `${projectName}: Git History`,
+    );
+    await expectSelectorVisible(page, '[data-yaade-editor-tool]');
+    await expectLocatorCount(
+      page.locator('[data-yaade-tool-tabs] button[aria-label^="Close"]'),
+      2,
+    );
+    const inactiveTab = page.locator(
+      '[data-yaade-tool-tabs] [data-yaade-tool-use]:not([data-active="true"])',
+    );
+    const inactiveTabId = await inactiveTab.getAttribute("data-yaade-tool-use");
+    if (!inactiveTabId) throw new Error("inactive tool tab has no id");
+    await inactiveTab.click();
+    await page.waitForFunction(
+      (id) =>
+        document
+          .querySelector(`[data-yaade-tool-use="${id}"]`)
+          ?.getAttribute("data-active") === "true",
+      inactiveTabId,
+    );
+    await expectLocatorCount(
+      page.locator("[data-yaade-tool-context-popover]"),
+      0,
+    );
+    await page
+      .locator('[data-yaade-tool-tabs] [data-yaade-tool-use][data-active="true"]')
+      .click();
+    await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
     await expectSelectorVisible(page, 'button[title="New Search"]');
     await expectSelectorVisible(page, 'button[title="New Agent"]');
     await expectSelectorVisible(page, 'button[title="New Terminal"]');
     await page.locator('button[title="New Search"]').click();
+    await page.waitForSelector('[data-yaade-list-panel="project-search"]');
     await openToolContext(page);
     await expectSelectorVisible(page, "#tool-project");
     await expectSelectorVisible(
       page,
       '[data-yaade-list-panel="project-search"]',
+    );
+    await expectLocatorCount(
+      page.locator(
+        '[data-yaade-tool-tabs] [data-yaade-tool-use] [data-slot="badge"]',
+      ),
+      0,
     );
     const selectedContrast = await page.evaluate(() => {
       const row = document.querySelector<HTMLElement>(
@@ -189,6 +237,131 @@ async function createTerminalViaApi(
     });
     expect(selectedContrast).not.toBeNull();
     expect(selectedContrast?.row).not.toBe(selectedContrast?.tabs);
+  } finally {
+    await app.app.close();
+  }
+});
+
+test("Editor tabs preserve dirty state, save, and reconnect the language server", async () => {
+  const mock = createMockLspHarness();
+  const app = await launchWeb({
+    env: mock.env,
+    workspaceRel: "fixtures/non-git-search",
+  });
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    await expectSelectorVisible(page, "[data-yaade-editor-tool]");
+    await page.getByRole("treeitem", { name: /index\.ts$/i }).click();
+    await expectSelectorVisible(page, "[data-yaade-monaco-editor]");
+    await mock.waitForClientMethod("textDocument/didOpen", {
+      timeoutMs: 15_000,
+    });
+    await page.getByRole("treeitem", { name: /other\.ts$/i }).click();
+    await expectLocatorCount(
+      page.locator('[data-yaade-editor-tabs] [role="tab"]'),
+      2,
+    );
+    await page
+      .locator('[data-yaade-editor-tab$="/src/index.ts"] [role="tab"]')
+      .click();
+
+    const input = page.locator(
+      "[data-yaade-monaco-editor] textarea.inputarea",
+    );
+    await input.focus();
+    await page.keyboard.press("Control+End");
+    await page.keyboard.type("\n// tool-editor-dirty");
+    await expect
+      .poll(() =>
+        page
+          .locator('[data-yaade-editor-tab$="/src/index.ts"]')
+          .getAttribute("data-dirty"),
+      )
+      .toBe("true");
+
+    const beforeSave = mock.captures().length;
+    await page.keyboard.press(
+      `${process.platform === "darwin" ? "Meta" : "Control"}+KeyS`,
+    );
+    await mock.waitForClientMethod("textDocument/didSave", {
+      timeoutMs: 15_000,
+      afterCaptureCount: beforeSave,
+    });
+    await expect
+      .poll(() =>
+        page
+          .locator('[data-yaade-editor-tab$="/src/index.ts"]')
+          .getAttribute("data-dirty"),
+      )
+      .toBeNull();
+
+    const beforeCrash = mock.captures().length;
+    mock.crash(1, 72);
+    await mock.waitForStartCount(2, 15_000);
+    await mock.waitForClientMethod("textDocument/didOpen", {
+      timeoutMs: 15_000,
+      afterCaptureCount: beforeCrash,
+    });
+    await expect
+      .poll(() =>
+        page
+          .locator("[data-yaade-editor-lsp-status]")
+          .getAttribute("data-yaade-editor-lsp-status"),
+      )
+      .toBe("ready");
+  } finally {
+    await app.app.close();
+    mock.dispose();
+  }
+});
+
+test("Mod-P opens Editor Quick Open before and after a file is open", async () => {
+  const app = await launchWeb({
+    workspaceRel: path.join(REPO_ROOT, "fixtures/non-git-search"),
+    startPath: "/",
+  });
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    await expectSelectorVisible(page, "[data-yaade-editor-tool]");
+    await expectContainsText(
+      page,
+      "[data-yaade-editor-tool]",
+      "Open a file to start editing",
+    );
+
+    const shortcut = `${process.platform === "darwin" ? "Meta" : "Control"}+KeyP`;
+    await page.keyboard.press(shortcut);
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-list-panel="yaade:palette"]',
+    );
+    await page.keyboard.type("other");
+    await expectListRows(page, {
+      panel: "yaade:palette",
+      minItems: 1,
+      needle: "other.ts",
+    });
+    await expectNotContainsText(
+      page,
+      '[data-yaade-list-panel="yaade:palette"]',
+      "No matching files",
+    );
+    await page
+      .locator('[data-yaade-list-panel="yaade:palette"] [data-yaade-list-item]')
+      .first()
+      .click();
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-editor-tool] [data-yaade-monaco-editor]',
+    );
+
+    await page.keyboard.press(shortcut);
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-list-panel="yaade:palette"]',
+    );
   } finally {
     await app.app.close();
   }
@@ -293,17 +466,51 @@ async function createTerminalViaApi(
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
     await waitForToolTerminalText(page, marker);
-    const firstSessionId = await page.evaluate(
-      () => window.__yaadeAgent!.getState().activeSessionId,
-    );
-    expect(firstSessionId).toBeTruthy();
+    const first = await page.evaluate(() => {
+      const state = window.__yaadeAgent!.getState();
+      const tool = (state.toolUses ?? []).find(
+        (use: {
+          id: string;
+          context?: { project?: { projectName?: string } };
+        }) => use.id === state.activeToolUseId,
+      );
+      return {
+        sessionId: state.activeSessionId,
+        toolUseId: tool?.id,
+        projectName: tool?.context?.project?.projectName,
+      };
+    });
+    expect(first.sessionId).toBeTruthy();
+    expect(first.toolUseId).toBeTruthy();
+    expect(first.projectName).toBeTruthy();
+    if (!first.sessionId || !first.toolUseId || !first.projectName) {
+      throw new Error("first session tool metadata missing");
+    }
     await page.getByRole("button", { name: "New session" }).click();
     await page.waitForFunction(
       () => (window.__yaadeAgent?.getState().sessions?.length ?? 0) >= 2,
     );
-    await page.evaluate(async (id) => {
-      await window.__yaadeAgent!.selectSession!(id!);
-    }, firstSessionId);
+    await page.keyboard.press(
+      `${process.platform === "darwin" ? "Meta" : "Control"}+KeyK`,
+    );
+    await expectListRows(page, {
+      panel: "yaade:palette",
+      minItems: 1,
+      needle: first.projectName,
+    });
+    await expectNotContainsText(
+      page,
+      '[data-yaade-list-panel="yaade:palette"]',
+      "No current tool uses",
+    );
+    await page
+      .locator(`[data-yaade-tool-switcher-use="${first.toolUseId}"]`)
+      .click();
+    await page.waitForFunction(
+      (sessionId) =>
+        window.__yaadeAgent?.getState().activeSessionId === sessionId,
+      first.sessionId,
+    );
     await waitForVisibleXterm(page);
     await waitForToolTerminalText(page, marker);
   } finally {
@@ -322,6 +529,11 @@ async function createTerminalViaApi(
     });
     test.skip(!provider, "no agent CLI provider available on this host");
     await page.locator('button[title="New Agent"]').click();
+    const providerMenu = page.locator("[data-yaade-agent-provider-menu]");
+    await expectSelectorVisible(page, "[data-yaade-agent-provider-menu]");
+    await providerMenu
+      .locator(`[data-yaade-agent-provider="${provider}"]`)
+      .click();
     await page.waitForFunction(
       () =>
         (window.__yaadeAgent?.getState().toolUses ?? []).some(
@@ -330,6 +542,15 @@ async function createTerminalViaApi(
       null,
       { timeout: 30_000 },
     );
+    const agentId = await page.evaluate(
+      () =>
+        window.__yaadeAgent
+          ?.getState()
+          .toolUses?.find((use: { kind: string }) => use.kind === "agent")?.id,
+    );
+    if (!agentId) throw new Error("agent tool missing after creation");
+    await page.locator(`[data-yaade-tool-use="${agentId}"]`).click();
+    await openToolContext(page);
     await expectSelectorVisible(page, "#tool-provider");
     const use = await page.evaluate(() =>
       (window.__yaadeAgent!.getState().toolUses ?? []).find(
@@ -365,11 +586,47 @@ async function createTerminalViaApi(
 });
 
 /** 6 */ test("SearchTool renders file cards and opens a Monaco buffer", async () => {
-  const app = await launchWeb({ workspaceRel: "fixtures/non-git-search" });
+  const project = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-tool-search-"));
+  fs.cpSync(path.join(REPO_ROOT, "fixtures/non-git-search"), project, {
+    recursive: true,
+  });
+  fs.writeFileSync(
+    path.join(project, "broad-results.txt"),
+    Array.from(
+      { length: 520 },
+      (_, index) => `broadNeedle result-row-${String(index).padStart(3, "0")}`,
+    ).join("\n"),
+  );
+  for (let index = 0; index < 12; index += 1) {
+    fs.writeFileSync(
+      path.join(project, `file-${String(index).padStart(2, "0")}.txt`),
+      `fileNeedle result-file-${String(index).padStart(2, "0")}\n`,
+    );
+  }
+  const app = await launchWeb({ workspaceRel: project });
   try {
     const page = app.page;
     await openToolSessionShell(page);
     await createSearchToolUse(page, "nonGitSearchFixture");
+    const searchOptions = page.locator("[data-yaade-project-search-options]");
+    await expectLocatorVisible(searchOptions);
+    await expect
+      .poll(() =>
+        page.evaluate(() => {
+          const query = document.querySelector("[data-yaade-project-search-input]");
+          const options = document.querySelector("[data-yaade-project-search-options]");
+          if (!query || !options) return false;
+          const queryRect = query.getBoundingClientRect();
+          const optionsRect = options.getBoundingClientRect();
+          return (
+            optionsRect.left > queryRect.left &&
+            optionsRect.right <= queryRect.right &&
+            optionsRect.top >= queryRect.top &&
+            optionsRect.bottom <= queryRect.bottom
+          );
+        }),
+      )
+      .toBe(true);
     await expectListRows(page, {
       panel: "project-search",
       minItems: 1,
@@ -395,6 +652,58 @@ async function createTerminalViaApi(
       '[data-yaade-list-panel="project-search"]',
       "afterSearchContext",
     );
+
+    const searchInput = page.getByLabel("Search project");
+    const results = page.locator('[data-yaade-list-panel="project-search"]');
+    const fileCards = results.locator("[data-yaade-project-search-file]");
+    const manualLoadButtons = page.getByRole("button", {
+      name: /Show \d+ more files|Load more matches/,
+    });
+    await searchInput.fill("fileNeedle");
+    await expectListRows(page, {
+      panel: "project-search",
+      minItems: 2,
+      needle: "result-file-01",
+    });
+    await expectLocatorCount(manualLoadButtons, 0);
+    await expect
+      .poll(async () => {
+        await results.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        return fileCards.count();
+      })
+      .toBe(12);
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-project-search-file="file-11.txt"]',
+    );
+
+    await searchInput.fill("broadNeedle");
+    await expectListRows(page, {
+      panel: "project-search",
+      minItems: 2,
+      needle: "result-row-001",
+    });
+    await expect
+      .poll(async () => {
+        await results.evaluate((element) => {
+          element.scrollTop = element.scrollHeight;
+        });
+        return page
+          .getByRole("status")
+          .filter({ hasText: "matches in" })
+          .textContent();
+      })
+      .toContain("520 matches in 1 file");
+    await expectLocatorCount(manualLoadButtons, 0);
+
+    await searchInput.fill("nonGitSearchFixture");
+    await expectListRows(page, {
+      panel: "project-search",
+      minItems: 1,
+      needle: "nonGitSearchFixture",
+    });
     await expectSelectorVisible(
       page,
       '[data-yaade-project-search-file*="src/index.ts"]',
@@ -404,8 +713,66 @@ async function createTerminalViaApi(
       page,
       '[data-yaade-search-editor*="/src/index.ts"] [data-yaade-monaco-editor]',
     );
+    await expectSelectorVisible(page, "[data-yaade-editor-file-tree]");
+    await expectContainsText(page, "[data-yaade-editor-breadcrumbs]", "src");
+    await expectContainsText(
+      page,
+      "[data-yaade-editor-breadcrumbs]",
+      "index.ts:2",
+    );
+    await expectLocatorVisible(
+      page.getByRole("treeitem", { name: /src\/index\.ts|index\.ts/i }),
+    );
+    await page.waitForFunction(
+      () => {
+        const editor = document.querySelector(
+          '[data-yaade-monaco-editor][data-yaade-monaco-language="typescript"]',
+        );
+        if (!editor) return false;
+        const tokenClasses = new Set(
+          [...editor.querySelectorAll(".view-line span")]
+            .flatMap((span) => [...span.classList])
+            .filter((name) => /^mtk\d+$/.test(name)),
+        );
+        return tokenClasses.size >= 2;
+      },
+      null,
+      { timeout: 20_000 },
+    );
+    await page.keyboard.press(
+      `${process.platform === "darwin" ? "Meta" : "Control"}+KeyP`,
+    );
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-list-panel="yaade:palette"]',
+    );
+    await page.keyboard.type("other");
+    await expectListRows(page, {
+      panel: "yaade:palette",
+      minItems: 1,
+      needle: "src/other.ts",
+    });
+    await expectNotContainsText(
+      page,
+      '[data-yaade-list-panel="yaade:palette"]',
+      "No matching files",
+    );
+    await page
+      .locator('[data-yaade-list-panel="yaade:palette"] [data-yaade-list-item]')
+      .filter({ hasText: "src/other.ts" })
+      .click();
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-search-editor*="/src/other.ts"] [data-yaade-monaco-editor]',
+    );
+    await page.getByRole("treeitem", { name: /^index\.ts$/i }).click();
+    await expectSelectorVisible(
+      page,
+      '[data-yaade-search-editor*="/src/index.ts"] [data-yaade-monaco-editor]',
+    );
   } finally {
     await app.app.close();
+    fs.rmSync(project, { recursive: true, force: true });
   }
 });
 
@@ -853,6 +1220,36 @@ async function createTerminalViaApi(
     await openToolContext(page);
     await expectSelectorVisible(page, "#tool-project");
     await waitForVisibleXterm(page);
+  } finally {
+    await app.app.close();
+  }
+});
+
+/** 19 */ test("Session settings opens from the tab bar and Mod-,", async ({}, testInfo) => {
+  const app = await launchWeb({});
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+
+    await page.locator("[data-yaade-session-settings]").click();
+    await expectLocatorVisible(page.locator("[data-yaade-settings-overlay]"));
+    await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 16);
+    await expectLocatorVisible(page.locator("[data-yaade-mono-font-picker]"));
+
+    await page.locator('[data-yaade-theme-option="tokyonight-night"]').click();
+    await expect
+      .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
+      .toBe("tokyonight-night");
+    await testInfo.attach("tool-session-settings.png", {
+      body: Buffer.from(await page.screenshot(), "base64"),
+      contentType: "image/png",
+    });
+
+    await page.getByRole("button", { name: "Close settings" }).click();
+    await page.keyboard.press(
+      `${process.platform === "darwin" ? "Meta" : "Control"}+Comma`,
+    );
+    await expectLocatorVisible(page.locator("[data-yaade-settings-overlay]"));
   } finally {
     await app.app.close();
   }

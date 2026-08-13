@@ -2,8 +2,10 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   interceptPrimaryQuickOpenShortcut,
+  interceptPrimarySaveShortcut,
   isPrimaryCommandPaletteShortcut,
   isPrimaryQuickOpenShortcut,
+  isPrimarySaveShortcut,
 } from "./editor-shortcuts.js"
 
 function keyEvent(
@@ -44,6 +46,35 @@ describe("isPrimaryQuickOpenShortcut", () => {
       isPrimaryCommandPaletteShortcut(keyEvent({ metaKey: true }), "MacIntel"),
       false,
     )
+  })
+
+  it("matches and intercepts the platform save shortcut", () => {
+    const mac = keyEvent({ key: "s", code: "KeyS", metaKey: true })
+    const linux = keyEvent({ key: "s", code: "KeyS", ctrlKey: true })
+    assert.equal(isPrimarySaveShortcut(mac, "MacIntel"), true)
+    assert.equal(isPrimarySaveShortcut(linux, "Linux x86_64"), true)
+    assert.equal(
+      isPrimarySaveShortcut({ ...mac, shiftKey: true }, "MacIntel"),
+      false,
+    )
+
+    let saved = 0
+    assert.equal(
+      interceptPrimarySaveShortcut(
+        {
+          ...mac,
+          repeat: false,
+          preventDefault: () => {},
+          stopPropagation: () => {},
+        },
+        "MacIntel",
+        () => {
+          saved += 1
+        },
+      ),
+      true,
+    )
+    assert.equal(saved, 1)
   })
 
   it("does not treat cross-platform modifiers as Quick Open", () => {

@@ -107,6 +107,14 @@ describe("applyAgentChatCssVars", () => {
         defaultYaadeTheme.tokens.gitConflictForeground,
       )
       assert.equal(vars.get("--yaade-bg"), defaultYaadeTheme.colors.bg)
+      assert.equal(
+        vars.get("--yaade-terminal-background"),
+        defaultYaadeTheme.colors.bg,
+      )
+      assert.equal(
+        vars.get("--yaade-terminal-foreground"),
+        defaultYaadeTheme.colors.text,
+      )
     })
 
     assert.deepEqual(

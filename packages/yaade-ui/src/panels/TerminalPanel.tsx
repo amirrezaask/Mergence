@@ -103,14 +103,15 @@ function cellMetricsValid(term: XTerm): boolean {
 
 function themeOptions(theme: YaadeTheme): NonNullable<XTerm["options"]["theme"]> {
   const c = theme.colors
+  const terminal = theme.terminal
   const ansi = theme.terminalAnsi
   return {
     // Real bg so OSC 11 reports a luminance TUIs (Cursor Agent) can theme against.
     // CSS still paints the surface; cell default matches the shell.
-    background: c.bg,
-    foreground: c.text,
-    cursor: c.accent,
-    selectionBackground: c.selection,
+    background: terminal?.background ?? c.bg,
+    foreground: terminal?.foreground ?? c.text,
+    cursor: terminal?.cursor ?? c.accent,
+    selectionBackground: terminal?.selectionBackground ?? c.selection,
     black: ansi?.black,
     red: ansi?.red,
     green: ansi?.green,
@@ -146,11 +147,11 @@ function liveThemeOptions(theme: YaadeTheme): NonNullable<XTerm["options"]["them
 
   return {
     ...options,
-    background: readCssVar("--yaade-bg") ?? options.background,
-    foreground: readCssVar("--yaade-text") ?? options.foreground,
-    cursor: readCssVar("--yaade-accent") ?? options.cursor,
+    background: readCssVar("--yaade-terminal-background") ?? options.background,
+    foreground: readCssVar("--yaade-terminal-foreground") ?? options.foreground,
+    cursor: readCssVar("--yaade-terminal-cursor") ?? options.cursor,
     selectionBackground:
-      readCssVar("--yaade-selection") ?? options.selectionBackground,
+      readCssVar("--yaade-terminal-selection") ?? options.selectionBackground,
     black: readAnsi("black", "black"),
     red: readAnsi("red", "red"),
     green: readAnsi("green", "green"),

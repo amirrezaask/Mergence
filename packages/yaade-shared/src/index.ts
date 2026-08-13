@@ -156,6 +156,7 @@ export {
   type YaadeTheme,
   type JetColors,
   type JetHighlightColors,
+  type JetTerminalColors,
   type JetTerminalAnsiColors,
   type JetShadcnTokens,
   type YaadeSemanticTokens,

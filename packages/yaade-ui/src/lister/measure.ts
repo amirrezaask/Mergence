@@ -49,7 +49,7 @@ export type PaletteRowLayout = "single" | "detail"
 
 export function readPaletteRowHeight(layout: PaletteRowLayout): number {
   return layout === "detail"
-    ? readCssLengthPx("--yaade-palette-detail-row-height", 3.5)
+    ? readCssLengthPx("--yaade-palette-detail-row-height", 3)
     : readCssLengthPx("--yaade-palette-row-height", 2.5)
 }
 
@@ -140,7 +140,7 @@ export function measureLongestItemContentWidth(
   return longest + chromePx
 }
 
-/** Dialog min width for a palette size token (`picker` 32rem / `wide` 42rem). */
+/** VS Code-like quick-input widths (`picker` 44rem / `wide` 52rem). */
 export function readPaletteSizeMinWidthPx(size: "picker" | "wide"): number {
-  return readRootFontSizePx() * (size === "wide" ? 42 : 32)
+  return readRootFontSizePx() * (size === "wide" ? 52 : 44)
 }

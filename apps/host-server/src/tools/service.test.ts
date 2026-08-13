@@ -4,6 +4,7 @@ import os from "node:os"
 import path from "node:path"
 import { describe, it } from "node:test"
 import {
+  ArchiveToolUse,
   CreateToolUse,
   GitToolInput,
   MainCheckout,
@@ -18,6 +19,35 @@ import { loadConfig } from "../config.js"
 import { startHostServer } from "../server.js"
 
 describe("ToolService", () => {
+  it("bootstraps Editor and Git tabs for every session", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-default-tools-"))
+    const config = await loadConfig([
+      "--host", "127.0.0.1", "--port", "0",
+      "--data-dir", path.join(root, "data"), "--allowed-roots", root, root,
+    ])
+    const host = await startHostServer(config)
+    try {
+      const session = host.runtime.toolSessions.listSessions()[0]
+      assert.ok(session)
+      const uses = host.runtime.toolSessions.listToolUses(session.id)
+      assert.deepEqual(uses.map(use => use.kind), ["editor", "git"])
+      assert.equal(
+        uses.find(use => use.id === host.runtime.toolSessions.getSession(session.id)?.activeToolUseId)?.kind,
+        "editor",
+      )
+      const archived = await dispatchPromise(
+        host.runtime,
+        "tools:archiveUse",
+        [ArchiveToolUse.make({ toolUseId: uses[0]!.id })],
+        "default-tools-test",
+      )
+      assert.equal(Schema.decodeUnknownSync(ToolUse)(archived).archivedAt !== undefined, true)
+    } finally {
+      await host.close()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
   it("persists a SearchTool before running its host-owned lifecycle", async () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-tool-service-"))
     const dataDir = path.join(root, "data")

@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { Bot, GitBranch, Search, Terminal } from "lucide-react";
+import { Bot, Code2, GitBranch, Search, Terminal } from "lucide-react";
 import type {
   CheckoutTarget,
   ProjectSearchResult,
@@ -13,6 +13,7 @@ import type { ProjectSearchOptions, YaadeTheme } from "@yaade/shared";
 export type ToolRendererProps = {
   readonly use: ToolUse;
   readonly theme: YaadeTheme;
+  readonly fontSize: number;
   readonly toolbar: ReactNode;
   readonly projects: readonly ProjectTarget[];
   readonly onContextChange: (
@@ -71,6 +72,13 @@ async function loadGitRenderer(): Promise<{
   return { default: module.GitToolView as ComponentType<ToolRendererProps> };
 }
 
+async function loadEditorRenderer(): Promise<{
+  default: ComponentType<ToolRendererProps>;
+}> {
+  const module = await import("./renderers/EditorToolView.js");
+  return { default: module.EditorToolView as ComponentType<ToolRendererProps> };
+}
+
 const entries: readonly RegistryEntry[] = [
   {
     kind: "agent",
@@ -105,6 +113,14 @@ const entries: readonly RegistryEntry[] = [
     mountPolicy: "remountable",
     describeInput: () => "history",
     loadRenderer: loadGitRenderer,
+  },
+  {
+    kind: "editor",
+    label: "Editor",
+    icon: Code2,
+    mountPolicy: "remountable",
+    describeInput: () => "workspace",
+    loadRenderer: loadEditorRenderer,
   },
 ];
 

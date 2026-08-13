@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { yaadeOverlayContentClass, type YaadeOverlayMotion } from "@/motion/tokens"
 
 export type JetDialogSize = "default" | "prompt" | "picker" | "wide" | "stage"
+export type JetDialogPlacement = "center" | "quick-input"
 
 const dialogSizeClass: Record<JetDialogSize, string> = {
   default: "sm:max-w-lg",
@@ -44,16 +45,24 @@ function DialogClose({
 function DialogOverlay({
   className,
   motion = "standard",
+  placement = "center",
   ...props
-}: React.ComponentProps<typeof DialogPrimitive.Overlay> & { motion?: YaadeOverlayMotion }) {
+}: React.ComponentProps<typeof DialogPrimitive.Overlay> & {
+  motion?: YaadeOverlayMotion
+  placement?: JetDialogPlacement
+}) {
   return (
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "yaade-dialog-overlay fixed inset-0 z-50 bg-backdrop overscroll-contain backdrop-blur-sm",
+        "yaade-dialog-overlay fixed inset-0 z-50 overscroll-contain",
+        placement === "quick-input"
+          ? "bg-transparent backdrop-blur-none"
+          : "bg-backdrop backdrop-blur-sm",
         className
       )}
       data-yaade-dialog-motion={motion}
+      data-yaade-dialog-placement={placement}
       {...props}
     />
   )
@@ -65,17 +74,27 @@ function DialogContent({
   showCloseButton = true,
   motion = "standard",
   size = "default",
+  placement = "center",
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
   motion?: YaadeOverlayMotion
   size?: JetDialogSize
+  placement?: JetDialogPlacement
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">
-      <DialogOverlay motion={motion} />
-      {/* Flex center — keep translate off the animated node so zoom-in enter cannot clobber position. */}
-      <div className="pointer-events-none fixed inset-0 z-50 flex items-center justify-center">
+      <DialogOverlay motion={motion} placement={placement} />
+      {/* Keep positioning off the animated node so enter transforms cannot clobber it. */}
+      <div
+        className={cn(
+          "pointer-events-none fixed inset-0 z-50 flex justify-center px-4",
+          placement === "quick-input"
+            ? "items-start pt-[var(--yaade-quick-input-top)]"
+            : "items-center",
+        )}
+        data-yaade-dialog-placement={placement}
+      >
         <DialogPrimitive.Content
           data-slot="dialog-content"
           className={cn(
@@ -86,6 +105,7 @@ function DialogContent({
           )}
           data-yaade-dialog-motion={motion}
           data-yaade-dialog-size={size}
+          data-yaade-dialog-placement={placement}
           {...props}
         >
           {children}

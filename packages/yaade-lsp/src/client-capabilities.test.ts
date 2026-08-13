@@ -28,6 +28,8 @@ test("advertises only semantic features implemented by the Monaco client", () =>
   assert.ok(textDocument.selectionRange)
   assert.ok(textDocument.documentLink)
   assert.ok(textDocument.colorProvider)
+  assert.ok(textDocument.callHierarchy)
+  assert.ok(textDocument.typeHierarchy)
   assert.ok(textDocument.publishDiagnostics)
   assert.equal(textDocument.synchronization.dynamicRegistration, false)
   assert.equal(textDocument.synchronization.willSave, true)
@@ -52,5 +54,5 @@ test("advertises only semantic features implemented by the Monaco client", () =>
     true,
   )
   assert.equal(yaadeLspClientCapabilities.window.showDocument.support, true)
-  assert.equal("callHierarchy" in textDocument, false)
+  assert.ok(yaadeLspClientCapabilities.workspace.symbol)
 })

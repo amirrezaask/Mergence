@@ -15,12 +15,18 @@
         try {
           var raw = localStorage.getItem("jet-color-scheme")
           var themeId = localStorage.getItem("jet-theme-id") || ""
-          var lightLegacy = themeId === "catppuccin-latte" || themeId === "tokyonight-day"
+          var lightThemeIds = [
+            "default-light",
+            "catppuccin-latte",
+            "tokyonight-day",
+            "rose-pine-dawn",
+            "ayu-light",
+          ]
           var scheme = raw === "light" || raw === "dark"
             ? raw
             : raw === "system"
               ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
-              : themeId === "default-light" || lightLegacy ? "light" : "dark"
+              : lightThemeIds.indexOf(themeId) >= 0 ? "light" : "dark"
           if (scheme === "dark") document.documentElement.classList.add("dark")
           document.documentElement.dataset.yaadeSurface = "default"
         } catch (_) {

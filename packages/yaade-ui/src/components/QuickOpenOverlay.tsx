@@ -10,6 +10,22 @@ export type QuickOpenWorkspace = {
   name: string
 }
 
+type QuickOpenEntry = {
+  path: string
+  name: string
+  directory: string
+}
+
+function quickOpenEntry(path: string): QuickOpenEntry {
+  const separator = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"))
+  if (separator < 0) return { path, name: path, directory: "" }
+  return {
+    path,
+    name: path.slice(separator + 1) || path,
+    directory: path.slice(0, separator),
+  }
+}
+
 export function QuickOpenOverlay({
   open,
   onOpenChange,
@@ -82,8 +98,8 @@ export function QuickOpenOverlay({
     }
   }, [open, scanReady, query, onSearch, workspaceId])
 
-  const items = useMemo<PaletteShellItem<string>[]>(
-    () => results.map(path => ({ key: path, value: path, data: path })),
+  const items = useMemo<PaletteShellItem<QuickOpenEntry>[]>(
+    () => results.map(path => ({ key: path, value: path, data: quickOpenEntry(path) })),
     [results],
   )
 
@@ -144,15 +160,25 @@ export function QuickOpenOverlay({
       onQueryChange={setQuery}
       items={items}
       shouldFilter={false}
-      onSelect={path => onSelect(path, query, workspaceId)}
+      onSelect={entry => onSelect(entry.path, query, workspaceId)}
       emptyLabel={scanReady ? "No matching files." : "Waiting for index…"}
       statusRow={statusRow}
       contentWidthMono
-      renderItem={path => (
+      renderItem={entry => (
         <>
-          <FileIcon path={path} />
-          <span className="truncate font-mono" title={path}>
-            {path}
+          <FileIcon path={entry.path} />
+          <span
+            className="flex min-w-0 flex-1 items-baseline gap-2"
+            title={entry.path}
+          >
+            <span className="truncate font-medium text-foreground">
+              {entry.name}
+            </span>
+            {entry.directory ? (
+              <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
+                {entry.directory}
+              </span>
+            ) : null}
           </span>
         </>
       )}

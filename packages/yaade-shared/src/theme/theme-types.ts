@@ -50,6 +50,13 @@ export type JetHighlightColors = {
   label: string
 }
 
+export type JetTerminalColors = {
+  background: string
+  foreground: string
+  cursor: string
+  selectionBackground: string
+}
+
 export type JetTerminalAnsiColors = {
   black: string
   red: string
@@ -90,6 +97,7 @@ export type YaadeTheme = {
   license?: string
   previewSwatches?: string[]
   terminalAnsi?: JetTerminalAnsiColors
+  terminal?: JetTerminalColors
   colors: JetColors
   highlights: JetHighlightColors
   /** Canonical shell, interaction, status, and source-control tokens. */
@@ -153,6 +161,7 @@ export function applyYaadeThemeCss(theme: YaadeTheme): void {
 
   applySemanticTokens(theme.tokens)
   applyJetHighlightCssVars(theme)
+  applyYaadeTerminalCssVars(theme)
   applyYaadeTerminalAnsiCssVars(theme)
   applyAgentChatCssVars(theme)
 }
@@ -181,6 +190,28 @@ export function applyAgentChatCssVars(theme: YaadeTheme): void {
   root.style.setProperty(
     "--agent-composer-border",
     `color-mix(in srgb, ${c.border} 80%, transparent)`,
+  )
+}
+
+export function applyYaadeTerminalCssVars(theme: YaadeTheme): void {
+  const root = getDocumentElement()
+  if (!root) return
+  const terminal = theme.terminal
+  root.style.setProperty(
+    "--yaade-terminal-background",
+    terminal?.background ?? theme.colors.bg,
+  )
+  root.style.setProperty(
+    "--yaade-terminal-foreground",
+    terminal?.foreground ?? theme.colors.text,
+  )
+  root.style.setProperty(
+    "--yaade-terminal-cursor",
+    terminal?.cursor ?? theme.colors.accent,
+  )
+  root.style.setProperty(
+    "--yaade-terminal-selection",
+    terminal?.selectionBackground ?? theme.colors.selection,
   )
 }
 

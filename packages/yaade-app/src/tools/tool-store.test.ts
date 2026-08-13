@@ -66,7 +66,7 @@ describe("smart ToolUse titles", () => {
         running: false,
       },
     }
-    assert.equal(toolUseDisplayTitle(search), "updateUseContext")
+    assert.equal(toolUseDisplayTitle(search), "p: updateUseContext")
 
     const agent: ToolUse = {
       ...use(),
@@ -82,18 +82,18 @@ describe("smart ToolUse titles", () => {
     )
     assert.equal(
       toolUseDisplayTitle(agent, prompt),
-      "Fix the unfinished session sidebar",
+      "p: Fix the unfinished session sidebar",
     )
     const generic = nextRuntimeToolTitle(agent, prompt, "Agent", "terminal")
     assert.equal(generic, prompt)
     const live = nextRuntimeToolTitle(agent, prompt, "codex · yaade", "terminal")
-    assert.equal(toolUseDisplayTitle(agent, live), "codex · yaade")
+    assert.equal(toolUseDisplayTitle(agent, live), "p: codex · yaade")
   })
 
   it("uses a terminal's live title", () => {
     const terminal = use()
     const live = nextRuntimeToolTitle(terminal, undefined, "fish · ~/dev/yaade", "terminal")
-    assert.equal(toolUseDisplayTitle(terminal, live), "fish · ~/dev/yaade")
+    assert.equal(toolUseDisplayTitle(terminal, live), "p: fish · ~/dev/yaade")
   })
 })
 

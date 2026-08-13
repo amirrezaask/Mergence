@@ -1,9 +1,14 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import {
+  CreateToolUse,
+  EditorToolInput,
+  EditorToolOutput,
+  GitToolInput,
   GitToolOutput,
   InvalidToolInput,
   ProcessToolOutput,
+  ProjectTarget,
   SearchToolOutput,
   SessionArchived,
   ToolRuntimeFailure,
@@ -11,7 +16,7 @@ import {
   ToolUseCreated,
   ToolUseNotFound,
   ToolUseUpdated,
-  type CreateToolUse,
+  MainCheckout,
   type ToolUse,
   type ToolUseId,
   type ToolUseOutput,
@@ -24,6 +29,7 @@ import {
   processOutput,
   parseProcessProvider,
 } from "./process-driver.js";
+import { EditorToolDriver } from "./editor-driver.js";
 import { GitToolDriver } from "./git-driver.js";
 import { SearchDriver } from "./search-driver.js";
 import { ToolRegistry } from "./registry.js";
@@ -33,8 +39,11 @@ function eventId(prefix: string, id: string): string {
 }
 
 function pendingOutput(
-  kind: "agent" | "terminal" | "search" | "git",
+  kind: "agent" | "terminal" | "search" | "git" | "editor",
 ): ToolUseOutput {
+  if (kind === "editor") {
+    return EditorToolOutput.make({ kind: "editor" });
+  }
   if (kind === "git") {
     return GitToolOutput.make({ kind: "git" });
   }
@@ -75,7 +84,62 @@ export class ToolService {
       new ProcessToolDriver(runtime, "terminal"),
       this.search,
       new GitToolDriver(),
+      new EditorToolDriver(),
     ]);
+  }
+
+  /** Ensures every visible session starts with Editor and Git tabs. */
+  async ensureDefaultTools(clientId = "default-tools-bootstrap"): Promise<void> {
+    const project = this.runtime.db.projects()[0];
+    if (!project) return;
+    for (const session of this.runtime.toolSessions.listSessions()) {
+      await this.ensureDefaultToolsForSession(session.id, project, clientId);
+    }
+  }
+
+  async ensureDefaultToolsForSession(
+    sessionId: import("@yaade/rpc").SessionId,
+    project: { readonly id: string; readonly rootPath: string; readonly name: string },
+    clientId: string,
+  ): Promise<void> {
+    const session = this.runtime.toolSessions.getSession(sessionId);
+    if (!session) return;
+    const existing = this.runtime.toolSessions.listToolUses(sessionId);
+    const contexts = {
+      project: ProjectTarget.make({
+        projectId: project.id,
+        projectPath: project.rootPath,
+        projectName: project.name,
+      }),
+      checkout: MainCheckout.make({ kind: "main" }),
+    };
+    const defaults: ToolUse[] = [];
+    for (const [kind, input] of [
+      ["editor", EditorToolInput.make({ kind: "editor" })],
+      ["git", GitToolInput.make({ kind: "git" })],
+    ] as const) {
+      const current = existing.find((use) => use.kind === kind);
+      if (current) {
+        defaults.push(current);
+        continue;
+      }
+      defaults.push(
+        await this.create(
+          CreateToolUse.make({
+            sessionId,
+            title: kind === "editor" ? "Editor" : "Git History",
+            kind,
+            ...contexts,
+            input,
+          }),
+          clientId,
+        ),
+      );
+    }
+    if (!session.activeToolUseId) {
+      const editor = defaults.find((use) => use.kind === "editor");
+      if (editor) this.runtime.toolSessions.setActiveToolUse(sessionId, editor.id);
+    }
   }
 
   createEffect(
@@ -626,7 +690,8 @@ export class ToolService {
       (command.kind === "search" && command.input.kind === "search") ||
       (command.kind === "agent" && command.input.kind === "agent") ||
       (command.kind === "terminal" && command.input.kind === "terminal") ||
-      (command.kind === "git" && command.input.kind === "git");
+      (command.kind === "git" && command.input.kind === "git") ||
+      (command.kind === "editor" && command.input.kind === "editor");
     if (!valid) {
       throw new InvalidToolInput({
         message: "tool kind does not match input",
@@ -671,5 +736,6 @@ function defaultTitle(kind: CreateToolUse["kind"]): string {
   if (kind === "agent") return "Agent";
   if (kind === "terminal") return "Terminal";
   if (kind === "search") return "Search";
-  return "Git History";
+  if (kind === "git") return "Git History";
+  return "Editor";
 }

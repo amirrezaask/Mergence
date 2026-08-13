@@ -164,7 +164,7 @@ function MonoFontPicker({
           size="sm"
           className="w-full min-w-0"
           inputClassName="font-mono"
-          aria-label="Monospace font"
+          aria-label="Terminal font"
         />
         <ComboboxPopup className="w-(--anchor-width)">
           <ComboboxEmpty>No monospace fonts found.</ComboboxEmpty>
@@ -576,10 +576,10 @@ export function SettingsOverlay({
                           htmlFor="yaade-mono-font"
                           className="text-sm font-medium leading-snug text-foreground"
                         >
-                          Monospace font
+                          Terminal font
                         </FieldLabel>
                         <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Terminal, editor, and code UI. Lists monospace faces available on this system.
+                          Sets the terminal and code monospace face. Lists fonts available on this system.
                         </FieldDescription>
                       </FieldContent>
                       <MonoFontPicker

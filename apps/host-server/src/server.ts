@@ -94,6 +94,7 @@ export async function startHostServer(
       return yield* HostRuntimeTag
     }),
   )
+  await runtime.toolService?.ensureDefaultTools()
 
   let inflightRpc = 0
 

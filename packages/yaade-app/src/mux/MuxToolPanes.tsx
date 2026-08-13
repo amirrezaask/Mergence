@@ -527,6 +527,9 @@ function WorkspaceSymbolsTool(props: MuxToolPanesProps) {
         setState(previous => ({ ...previous, loading: true, error: null }))
         try {
           const { client } = await activeLsp(props)
+          if (!client.supports("workspace/symbol")) {
+            throw new Error("Workspace symbols are not supported by this language server")
+          }
           const symbols = await client.sendRequest<LspWorkspaceSymbol[] | null>(
             "workspace/symbol",
             { query },
@@ -618,6 +621,11 @@ function HierarchyTool(
         const prepareMethod = isCall
           ? "textDocument/prepareCallHierarchy"
           : "textDocument/prepareTypeHierarchy"
+        if (!client.supports(prepareMethod)) {
+          throw new Error(
+            `${isCall ? "Call" : "Type"} hierarchy is not supported by this language server`,
+          )
+        }
         const roots = await client.sendRequest<LspHierarchyItem[] | null>(
           prepareMethod,
           {

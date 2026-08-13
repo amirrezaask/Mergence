@@ -72,7 +72,7 @@ import {
   type LspDiagnostic,
   type LspWorkspaceEdit,
 } from "@yaade/monaco"
-import { canonicalizeFileUri, fileUriToPath } from "@yaade/shared"
+import { canonicalizeFileUri, Emitter, fileUriToPath } from "@yaade/shared"
 import type { LspConnection } from "./manager.js"
 import type { JetLspWorkspaceDeps } from "./yaade-workspace.js"
 import type { LspOutputEntry, LspProgressEvent } from "./yaade-workspace.js"
@@ -617,6 +617,13 @@ function requestWithCancellation<R>(
   return request
 }
 
+export const LSP_INITIALIZE_TIMEOUT_MS = 15_000
+
+export type LspConnectionClosedEvent = {
+  connectionId: string
+  reason: string
+}
+
 export class LspClientPool {
   private clients = new Map<string, MonacoLspClient>()
   private pending = new Map<string, Promise<MonacoLspClient>>()
@@ -647,6 +654,8 @@ export class LspClientPool {
   private commandSequence = 0
   private openDocs = new Map<string, Set<string>>()
   private editorOpener: monaco.IDisposable | null = null
+
+  readonly onDidDisconnect = new Emitter<LspConnectionClosedEvent>()
 
   private lspOwnerId(connectionId: string): string {
     return `lsp:${connectionId}`
@@ -919,7 +928,26 @@ export class LspClientPool {
 
     const { webSocket, reader, writer } = await createWebSocketTransports(conn.transportUrl)
     const connection = createMessageConnection(reader, writer)
+    let expectedDisconnect = false
+    const handleUnexpectedClose = (event: CloseEvent) => {
+      if (expectedDisconnect) return
+      queueMicrotask(() => {
+        if (
+          expectedDisconnect ||
+          this.connections.get(conn.id) !== connection
+        ) {
+          return
+        }
+        this.onDidDisconnect.fire({
+          connectionId: conn.id,
+          reason: event.reason || `Language server connection closed (${event.code})`,
+        })
+      })
+    }
+    webSocket.addEventListener("close", handleUnexpectedClose)
     const cancelPending = () => {
+      expectedDisconnect = true
+      webSocket.removeEventListener("close", handleUnexpectedClose)
       if (this.connections.get(conn.id) === connection) {
         this.connections.delete(conn.id)
         this.connectionDescriptors.delete(conn.id)
@@ -1097,14 +1125,24 @@ export class LspClientPool {
 
     let initialized: InitializeResult
     try {
-      initialized = await connection.sendRequest<InitializeResult>("initialize", {
-        processId: null,
-        clientInfo: { name: "yaade", version: "0.0.1" },
-        rootUri: conn.projectRootUri,
-        workspaceFolders: [{ uri: conn.projectRootUri, name: "workspace" }],
-        initializationOptions: conn.initializationOptions,
-        capabilities: yaadeLspClientCapabilities,
-      })
+      const initializeCancellation = new CancellationTokenSource()
+      const initializeTimer = window.setTimeout(
+        () => initializeCancellation.cancel(),
+        LSP_INITIALIZE_TIMEOUT_MS,
+      )
+      try {
+        initialized = await connection.sendRequest<InitializeResult>("initialize", {
+          processId: null,
+          clientInfo: { name: "yaade", version: "0.0.1" },
+          rootUri: conn.projectRootUri,
+          workspaceFolders: [{ uri: conn.projectRootUri, name: "workspace" }],
+          initializationOptions: conn.initializationOptions,
+          capabilities: yaadeLspClientCapabilities,
+        }, initializeCancellation.token)
+      } finally {
+        window.clearTimeout(initializeTimer)
+        initializeCancellation.dispose()
+      }
     } catch (error) {
       dynamicRegistrations.dispose()
       this.dynamicRegistrations.delete(conn.id)
@@ -1134,6 +1172,8 @@ export class LspClientPool {
       disconnect: () => {
         if (disconnected) return
         disconnected = true
+        expectedDisconnect = true
+        webSocket.removeEventListener("close", handleUnexpectedClose)
         for (const d of this.disposables.get(conn.id) ?? []) d.dispose()
         this.disposables.delete(conn.id)
         this.dynamicRegistrations.get(conn.id)?.dispose()

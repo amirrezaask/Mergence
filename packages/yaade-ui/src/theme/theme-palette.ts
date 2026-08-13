@@ -1,6 +1,7 @@
 import type {
   JetHighlightColors,
   JetTerminalAnsiColors,
+  JetTerminalColors,
   YaadeSemanticTokens,
   YaadeTheme,
 } from "@yaade/shared"
@@ -12,11 +13,9 @@ export type ColorScheme = "dark" | "light"
 type ThemeFamily =
   | "Default"
   | "Catppuccin"
+  | "Tokyo Night"
+  | "Rosé Pine"
   | "Ayu"
-  | "Everforest"
-  | "Gruvbox"
-  | "TokyoNight"
-  | "RAD"
 
 export type PaletteThemeInput = {
   id: string
@@ -29,6 +28,7 @@ export type PaletteThemeInput = {
   tokens: YaadeSemanticTokens
   highlights: JetHighlightColors
   terminalAnsi: JetTerminalAnsiColors
+  terminal?: JetTerminalColors
 }
 
 function swatches(theme: Pick<PaletteThemeInput, "tokens" | "highlights" | "terminalAnsi">): string[] {

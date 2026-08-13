@@ -3,6 +3,8 @@ import { Data, Schema } from "effect";
 import {
   AgentToolInput,
   AppSession,
+  EditorToolInput,
+  EditorToolOutput,
   GitToolInput,
   GitToolOutput,
   ProcessToolOutput,
@@ -79,11 +81,13 @@ const ToolUseInputSchema = Schema.Union(
   TerminalToolInput,
   SearchToolInput,
   GitToolInput,
+  EditorToolInput,
 );
 const ToolUseOutputSchema = Schema.Union(
   ProcessToolOutput,
   SearchToolOutput,
   GitToolOutput,
+  EditorToolOutput,
 );
 
 function decodeJson<A>(

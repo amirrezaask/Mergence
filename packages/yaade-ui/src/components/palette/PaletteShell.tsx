@@ -140,12 +140,14 @@ export function PaletteShell<T>({
       </DialogHeader>
       <DialogContent
         motion="instant"
+        placement="quick-input"
         size={size}
         data-yaade-palette=""
+        data-yaade-quick-input=""
         data-yaade-palette-fit={fitContent ? "content" : undefined}
         style={fitStyle}
         className={[
-          "max-h-[calc(100dvh-2rem)] gap-0 overflow-hidden border-border bg-popover p-0 text-popover-foreground shadow-lg",
+          "max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] gap-0 overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl backdrop-blur-none",
           contentClassName,
         ]
           .filter(Boolean)
@@ -175,7 +177,7 @@ export function PaletteShell<T>({
                 requireQueryForSelection={requireQueryForSelection}
                 aria-label={title}
                 items={listerItems}
-                itemClassName={cn("mx-1.5 px-2.5 py-1.5", itemClassName)}
+                itemClassName={cn("mx-0 rounded-none px-2.5 py-0", itemClassName)}
                 itemStyle={node => itemStyle?.(node.data)}
                 estimateSize={node =>
                   estimateSize?.(node.data) ?? readPaletteRowHeight(rowLayout)
@@ -186,7 +188,7 @@ export function PaletteShell<T>({
                   fitContent ? onContentWidthChange : undefined
                 }
                 betweenInputAndList={statusRow}
-                listClassName="min-h-0 max-h-[min(var(--yaade-overlay-list-max),calc(100dvh-5rem))] px-0.5 pb-1.5"
+                listClassName="min-h-0 max-h-[min(var(--yaade-overlay-list-max),calc(100dvh-var(--yaade-quick-input-top)-4rem))] px-1.5 pt-0.5 pb-1.5"
                 className="min-h-0"
                 emptyState={
                   <div

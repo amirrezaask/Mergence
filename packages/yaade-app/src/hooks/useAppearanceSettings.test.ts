@@ -8,12 +8,19 @@ import {
 } from "./useAppearanceSettings.js"
 
 describe("normalizeThemeId", () => {
-  it("keeps Catppuccin themes and migrates removed themes", () => {
-    assert.equal(normalizeThemeId("catppuccin-latte"), "catppuccin-latte")
-    assert.equal(normalizeThemeId("catppuccin-mocha"), "catppuccin-mocha")
-    assert.equal(normalizeThemeId("tokyonight-day"), "default-light")
-    for (const id of ["tokyonight-night", "tokyonight-storm"]) {
-      assert.equal(normalizeThemeId(id), "default-dark")
+  it("keeps every bundled palette family", () => {
+    for (const id of [
+      "catppuccin-latte",
+      "catppuccin-mocha",
+      "tokyonight-day",
+      "tokyonight-night",
+      "tokyonight-moon",
+      "rose-pine",
+      "rose-pine-dawn",
+      "ayu-dark",
+      "ayu-light",
+    ]) {
+      assert.equal(normalizeThemeId(id), id)
     }
   })
 

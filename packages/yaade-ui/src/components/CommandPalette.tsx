@@ -44,39 +44,35 @@ export function CommandPalette({
       onSelect={cmd => onRun(cmd.id)}
       emptyLabel="No results."
       requireQueryForSelection={false}
-      rowLayout="detail"
+      rowLayout="single"
       renderItem={cmd => (
         <span className="grid w-full min-w-0 grid-cols-[minmax(0,1fr)_auto] items-center gap-3">
           <span
             data-slot="palette-row-content"
-            className="flex min-w-0 flex-col justify-center gap-0.5"
+            className="flex min-w-0 items-baseline gap-2"
           >
-            <span className="flex min-w-0 items-center gap-2">
-              <span
-                data-slot="palette-row-title"
-                className="min-w-0 truncate font-medium leading-tight"
-              >
-                {cmd.title}
-              </span>
-              {cmd.recent && (
-                <Badge
-                  variant="secondary"
-                  className="px-1.5 py-0 text-3xs leading-normal"
-                >
-                  Recent
-                </Badge>
-              )}
-            </span>
             <span
-              data-slot="palette-row-meta"
-              className="flex min-w-0 items-center gap-1.5 truncate text-xs leading-tight text-muted-foreground"
+              data-slot="palette-row-title"
+              className="min-w-0 truncate font-medium leading-tight"
             >
-              {cmd.category && <span>{cmd.category}</span>}
-              {cmd.category && cmd.aliases?.length ? <span aria-hidden>·</span> : null}
-              {cmd.aliases?.length ? (
-                <span className="min-w-0 truncate">{cmd.aliases.join(" · ")}</span>
-              ) : null}
+              {cmd.title}
             </span>
+            {cmd.category ? (
+              <span
+                data-slot="palette-row-meta"
+                className="shrink-0 truncate text-xs leading-tight text-muted-foreground"
+              >
+                {cmd.category}
+              </span>
+            ) : null}
+            {cmd.recent ? (
+              <Badge
+                variant="secondary"
+                className="shrink-0 px-1.5 py-0 text-3xs leading-normal"
+              >
+                Recent
+              </Badge>
+            ) : null}
           </span>
           {cmd.keybinding ? (
             <span

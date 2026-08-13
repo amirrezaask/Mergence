@@ -25,6 +25,9 @@ test("gates Monaco providers on the server's declared capabilities", () => {
     documentRangeFormattingProvider: true,
     documentHighlightProvider: true,
     codeLensProvider: { resolveProvider: true },
+    callHierarchyProvider: true,
+    typeHierarchyProvider: true,
+    workspaceSymbolProvider: true,
   }
 
   for (const method of [
@@ -42,6 +45,9 @@ test("gates Monaco providers on the server's declared capabilities", () => {
     "textDocument/rangeFormatting",
     "textDocument/documentHighlight",
     "textDocument/codeLens",
+    "textDocument/prepareCallHierarchy",
+    "textDocument/prepareTypeHierarchy",
+    "workspace/symbol",
   ]) assert.equal(serverSupports(capabilities, method), true, method)
 
   assert.equal(serverSupports({ semanticTokensProvider: {
@@ -52,5 +58,5 @@ test("gates Monaco providers on the server's declared capabilities", () => {
     legend: { tokenTypes: [], tokenModifiers: [] },
     full: true,
   } }, "textDocument/semanticTokens/full/delta"), false)
-  assert.equal(serverSupports(capabilities, "textDocument/callHierarchy"), false)
+  assert.equal(serverSupports(capabilities, "textDocument/linkedEditingRange"), false)
 })

@@ -38,7 +38,7 @@ Fonts: `--font-sans` Geist, `--font-mono` Commit Mono.
 ### Motion
 `yaadeMotion` (from `@yaade/ui`) is the single source of animation timings: 100ms interaction, 160ms menus, and 200ms panels. CSS vars: `--yaade-motion-fast/hot/menu/overlay/panel/slow-menu/scroll/entity`; easing vars: `--yaade-ease-out/in-out/drawer`. Never hardcode durations; reference the token. Press feedback is the restrained global `0.98` scale.
 
-High-frequency palette surfaces use `<DialogContent motion="instant" size="picker" />`. Standard prompts and dialogs use the menu/panel motion tokens. Dialog sizes are semantic: `prompt` (24rem), `picker` (32rem), `wide` (42rem), and `default`.
+High-frequency palette surfaces use `<DialogContent motion="instant" placement="quick-input" size="picker" />`. Standard prompts and dialogs use the menu/panel motion tokens. Dialog sizes are semantic: `prompt` (24rem), `picker` (32rem), `wide` (42rem), and `default`; PaletteShell applies VS Code-like quick-input minimums (`picker` 44rem, `wide` 52rem) with viewport caps.
 
 Reduced motion is handled globally by `data-yaade-reduced-motion` and `prefers-reduced-motion` in `globals.css`.
 
@@ -50,6 +50,8 @@ Only `lucide-react`. Default size class: `size-4`. Do not import other icon libr
 ### Overlay palettes → `PaletteShell<T>`
 
 Location: `src/components/palette/PaletteShell.tsx`.
+
+PaletteShell uses shared VS Code-like quick-input chrome: top-docked placement, no backdrop dim/blur, an inset focused search field, dense square selection rows, and a compact floating shadow. `CdOverlay` uses the same chrome while retaining its bespoke path completion controls.
 
 List engine: **`Lister`** (`src/lister/`) — flat/tree virt list, fuzzy filter, search input. `showInput` = initial visibility only; typing always reveals the field while query non-empty. PaletteShell = Dialog chrome + Lister (`showInput`, `flatVariant="palette"`). Explorer / LocationList use same Lister (`showInput={false}` until type).
 

@@ -39,7 +39,7 @@ export type ProjectSearchPanelProps = {
   onOptionsChange: (options: ProjectSearchOptions) => void
   onSelectResult: (result: ProjectSearchResult, disposition?: "preview" | "pinned") => void
   /** Fetch the next host result page when the list is truncated. */
-  onLoadMore?: () => void
+  onLoadMore?: () => void | Promise<void>
   className?: string
 }
 
@@ -101,6 +101,7 @@ function useNearViewport(
   rootRef: RefObject<Element | null>,
   onNear: () => void,
   enabled: boolean,
+  revision: unknown = null,
 ): (node: HTMLElement | null) => void {
   const [node, setNode] = useState<HTMLElement | null>(null)
   const onNearRef = useRef(onNear)
@@ -121,7 +122,7 @@ function useNearViewport(
     )
     observer.observe(node)
     return () => observer.disconnect()
-  }, [enabled, node, rootRef])
+  }, [enabled, node, revision, rootRef])
 
   return setNode
 }
@@ -288,6 +289,7 @@ export function ProjectSearchPanel({
   const scrollRef = useRef<HTMLDivElement>(null)
   const buckets = useMemo(() => groupSearchResultsByPath(results), [results])
   const [visibleCount, setVisibleCount] = useState(SEARCH_FILES_PAGE_SIZE)
+  const [requestingMore, setRequestingMore] = useState(false)
   const [selectedResult, setSelectedResult] = useState<{
     path: string
     line: number
@@ -299,6 +301,7 @@ export function ProjectSearchPanel({
 
   useEffect(() => {
     setVisibleCount(SEARCH_FILES_PAGE_SIZE)
+    setRequestingMore(false)
   }, [resultsKey])
 
   // Grow the mounted file window when host pages append more file groups.
@@ -314,7 +317,26 @@ export function ProjectSearchPanel({
   const hasMoreFiles = visibleCount < buckets.length
   const canFetchHostPage = Boolean(truncated && onLoadMore)
   const showMoreControl = hasMoreFiles || canFetchHostPage || loadingMore
-  const remainingFiles = Math.max(0, buckets.length - visibleCount)
+  const loadMoreBusy = loading || loadingMore || requestingMore
+
+  const loadNextPage = useCallback(() => {
+    if (hasMoreFiles) {
+      setVisibleCount(count =>
+        Math.min(buckets.length, count + SEARCH_FILES_PAGE_SIZE),
+      )
+      return
+    }
+    if (!canFetchHostPage || loadMoreBusy || !onLoadMore) return
+    setRequestingMore(true)
+    void Promise.resolve(onLoadMore()).finally(() => setRequestingMore(false))
+  }, [buckets.length, canFetchHostPage, hasMoreFiles, loadMoreBusy, onLoadMore])
+
+  const setLoadMoreRef = useNearViewport(
+    scrollRef,
+    loadNextPage,
+    showMoreControl,
+    `${visibleCount}:${buckets.length}:${results.length}:${loadMoreBusy}`,
+  )
 
   const include = formatGlobs(options.include)
   const exclude = formatGlobs(options.exclude)
@@ -381,31 +403,36 @@ export function ProjectSearchPanel({
             onChange={event => onQueryChange(event.target.value)}
             placeholder="Search project…"
             aria-label="Search project"
-            className="h-9 pl-9 font-mono text-sm"
+            className="h-9 pr-36 pl-9 font-mono text-sm"
             data-yaade-project-search-input=""
           />
+          <div
+            className="absolute inset-y-1 right-1 flex items-center gap-0.5 bg-card pl-1"
+            data-yaade-project-search-options=""
+          >
+            {(
+              [
+                ["Case", caseSensitive, () => patchOptions({ caseSensitive: !caseSensitive })],
+                ["Regex", regex, () => patchOptions({ regex: !regex, fuzzy: false })],
+                ["Word", wholeWord, () => patchOptions({ wholeWord: !wholeWord })],
+              ] as const
+            ).map(([label, active, toggle]) => (
+              <Button
+                key={label}
+                type="button"
+                size="sm"
+                variant={active ? "secondary" : "ghost"}
+                className="h-7 px-2 text-xs"
+                aria-pressed={active}
+                onClick={toggle}
+              >
+                {label}
+              </Button>
+            ))}
+          </div>
         </div>
-        <div className="flex flex-wrap items-center gap-1">
-          {(
-            [
-              ["Case", caseSensitive, () => patchOptions({ caseSensitive: !caseSensitive })],
-              ["Regex", regex, () => patchOptions({ regex: !regex, fuzzy: false })],
-              ["Word", wholeWord, () => patchOptions({ wholeWord: !wholeWord })],
-            ] as const
-          ).map(([label, active, toggle]) => (
-            <Button
-              key={label}
-              type="button"
-              size="sm"
-              variant={active ? "secondary" : "ghost"}
-              className="h-7 px-2 text-xs"
-              aria-pressed={active}
-              onClick={toggle}
-            >
-              {label}
-            </Button>
-          ))}
-          {loading || loadingMore ? <Spinner className="ml-1 size-3.5" /> : null}
+        <div className="flex h-4 items-center">
+          {loading || loadingMore ? <Spinner className="size-3.5" /> : null}
           {results.length > 0 ? (
             <span className="ml-auto text-xs text-muted-foreground" role="status">
               {results.length}
@@ -471,36 +498,12 @@ export function ProjectSearchPanel({
         ))}
         {showMoreControl ? (
           <div
-            className="flex items-center justify-center gap-2 px-3 py-4 text-xs text-muted-foreground"
+            ref={setLoadMoreRef}
+            className="flex min-h-10 items-center justify-center px-3 py-3 text-muted-foreground"
             data-yaade-project-search-sentinel=""
+            aria-hidden={!loadMoreBusy}
           >
-            {hasMoreFiles ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                onClick={() =>
-                  setVisibleCount(count =>
-                    Math.min(buckets.length, count + SEARCH_FILES_PAGE_SIZE),
-                  )
-                }
-              >
-                Show {Math.min(SEARCH_FILES_PAGE_SIZE, remainingFiles)} more file{
-                  Math.min(SEARCH_FILES_PAGE_SIZE, remainingFiles) === 1 ? "" : "s"
-                }
-              </Button>
-            ) : (
-              <Button
-                type="button"
-                variant="ghost"
-                size="sm"
-                disabled={loading || loadingMore}
-                onClick={onLoadMore}
-              >
-                {loadingMore ? <Spinner className="size-3.5" /> : null}
-                {loadingMore ? "Loading more matches…" : "Load more matches"}
-              </Button>
-            )}
+            {loadMoreBusy ? <Spinner className="size-3.5" /> : null}
           </div>
         ) : null}
       </div>

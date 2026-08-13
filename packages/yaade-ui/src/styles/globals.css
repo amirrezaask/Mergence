@@ -113,7 +113,8 @@
   /* Palette virtualization and rendered slots share these rem-scaled contracts.
    * Single-line pickers stay compact; detail rows reserve title + metadata. */
   --yaade-palette-row-height: 2.5rem;
-  --yaade-palette-detail-row-height: 3.5rem;
+  --yaade-palette-detail-row-height: 3rem;
+  --yaade-quick-input-top: clamp(1rem, 7dvh, 4.5rem);
   /* Agent CLI picker rows contain a provider glyph plus two text lines.
    * Keep the virtual slot rem-scaled so appearance zoom cannot clip or overlap
    * the line boxes. Other palette rows retain their compact contract. */
@@ -553,6 +554,34 @@ body {
   transform: scale(var(--yaade-press-scale)) translateY(var(--yaade-press-y));
   filter: brightness(0.96);
   box-shadow: inset 0 1px 2px rgb(0 0 0 / 0.22);
+}
+
+/* VS Code-style quick input: top-docked, dense, rectangular rows with a strong selection. */
+[data-yaade-quick-input] [data-slot="command-item"] {
+  border-radius: 0;
+}
+
+[data-yaade-quick-input] [data-slot="command-item"][data-selected="true"] {
+  background: var(--primary);
+  color: var(--primary-foreground);
+}
+
+[data-yaade-quick-input]
+  [data-slot="command-item"][data-selected="true"]
+  .text-foreground {
+  color: var(--primary-foreground);
+}
+
+[data-yaade-quick-input]
+  [data-slot="command-item"][data-selected="true"]
+  :is(.text-muted-foreground, [data-slot="palette-row-meta"]) {
+  color: color-mix(in oklch, var(--primary-foreground) 78%, transparent);
+}
+
+[data-yaade-quick-input] [data-slot="command-item"]:active {
+  transform: none;
+  filter: none;
+  box-shadow: none;
 }
 
 /* List / sidebar row hover — RAD DrawHotEffects (flat accent, no press inset) */

@@ -43,6 +43,7 @@ function ListerSearchInput({
   ariaLabel,
   controlsId,
   activeDescendantId,
+  variant,
 }: {
   value: string
   onChange: (next: string) => void
@@ -53,6 +54,7 @@ function ListerSearchInput({
   ariaLabel?: string
   controlsId: string
   activeDescendantId?: string
+  variant: "plain" | "quick-input"
 }) {
   const setRefs = (el: HTMLInputElement | null) => {
     if (inputRef) (inputRef as MutableRefObject<HTMLInputElement | null>).current = el
@@ -61,9 +63,21 @@ function ListerSearchInput({
   return (
     <div
       data-slot="command-input-wrapper"
-      className="flex h-9 items-center gap-2 border-b px-3"
+      data-yaade-quick-input-field={variant === "quick-input" ? "" : undefined}
+      className={cn(
+        "flex items-center gap-2",
+        variant === "quick-input"
+          ? "mx-1.5 mt-1.5 mb-1 h-8 rounded-sm border border-input bg-background px-2 shadow-xs focus-within:border-primary focus-within:ring-1 focus-within:ring-primary"
+          : "h-9 border-b px-3",
+      )}
     >
-      <SearchIcon className="size-4 shrink-0 opacity-50" aria-hidden="true" />
+      <SearchIcon
+        className={cn(
+          "shrink-0 opacity-50",
+          variant === "quick-input" ? "size-3.5" : "size-4",
+        )}
+        aria-hidden="true"
+      />
       <input
         ref={setRefs}
         data-slot="command-input"
@@ -74,7 +88,10 @@ function ListerSearchInput({
         aria-controls={controlsId}
         aria-activedescendant={activeDescendantId}
         autoFocus={autoFocus}
-        className="flex h-10 w-full min-w-0 flex-1 rounded-md bg-transparent py-3 text-sm outline-none focus-visible:ring-0 placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50"
+        className={cn(
+          "flex w-full min-w-0 flex-1 bg-transparent text-sm outline-none focus-visible:ring-0 placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
+          variant === "quick-input" ? "h-full rounded-none py-0" : "h-10 rounded-md py-3",
+        )}
         value={value}
         placeholder={placeholder}
         disabled={disabled}
@@ -688,7 +705,7 @@ export function Lister<T>({
                 data-slot="command-item"
                 data-selected={selected ? "true" : undefined}
                 className={cn(
-                  "absolute left-0 top-0 flex w-full shrink-0 cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-sm outline-none select-none",
+                  "absolute left-0 top-0 flex w-full shrink-0 cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none select-none",
                   selected && "bg-accent text-accent-foreground",
                   itemClassName,
                 )}
@@ -781,6 +798,7 @@ export function Lister<T>({
               ? optionId(visibleRows[selectedIndex]?.node.id ?? "")
               : undefined
           }
+          variant={flatVariant === "palette" ? "quick-input" : "plain"}
         />
       ) : null}
       {betweenInputAndList}

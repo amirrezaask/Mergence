@@ -1,9 +1,9 @@
-import { useEffect, useId, useRef } from "react"
+import { useEffect, useId, useRef, useState } from "react"
 import * as monaco from "monaco-editor/esm/vs/editor/editor.api.js"
 import type { YaadeTheme } from "@yaade/shared"
 import "./monaco-features.js"
 import { ensureMonacoEnvironment } from "./monaco-env.js"
-import { isLargeModel } from "./language.js"
+import { isLargeModel, monacoLanguageId } from "./language.js"
 import { ensureLanguageContribution } from "./language-contributions.js"
 import { monacoModels } from "./model-registry.js"
 import { applyYaadeMonacoTheme } from "./theme.js"
@@ -19,6 +19,7 @@ import {
 import {
   interceptPrimaryCommandPaletteShortcut,
   interceptPrimaryQuickOpenShortcut,
+  interceptPrimarySaveShortcut,
 } from "./editor-shortcuts.js"
 import {
   recordMonacoEditorBlurred,
@@ -35,6 +36,7 @@ export type MonacoEditorHostProps = {
   theme: YaadeTheme
   readOnly?: boolean
   autoFocus?: boolean
+  fontSize?: number
   /** Stable surface identity used to restore cursor, selections, folds, and scroll. */
   viewStateId?: string
   initialViewState?: monaco.editor.ICodeEditorViewState | null
@@ -48,6 +50,7 @@ export type MonacoEditorHostProps = {
   onCursorChange?: (line: number, column: number) => void
   onQuickOpen?: () => void
   onCommandPalette?: () => void
+  onSave?: () => void
   className?: string
 }
 
@@ -77,6 +80,7 @@ export function MonacoEditorHost({
   theme,
   readOnly = false,
   autoFocus = false,
+  fontSize = 14,
   viewStateId,
   initialViewState,
   onViewStateChange,
@@ -86,10 +90,12 @@ export function MonacoEditorHost({
   onCursorChange,
   onQuickOpen,
   onCommandPalette,
+  onSave,
   className,
 }: MonacoEditorHostProps) {
   const containerRef = useRef<HTMLDivElement | null>(null)
   const editorRef = useRef<MonacoEditorHandle | null>(null)
+  const [initialLanguageReady, setInitialLanguageReady] = useState(false)
   const generatedEditorId = useId()
   const editorId = viewStateId ?? generatedEditorId
   const viewOwnerId = `view:${editorId}`
@@ -100,6 +106,7 @@ export function MonacoEditorHost({
   const onCursorChangeRef = useRef(onCursorChange)
   const onQuickOpenRef = useRef(onQuickOpen)
   const onCommandPaletteRef = useRef(onCommandPalette)
+  const onSaveRef = useRef(onSave)
   const onViewStateChangeRef = useRef(onViewStateChange)
 
   onReadyRef.current = onReady
@@ -108,13 +115,27 @@ export function MonacoEditorHost({
   onCursorChangeRef.current = onCursorChange
   onQuickOpenRef.current = onQuickOpen
   onCommandPaletteRef.current = onCommandPalette
+  onSaveRef.current = onSave
   onViewStateChangeRef.current = onViewStateChange
 
   useEffect(() => {
+    let cancelled = false
     void ensureLanguageContribution(languageId)
-  }, [languageId])
+      .catch(() => undefined)
+      .then(() => {
+        if (cancelled) return
+        // Re-assigning after Monarch registration forces existing models to
+        // tokenize. The first editor waits for this path before it is created.
+        monacoModels.setLanguage(uri, languageId)
+        setInitialLanguageReady(true)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [languageId, uri])
 
   useEffect(() => {
+    if (!initialLanguageReady) return
     ensureMonacoEnvironment()
     const container = containerRef.current
     if (!container) return
@@ -139,8 +160,8 @@ export function MonacoEditorHost({
       links: true,
       hover: { enabled: true, delay: 250 },
       fontFamily: "var(--font-mono, 'Commit Mono', ui-monospace, monospace)",
-      fontSize: 14,
-      lineHeight: 22,
+      fontSize,
+      lineHeight: Math.round(fontSize * (22 / 14)),
       padding: { top: 8, bottom: 8 },
       renderWhitespace: "selection",
       bracketPairColorization: { enabled: true },
@@ -204,6 +225,11 @@ export function MonacoEditorHost({
             browserEvent,
             platform,
             () => onQuickOpenRef.current?.(),
+          ) ||
+          interceptPrimarySaveShortcut(
+            browserEvent,
+            platform,
+            () => onSaveRef.current?.(),
           )
         ) {
           return
@@ -248,7 +274,7 @@ export function MonacoEditorHost({
       editorRef.current = null
       monacoModels.release(currentUri, viewOwnerId)
     }
-  }, [editorId])
+  }, [editorId, initialLanguageReady])
 
   useEffect(() => {
     uriRef.current = uri
@@ -300,6 +326,13 @@ export function MonacoEditorHost({
   }, [readOnly])
 
   useEffect(() => {
+    editorRef.current?.updateOptions({
+      fontSize,
+      lineHeight: Math.round(fontSize * (22 / 14)),
+    })
+  }, [fontSize])
+
+  useEffect(() => {
     if (autoFocus) editorRef.current?.focus()
   }, [autoFocus])
 
@@ -308,6 +341,7 @@ export function MonacoEditorHost({
       ref={containerRef}
       className={className}
       data-yaade-monaco-editor
+      data-yaade-monaco-language={monacoLanguageId(languageId)}
       aria-label="Code editor"
       style={{ width: "100%", height: "100%", minHeight: 0, minWidth: 0 }}
     />

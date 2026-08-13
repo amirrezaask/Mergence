@@ -63,6 +63,8 @@ export const yaadeLspClientCapabilities = {
     selectionRange: { dynamicRegistration: true },
     documentLink: { dynamicRegistration: true, tooltipSupport: true },
     colorProvider: { dynamicRegistration: true },
+    callHierarchy: { dynamicRegistration: false },
+    typeHierarchy: { dynamicRegistration: false },
     publishDiagnostics: { relatedInformation: true, tagSupport: { valueSet: [1, 2] } },
   },
   workspace: {
@@ -78,6 +80,7 @@ export const yaadeLspClientCapabilities = {
     },
     workspaceFolders: true,
     configuration: true,
+    symbol: { dynamicRegistration: false },
   },
   window: {
     showMessage: { messageActionItem: { additionalPropertiesSupport: true } },

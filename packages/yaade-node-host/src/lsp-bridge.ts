@@ -256,6 +256,10 @@ export class LspBridge {
       shell: false,
       env: { ...process.env, ...def.environment },
     })
+    const spawned = new Promise<void>((resolve, reject) => {
+      proc.once("spawn", resolve)
+      proc.once("error", reject)
+    })
 
     const session: LspSession = {
       id,
@@ -285,6 +289,16 @@ export class LspBridge {
       message => this.options.onLog?.(session.id, "stderr", redact(message)),
       opts.onSpawnError,
     )
+    try {
+      await spawned
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      return {
+        id: "",
+        transportUrl: "",
+        error: `Could not start ${def.id}: ${message}`,
+      }
+    }
     this.options.onLog?.(session.id, "host", `Started ${def.id}`)
 
     return { id, transportUrl: `ws://127.0.0.1:${port}` }

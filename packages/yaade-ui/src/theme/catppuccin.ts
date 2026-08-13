@@ -102,6 +102,12 @@ function catppuccinTheme(input: {
     sourceUrl,
     license: "MIT",
     tokens: semanticTokens(palette, scheme),
+    terminal: {
+      background: palette.base,
+      foreground: palette.text,
+      cursor: palette.rosewater,
+      selectionBackground: palette.surface2,
+    },
     highlights: paletteHighlights({
       keyword: palette.mauve,
       controlKeyword: palette.pink,

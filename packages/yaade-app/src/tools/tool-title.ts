@@ -33,14 +33,20 @@ export function toolUseDisplayTitle(
   use: ToolUse,
   runtimeTitle?: RuntimeToolTitle,
 ): string {
-  if (use.input.kind === "search") {
-    return compactToolTitle(use.input.query) || "Search";
-  }
-  return (
-    runtimeTitle?.title ||
-    compactToolTitle(use.title) ||
-    (use.kind === "agent" ? "Agent" : "Terminal")
-  );
+  const title =
+    use.input.kind === "search"
+      ? compactToolTitle(use.input.query) || "Search"
+      : runtimeTitle?.title ||
+        compactToolTitle(use.title) ||
+        (use.kind === "agent"
+          ? "Agent"
+          : use.kind === "editor"
+            ? "Editor"
+            : use.kind === "git"
+              ? "Git History"
+              : "Terminal");
+  const projectName = compactToolTitle(use.context.project.projectName);
+  return projectName ? compactToolTitle(`${projectName}: ${title}`) : title;
 }
 
 export function nextRuntimeToolTitle(

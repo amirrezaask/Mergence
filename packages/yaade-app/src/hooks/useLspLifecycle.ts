@@ -143,16 +143,12 @@ export function useLspLifecycle(
       onProgress: recordLspProgress,
       onOutput: recordLspOutput,
       isUriAllowed: uri => workspace.resolveRootUriForFile(uri) != null,
-      applyWorkspaceEditTransaction: async (edit, transactionOptions) => {
-        const apply = applyWorkspaceEditTransactionRef.current
-        if (!apply) {
-          return {
-            applied: false,
-            reason: "Atomic workspace edits are unavailable",
+      ...(applyWorkspaceEditTransactionRef.current
+        ? {
+            applyWorkspaceEditTransaction: (edit, transactionOptions) =>
+              applyWorkspaceEditTransactionRef.current!(edit, transactionOptions),
           }
-        }
-        return apply(edit, transactionOptions)
-      },
+        : {}),
     })
     runtime.pool.setServerMessageHandler((message, kind) => {
       showYaadeToast(message, {
@@ -369,21 +365,53 @@ export function useLspLifecycle(
     }
   }, [bumpLspRevision, ensureLspForFileDeduped, ensureRuntime, workspace])
 
+  const reconnectOpenDocuments = useCallback(async () => {
+    const runtime = runtimeRef.current
+    if (!runtime?.manager) return
+    setLspStatus("restarting")
+    const staleIds = await runtime.manager.stopAll()
+    for (const id of staleIds) {
+      runtime.router.releaseConnection(id)
+      runtime.pool.releaseConnection(id)
+    }
+    const documents = [...workspace.openBuffers]
+    await Promise.all(documents.map(uri => ensureLspForFileDeduped(uri)))
+    setLspStatus(runtime.manager.hasAnyConnection() ? "ready" : "idle")
+    bumpLspRevision()
+  }, [bumpLspRevision, ensureLspForFileDeduped, workspace])
+
+  useEffect(() => {
+    let disposed = false
+    let release: (() => void) | null = null
+    void ensureRuntime().then(runtime => {
+      if (disposed) return
+      const subscription = runtime.pool.onDidDisconnect.event(event => {
+        const stale = runtime.manager?.listConnections().some(
+          connection => connection.id === event.connectionId,
+        )
+        if (!stale) return
+        runtime.manager?.clearConnection(event.connectionId)
+        runtime.router.releaseConnection(event.connectionId)
+        runtime.pool.releaseConnection(event.connectionId)
+        setLspStatus("disconnected")
+        window.setTimeout(() => {
+          if (disposed) return
+          void reconnectOpenDocuments().catch(() => {
+            if (!disposed) setLspStatus("disconnected")
+          })
+        }, 250)
+      })
+      release = () => subscription.dispose()
+    })
+    return () => {
+      disposed = true
+      release?.()
+    }
+  }, [ensureRuntime, reconnectOpenDocuments])
+
   useEffect(() => {
     const reconnectClients = () => {
-      const runtime = runtimeRef.current
-      if (!runtime?.manager || !runtime.manager.hasAnyConnection()) return
-      setLspStatus("restarting")
-      for (const connection of runtime.manager.listConnections()) {
-        runtime.router.releaseConnection(connection.id)
-        runtime.pool.releaseConnection(connection.id)
-      }
-      void Promise.all(
-        [...workspace.openBuffers].map(uri => ensureLspForFileDeduped(uri)),
-      ).then(() => {
-        setLspStatus(runtime.manager?.hasAnyConnection() ? "ready" : "idle")
-        bumpLspRevision()
-      }).catch(() => {
+      void reconnectOpenDocuments().catch(() => {
         setLspStatus("disconnected")
       })
     }
@@ -391,7 +419,7 @@ export function useLspLifecycle(
     return () => {
       window.removeEventListener("yaade:host-reconnected", reconnectClients)
     }
-  }, [bumpLspRevision, ensureLspForFileDeduped, workspace])
+  }, [reconnectOpenDocuments])
 
   return {
     lspManager: runtimeRef.current?.manager ?? null,

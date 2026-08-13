@@ -139,7 +139,7 @@ test.describe("shell settings", () => {
       await page
         .locator("[data-yaade-settings-category='appearance']")
         .click()
-      await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 6)
+      await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 16)
       await expectLocatorCount(page.locator("[data-yaade-color-mode-option]"), 3)
       await expectLocatorCount(page.locator("[data-yaade-preferred-editor]"), 2)
 

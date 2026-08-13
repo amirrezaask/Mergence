@@ -13,7 +13,13 @@ export const ToolUseId = Schema.String.pipe(
 );
 export type ToolUseId = Schema.Schema.Type<typeof ToolUseId>;
 
-export const ToolKind = Schema.Literal("agent", "terminal", "search", "git");
+export const ToolKind = Schema.Literal(
+  "agent",
+  "terminal",
+  "search",
+  "git",
+  "editor",
+);
 export type ToolKind = Schema.Schema.Type<typeof ToolKind>;
 
 export const ToolUseStatus = Schema.Literal(
@@ -126,11 +132,18 @@ export class GitToolInput extends Schema.TaggedClass<GitToolInput>()(
   { kind: Schema.Literal("git") },
 ) {}
 
+/** Editor is an interactive workspace surface, not a process. */
+export class EditorToolInput extends Schema.TaggedClass<EditorToolInput>()(
+  "EditorToolInput",
+  { kind: Schema.Literal("editor") },
+) {}
+
 export const ToolUseInput = Schema.Union(
   AgentToolInput,
   TerminalToolInput,
   SearchToolInput,
   GitToolInput,
+  EditorToolInput,
 );
 export type ToolUseInput = Schema.Schema.Type<typeof ToolUseInput>;
 
@@ -183,10 +196,16 @@ export class GitToolOutput extends Schema.TaggedClass<GitToolOutput>()(
   { kind: Schema.Literal("git") },
 ) {}
 
+export class EditorToolOutput extends Schema.TaggedClass<EditorToolOutput>()(
+  "EditorToolOutput",
+  { kind: Schema.Literal("editor") },
+) {}
+
 export const ToolUseOutput = Schema.Union(
   ProcessToolOutput,
   SearchToolOutput,
   GitToolOutput,
+  EditorToolOutput,
 );
 export type ToolUseOutput = Schema.Schema.Type<typeof ToolUseOutput>;
 
@@ -230,8 +249,12 @@ export const ToolUse = ToolUseShape.pipe(
       (value.kind === "git" &&
         value.input.kind === "git" &&
         value.output.kind === "git") ||
+      (value.kind === "editor" &&
+        value.input.kind === "editor" &&
+        value.output.kind === "editor") ||
       (value.kind !== "search" &&
         value.kind !== "git" &&
+        value.kind !== "editor" &&
         value.input.kind === value.kind &&
         value.output.kind === "process"),
     { message: () => "ToolUse kind does not match its input and output" },

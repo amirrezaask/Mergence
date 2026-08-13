@@ -35,6 +35,81 @@ async function openWorkingTreeDialog(
 test.describe("git hunk staging", () => {
   test.skip(!hasGit(), "git not available")
 
+  test("commit diff file tree scrolls with the pointer wheel", async () => {
+    const project = path.join(process.cwd(), ".tmp-tree-scroll-e2e")
+    fs.rmSync(project, { recursive: true, force: true })
+    fs.mkdirSync(project, { recursive: true })
+    for (let index = 0; index < 160; index += 1) {
+      const directory = path.join(
+        project,
+        `src/section-${String(index % 10).padStart(2, "0")}`,
+      )
+      fs.mkdirSync(directory, { recursive: true })
+      fs.writeFileSync(
+        path.join(directory, `file-${String(index).padStart(3, "0")}.ts`),
+        `export const value${index} = ${index}\\n`,
+      )
+    }
+    execSync(
+      "git init -q && git config user.email t@t && git config user.name t && git add . && git commit -qm seed",
+      { cwd: project, stdio: "ignore" },
+    )
+    for (let index = 0; index < 160; index += 1) {
+      const directory = path.join(
+        project,
+        `src/section-${String(index % 10).padStart(2, "0")}`,
+      )
+      fs.appendFileSync(
+        path.join(directory, `file-${String(index).padStart(3, "0")}.ts`),
+        `export const changed${index} = true\\n`,
+      )
+    }
+
+    const { app, page } = await launchJet({
+      workspaceRel: ".tmp-tree-scroll-e2e",
+      projectPage: true,
+    })
+    try {
+      await page.locator('[data-yaade-project-worktree-item="main"]').click()
+      await page.locator("[data-yaade-git-working-tree]").click()
+
+      const dialog = page.locator("[data-yaade-commit-changes-dialog]")
+      await dialog.waitFor({ state: "visible", timeout: 15_000 })
+      const tree = dialog.locator("[data-yaade-pierre-file-tree]")
+      await tree.waitFor({ state: "visible", timeout: 15_000 })
+      const scrollMetrics = await tree.evaluate(element => {
+        const scroll = element.shadowRoot?.querySelector<HTMLElement>(
+          '[data-file-tree-virtualized-scroll="true"]',
+        )
+        if (!scroll) return null
+        return {
+          scrollHeight: scroll.scrollHeight,
+          clientHeight: scroll.clientHeight,
+          scrollTop: scroll.scrollTop,
+        }
+      })
+      expect(scrollMetrics).not.toBeNull()
+      expect(scrollMetrics!.scrollHeight).toBeGreaterThan(scrollMetrics!.clientHeight)
+
+      const box = await tree.boundingBox()
+      expect(box).not.toBeNull()
+      await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2)
+      await page.mouse.wheel(0, 600)
+      await expect
+        .poll(() =>
+          tree.evaluate(element =>
+            element.shadowRoot?.querySelector<HTMLElement>(
+              '[data-file-tree-virtualized-scroll="true"]',
+            )?.scrollTop ?? 0,
+          ),
+        )
+        .toBeGreaterThan(0)
+    } finally {
+      await app.close()
+      fs.rmSync(project, { recursive: true, force: true })
+    }
+  })
+
   test("inline Stage hunk applies via git and moves the change to staged", async () => {
     const home = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-hunk-home-"))
     const project = path.join(home, "repo")

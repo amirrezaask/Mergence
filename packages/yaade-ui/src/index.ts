@@ -36,6 +36,7 @@ export {
   sessionHeaderContextRef,
   AGENT_CLI_DRIVERS,
   agentCliDriverById,
+  AgentProviderIcon,
   AgentCliPickerOverlay,
   type AgentCliDriver,
   type AgentCliLaunchSelection,
@@ -89,6 +90,10 @@ export {
   type LocationListTabProps,
 } from "./panels/location-list/index.js"
 export { ExplorerTab, type ExplorerSelection } from "./tabs/ExplorerTab.js"
+export {
+  PierreWorkspaceFileTree,
+  type PierreWorkspaceFileTreeProps,
+} from "./tabs/PierreWorkspaceFileTree.js"
 export { CdOverlay } from "./components/CdOverlay.js"
 export { ProjectSwitcherOverlay } from "./components/ProjectSwitcherOverlay.js"
 export {

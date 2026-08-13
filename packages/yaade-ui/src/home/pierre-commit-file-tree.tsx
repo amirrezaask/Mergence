@@ -1,9 +1,11 @@
-import { useEffect, useMemo, useRef, type CSSProperties } from "react"
+import { useEffect, useMemo, useRef } from "react"
 import type { GitCommitFile, GitFileStatus, GitStatusEntry } from "@yaade/shared"
 import type { GitStatus as PierreGitStatus } from "@pierre/trees"
 import { FileTree, useFileTree } from "@pierre/trees/react"
 
 import { Button } from "@/components/ui/button.js"
+import { pierreTreeTokenStyle } from "@/lib/pierre-tree-theme.js"
+import { forwardPierreTreeWheel } from "@/lib/pierre-tree-scroll.js"
 import { cn } from "@/lib/utils.js"
 
 export type PierreCommitFileTreeProps = {
@@ -161,25 +163,9 @@ export function PierreCommitFileTree(props: PierreCommitFileTreeProps) {
     <FileTree
       model={model}
       data-yaade-pierre-file-tree=""
+      onWheel={forwardPierreTreeWheel}
       className={cn("h-full min-h-0 w-full min-w-0 bg-transparent", className)}
-      style={
-        {
-          "--trees-theme-background": "transparent",
-          "--trees-theme-list-active-selection-bg":
-            "color-mix(in oklab, var(--muted) 70%, transparent)",
-          "--trees-theme-list-hover-bg":
-            "color-mix(in oklab, var(--muted) 45%, transparent)",
-          "--trees-theme-focus-ring": "var(--ring)",
-          "--trees-theme-git-modified": "var(--git-modified)",
-          "--trees-theme-git-added": "var(--git-added)",
-          "--trees-theme-git-deleted": "var(--git-deleted)",
-          "--trees-theme-git-untracked": "var(--git-added)",
-          "--trees-theme-git-renamed": "var(--git-modified)",
-          fontFamily: "var(--font-mono, 'Commit Mono', ui-monospace, monospace)",
-          fontSize: "var(--yaade-fs-2xs)",
-          color: "var(--foreground)",
-        } as CSSProperties
-      }
+      style={pierreTreeTokenStyle}
       renderContextMenu={
         workingTree && onToggleStage
           ? (item, context) => {
