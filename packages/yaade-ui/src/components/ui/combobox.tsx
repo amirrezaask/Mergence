@@ -6,7 +6,6 @@ import * as React from "react";
 
 import { cn } from "@/lib/utils.js";
 import { Input } from "./combobox-field.js";
-import { ScrollArea } from "./base-scroll-area.js";
 
 const ComboboxContext = React.createContext<{
   chipsRef: React.RefObject<Element | null> | null;
@@ -142,7 +141,7 @@ function ComboboxPopup({
   className,
   children,
   side = "bottom",
-  sideOffset = 4,
+  sideOffset = 6,
   alignOffset,
   align = "start",
   anchor: anchorProp,
@@ -165,19 +164,19 @@ function ComboboxPopup({
         align={align}
         alignOffset={alignOffset}
         anchor={anchor}
-        className="z-50 select-none"
+        className="z-50 min-w-0 select-none"
         data-slot="combobox-positioner"
         side={side}
         sideOffset={sideOffset}
       >
         <span
           className={cn(
-            "relative flex max-h-full min-w-(--anchor-width) max-w-(--available-width) origin-(--transform-origin) rounded-lg border bg-popover not-dark:bg-clip-padding shadow-lg/5 transition-[scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "relative flex w-(--anchor-width) min-w-0 max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg border border-border bg-popover/96 not-dark:bg-clip-padding shadow-lg transition-[scale,opacity] backdrop-blur-xl before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             className,
           )}
         >
           <ComboboxPrimitive.Popup
-            className="flex max-h-[min(var(--available-height),23rem)] flex-1 flex-col text-foreground"
+            className="flex min-w-0 max-h-[min(var(--available-height),20rem)] flex-1 flex-col text-foreground"
             data-slot="combobox-popup"
             {...props}
           >
@@ -202,7 +201,7 @@ function ComboboxItem({
   return (
     <ComboboxPrimitive.Item
       className={cn(
-        "grid min-h-8 in-data-[side=none]:min-w-[calc(var(--anchor-width)+1.25rem)] cursor-default grid-cols-[1rem_1fr] items-center gap-2 rounded-sm py-1 ps-2 pe-4 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-accent/50 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
+        "grid min-h-8 w-full min-w-0 cursor-default grid-cols-[1rem_minmax(0,1fr)] items-center gap-2 rounded-md py-1 ps-2 pe-3 text-base outline-none hover:bg-accent data-disabled:pointer-events-none data-selected:bg-primary/16 data-selected:text-foreground data-highlighted:bg-accent data-highlighted:text-accent-foreground [&[data-highlighted][data-selected]]:bg-accent [&[data-highlighted][data-selected]]:text-accent-foreground data-disabled:opacity-64 sm:min-h-7 sm:text-sm [&_svg:not([class*='size-'])]:size-4.5 sm:[&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0",
         className,
       )}
       data-slot="combobox-item"
@@ -213,7 +212,7 @@ function ComboboxItem({
       </ComboboxPrimitive.ItemIndicator>
       <div
         className={cn(
-          "[&_svg:not([class*='text-'])]:text-muted-foreground",
+          "min-w-0 overflow-hidden [&_svg:not([class*='text-'])]:text-muted-foreground",
           hideIndicator ? "col-start-1 col-span-full" : "col-start-2",
           contentClassName,
         )}
@@ -278,13 +277,11 @@ function ComboboxValue({ ...props }: ComboboxPrimitive.Value.Props) {
 
 function ComboboxList({ className, ...props }: ComboboxPrimitive.List.Props) {
   return (
-    <ScrollArea scrollbarGutter scrollFade>
-      <ComboboxPrimitive.List
-        className={cn("not-empty:scroll-py-1 not-empty:px-1 not-empty:py-1", className)}
-        data-slot="combobox-list"
-        {...props}
-      />
-    </ScrollArea>
+    <ComboboxPrimitive.List
+      className={cn("min-w-0 overflow-y-auto overscroll-contain not-empty:scroll-py-1 not-empty:p-1", className)}
+      data-slot="combobox-list"
+      {...props}
+    />
   );
 }
 

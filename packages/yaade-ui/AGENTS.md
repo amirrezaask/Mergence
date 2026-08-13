@@ -18,7 +18,7 @@ The required `YaadeTheme.tokens: YaadeSemanticTokens` object is the authored col
 Semantic: shadcn roles plus `success`, `warning`, `info`, `backdrop`, Git added/modified/deleted/conflict foreground pairs, and `sidebar-*`. Never hardcode palette colors outside token/theme files. Exact provider-brand and language-file-icon colors are the documented exceptions.
 
 ### Radius
-`--radius: 0.375rem` (6px at default zoom). Use `rounded-md` for controls and surfaces; reserve full pills for badges.
+`--radius: 0.5rem` (8px at default zoom). Use `rounded-md` for controls and compact surfaces; reserve full pills for badges.
 
 ### Typography
 Scale (rem, ~px):

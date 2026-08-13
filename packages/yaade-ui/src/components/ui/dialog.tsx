@@ -50,7 +50,7 @@ function DialogOverlay({
     <DialogPrimitive.Overlay
       data-slot="dialog-overlay"
       className={cn(
-        "yaade-dialog-overlay fixed inset-0 z-50 bg-backdrop overscroll-contain",
+        "yaade-dialog-overlay fixed inset-0 z-50 bg-backdrop overscroll-contain backdrop-blur-sm",
         className
       )}
       data-yaade-dialog-motion={motion}
@@ -79,7 +79,7 @@ function DialogContent({
         <DialogPrimitive.Content
           data-slot="dialog-content"
           className={cn(
-            "pointer-events-auto grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-lg border border-border bg-popover p-6 shadow-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            "pointer-events-auto grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-xl border border-border bg-popover/96 p-5 shadow-lg backdrop-blur-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
             dialogSizeClass[size],
             yaadeOverlayContentClass,
             className

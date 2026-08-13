@@ -284,7 +284,9 @@ export class UpdateToolUseInput extends Schema.TaggedClass<UpdateToolUseInput>()
   {
     toolUseId: ToolUseId,
     inputRevision: Schema.Number,
-    input: Schema.Union(SearchToolInput, AgentToolInput),
+    // Reuse the fully discriminated input union. The service rejects terminal
+    // updates, while the schema reliably decodes both agent and search members.
+    input: ToolUseInput,
   },
 ) {}
 export class UpdateToolUseContext extends Schema.TaggedClass<UpdateToolUseContext>()(

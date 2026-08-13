@@ -49,7 +49,9 @@ const env = {
 }
 
 const children = [
-  spawnHostServer({ repoRoot, host, port: hostPort, env }),
+  // Keep host RPC contracts in lockstep with Vite HMR. Without watch mode,
+  // client-side channel additions can hot-reload against a stale host process.
+  spawnHostServer({ repoRoot, host, port: hostPort, env, watch: true }),
   spawnVite({ appDir, port: vitePort, env }),
 ]
 

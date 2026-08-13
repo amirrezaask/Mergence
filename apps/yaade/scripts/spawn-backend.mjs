@@ -137,6 +137,7 @@ export function isPackagedRuntime(runtimeRoot) {
  *   port?: number
  *   host?: string
  *   launchPath?: string
+ *   watch?: boolean
  *   extraArgs?: string[]
  *   stdio?: import('node:child_process').StdioOptions
  *   env?: NodeJS.ProcessEnv
@@ -149,6 +150,7 @@ export function spawnHostServer(opts) {
     port = Number(process.env.JET_PORT ?? DEFAULT_HOST_PORT),
     host = process.env.JET_HOST ?? DEFAULT_HOST,
     launchPath,
+    watch = false,
     extraArgs = [],
     stdio = "inherit",
     env = process.env,
@@ -186,6 +188,7 @@ export function spawnHostServer(opts) {
   const entry = path.resolve(repoRoot, "apps/host-server/src/bin.ts")
   const args = [
     tsxCli,
+    ...(watch ? ["watch"] : []),
     entry,
     "--host",
     host,

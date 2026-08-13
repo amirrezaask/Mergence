@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { FolderKanban, GitBranch, LoaderCircle, Sparkles } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import {
   BranchWorktreeCheckout,
@@ -13,6 +14,7 @@ import {
   ComboboxItem,
   ComboboxList,
   ComboboxPopup,
+  Button,
   Input,
 } from "@yaade/ui/primitives";
 
@@ -92,7 +94,8 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         : `worktree:${props.use.context.checkoutPath}`
       : "main";
   const agentProvider =
-    props.use.input.kind === "agent" && isAgentProvider(props.use.input.provider)
+    props.use.input.kind === "agent" &&
+    isAgentProvider(props.use.input.provider)
       ? props.use.input.provider
       : null;
   const providerIds = useMemo(() => {
@@ -174,7 +177,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
 
   return (
     <div
-      className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-2"
+      className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card/55 px-3 py-2 backdrop-blur-sm"
       data-yaade-tool-context
     >
       <Combobox
@@ -189,19 +192,18 @@ export function ToolContextControls(props: ToolContextControlsProps) {
           setBranch("");
           void change(next, MainCheckout.make({ kind: "main" }));
         }}
-        itemToStringValue={(value) => {
+        itemToStringLabel={(value) => {
           const item = props.projects.find(
             (candidate) => candidate.projectId === value,
           );
-          return item
-            ? `${item.projectName} ${item.projectPath}`
-            : String(value);
+          return item ? item.projectName : String(value);
         }}
       >
         <ComboboxInput
           id={active ? "tool-project" : undefined}
           aria-label="Tool project"
-          className="w-56"
+          className="w-44 lg:w-56"
+          startAddon={<FolderKanban />}
           size="sm"
         />
         <ComboboxPopup className="w-(--anchor-width)">
@@ -269,7 +271,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
             );
           }
         }}
-        itemToStringValue={(value) => {
+        itemToStringLabel={(value) => {
           if (value === "main") return "Main";
           if (value === "new-branch") return "New isolated branch";
           const path = String(value).slice("worktree:".length);
@@ -283,7 +285,8 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         <ComboboxInput
           id={active ? "tool-checkout" : undefined}
           aria-label="Tool worktree"
-          className="w-56"
+          className="w-44 lg:w-56"
+          startAddon={<GitBranch />}
           size="sm"
         />
         <ComboboxPopup className="w-(--anchor-width)">
@@ -340,28 +343,37 @@ export function ToolContextControls(props: ToolContextControlsProps) {
       </Combobox>
 
       {creatingBranch ? (
-        <Input
-          id={active ? "tool-branch" : undefined}
-          aria-label="Isolated branch worktree"
-          className="w-48"
-          autoFocus
-          autoComplete="off"
-          placeholder="feature/my-branch"
-          value={branch}
-          disabled={pending}
-          onChange={(event) => setBranch(event.target.value)}
-          onKeyDown={(event) => {
-            if (event.key === "Enter") {
-              event.preventDefault();
-              submitBranch();
-            }
-            if (event.key === "Escape") {
-              event.preventDefault();
-              setCreatingBranch(false);
-              setBranch("");
-            }
-          }}
-        />
+        <div className="flex items-center gap-1.5">
+          <Input
+            id={active ? "tool-branch" : undefined}
+            aria-label="Isolated branch worktree"
+            className="w-40"
+            autoFocus
+            autoComplete="off"
+            placeholder="feature/my-branch"
+            value={branch}
+            disabled={pending}
+            onChange={(event) => setBranch(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                submitBranch();
+              }
+              if (event.key === "Escape") {
+                event.preventDefault();
+                setCreatingBranch(false);
+                setBranch("");
+              }
+            }}
+          />
+          <Button
+            size="sm"
+            disabled={pending || !branch.trim()}
+            onClick={submitBranch}
+          >
+            Create
+          </Button>
+        </div>
       ) : null}
 
       {props.use.kind === "agent" && agentProvider && props.onProviderChange ? (
@@ -385,6 +397,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
             id={active ? "tool-provider" : undefined}
             aria-label="Agent provider"
             className="w-36"
+            startAddon={<Sparkles />}
             size="sm"
           />
           <ComboboxPopup className="w-(--anchor-width)">
@@ -412,6 +425,12 @@ export function ToolContextControls(props: ToolContextControlsProps) {
             </ComboboxList>
           </ComboboxPopup>
         </Combobox>
+      ) : null}
+      {pending ? (
+        <LoaderCircle
+          className="ml-auto size-3.5 animate-spin text-primary"
+          aria-label="Restarting tool"
+        />
       ) : null}
     </div>
   );

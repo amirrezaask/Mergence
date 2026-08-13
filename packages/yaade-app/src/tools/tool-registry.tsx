@@ -26,6 +26,7 @@ export type ToolRendererProps = {
     options: ProjectSearchOptions,
   ) => Promise<void>;
   readonly onLoadMore: () => Promise<void>;
+  readonly onTitleChange?: (title: string) => void;
   readonly visible?: boolean;
 };
 

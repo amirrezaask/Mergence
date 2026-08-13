@@ -86,7 +86,7 @@
 /* Scheme-invariant metrics. Theme colors are applied synchronously from YaadeTheme.tokens. */
 :root {
   color-scheme: light;
-  --radius: 0.625rem;
+  --radius: 0.5rem;
   --yaade-island-radius: var(--radius);
   --yaade-app-header-height: 2.75rem;
 
@@ -333,6 +333,61 @@ body,
 body {
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
+}
+
+::selection {
+  background: color-mix(in oklch, var(--primary) 42%, transparent);
+  color: var(--foreground);
+}
+
+* {
+  scrollbar-color: color-mix(in oklch, var(--muted-foreground) 42%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+/* Tool Session shell: dense workbench chrome with visibly layered navigation. */
+[data-yaade-shell="tool-session"] {
+  background:
+    radial-gradient(
+      circle at 70% -20%,
+      color-mix(in oklch, var(--primary) 8%, transparent),
+      transparent 36rem
+    ),
+    var(--background);
+}
+
+[data-yaade-session-tabs],
+[data-yaade-tool-sidebar],
+[data-yaade-tool-context] {
+  -webkit-backdrop-filter: blur(18px) saturate(1.12);
+  backdrop-filter: blur(18px) saturate(1.12);
+}
+
+[data-yaade-tool-use] {
+  transform: translateZ(0);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-yaade-tool-use]:not([data-active="true"]):hover {
+    transform: translateX(2px);
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  [data-yaade-session-tabs],
+  [data-yaade-tool-sidebar],
+  [data-yaade-tool-context] {
+    background: var(--card);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  [data-yaade-tool-use][data-active="true"] {
+    border-color: var(--sidebar-primary);
+    background: var(--sidebar-accent);
+  }
 }
 
 /* Shared app rails: one calm chrome treatment across HQ, project, and mux. */

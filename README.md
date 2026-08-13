@@ -21,9 +21,10 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 - Top tab strip of Sessions (`+` creates an empty Session)
-- Sidebar lists ToolUses with type, title, status, project, and checkout
-- Sidebar header shortcuts create Search, Agent, or Terminal immediately
-- Each tool pane configures project, worktree, and kind-specific options via comboboxes
+- Sidebar lists ToolUses with high-contrast selection, semantic status, project, and checkout
+- Titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
+- Sidebar and empty-state shortcuts create Search, Agent, or Terminal immediately
+- Each tool pane configures project, worktree, and kind-specific options via compact comboboxes (project names are shown; IDs remain internal)
 - Changing project or agent provider restarts the underlying process; the change itself does not fail
 - Selecting a ToolUse renders only that ToolUse in the main viewport
 - Closing a Session with live tools offers Keep running / Stop tools / Cancel

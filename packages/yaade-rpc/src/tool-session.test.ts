@@ -16,6 +16,7 @@ import {
   ToolUseOutput,
   ToolUseStatus,
   TerminalToolInput,
+  UpdateToolUseInput,
 } from "./tool-session.js"
 
 const decode = <A>(schema: Schema.Schema<A>, value: unknown): A =>
@@ -93,6 +94,29 @@ describe("tool session contracts", () => {
       }).kind,
       "search",
     )
+  })
+
+  it("decodes both mutable input variants through UpdateToolUseInput", () => {
+    const base = {
+      _tag: "UpdateToolUseInput",
+      toolUseId: "use-process",
+      inputRevision: 1,
+    }
+    const agent = decode(UpdateToolUseInput, {
+      ...base,
+      input: { _tag: "AgentToolInput", kind: "agent", provider: "pi" },
+    })
+    const search = decode(UpdateToolUseInput, {
+      ...base,
+      input: {
+        _tag: "SearchToolInput",
+        kind: "search",
+        query: "needle",
+        options: {},
+      },
+    })
+    assert.equal(agent.input.kind, "agent")
+    assert.equal(search.input.kind, "search")
   })
 
   it("rejects a ToolUse whose input or output kind does not match", () => {

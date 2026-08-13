@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import { Schema } from "effect"
 import { AppSession, SessionId, ToolUseId, type ToolUse } from "@yaade/rpc"
 import { ToolSessionStore } from "./tool-store.js"
+import { nextRuntimeToolTitle, toolUseDisplayTitle } from "./tool-title.js"
 
 const sessionId = Schema.decodeUnknownSync(SessionId)("ses-a")
 const useId = Schema.decodeUnknownSync(ToolUseId)("use-a")
@@ -43,6 +44,58 @@ function use(): ToolUse {
     updatedAt: "2026-01-01",
   }
 }
+
+describe("smart ToolUse titles", () => {
+  it("uses search queries and promotes agent prompts to live terminal titles", () => {
+    const search: ToolUse = {
+      ...use(),
+      kind: "search",
+      title: "Search",
+      input: {
+        _tag: "SearchToolInput",
+        kind: "search",
+        query: "updateUseContext",
+        options: {},
+      },
+      output: {
+        _tag: "SearchToolOutput",
+        kind: "search",
+        resultRevision: 1,
+        resultCount: 0,
+        truncated: false,
+        running: false,
+      },
+    }
+    assert.equal(toolUseDisplayTitle(search), "updateUseContext")
+
+    const agent: ToolUse = {
+      ...use(),
+      kind: "agent",
+      title: "Agent",
+      input: { _tag: "AgentToolInput", kind: "agent", provider: "codex" },
+    }
+    const prompt = nextRuntimeToolTitle(
+      agent,
+      undefined,
+      "Fix the unfinished session sidebar",
+      "prompt",
+    )
+    assert.equal(
+      toolUseDisplayTitle(agent, prompt),
+      "Fix the unfinished session sidebar",
+    )
+    const generic = nextRuntimeToolTitle(agent, prompt, "Agent", "terminal")
+    assert.equal(generic, prompt)
+    const live = nextRuntimeToolTitle(agent, prompt, "codex · yaade", "terminal")
+    assert.equal(toolUseDisplayTitle(agent, live), "codex · yaade")
+  })
+
+  it("uses a terminal's live title", () => {
+    const terminal = use()
+    const live = nextRuntimeToolTitle(terminal, undefined, "fish · ~/dev/yaade", "terminal")
+    assert.equal(toolUseDisplayTitle(terminal, live), "fish · ~/dev/yaade")
+  })
+})
 
 describe("ToolSessionStore browser state", () => {
   it("keeps normalized snapshots stable until a mutation", () => {

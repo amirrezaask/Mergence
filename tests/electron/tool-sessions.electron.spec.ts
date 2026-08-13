@@ -151,9 +151,21 @@ async function createTerminalViaApi(
     await expectContainsText(
       page,
       '[data-yaade-shell="tool-session"]',
-      "Add a tool to start this session",
+      "What do you want to run?",
     );
     await expectSelectorVisible(page, '[role="tablist"] [role="tab"]');
+    await expectLocatorVisible(page.getByRole("button", { name: "Agent" }));
+    await expectLocatorVisible(page.getByRole("button", { name: "Terminal" }));
+    await expectLocatorVisible(page.getByRole("button", { name: "Search" }));
+    const ctaColors = await page.evaluate(() =>
+      ["Agent", "Terminal", "Search"].map((name) => {
+        const button = [...document.querySelectorAll("button")].find(
+          (candidate) => candidate.textContent?.trim() === name,
+        );
+        return button ? getComputedStyle(button).backgroundColor : "";
+      }),
+    );
+    expect(new Set(ctaColors).size).toBe(3);
     await expectSelectorVisible(page, 'button[title="New Search"]');
     await expectSelectorVisible(page, 'button[title="New Agent"]');
     await expectSelectorVisible(page, 'button[title="New Terminal"]');
@@ -163,6 +175,22 @@ async function createTerminalViaApi(
       page,
       '[data-yaade-list-panel="project-search"]',
     );
+    const selectedContrast = await page.evaluate(() => {
+      const row = document.querySelector<HTMLElement>(
+        '[data-yaade-tool-use][data-active="true"]',
+      );
+      const sidebar = document.querySelector<HTMLElement>(
+        "[data-yaade-tool-sidebar]",
+      );
+      return row && sidebar
+        ? {
+            row: getComputedStyle(row).backgroundColor,
+            sidebar: getComputedStyle(sidebar).backgroundColor,
+          }
+        : null;
+    });
+    expect(selectedContrast).not.toBeNull();
+    expect(selectedContrast?.row).not.toBe(selectedContrast?.sidebar);
   } finally {
     await app.app.close();
   }
@@ -212,11 +240,40 @@ async function createTerminalViaApi(
     const page = app.page;
     await openToolSessionShell(page);
     await createTerminalToolUse(page);
+    const projectDisplay = await page.getByLabel("Tool project").inputValue();
+    const project = await page.evaluate(() => {
+      const state = window.__yaadeAgent!.getState();
+      return (state.toolUses ?? []).find(
+        (use: { id: string }) => use.id === state.activeToolUseId,
+      )?.context?.project;
+    });
+    expect(projectDisplay).toBe(project?.projectName);
+    expect(projectDisplay).not.toBe(project?.projectId);
+    await page.getByLabel("Tool project").click();
+    const [projectControlBox, projectPopupBox] = await Promise.all([
+      page.getByLabel("Tool project").boundingBox(),
+      page.locator('[data-slot="combobox-popup"]').boundingBox(),
+    ]);
+    expect(projectControlBox).not.toBeNull();
+    expect(projectPopupBox).not.toBeNull();
+    expect(projectPopupBox!.width).toBeLessThanOrEqual(
+      projectControlBox!.width + 2,
+    );
+    await expectSelectorVisible(page, '[data-slot="combobox-item"][data-selected]');
+    await page.keyboard.press("Escape");
     await focusTerminal(page);
     const marker = `yaade-tool-pty-${Date.now()}`;
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
     await waitForToolTerminalText(page, marker);
+    await page.waitForFunction(
+      () => {
+        const title = document.querySelector("[data-yaade-tool-title]")?.textContent?.trim();
+        return Boolean(title && title !== "Terminal");
+      },
+      null,
+      { timeout: 10_000 },
+    );
   } finally {
     await app.app.close();
   }
@@ -277,6 +334,27 @@ async function createTerminalViaApi(
       ),
     );
     expect(use).toBeTruthy();
+    const updatedProvider = await page.evaluate(async () => {
+      const state = window.__yaadeAgent!.getState();
+      const agent = (state.toolUses ?? []).find(
+        (item: { kind: string }) => item.kind === "agent",
+      );
+      if (!agent || agent.input.kind !== "agent")
+        throw new Error("agent tool missing");
+      const updated = await window.yaade!.tools!.updateUseInput({
+        _tag: "UpdateToolUseInput",
+        toolUseId: agent.id,
+        inputRevision: agent.inputRevision,
+        input: {
+          _tag: "AgentToolInput",
+          kind: "agent",
+          provider: agent.input.provider,
+          ...(agent.input.args ? { args: agent.input.args } : {}),
+        },
+      });
+      return updated.input.kind === "agent" ? updated.input.provider : null;
+    });
+    expect(updatedProvider).toBe(provider);
     await waitForVisibleXterm(page);
   } finally {
     await app.app.close();
@@ -294,6 +372,11 @@ async function createTerminalViaApi(
       minItems: 1,
       needle: "nonGitSearchFixture",
     });
+    await expectContainsText(
+      page,
+      "[data-yaade-tool-sidebar]",
+      "nonGitSearchFixture",
+    );
     await expectNotContainsText(
       page,
       '[data-yaade-list-panel="project-search"]',

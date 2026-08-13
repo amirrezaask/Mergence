@@ -31,6 +31,7 @@ export type ProcessToolViewProps = {
     options: ProjectSearchOptions,
   ) => Promise<void>;
   readonly onLoadMore?: () => Promise<void>;
+  readonly onTitleChange?: (title: string) => void;
 };
 
 export function ProcessToolView({
@@ -40,6 +41,7 @@ export function ProcessToolView({
   projects,
   onContextChange,
   onProviderChange,
+  onTitleChange,
   visible = true,
 }: ProcessToolViewProps) {
   if (use.output.kind !== "process") return null;
@@ -80,6 +82,7 @@ export function ProcessToolView({
           status={status}
           attachOnly
           visible={visible}
+          onTitleChange={(_id, title) => onTitleChange?.(title)}
         />
       </Suspense>
     </div>

@@ -1,12 +1,9 @@
-import {
-  Bot,
-  PanelLeft,
-  Search,
-  Terminal as TerminalIcon,
-  X,
-} from "lucide-react";
+import { useState } from "react";
+import { Bot, Search, Terminal as TerminalIcon, X } from "lucide-react";
 import type { ToolKind, ToolUse, ToolUseId } from "@yaade/rpc";
-import { Badge, Button } from "@yaade/ui/primitives";
+import { cn } from "@yaade/ui";
+import { Badge, Button, Input } from "@yaade/ui/primitives";
+import { toolUseDisplayTitle, type RuntimeToolTitle } from "./tool-title.js";
 
 const toolIcon: Record<ToolKind, typeof Bot> = {
   agent: Bot,
@@ -15,7 +12,20 @@ const toolIcon: Record<ToolKind, typeof Bot> = {
 };
 
 function statusLabel(status: ToolUse["status"]): string {
-  return status === "succeeded" ? "done" : status;
+  if (status === "succeeded") return "done";
+  if (status === "disconnected") return "offline";
+  return status;
+}
+
+function statusVariant(
+  status: ToolUse["status"],
+): "secondary" | "info" | "success" | "warning" | "destructive" | "outline" {
+  if (status === "running") return "success";
+  if (status === "starting" || status === "created") return "info";
+  if (status === "waiting") return "warning";
+  if (status === "failed" || status === "disconnected") return "destructive";
+  if (status === "cancelled") return "outline";
+  return "secondary";
 }
 
 export type ToolUseSidebarProps = {
@@ -24,6 +34,7 @@ export type ToolUseSidebarProps = {
   readonly useIds: readonly ToolUseId[];
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>;
   readonly activeToolUseId?: ToolUseId;
+  readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
   readonly onSelect: (use: ToolUse) => void;
   readonly onAddKind: (kind: ToolKind) => void;
   readonly onRename: (use: ToolUse, title: string) => void;
@@ -31,71 +42,89 @@ export type ToolUseSidebarProps = {
 };
 
 export function ToolUseSidebar(props: ToolUseSidebarProps) {
+  const [editingId, setEditingId] = useState<ToolUseId | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+
+  const finishRename = (use: ToolUse) => {
+    const next = draftTitle.trim();
+    setEditingId(null);
+    if (next && next !== use.title) props.onRename(use, next);
+  };
+
   return (
     <>
       {props.open ? (
         <button
           type="button"
           aria-label="Close tool sidebar"
-          className="absolute inset-0 z-10 bg-background/60 md:hidden"
+          className="absolute inset-0 z-10 bg-backdrop/70 backdrop-blur-sm md:hidden"
           onClick={() => props.onOpenChange(false)}
         />
       ) : null}
       <aside
-        className={`absolute inset-y-0 left-0 z-20 flex w-[296px] shrink-0 flex-col border-r border-border bg-sidebar shadow-lg transition-transform md:relative md:z-auto md:shadow-none ${
-          props.open ? "translate-x-0" : "-translate-x-full md:translate-x-0"
-        }`}
+        className={cn(
+          "absolute inset-y-0 left-0 z-20 flex w-[280px] shrink-0 flex-col border-r border-sidebar-border bg-sidebar shadow-lg transition-transform duration-[var(--yaade-motion-panel)] ease-[var(--yaade-ease-drawer)] md:relative md:z-auto md:shadow-none",
+          props.open ? "translate-x-0" : "-translate-x-full md:translate-x-0",
+        )}
+        data-yaade-tool-sidebar
       >
-        <div className="flex items-center justify-end px-3 py-3">
-          <div className="flex items-center gap-1">
-            <Button
-              className="md:hidden"
-              size="icon-sm"
-              variant="ghost"
-              aria-label="Close tool sidebar"
-              onClick={() => props.onOpenChange(false)}
-            >
-              <X />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="New Search"
-              title="New Search"
-              onClick={() => props.onAddKind("search")}
-            >
-              <Search />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="New Agent"
-              title="New Agent"
-              onClick={() => props.onAddKind("agent")}
-            >
-              <Bot />
-            </Button>
-            <Button
-              size="icon-sm"
-              variant="ghost"
-              aria-label="New Terminal"
-              title="New Terminal"
-              onClick={() => props.onAddKind("terminal")}
-            >
-              <TerminalIcon />
-            </Button>
-          </div>
+        <div className="flex h-10 shrink-0 items-center justify-end gap-1.5 border-b border-sidebar-border/80 px-2.5">
+          <Button
+            className="md:hidden"
+            size="icon-sm"
+            variant="ghost"
+            aria-label="Close tool sidebar"
+            onClick={() => props.onOpenChange(false)}
+          >
+            <X />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="ghost"
+            aria-label="New Search"
+            title="New Search"
+            onClick={() => props.onAddKind("search")}
+          >
+            <Search />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="default"
+            aria-label="New Agent"
+            title="New Agent"
+            onClick={() => props.onAddKind("agent")}
+          >
+            <Bot />
+          </Button>
+          <Button
+            size="icon-sm"
+            variant="secondary"
+            aria-label="New Terminal"
+            title="New Terminal"
+            onClick={() => props.onAddKind("terminal")}
+          >
+            <TerminalIcon />
+          </Button>
         </div>
-        <div className="flex min-h-0 flex-1 flex-col gap-1 overflow-y-auto px-2">
+        <div className="flex min-h-0 flex-1 flex-col gap-1.5 overflow-y-auto p-2">
           {props.useIds.map((id, index) => {
             const use = props.usesById.get(id);
             if (!use) return null;
             const Icon = toolIcon[use.kind];
+            const active = id === props.activeToolUseId;
+            const displayTitle = toolUseDisplayTitle(
+              use,
+              props.runtimeTitles.get(id),
+            );
             return (
-              <button
+              <div
                 key={id}
-                type="button"
-                draggable
+                role="button"
+                tabIndex={active ? 0 : -1}
+                aria-current={active ? "page" : undefined}
+                data-active={active ? "true" : undefined}
+                data-yaade-tool-use={id}
+                draggable={editingId !== id}
                 onDragStart={(event) =>
                   event.dataTransfer.setData("text/tool-use-id", id)
                 }
@@ -113,52 +142,64 @@ export function ToolUseSidebar(props: ToolUseSidebarProps) {
                   props.onReorder(ids);
                 }}
                 onClick={() => {
+                  if (editingId === id) return;
                   props.onSelect(use);
                   props.onOpenChange(false);
                 }}
                 onDoubleClick={() => {
-                  const next = window
-                    .prompt("Rename tool use", use.title)
-                    ?.trim();
-                  if (next) props.onRename(use, next);
+                  setDraftTitle(use.title);
+                  setEditingId(id);
                 }}
-                className={`flex min-h-16 items-center gap-3 rounded-md px-3 text-left transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-                  id === props.activeToolUseId
-                    ? "bg-sidebar-accent text-sidebar-accent-foreground"
-                    : "hover:bg-sidebar-accent/60"
-                }`}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && editingId !== id)
+                    props.onSelect(use);
+                }}
+                className="group relative flex min-h-17 items-center gap-2.5 overflow-hidden rounded-lg border border-transparent px-2.5 text-left outline-none transition-[color,background-color,border-color,transform] duration-[var(--yaade-motion-hot)] hover:bg-sidebar-accent/70 focus-visible:border-sidebar-ring focus-visible:ring-2 focus-visible:ring-sidebar-ring/40 data-[active=true]:border-sidebar-primary/45 data-[active=true]:bg-sidebar-primary/14"
               >
-                <Icon className="size-4 shrink-0" aria-hidden />
+                <span className="absolute inset-y-2 left-0 w-0.5 -translate-x-full rounded-full bg-sidebar-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:translate-x-0" />
+                <span className="grid size-8 shrink-0 place-items-center rounded-md border border-sidebar-border bg-background/50 text-muted-foreground transition-colors group-data-[active=true]:border-sidebar-primary/35 group-data-[active=true]:bg-sidebar-primary/16 group-data-[active=true]:text-sidebar-primary">
+                  <Icon className="size-4" aria-hidden />
+                </span>
                 <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sm font-medium">
-                    {use.context.project.projectName}
-                  </span>
-                  <span className="mt-1 block truncate font-mono text-2xs text-muted-foreground">
+                  {editingId === id ? (
+                    <Input
+                      aria-label={`Rename ${use.title}`}
+                      className="h-6 bg-background px-1.5"
+                      autoFocus
+                      value={draftTitle}
+                      onClick={(event) => event.stopPropagation()}
+                      onChange={(event) => setDraftTitle(event.target.value)}
+                      onBlur={() => finishRename(use)}
+                      onKeyDown={(event) => {
+                        event.stopPropagation();
+                        if (event.key === "Enter") finishRename(use);
+                        if (event.key === "Escape") setEditingId(null);
+                      }}
+                    />
+                  ) : (
+                    <span
+                      className="block truncate text-xs font-semibold text-sidebar-foreground"
+                      data-yaade-tool-title
+                    >
+                      {displayTitle}
+                    </span>
+                  )}
+                  <span className="mt-0.5 block truncate font-mono text-3xs text-muted-foreground">
+                    {use.context.project.projectName} ·{" "}
                     {use.context.checkoutLabel}
                   </span>
                 </span>
-                <Badge variant="outline" className="shrink-0 text-2xs">
+                <Badge
+                  variant={statusVariant(use.status)}
+                  className="shrink-0 px-1.5 py-0 text-3xs"
+                >
                   {statusLabel(use.status)}
                 </Badge>
-              </button>
+              </div>
             );
           })}
         </div>
       </aside>
     </>
-  );
-}
-
-export function SidebarOpenButton(props: { onClick: () => void }) {
-  return (
-    <Button
-      className="md:hidden"
-      size="icon-sm"
-      variant="ghost"
-      aria-label="Open tool sidebar"
-      onClick={props.onClick}
-    >
-      <PanelLeft />
-    </Button>
   );
 }

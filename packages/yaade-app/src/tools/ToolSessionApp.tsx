@@ -9,7 +9,7 @@ import {
   lazy,
   type ComponentType,
 } from "react";
-import { Activity, LoaderCircle } from "lucide-react";
+import { Activity, Bot, LoaderCircle, Search, Terminal } from "lucide-react";
 import type {
   CheckoutTarget,
   CreateToolUse,
@@ -34,8 +34,10 @@ import {
   DialogHeader,
   DialogTitle,
   Empty,
+  EmptyContent,
   EmptyDescription,
   EmptyHeader,
+  EmptyMedia,
   EmptyTitle,
 } from "@yaade/ui/primitives";
 import { WhichKeyPanel } from "@yaade/ui";
@@ -51,7 +53,8 @@ import {
 import { type AgentProvider } from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
-import { SidebarOpenButton, ToolUseSidebar } from "./ToolUseSidebar.js";
+import { ToolUseSidebar } from "./ToolUseSidebar.js";
+import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import {
   TOOL_SESSION_DIRECT_BINDINGS,
   TOOL_SESSION_PREFIX,
@@ -125,7 +128,12 @@ export function ToolSessionApp() {
   >([]);
   const [viewportIds, setViewportIds] = useState<readonly ToolUseId[]>([]);
   const [prefixPending, setPrefixPending] = useState(false);
+  const [runtimeTitles, setRuntimeTitles] = useState<
+    ReadonlyMap<ToolUseId, RuntimeToolTitle>
+  >(() => new Map());
   const prefixPendingRef = useRef(false);
+  const toolUsesRef = useRef(snapshot.usesById);
+  toolUsesRef.current = snapshot.usesById;
 
   useEffect(() => {
     prefixPendingRef.current = prefixPending;
@@ -190,6 +198,41 @@ export function ToolSessionApp() {
       ),
     [snapshot.usesById],
   );
+
+  const updateRuntimeTitle = useCallback(
+    (use: ToolUse, title: string, source: RuntimeToolTitle["source"]) => {
+      setRuntimeTitles((previous) => {
+        const current = previous.get(use.id);
+        const next = nextRuntimeToolTitle(use, current, title, source);
+        if (
+          !next ||
+          (current?.title === next.title && current.source === next.source)
+        ) {
+          return previous;
+        }
+        return new Map(previous).set(use.id, next);
+      });
+    },
+    [],
+  );
+
+  useEffect(() => {
+    const agents = window.yaade?.agents;
+    if (!agents?.onEvent) return;
+    return agents.onEvent((payload) => {
+      const event = payload.event;
+      const prompt = event?.metadata?.prompt;
+      if (event?.kind !== "prompt.submitted" || typeof prompt !== "string")
+        return;
+      const use = [...toolUsesRef.current.values()].find(
+        (candidate) =>
+          candidate.kind === "agent" &&
+          candidate.output.kind === "process" &&
+          candidate.output.terminalInstanceId === payload.sessionId,
+      );
+      if (use) updateRuntimeTitle(use, prompt, "prompt");
+    });
+  }, [updateRuntimeTitle]);
 
   useEffect(() => {
     if (!selected || selected.output.kind !== "process") return;
@@ -640,9 +683,6 @@ export function ToolSessionApp() {
       className="flex h-full min-h-0 flex-col bg-background text-foreground"
       data-yaade-shell="tool-session"
     >
-      <div className="flex items-center gap-2 border-b border-border px-3 md:hidden">
-        <SidebarOpenButton onClick={() => setSidebarOpen(true)} />
-      </div>
       <SessionTabStrip
         sessions={visibleSessions}
         activeSessionId={snapshot.activeSessionId}
@@ -651,6 +691,7 @@ export function ToolSessionApp() {
         onCreate={() => void createSession()}
         onRename={(id, title) => void renameSession(id, title)}
         onReorder={(ids) => void reorderSessions(ids)}
+        onOpenSidebar={() => setSidebarOpen(true)}
       />
       <div className="relative flex min-h-0 flex-1">
         <ToolUseSidebar
@@ -659,6 +700,7 @@ export function ToolSessionApp() {
           useIds={useIds}
           usesById={snapshot.usesById}
           activeToolUseId={snapshot.activeToolUseId}
+          runtimeTitles={runtimeTitles}
           onSelect={selectTool}
           onAddKind={(kind) => void createTool(kind)}
           onRename={(use, title) => void renameToolUse(use, title)}
@@ -699,13 +741,15 @@ export function ToolSessionApp() {
                 const latest =
                   client.store.getSnapshot().usesById.get(use.id) ?? use;
                 try {
-                  const updated = await window.yaade?.tools?.updateUseContext?.({
-                    _tag: "UpdateToolUseContext",
-                    toolUseId: latest.id,
-                    revision: latest.revision,
-                    project: nextProject,
-                    checkout,
-                  });
+                  const updated = await window.yaade?.tools?.updateUseContext?.(
+                    {
+                      _tag: "UpdateToolUseContext",
+                      toolUseId: latest.id,
+                      revision: latest.revision,
+                      project: nextProject,
+                      checkout,
+                    },
+                  );
                   if (updated) client.store.replaceToolUse(updated);
                   setActionError(undefined);
                   await client.reconcile();
@@ -739,6 +783,9 @@ export function ToolSessionApp() {
                 }
               }}
               onAction={(action, use) => void runToolAction(action, use)}
+              onTitleChange={(use, title) =>
+                updateRuntimeTitle(use, title, "terminal")
+              }
               onSearchChange={async (use, next, options) => {
                 const latest =
                   client.store.getSnapshot().usesById.get(use.id) ?? use;
@@ -780,7 +827,7 @@ export function ToolSessionApp() {
               }}
             />
           ) : (
-            <EmptySession />
+            <EmptySession onAddKind={(kind) => void createTool(kind)} />
           )}
         </main>
       </div>
@@ -809,17 +856,47 @@ export function ToolSessionApp() {
   );
 }
 
-function EmptySession() {
+function EmptySession(props: { onAddKind: (kind: ToolKind) => void }) {
   return (
-    <div className="grid h-full place-items-center p-8">
-      <Empty>
+    <div className="grid h-full place-items-center overflow-hidden p-6 md:p-10">
+      <Empty className="relative max-w-xl border border-border bg-card/55 px-8 py-12 shadow-none backdrop-blur-sm">
+        <div
+          className="pointer-events-none absolute inset-x-16 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent"
+          aria-hidden
+        />
         <EmptyHeader>
-          <Activity className="size-7 text-muted-foreground" />
-          <EmptyTitle>Add a tool to start this session</EmptyTitle>
+          <EmptyMedia
+            variant="icon"
+            className="border border-primary/30 bg-primary/14 text-primary"
+          >
+            <Activity />
+          </EmptyMedia>
+          <EmptyTitle>What do you want to run?</EmptyTitle>
         </EmptyHeader>
         <EmptyDescription>
-          Run a terminal, launch an agent, or search the project.
+          Start directly in this session. You can switch project or checkout
+          inside the tool.
         </EmptyDescription>
+        <EmptyContent className="grid max-w-md grid-cols-1 gap-2 sm:grid-cols-3">
+          <Button onClick={() => props.onAddKind("agent")}>
+            <Bot data-icon="inline-start" />
+            Agent
+          </Button>
+          <Button
+            variant="secondary"
+            onClick={() => props.onAddKind("terminal")}
+          >
+            <Terminal data-icon="inline-start" />
+            Terminal
+          </Button>
+          <Button variant="outline" onClick={() => props.onAddKind("search")}>
+            <Search data-icon="inline-start" />
+            Search
+          </Button>
+        </EmptyContent>
+        <p className="m-0 font-mono text-3xs text-muted-foreground">
+          Ctrl–A T · new tool
+        </p>
       </Empty>
     </div>
   );
@@ -847,6 +924,7 @@ function ToolUseViewport(props: {
     options: ProjectSearchOptions,
   ) => Promise<void>;
   readonly onLoadMore: (use: ToolUse) => Promise<void>;
+  readonly onTitleChange: (use: ToolUse, title: string) => void;
 }) {
   const processIds = new Set(props.processUses.map((use) => use.id));
   const render = (use: ToolUse, visible: boolean) => (
@@ -866,6 +944,7 @@ function ToolUseViewport(props: {
         props.onSearchChange(use, query, options)
       }
       onLoadMore={() => props.onLoadMore(use)}
+      onTitleChange={(title) => props.onTitleChange(use, title)}
     />
   );
   if (
@@ -931,6 +1010,7 @@ function SelectedToolUse(props: {
     options: ProjectSearchOptions,
   ) => Promise<void>;
   onLoadMore: () => Promise<void>;
+  onTitleChange: (title: string) => void;
 }) {
   const { use } = props;
   const Renderer = rendererFor(use.kind);
@@ -954,6 +1034,7 @@ function SelectedToolUse(props: {
         results={props.results}
         onSearchChange={props.onSearchChange}
         onLoadMore={props.onLoadMore}
+        onTitleChange={props.onTitleChange}
         visible={props.visible}
       />
     </Suspense>
