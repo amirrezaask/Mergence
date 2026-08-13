@@ -1,5 +1,5 @@
 import type { ComponentType, ReactNode } from "react";
-import { Bot, Search, Terminal } from "lucide-react";
+import { Bot, GitBranch, Search, Terminal } from "lucide-react";
 import type {
   CheckoutTarget,
   ProjectSearchResult,
@@ -64,6 +64,13 @@ async function loadSearchRenderer(): Promise<{
   return { default: module.SearchToolView as ComponentType<ToolRendererProps> };
 }
 
+async function loadGitRenderer(): Promise<{
+  default: ComponentType<ToolRendererProps>;
+}> {
+  const module = await import("./renderers/GitToolView.js");
+  return { default: module.GitToolView as ComponentType<ToolRendererProps> };
+}
+
 const entries: readonly RegistryEntry[] = [
   {
     kind: "agent",
@@ -90,6 +97,14 @@ const entries: readonly RegistryEntry[] = [
     describeInput: (input) =>
       input.kind === "search" ? input.query || "(empty query)" : "search",
     loadRenderer: loadSearchRenderer,
+  },
+  {
+    kind: "git",
+    label: "Git History",
+    icon: GitBranch,
+    mountPolicy: "remountable",
+    describeInput: () => "history",
+    loadRenderer: loadGitRenderer,
   },
 ];
 

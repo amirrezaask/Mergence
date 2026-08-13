@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Effect, Exit, Fiber, Scope } from "effect";
 import {
+  GitToolOutput,
   InvalidToolInput,
   ProcessToolOutput,
   SearchToolOutput,
@@ -23,6 +24,7 @@ import {
   processOutput,
   parseProcessProvider,
 } from "./process-driver.js";
+import { GitToolDriver } from "./git-driver.js";
 import { SearchDriver } from "./search-driver.js";
 import { ToolRegistry } from "./registry.js";
 
@@ -30,7 +32,12 @@ function eventId(prefix: string, id: string): string {
   return `${prefix}:${id}:${randomUUID()}`;
 }
 
-function pendingOutput(kind: "agent" | "terminal" | "search"): ToolUseOutput {
+function pendingOutput(
+  kind: "agent" | "terminal" | "search" | "git",
+): ToolUseOutput {
+  if (kind === "git") {
+    return GitToolOutput.make({ kind: "git" });
+  }
   if (kind === "search") {
     return SearchToolOutput.make({
       kind: "search",
@@ -67,6 +74,7 @@ export class ToolService {
       new ProcessToolDriver(runtime, "agent"),
       new ProcessToolDriver(runtime, "terminal"),
       this.search,
+      new GitToolDriver(),
     ]);
   }
 
@@ -133,14 +141,12 @@ export class ToolService {
           toolUseId: use.id,
           message: "tool use disappeared",
         });
-      if (output.kind !== "process")
-        throw new Error("process driver returned search output");
+      const failed =
+        output.kind === "process" && output.processState === "failed";
       const running = store.compareAndSetToolUse(current.id, current.revision, {
-        status: output.processState === "failed" ? "failed" : "running",
+        status: failed ? "failed" : "running",
         output,
-        ...(output.processState === "failed"
-          ? { error: "process failed" }
-          : {}),
+        ...(failed ? { error: "process failed" } : {}),
       });
       this.emitUpdated(running);
       return running;
@@ -388,17 +394,15 @@ export class ToolService {
         .get(starting.kind)
         .restart(starting)
         .pipe(Effect.runPromise);
-      if (output.kind !== "process")
-        throw new Error("process driver returned search output");
+      const failed =
+        output.kind === "process" && output.processState === "failed";
       const result = this.runtime.toolSessions.compareAndSetToolUse(
         useId,
         starting.revision,
         {
-          status: output.processState === "failed" ? "failed" : "running",
+          status: failed ? "failed" : "running",
           output,
-          ...(output.processState === "failed"
-            ? { error: "process failed" }
-            : {}),
+          ...(failed ? { error: "process failed" } : {}),
         },
       );
       this.emitUpdated(result);
@@ -621,7 +625,8 @@ export class ToolService {
     const valid =
       (command.kind === "search" && command.input.kind === "search") ||
       (command.kind === "agent" && command.input.kind === "agent") ||
-      (command.kind === "terminal" && command.input.kind === "terminal");
+      (command.kind === "terminal" && command.input.kind === "terminal") ||
+      (command.kind === "git" && command.input.kind === "git");
     if (!valid) {
       throw new InvalidToolInput({
         message: "tool kind does not match input",
@@ -665,5 +670,6 @@ export class ToolService {
 function defaultTitle(kind: CreateToolUse["kind"]): string {
   if (kind === "agent") return "Agent";
   if (kind === "terminal") return "Terminal";
-  return "Search";
+  if (kind === "search") return "Search";
+  return "Git History";
 }

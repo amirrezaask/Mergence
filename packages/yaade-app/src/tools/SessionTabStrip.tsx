@@ -1,5 +1,5 @@
 import { useRef, useState } from "react";
-import { PanelLeft, Plus, X } from "lucide-react";
+import { Plus, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
 import { Button, Input } from "@yaade/ui/primitives";
 
@@ -11,7 +11,6 @@ export type SessionTabStripProps = {
   readonly onCreate: () => void;
   readonly onRename: (id: SessionId, title: string) => void;
   readonly onReorder: (ids: readonly SessionId[]) => void;
-  readonly onOpenSidebar: () => void;
 };
 
 export function SessionTabStrip(props: SessionTabStripProps) {
@@ -30,16 +29,6 @@ export function SessionTabStrip(props: SessionTabStripProps) {
       className="flex h-11 shrink-0 items-center border-b border-border bg-card/80 backdrop-blur-xl"
       data-yaade-session-tabs
     >
-      <div className="flex h-full shrink-0 items-center border-r border-border px-2 md:hidden">
-        <Button
-          size="icon-sm"
-          variant="ghost"
-          aria-label="Open tool sidebar"
-          onClick={props.onOpenSidebar}
-        >
-          <PanelLeft />
-        </Button>
-      </div>
       <nav
         className="flex h-full min-w-0 flex-1 items-end gap-1 overflow-x-auto px-2 pt-1.5"
         aria-label="Sessions"

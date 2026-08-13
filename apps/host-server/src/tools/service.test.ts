@@ -5,6 +5,7 @@ import path from "node:path"
 import { describe, it } from "node:test"
 import {
   CreateToolUse,
+  GitToolInput,
   MainCheckout,
   ProjectTarget,
   SearchToolInput,
@@ -50,6 +51,40 @@ describe("ToolService", () => {
       const stored = host.runtime.toolSessions.getToolUse(useId)
       assert.equal(stored?.status, "succeeded")
       assert.equal(stored?.output.kind, "search")
+    } finally {
+      await host.close()
+      fs.rmSync(root, { recursive: true, force: true })
+    }
+  })
+
+  it("creates a Git History tool without launching a process", async () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-git-tool-service-"))
+    const config = await loadConfig([
+      "--host", "127.0.0.1", "--port", "0",
+      "--data-dir", path.join(root, "data"), "--allowed-roots", root, root,
+    ])
+    const host = await startHostServer(config)
+    try {
+      const project = host.runtime.db.projects()[0]
+      assert.ok(project)
+      const session = host.runtime.toolSessions.listSessions()[0]
+      assert.ok(session)
+      const created = Schema.decodeUnknownSync(ToolUse)(
+        await dispatchPromise(host.runtime, "tools:createUse", [CreateToolUse.make({
+          sessionId: session.id,
+          kind: "git",
+          project: ProjectTarget.make({
+            projectId: project.id,
+            projectPath: project.rootPath,
+            projectName: project.name,
+          }),
+          checkout: MainCheckout.make({ kind: "main" }),
+          input: GitToolInput.make({ kind: "git" }),
+        })], "git-tool-test"),
+      )
+      assert.equal(created.status, "running")
+      assert.equal(created.output.kind, "git")
+      assert.equal(created.input.kind, "git")
     } finally {
       await host.close()
       fs.rmSync(root, { recursive: true, force: true })

@@ -3,6 +3,8 @@ import { Data, Schema } from "effect";
 import {
   AgentToolInput,
   AppSession,
+  GitToolInput,
+  GitToolOutput,
   ProcessToolOutput,
   ProjectSearchResult,
   type ResolvedToolContext,
@@ -76,8 +78,13 @@ const ToolUseInputSchema = Schema.Union(
   AgentToolInput,
   TerminalToolInput,
   SearchToolInput,
+  GitToolInput,
 );
-const ToolUseOutputSchema = Schema.Union(ProcessToolOutput, SearchToolOutput);
+const ToolUseOutputSchema = Schema.Union(
+  ProcessToolOutput,
+  SearchToolOutput,
+  GitToolOutput,
+);
 
 function decodeJson<A>(
   schema: Schema.Schema<A>,

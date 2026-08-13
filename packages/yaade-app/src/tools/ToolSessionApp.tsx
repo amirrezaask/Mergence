@@ -9,7 +9,7 @@ import {
   lazy,
   type ComponentType,
 } from "react";
-import { Activity, Bot, LoaderCircle, Search, Terminal } from "lucide-react";
+import { Activity, LoaderCircle } from "lucide-react";
 import type {
   CheckoutTarget,
   CreateToolUse,
@@ -34,7 +34,6 @@ import {
   DialogHeader,
   DialogTitle,
   Empty,
-  EmptyContent,
   EmptyDescription,
   EmptyHeader,
   EmptyMedia,
@@ -53,7 +52,7 @@ import {
 import { type AgentProvider } from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
-import { ToolUseSidebar } from "./ToolUseSidebar.js";
+import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import {
   TOOL_SESSION_DIRECT_BINDINGS,
@@ -121,7 +120,6 @@ export function ToolSessionApp() {
   const [projects, setProjects] = useState<readonly ProjectTarget[]>([]);
   const [closeChoice, setCloseChoice] = useState<CloseChoice>();
   const [actionError, setActionError] = useState<string | undefined>();
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [archivedSessions, setArchivedSessions] = useState<
     readonly import("@yaade/rpc").AppSession[]
@@ -304,7 +302,9 @@ export function ToolSessionApp() {
                   query: "",
                   options: {},
                 }
-              : { _tag: "TerminalToolInput", kind: "terminal" };
+              : nextKind === "git"
+                ? { _tag: "GitToolInput", kind: "git" }
+                : { _tag: "TerminalToolInput", kind: "terminal" };
         const command: CreateToolUse = {
           _tag: "CreateToolUse",
           sessionId: activeSession.id,
@@ -673,6 +673,60 @@ export function ToolSessionApp() {
     useIds,
   ]);
 
+  const updateToolContext = useCallback(
+    async (
+      use: ToolUse,
+      nextProject: ProjectTarget,
+      checkout: CheckoutTarget,
+    ) => {
+      const latest = client.store.getSnapshot().usesById.get(use.id) ?? use;
+      try {
+        const updated = await window.yaade?.tools?.updateUseContext?.({
+          _tag: "UpdateToolUseContext",
+          toolUseId: latest.id,
+          revision: latest.revision,
+          project: nextProject,
+          checkout,
+        });
+        if (updated) client.store.replaceToolUse(updated);
+        setActionError(undefined);
+        await client.reconcile();
+      } catch (error) {
+        setActionError(errorMessage(error));
+        await client.reconcile().catch(() => undefined);
+      }
+    },
+    [client],
+  );
+
+  const updateToolProvider = useCallback(
+    async (use: ToolUse, provider: string) => {
+      if (!isAgentProvider(provider)) return;
+      const latest = client.store.getSnapshot().usesById.get(use.id) ?? use;
+      if (latest.input.kind !== "agent") return;
+      try {
+        const updated = await window.yaade?.tools?.updateUseInput?.({
+          _tag: "UpdateToolUseInput",
+          toolUseId: latest.id,
+          inputRevision: latest.inputRevision,
+          input: {
+            _tag: "AgentToolInput",
+            kind: "agent",
+            provider,
+            ...(latest.input.args ? { args: latest.input.args } : {}),
+          },
+        });
+        if (updated) client.store.replaceToolUse(updated);
+        setActionError(undefined);
+        await client.reconcile();
+      } catch (error) {
+        setActionError(errorMessage(error));
+        await client.reconcile().catch(() => undefined);
+      }
+    },
+    [client],
+  );
+
   const whichKeyEntries = TOOL_SESSION_PREFIX_BINDINGS.map((binding) => ({
     key: binding.key,
     desc: binding.desc,
@@ -691,21 +745,8 @@ export function ToolSessionApp() {
         onCreate={() => void createSession()}
         onRename={(id, title) => void renameSession(id, title)}
         onReorder={(ids) => void reorderSessions(ids)}
-        onOpenSidebar={() => setSidebarOpen(true)}
       />
       <div className="relative flex min-h-0 flex-1">
-        <ToolUseSidebar
-          open={sidebarOpen}
-          onOpenChange={setSidebarOpen}
-          useIds={useIds}
-          usesById={snapshot.usesById}
-          activeToolUseId={snapshot.activeToolUseId}
-          runtimeTitles={runtimeTitles}
-          onSelect={selectTool}
-          onAddKind={(kind) => void createTool(kind)}
-          onRename={(use, title) => void renameToolUse(use, title)}
-          onReorder={(ids) => void reorderToolUses(ids)}
-        />
         <main className="flex min-w-0 flex-1 flex-col">
           {snapshot.connection === "reconciling" ||
           snapshot.connection === "offline" ? (
@@ -737,51 +778,8 @@ export function ToolSessionApp() {
               theme={activeTheme}
               projects={projects}
               results={snapshot.searchResultsByUseId.get(selected.id) ?? []}
-              onContextChange={async (use, nextProject, checkout) => {
-                const latest =
-                  client.store.getSnapshot().usesById.get(use.id) ?? use;
-                try {
-                  const updated = await window.yaade?.tools?.updateUseContext?.(
-                    {
-                      _tag: "UpdateToolUseContext",
-                      toolUseId: latest.id,
-                      revision: latest.revision,
-                      project: nextProject,
-                      checkout,
-                    },
-                  );
-                  if (updated) client.store.replaceToolUse(updated);
-                  setActionError(undefined);
-                  await client.reconcile();
-                } catch (error) {
-                  setActionError(errorMessage(error));
-                  await client.reconcile().catch(() => undefined);
-                }
-              }}
-              onProviderChange={async (use, provider) => {
-                const latest =
-                  client.store.getSnapshot().usesById.get(use.id) ?? use;
-                if (latest.input.kind !== "agent") return;
-                try {
-                  const updated = await window.yaade?.tools?.updateUseInput?.({
-                    _tag: "UpdateToolUseInput",
-                    toolUseId: latest.id,
-                    inputRevision: latest.inputRevision,
-                    input: {
-                      _tag: "AgentToolInput",
-                      kind: "agent",
-                      provider,
-                      ...(latest.input.args ? { args: latest.input.args } : {}),
-                    },
-                  });
-                  if (updated) client.store.replaceToolUse(updated);
-                  setActionError(undefined);
-                  await client.reconcile();
-                } catch (error) {
-                  setActionError(errorMessage(error));
-                  await client.reconcile().catch(() => undefined);
-                }
-              }}
+              onContextChange={updateToolContext}
+              onProviderChange={updateToolProvider}
               onAction={(action, use) => void runToolAction(action, use)}
               onTitleChange={(use, title) =>
                 updateRuntimeTitle(use, title, "terminal")
@@ -827,10 +825,24 @@ export function ToolSessionApp() {
               }}
             />
           ) : (
-            <EmptySession onAddKind={(kind) => void createTool(kind)} />
+            <EmptySession />
           )}
         </main>
       </div>
+      <ToolUseTabStrip
+        useIds={useIds}
+        usesById={snapshot.usesById}
+        activeToolUseId={snapshot.activeToolUseId}
+        runtimeTitles={runtimeTitles}
+        projects={projects}
+        onSelect={selectTool}
+        onContextChange={updateToolContext}
+        onProviderChange={updateToolProvider}
+        onAddKind={(kind) => void createTool(kind)}
+        onClose={(use) => void runToolAction("archive", use)}
+        onRename={(use, title) => void renameToolUse(use, title)}
+        onReorder={(ids) => void reorderToolUses(ids)}
+      />
       {prefixPending ? (
         <WhichKeyPanel prefix={TOOL_SESSION_PREFIX} entries={whichKeyEntries} />
       ) : null}
@@ -856,7 +868,7 @@ export function ToolSessionApp() {
   );
 }
 
-function EmptySession(props: { onAddKind: (kind: ToolKind) => void }) {
+function EmptySession() {
   return (
     <div className="grid h-full place-items-center overflow-hidden p-6 md:p-10">
       <Empty className="relative max-w-xl border border-border bg-card/55 px-8 py-12 shadow-none backdrop-blur-sm">
@@ -877,26 +889,6 @@ function EmptySession(props: { onAddKind: (kind: ToolKind) => void }) {
           Start directly in this session. You can switch project or checkout
           inside the tool.
         </EmptyDescription>
-        <EmptyContent className="grid max-w-md grid-cols-1 gap-2 sm:grid-cols-3">
-          <Button onClick={() => props.onAddKind("agent")}>
-            <Bot data-icon="inline-start" />
-            Agent
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => props.onAddKind("terminal")}
-          >
-            <Terminal data-icon="inline-start" />
-            Terminal
-          </Button>
-          <Button variant="outline" onClick={() => props.onAddKind("search")}>
-            <Search data-icon="inline-start" />
-            Search
-          </Button>
-        </EmptyContent>
-        <p className="m-0 font-mono text-3xs text-muted-foreground">
-          Ctrl–A T · new tool
-        </p>
       </Empty>
     </div>
   );

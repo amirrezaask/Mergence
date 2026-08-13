@@ -3,11 +3,6 @@ import { LoaderCircle } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import type { ProjectSearchOptions, YaadeTheme } from "@yaade/shared";
 import { pathToFileUri } from "@yaade/shared";
-import {
-  ToolContextControls,
-  type AgentProvider,
-} from "../ToolContextControls.js";
-
 const TerminalPanel = lazy(() =>
   import("@yaade/ui/terminal").then((module) => ({
     default: module.TerminalPanel,
@@ -38,9 +33,6 @@ export function ProcessToolView({
   use,
   theme,
   toolbar,
-  projects,
-  onContextChange,
-  onProviderChange,
   onTitleChange,
   visible = true,
 }: ProcessToolViewProps) {
@@ -52,17 +44,6 @@ export function ProcessToolView({
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {toolbar}
-      <ToolContextControls
-        use={use}
-        projects={projects}
-        active={visible}
-        onChange={onContextChange}
-        onProviderChange={
-          onProviderChange
-            ? (provider: AgentProvider) => onProviderChange(provider)
-            : undefined
-        }
-      />
       <Suspense
         fallback={
           <div className="grid flex-1 place-items-center text-sm text-muted-foreground">

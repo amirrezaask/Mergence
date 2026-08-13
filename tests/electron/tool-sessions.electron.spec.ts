@@ -6,6 +6,7 @@ import type { ShellDriver } from "../shell/driver.js";
 import { launchWeb } from "../shell/launch-web.js";
 import {
   expectContainsText,
+  expectLocatorCount,
   expectLocatorVisible,
   expectNotContainsText,
   expectSelectorVisible,
@@ -25,6 +26,11 @@ async function openToolSessionShell(page: ShellDriver): Promise<void> {
   );
 }
 
+async function openToolContext(page: ShellDriver): Promise<void> {
+  await page.locator('[data-yaade-tool-use][data-active="true"]').click();
+  await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
+}
+
 async function waitForVisibleXterm(page: ShellDriver): Promise<void> {
   await page.waitForFunction(
     () => {
@@ -42,6 +48,7 @@ async function waitForVisibleXterm(page: ShellDriver): Promise<void> {
 async function createTerminalToolUse(page: ShellDriver): Promise<void> {
   await page.locator('button[title="New Terminal"]').click();
   await waitForVisibleXterm(page);
+  await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
 }
 
@@ -53,6 +60,7 @@ async function createSearchToolUse(
   await page.waitForSelector('[data-yaade-list-panel="project-search"]', {
     timeout: 30_000,
   });
+  await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
   await page.getByLabel("Search project").fill(query);
 }
@@ -154,22 +162,12 @@ async function createTerminalViaApi(
       "What do you want to run?",
     );
     await expectSelectorVisible(page, '[role="tablist"] [role="tab"]');
-    await expectLocatorVisible(page.getByRole("button", { name: "Agent" }));
-    await expectLocatorVisible(page.getByRole("button", { name: "Terminal" }));
-    await expectLocatorVisible(page.getByRole("button", { name: "Search" }));
-    const ctaColors = await page.evaluate(() =>
-      ["Agent", "Terminal", "Search"].map((name) => {
-        const button = [...document.querySelectorAll("button")].find(
-          (candidate) => candidate.textContent?.trim() === name,
-        );
-        return button ? getComputedStyle(button).backgroundColor : "";
-      }),
-    );
-    expect(new Set(ctaColors).size).toBe(3);
+    await expectLocatorCount(page.locator('[data-slot="empty"] button'), 0);
     await expectSelectorVisible(page, 'button[title="New Search"]');
     await expectSelectorVisible(page, 'button[title="New Agent"]');
     await expectSelectorVisible(page, 'button[title="New Terminal"]');
     await page.locator('button[title="New Search"]').click();
+    await openToolContext(page);
     await expectSelectorVisible(page, "#tool-project");
     await expectSelectorVisible(
       page,
@@ -179,18 +177,18 @@ async function createTerminalViaApi(
       const row = document.querySelector<HTMLElement>(
         '[data-yaade-tool-use][data-active="true"]',
       );
-      const sidebar = document.querySelector<HTMLElement>(
-        "[data-yaade-tool-sidebar]",
+      const tabs = document.querySelector<HTMLElement>(
+        "[data-yaade-tool-tabs]",
       );
-      return row && sidebar
+      return row && tabs
         ? {
             row: getComputedStyle(row).backgroundColor,
-            sidebar: getComputedStyle(sidebar).backgroundColor,
+            tabs: getComputedStyle(tabs).backgroundColor,
           }
         : null;
     });
     expect(selectedContrast).not.toBeNull();
-    expect(selectedContrast?.row).not.toBe(selectedContrast?.sidebar);
+    expect(selectedContrast?.row).not.toBe(selectedContrast?.tabs);
   } finally {
     await app.app.close();
   }
@@ -259,7 +257,10 @@ async function createTerminalViaApi(
     expect(projectPopupBox!.width).toBeLessThanOrEqual(
       projectControlBox!.width + 2,
     );
-    await expectSelectorVisible(page, '[data-slot="combobox-item"][data-selected]');
+    await expectSelectorVisible(
+      page,
+      '[data-slot="combobox-item"][data-selected]',
+    );
     await page.keyboard.press("Escape");
     await focusTerminal(page);
     const marker = `yaade-tool-pty-${Date.now()}`;
@@ -268,7 +269,9 @@ async function createTerminalViaApi(
     await waitForToolTerminalText(page, marker);
     await page.waitForFunction(
       () => {
-        const title = document.querySelector("[data-yaade-tool-title]")?.textContent?.trim();
+        const title = document
+          .querySelector("[data-yaade-tool-title]")
+          ?.textContent?.trim();
         return Boolean(title && title !== "Terminal");
       },
       null,
@@ -374,7 +377,7 @@ async function createTerminalViaApi(
     });
     await expectContainsText(
       page,
-      "[data-yaade-tool-sidebar]",
+      "[data-yaade-tool-tabs]",
       "nonGitSearchFixture",
     );
     await expectNotContainsText(
@@ -504,6 +507,7 @@ async function createTerminalViaApi(
     const branch = `yaade-e2e-${Date.now()}`;
     await page.locator('button[title="New Terminal"]').click();
     await waitForVisibleXterm(page);
+    await openToolContext(page);
     await page.locator("#tool-checkout").click();
     await page.getByRole("option", { name: "New isolated branch…" }).click();
     await page.getByLabel("Isolated branch worktree").fill(branch);
@@ -766,24 +770,25 @@ async function createTerminalViaApi(
   }
 });
 
-/** 17 */ test("mobile sidebar opens and keeps the selected ToolUse visible", async () => {
+/** 17 */ test("mobile ToolUse taskbar keeps the selected ToolUse visible", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await page.setViewportSize({ width: 390, height: 844 });
     await openToolSessionShell(page);
     await createTerminalViaApi(page, "mobile-term");
-    await page.getByRole("button", { name: "Open tool sidebar" }).click();
-    await expectSelectorVisible(page, '[data-yaade-shell="tool-session"]');
-    await expectContainsText(
+    const toolTabs = page.locator("[data-yaade-tool-tabs]");
+    await expectSelectorVisible(page, "[data-yaade-tool-tabs]");
+    await expectSelectorVisible(
       page,
-      '[data-yaade-shell="tool-session"]',
-      "sample-workspace",
+      '[data-yaade-tool-tabs] [data-yaade-tool-use][data-active="true"]',
     );
-    await page
-      .getByRole("button", { name: "Close tool sidebar" })
-      .first()
-      .click();
+    const toolTabsBox = await toolTabs.boundingBox();
+    const viewportHeight = await page.evaluate(() => window.innerHeight);
+    expect(toolTabsBox).not.toBeNull();
+    expect(
+      (toolTabsBox?.y ?? 0) + (toolTabsBox?.height ?? 0),
+    ).toBeGreaterThanOrEqual(viewportHeight - 2);
     await waitForVisibleXterm(page);
   } finally {
     await app.app.close();
@@ -845,6 +850,7 @@ async function createTerminalViaApi(
       '[data-yaade-shell="tool-session"]',
       "Action failed",
     );
+    await openToolContext(page);
     await expectSelectorVisible(page, "#tool-project");
     await waitForVisibleXterm(page);
   } finally {

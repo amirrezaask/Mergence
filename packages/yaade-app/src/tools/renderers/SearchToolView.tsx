@@ -18,7 +18,6 @@ import { setPendingEditorNavigation } from "@yaade/monaco/pending";
 import { ProjectSearchPanel } from "@yaade/ui";
 import { Button } from "@yaade/ui/primitives";
 import { ensureMonacoWorkersConfigured } from "../../editor/monaco-workers.js";
-import { ToolContextControls } from "../ToolContextControls.js";
 
 export type SearchToolViewProps = {
   readonly use: ToolUse;
@@ -152,11 +151,6 @@ export function SearchToolView(props: SearchToolViewProps) {
         data-yaade-search-editor={openResult.uri}
       >
         {props.toolbar}
-        <ToolContextControls
-          use={props.use}
-          projects={props.projects}
-          onChange={props.onContextChange}
-        />
         <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-2">
           <Button size="sm" variant="ghost" onClick={() => setOpenResult(null)}>
             <ArrowLeft data-icon="inline-start" /> Search results
@@ -193,11 +187,6 @@ export function SearchToolView(props: SearchToolViewProps) {
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       {props.toolbar}
-      <ToolContextControls
-        use={props.use}
-        projects={props.projects}
-        onChange={props.onContextChange}
-      />
       <div className="min-h-0 flex-1">
         <ProjectSearchPanel
           query={query}

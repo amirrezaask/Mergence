@@ -13,7 +13,7 @@ export const ToolUseId = Schema.String.pipe(
 );
 export type ToolUseId = Schema.Schema.Type<typeof ToolUseId>;
 
-export const ToolKind = Schema.Literal("agent", "terminal", "search");
+export const ToolKind = Schema.Literal("agent", "terminal", "search", "git");
 export type ToolKind = Schema.Schema.Type<typeof ToolKind>;
 
 export const ToolUseStatus = Schema.Literal(
@@ -120,10 +120,17 @@ export class SearchToolInput extends Schema.TaggedClass<SearchToolInput>()(
   },
 ) {}
 
+/** Git is an interactive repository history/review surface, not a process. */
+export class GitToolInput extends Schema.TaggedClass<GitToolInput>()(
+  "GitToolInput",
+  { kind: Schema.Literal("git") },
+) {}
+
 export const ToolUseInput = Schema.Union(
   AgentToolInput,
   TerminalToolInput,
   SearchToolInput,
+  GitToolInput,
 );
 export type ToolUseInput = Schema.Schema.Type<typeof ToolUseInput>;
 
@@ -171,7 +178,16 @@ export class SearchToolOutput extends Schema.TaggedClass<SearchToolOutput>()(
   },
 ) {}
 
-export const ToolUseOutput = Schema.Union(ProcessToolOutput, SearchToolOutput);
+export class GitToolOutput extends Schema.TaggedClass<GitToolOutput>()(
+  "GitToolOutput",
+  { kind: Schema.Literal("git") },
+) {}
+
+export const ToolUseOutput = Schema.Union(
+  ProcessToolOutput,
+  SearchToolOutput,
+  GitToolOutput,
+);
 export type ToolUseOutput = Schema.Schema.Type<typeof ToolUseOutput>;
 
 export class AppSession extends Schema.Class<AppSession>("AppSession")({
@@ -211,7 +227,11 @@ export const ToolUse = ToolUseShape.pipe(
       (value.kind === "search" &&
         value.input.kind === "search" &&
         value.output.kind === "search") ||
+      (value.kind === "git" &&
+        value.input.kind === "git" &&
+        value.output.kind === "git") ||
       (value.kind !== "search" &&
+        value.kind !== "git" &&
         value.input.kind === value.kind &&
         value.output.kind === "process"),
     { message: () => "ToolUse kind does not match its input and output" },

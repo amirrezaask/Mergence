@@ -4,6 +4,8 @@ import { Effect, Schema } from "effect"
 import {
   AgentToolInput,
   AppSession,
+  GitToolInput,
+  GitToolOutput,
   MainCheckout,
   ProcessToolOutput,
   SearchResultsAppended,
@@ -79,9 +81,11 @@ describe("tool session contracts", () => {
       query: "needle",
       options: { regex: false },
     })
+    const git = decode(ToolUseInput, { _tag: "GitToolInput", kind: "git" })
     assert.equal(agent.kind, "agent")
     assert.equal(terminal.kind, "terminal")
     assert.equal(search.kind, "search")
+    assert.equal(git.kind, "git")
     assert.equal(decode(ToolUseOutput, processUse(terminal).output).kind, "process")
     assert.equal(
       decode(ToolUseOutput, {
@@ -93,6 +97,10 @@ describe("tool session contracts", () => {
         running: false,
       }).kind,
       "search",
+    )
+    assert.equal(
+      decode(ToolUseOutput, { _tag: "GitToolOutput", kind: "git" }).kind,
+      "git",
     )
   })
 
@@ -159,6 +167,8 @@ describe("tool session contracts", () => {
     assert.equal(MainCheckout.make({ kind: "main" }).kind, "main")
     assert.equal(SearchToolInput.make({ kind: "search", query: "x", options: {} }).query, "x")
     assert.equal(TerminalToolInput.make({ kind: "terminal" }).kind, "terminal")
+    assert.equal(GitToolInput.make({ kind: "git" }).kind, "git")
+    assert.equal(GitToolOutput.make({ kind: "git" }).kind, "git")
     assert.equal(ProcessToolOutput.make({
       kind: "process",
       terminalInstanceId: "term",

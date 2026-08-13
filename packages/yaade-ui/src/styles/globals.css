@@ -345,7 +345,7 @@ body {
   scrollbar-width: thin;
 }
 
-/* Tool Session shell: dense workbench chrome with visibly layered navigation. */
+/* Tool Session shell: dense workbench chrome with layered session and tool navigation. */
 [data-yaade-shell="tool-session"] {
   background:
     radial-gradient(
@@ -357,7 +357,7 @@ body {
 }
 
 [data-yaade-session-tabs],
-[data-yaade-tool-sidebar],
+[data-yaade-tool-tabs],
 [data-yaade-tool-context] {
   -webkit-backdrop-filter: blur(18px) saturate(1.12);
   backdrop-filter: blur(18px) saturate(1.12);
@@ -375,7 +375,7 @@ body {
 
 @media (prefers-reduced-transparency: reduce) {
   [data-yaade-session-tabs],
-  [data-yaade-tool-sidebar],
+  [data-yaade-tool-tabs],
   [data-yaade-tool-context] {
     background: var(--card);
     -webkit-backdrop-filter: none;

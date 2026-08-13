@@ -36,6 +36,7 @@ export type ToolContextControlsProps = {
   readonly use: ToolUse;
   readonly projects: readonly ProjectTarget[];
   readonly active?: boolean;
+  readonly presentation?: "pane" | "popover";
   readonly onChange: (
     project: ProjectTarget,
     checkout: CheckoutTarget,
@@ -177,7 +178,11 @@ export function ToolContextControls(props: ToolContextControlsProps) {
 
   return (
     <div
-      className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card/55 px-3 py-2 backdrop-blur-sm"
+      className={
+        props.presentation === "popover"
+          ? "flex flex-col gap-3 p-3"
+          : "flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card/55 px-3 py-2 backdrop-blur-sm"
+      }
       data-yaade-tool-context
     >
       <Combobox
@@ -202,7 +207,9 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         <ComboboxInput
           id={active ? "tool-project" : undefined}
           aria-label="Tool project"
-          className="w-44 lg:w-56"
+          className={
+            props.presentation === "popover" ? "w-full" : "w-44 lg:w-56"
+          }
           startAddon={<FolderKanban />}
           size="sm"
         />
@@ -285,7 +292,9 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         <ComboboxInput
           id={active ? "tool-checkout" : undefined}
           aria-label="Tool worktree"
-          className="w-44 lg:w-56"
+          className={
+            props.presentation === "popover" ? "w-full" : "w-44 lg:w-56"
+          }
           startAddon={<GitBranch />}
           size="sm"
         />
@@ -396,7 +405,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
           <ComboboxInput
             id={active ? "tool-provider" : undefined}
             aria-label="Agent provider"
-            className="w-36"
+            className={props.presentation === "popover" ? "w-full" : "w-36"}
             startAddon={<Sparkles />}
             size="sm"
           />
