@@ -21,6 +21,10 @@ import {
   registerTerminalInstance,
   unregisterTerminalInstance,
 } from "./terminal-instance-registry.js"
+import {
+  DEFAULT_MONO_FONT_FAMILY,
+  NERD_FONT_FAMILY,
+} from "../theme/appearance-defaults.js"
 
 export type TerminalPanelProps = {
   cwdRootUri: string
@@ -81,8 +85,6 @@ type TerminalSession = {
   lastFitHeight: number
 }
 
-const MONO_FONT_FALLBACK = '"Commit Mono", ui-monospace, monospace'
-
 function readRootFontSize(): number {
   const px = parseFloat(getComputedStyle(document.documentElement).fontSize)
   return Number.isFinite(px) && px > 0 ? px : 13
@@ -91,7 +93,7 @@ function readRootFontSize(): number {
 /** xterm measures via canvas — CSS var() in fontFamily breaks cell metrics. */
 function readTerminalFontFamily(): string {
   const fromTheme = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim()
-  return fromTheme || MONO_FONT_FALLBACK
+  return fromTheme || DEFAULT_MONO_FONT_FAMILY
 }
 
 function cellMetricsValid(term: XTerm): boolean {
@@ -747,16 +749,28 @@ export function TerminalPanel({
 
     // Measure after webfonts settle — wrong cell width → wrong cols → PTY/xterm
     // mismatch → wrapped progress lines that \\r cannot rewrite in place.
-    const refitAfterFonts = () => {
-      if (cancelled) return
+    const refitAfterFonts = (clearAtlas: boolean) => {
+      if (cancelled || !session.live) return
       syncTypography()
+      if (clearAtlas) {
+        // Glyphs rasterized before the Nerd Font loaded stay as tofu in the atlas.
+        term.clearTextureAtlas()
+      }
+      session.lastFitWidth = 0
+      session.lastFitHeight = 0
       syncFit()
+      if (clearAtlas) term.refresh(0, Math.max(0, term.rows - 1))
     }
     const fontsReady =
-      typeof document !== "undefined" && document.fonts?.ready
-        ? document.fonts.ready.then(refitAfterFonts).catch(() => {})
+      typeof document !== "undefined" && document.fonts
+        ? Promise.all([
+            document.fonts.ready,
+            document.fonts.load(`16px "${NERD_FONT_FAMILY}"`, "\uE725"),
+          ])
+            .then(() => refitAfterFonts(true))
+            .catch(() => {})
         : Promise.resolve()
-    const onFontsLoadingDone = () => refitAfterFonts()
+    const onFontsLoadingDone = () => refitAfterFonts(false)
     document.fonts?.addEventListener?.("loadingdone", onFontsLoadingDone)
 
     let startTimer = 0

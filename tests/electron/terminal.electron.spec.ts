@@ -114,6 +114,64 @@ test.describe("electron terminal", () => {
     }
   })
 
+  test("falls back to Symbols Nerd Font Mono for icon glyphs", async ({}, testInfo) => {
+    const { app, page } = await launchJet()
+    try {
+      await showTerminal(page)
+
+      const font = await page.evaluate(async () => {
+        await document.fonts.load('16px "Symbols Nerd Font Mono"', "\uE725")
+        const glyph = "\uE725"
+        const draw = (family: string) => {
+          const canvas = document.createElement("canvas")
+          canvas.width = 48
+          canvas.height = 48
+          const ctx = canvas.getContext("2d")
+          if (!ctx) return ""
+          ctx.fillStyle = "#ffffff"
+          ctx.font = `32px ${family}`
+          ctx.textBaseline = "top"
+          ctx.fillText(glyph, 8, 8)
+          return canvas.toDataURL()
+        }
+        return {
+          stack: getComputedStyle(document.documentElement)
+            .getPropertyValue("--font-mono")
+            .trim(),
+          loaded: document.fonts.check(
+            '16px "Symbols Nerd Font Mono"',
+            glyph,
+          ),
+          tofu: draw('"Commit Mono"'),
+          fallback: draw('"Commit Mono", "Symbols Nerd Font Mono"'),
+        }
+      })
+
+      expect(font.stack).toContain("Commit Mono")
+      expect(font.stack).toContain("Symbols Nerd Font Mono")
+      expect(font.loaded).toBe(true)
+      expect(font.fallback).not.toBe(font.tofu)
+
+      const ptyId = await page
+        .locator("[data-yaade-terminal-panel]")
+        .getAttribute("data-yaade-terminal-pty-id")
+      expect(ptyId).toBeTruthy()
+      await page.evaluate(async id => {
+        const terminal = window.yaade?.terminal
+        if (!terminal) throw new Error("Terminal API unavailable")
+        await terminal.write(id, `printf '${"\uE725"} nerd-glyph-ok\\n'\n`)
+      }, ptyId!)
+      await waitForTerminalText(page, "nerd-glyph-ok")
+
+      await testInfo.attach("nerd-font-terminal.png", {
+        body: Buffer.from(await page.screenshot(), "base64"),
+        contentType: "image/png",
+      })
+    } finally {
+      await app.close()
+    }
+  })
+
   test("foreground reconnect catches mounted terminals up from PTY replay", async () => {
     const { app, page } = await launchJet()
     try {

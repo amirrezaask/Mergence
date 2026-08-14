@@ -3,6 +3,7 @@ import { describe, it } from "node:test"
 import {
   normalizeColorSchemeMode,
   normalizePreferredEditor,
+  normalizeSessionLayout,
   normalizeThemeId,
   themeIdForColorSchemeMode,
 } from "./useAppearanceSettings.js"
@@ -27,6 +28,14 @@ describe("normalizeThemeId", () => {
   it("uses the stored scheme for unknown ids", () => {
     assert.equal(normalizeThemeId("removed-theme", "light"), "default-light")
     assert.equal(normalizeThemeId("removed-theme", "dark"), "default-dark")
+  })
+})
+
+describe("session layout", () => {
+  it("preserves tab bars and sidebars", () => {
+    assert.equal(normalizeSessionLayout("tabs"), "tabs")
+    assert.equal(normalizeSessionLayout("sidebar"), "sidebar")
+    assert.equal(normalizeSessionLayout("cards"), "sidebar")
   })
 })
 

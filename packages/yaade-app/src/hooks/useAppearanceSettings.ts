@@ -7,6 +7,7 @@ import {
   DEFAULT_MONO_FONT_NAME,
   DEFAULT_UI_FONT_FAMILY,
   buildMonoFontStack,
+  preloadNerdFont,
   siblingThemeForScheme,
   type ColorSchemeMode,
   type JetAppearanceSettings,
@@ -80,9 +81,8 @@ export function themeIdForColorSchemeMode(
   return siblingThemeForScheme(themeId, scheme).id
 }
 
-export function normalizeSessionLayout(_value: unknown): SessionLayout {
-  // Legacy localStorage may hold "cards" | "tabs" — always coerce to sidebar.
-  return "sidebar"
+export function normalizeSessionLayout(value: unknown): SessionLayout {
+  return value === "tabs" || value === "sidebar" ? value : "sidebar"
 }
 
 function normalizeProjectFilterPath(value: unknown): string | null {
@@ -261,6 +261,7 @@ export function applyAppearanceCss(settings: JetAppearanceSettings): void {
     "--font-mono",
     buildMonoFontStack(settings.monoFontFamily) || DEFAULT_MONO_FONT_FAMILY,
   )
+  preloadNerdFont()
   root.style.setProperty("--yaade-editor-line-height", "1.45")
   root.style.setProperty("--yaade-terminal-line-height", "1")
   root.style.setProperty("--yaade-terminal-cursor-blink", "1")

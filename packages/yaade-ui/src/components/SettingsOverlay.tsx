@@ -4,6 +4,8 @@ import {
   Brush,
   Monitor,
   Moon,
+  PanelLeft,
+  PanelTop,
   RotateCcw,
   SlidersHorizontal,
   Sun,
@@ -55,8 +57,8 @@ import {
 import { DEFAULT_MONO_FONT_NAME } from "../theme/appearance-defaults.js"
 import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 
-/** Mission Control is sidebar-only; legacy `"cards"` / `"tabs"` normalize here. */
-export type SessionLayout = "sidebar"
+/** Navigation chrome for the Session shell. */
+export type SessionLayout = "tabs" | "sidebar"
 export type ColorSchemeMode = "system" | "light" | "dark"
 /** Preferred file editor for quick open / search / go-to-definition. */
 export type PreferredEditor = "monaco" | "neovim"
@@ -67,7 +69,7 @@ export type JetAppearanceSettings = {
   fontSize: number
   /** Primary monospace face name (CSS stack built via `buildMonoFontStack`). */
   monoFontFamily: string
-  /** Always `"sidebar"` — kept for persistence / agent-bridge compat. */
+  /** Session and ToolUse navigation chrome. */
   sessionLayout: SessionLayout
   /** Whether the Mission Control sidebar is collapsed (icon mode). */
   sidebarCollapsed: boolean
@@ -492,6 +494,52 @@ export function SettingsOverlay({
                         >
                           <Moon aria-hidden />
                           Dark
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </Field>
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
+                    >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
+                          Navigation layout
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Choose between compact bars or dedicated session and tool sidebars.
+                        </FieldDescription>
+                      </FieldContent>
+                      <ToggleGroup
+                        type="single"
+                        variant="outline"
+                        size="sm"
+                        value={settings.sessionLayout}
+                        aria-label="Navigation layout"
+                        className="w-full"
+                        onValueChange={value => {
+                          if (value !== "tabs" && value !== "sidebar") return
+                          onSettingsChange(
+                            settingPatch(settings, { sessionLayout: value }),
+                          )
+                        }}
+                      >
+                        <ToggleGroupItem
+                          value="tabs"
+                          aria-label="Tab bar layout"
+                          className="flex-1"
+                          data-yaade-session-layout-option="tabs"
+                        >
+                          <PanelTop aria-hidden />
+                          Tab bar
+                        </ToggleGroupItem>
+                        <ToggleGroupItem
+                          value="sidebar"
+                          aria-label="Sidebar layout"
+                          className="flex-1"
+                          data-yaade-session-layout-option="sidebar"
+                        >
+                          <PanelLeft aria-hidden />
+                          Sidebars
                         </ToggleGroupItem>
                       </ToggleGroup>
                     </Field>

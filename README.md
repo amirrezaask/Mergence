@@ -1,14 +1,14 @@
 # YAADE
 
-**Browser IDE for local or remote machines — Session tabs with composable ToolUses.**
+**Browser IDE for local or remote machines — Session navigation with composable ToolUses.**
 
-YAADE opens at `/` with top-level **Session** tabs. Each Session is an ordered
+YAADE opens at `/` with top-level **Session** navigation. Each Session is an ordered
 collection of **ToolUses** (Editor, Git History, Agent, Terminal, Search). Every session opens with Editor and Git History tabs. Project and checkout
 belong to each ToolUse, never to the Session. Layout and PTYs live on the host,
 so closing a browser tab does not kill shells.
 
 ```
-http://localhost:5174/              → Session shell (Session tabs + ToolUse taskbar)
+http://localhost:5174/              → Session shell (Session navigation + ToolUse viewport)
 http://localhost:5174/?s=ses-…&u=use-… → deep-link a Session + ToolUse
 ```
 
@@ -21,8 +21,9 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 
-- Top tab strip of Sessions (`+` creates a Session with Editor and Git History tabs); the left-side gear opens Settings
-- A horizontal ToolUse taskbar is docked at the bottom of the screen, with high-contrast selection and semantic status; each tool pane retains its project and checkout context
+- Sessions and ToolUses support two navigation layouts: **Tab bar** keeps Sessions at the top and ToolUses in a bottom taskbar; **Sidebars** puts Sessions on the left and ToolUses on the right. Switch layouts from Settings → Appearance → Navigation layout.
+- In either layout, `+` creates a Session with Editor and Git History tools; Settings stays beside the Session navigation.
+- The Sidebar layout keeps both rails visible while the active ToolUse owns the center viewport; each tool pane retains its project and checkout context
 - ToolUse tab titles include the project name (for example, `yaade: Git History`) and stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
 - Every Session starts with Editor and Git History tabs; all ToolUse tabs can be reordered or closed
 - Each ToolUse tab opens a context popover for project, worktree, and kind-specific options (project names are shown; IDs remain internal)

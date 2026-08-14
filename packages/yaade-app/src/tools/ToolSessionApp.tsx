@@ -780,196 +780,238 @@ export function ToolSessionApp() {
     [client],
   );
 
+  const sidebarLayout = appearanceSettings.sessionLayout === "sidebar";
+  const renderPrefixHud = (placement: "main" | "dock") =>
+    prefixPending ? (
+      <div
+        className={
+          placement === "main"
+            ? "pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-2"
+            : "pointer-events-none absolute inset-x-0 bottom-full z-20 flex justify-center px-2 pb-2"
+        }
+      >
+        <div className="pointer-events-auto w-full max-w-4xl">
+          <WhichKeyPanel
+            variant="overlay"
+            prefix={TOOL_SESSION_PREFIX}
+            groups={TOOL_SESSION_PREFIX_GROUPS}
+            entries={toolSessionHudBindings().map((binding) => ({
+              key: binding.key,
+              desc: binding.desc,
+              group: binding.group,
+            }))}
+            onSelect={(key) => {
+              clearPrefix();
+              if (isToolSessionJumpKey(key)) {
+                runPrefixCommand("tool.jump", Number(key) - 1);
+                return;
+              }
+              const binding = matchToolSessionPrefixBinding(key);
+              if (binding) runPrefixCommand(binding.command);
+            }}
+          />
+        </div>
+      </div>
+    ) : null;
+
   return (
     <TooltipProvider delayDuration={400} skipDelayDuration={200}>
-    <div
-      className="flex h-full min-h-0 flex-col bg-background text-foreground"
-      data-yaade-shell="tool-session"
-    >
-      <SessionTabStrip
-        sessions={visibleSessions}
-        activeSessionId={snapshot.activeSessionId}
-        toolCounts={toolCounts}
-        onSelect={selectSession}
-        onClose={requestCloseSession}
-        onOpenSettings={() => setSettingsOpen(true)}
-        onCreate={() => void createSession()}
-        onRename={(id, title) => void renameSession(id, title)}
-        onReorder={(ids) => void reorderSessions(ids)}
-      />
-      <div className="relative flex min-h-0 flex-1">
-        <main className="flex min-w-0 flex-1 flex-col">
-          {snapshot.connection === "reconciling" ||
-          snapshot.connection === "offline" ? (
-            <Alert className="m-4">
-              <AlertTitle>
-                {snapshot.connection === "offline"
-                  ? "Host offline"
-                  : "Reconnecting"}
-              </AlertTitle>
-              <AlertDescription>
-                {snapshot.connection === "offline"
-                  ? "Tool state will refresh when the host returns."
-                  : "Reconciling session state without clearing current results."}
-              </AlertDescription>
-            </Alert>
+      <div
+        className="flex h-full min-h-0 flex-col bg-background text-foreground"
+        data-yaade-shell="tool-session"
+        data-yaade-session-layout={appearanceSettings.sessionLayout}
+      >
+        {!sidebarLayout ? (
+          <SessionTabStrip
+            sessions={visibleSessions}
+            activeSessionId={snapshot.activeSessionId}
+            toolCounts={toolCounts}
+            layout="tabs"
+            onSelect={selectSession}
+            onClose={requestCloseSession}
+            onOpenSettings={() => setSettingsOpen(true)}
+            onCreate={() => void createSession()}
+            onRename={(id, title) => void renameSession(id, title)}
+            onReorder={(ids) => void reorderSessions(ids)}
+          />
+        ) : null}
+        <div
+          className={
+            sidebarLayout
+              ? "relative grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)_18rem] max-md:flex max-md:flex-col"
+              : "relative flex min-h-0 flex-1 flex-col"
+          }
+        >
+          {sidebarLayout ? (
+            <SessionTabStrip
+              sessions={visibleSessions}
+              activeSessionId={snapshot.activeSessionId}
+              toolCounts={toolCounts}
+              layout="sidebar"
+              onSelect={selectSession}
+              onClose={requestCloseSession}
+              onOpenSettings={() => setSettingsOpen(true)}
+              onCreate={() => void createSession()}
+              onRename={(id, title) => void renameSession(id, title)}
+              onReorder={(ids) => void reorderSessions(ids)}
+            />
           ) : null}
-          {actionError ? (
-            <Alert variant="destructive" className="m-4">
-              <AlertTitle>Action failed</AlertTitle>
-              <AlertDescription>{actionError}</AlertDescription>
-            </Alert>
-          ) : null}
-          {snapshot.connection === "connecting" &&
-          visibleSessions.length === 0 ? (
-            <SessionBootState />
-          ) : selected ? (
-            <ToolUseViewport
-              selected={selected}
-              processUses={processUses.filter((use) =>
-                viewportIds.includes(use.id),
-              )}
-              theme={activeTheme}
-              fontSize={fontSize}
-              projects={projects}
-              results={snapshot.searchResultsByUseId.get(selected.id) ?? []}
-              onContextChange={updateToolContext}
-              onProviderChange={updateToolProvider}
-              onAction={(action, use) => void runToolAction(action, use)}
-              onTitleChange={(use, title) =>
-                updateRuntimeTitle(use, title, "terminal")
-              }
-              onSearchChange={async (use, next, options) => {
-                const latest =
-                  client.store.getSnapshot().usesById.get(use.id) ?? use;
-                if (latest.input.kind !== "search") return;
-                try {
-                  const updated = await window.yaade?.tools?.updateUseInput?.({
-                    _tag: "UpdateToolUseInput",
-                    toolUseId: latest.id,
-                    inputRevision: latest.inputRevision,
-                    input: {
-                      _tag: "SearchToolInput",
-                      kind: "search",
-                      query: next,
-                      options,
-                    },
-                  });
-                  if (updated) {
-                    client.store.replaceToolUse(updated);
-                    await client.reconcile();
+          <main className="relative flex min-w-0 min-h-0 flex-1 flex-col">
+            {snapshot.connection === "reconciling" ||
+            snapshot.connection === "offline" ? (
+              <Alert className="m-4">
+                <AlertTitle>
+                  {snapshot.connection === "offline"
+                    ? "Host offline"
+                    : "Reconnecting"}
+                </AlertTitle>
+                <AlertDescription>
+                  {snapshot.connection === "offline"
+                    ? "Tool state will refresh when the host returns."
+                    : "Reconciling session state without clearing current results."}
+                </AlertDescription>
+              </Alert>
+            ) : null}
+            {actionError ? (
+              <Alert variant="destructive" className="m-4">
+                <AlertTitle>Action failed</AlertTitle>
+                <AlertDescription>{actionError}</AlertDescription>
+              </Alert>
+            ) : null}
+            {snapshot.connection === "connecting" &&
+            visibleSessions.length === 0 ? (
+              <SessionBootState />
+            ) : selected ? (
+              <ToolUseViewport
+                selected={selected}
+                processUses={processUses.filter((use) =>
+                  viewportIds.includes(use.id),
+                )}
+                theme={activeTheme}
+                fontSize={fontSize}
+                projects={projects}
+                results={snapshot.searchResultsByUseId.get(selected.id) ?? []}
+                onContextChange={updateToolContext}
+                onProviderChange={updateToolProvider}
+                onAction={(action, use) => void runToolAction(action, use)}
+                onTitleChange={(use, title) =>
+                  updateRuntimeTitle(use, title, "terminal")
+                }
+                onSearchChange={async (use, next, options) => {
+                  const latest =
+                    client.store.getSnapshot().usesById.get(use.id) ?? use;
+                  if (latest.input.kind !== "search") return;
+                  try {
+                    const updated = await window.yaade?.tools?.updateUseInput?.(
+                      {
+                        _tag: "UpdateToolUseInput",
+                        toolUseId: latest.id,
+                        inputRevision: latest.inputRevision,
+                        input: {
+                          _tag: "SearchToolInput",
+                          kind: "search",
+                          query: next,
+                          options,
+                        },
+                      },
+                    );
+                    if (updated) {
+                      client.store.replaceToolUse(updated);
+                      await client.reconcile();
+                    }
+                  } catch (error) {
+                    setActionError(errorMessage(error));
                   }
-                } catch (error) {
-                  setActionError(errorMessage(error));
-                }
-              }}
-              onLoadMore={async (use) => {
-                if (use.output.kind !== "search" || !use.output.nextCursor)
-                  return;
-                try {
-                  await window.yaade?.tools?.loadMore?.(
-                    use.id,
-                    use.output.resultRevision,
-                    Number(use.output.nextCursor),
-                    100,
-                  );
-                  await client.reconcile();
-                } catch (error) {
-                  setActionError(errorMessage(error));
-                }
-              }}
-            />
-          ) : (
-            <SessionEmptyState
-              onAddKind={(kind) => void createTool(kind)}
-              onAddAgent={(provider) => void createTool("agent", provider)}
-            />
-          )}
-        </main>
-      </div>
-      <div className="relative shrink-0">
-        {prefixPending ? (
-          <div className="pointer-events-none absolute inset-x-0 bottom-full z-20 flex justify-center px-2 pb-2">
-            <div className="pointer-events-auto w-full max-w-4xl">
-              <WhichKeyPanel
-                variant="overlay"
-                prefix={TOOL_SESSION_PREFIX}
-                groups={TOOL_SESSION_PREFIX_GROUPS}
-                entries={toolSessionHudBindings().map((binding) => ({
-                  key: binding.key,
-                  desc: binding.desc,
-                  group: binding.group,
-                }))}
-                onSelect={(key) => {
-                  clearPrefix();
-                  if (isToolSessionJumpKey(key)) {
-                    runPrefixCommand("tool.jump", Number(key) - 1);
+                }}
+                onLoadMore={async (use) => {
+                  if (use.output.kind !== "search" || !use.output.nextCursor)
                     return;
+                  try {
+                    await window.yaade?.tools?.loadMore?.(
+                      use.id,
+                      use.output.resultRevision,
+                      Number(use.output.nextCursor),
+                      100,
+                    );
+                    await client.reconcile();
+                  } catch (error) {
+                    setActionError(errorMessage(error));
                   }
-                  const binding = matchToolSessionPrefixBinding(key);
-                  if (binding) runPrefixCommand(binding.command);
                 }}
               />
-            </div>
+            ) : (
+              <SessionEmptyState
+                onAddKind={(kind) => void createTool(kind)}
+                onAddAgent={(provider) => void createTool("agent", provider)}
+              />
+            )}
+            {sidebarLayout ? renderPrefixHud("main") : null}
+          </main>
+          <div
+            className={
+              sidebarLayout ? "relative min-h-0 min-w-0" : "relative shrink-0"
+            }
+          >
+            {!sidebarLayout ? renderPrefixHud("dock") : null}
+            <ToolUseTabStrip
+              useIds={useIds}
+              usesById={snapshot.usesById}
+              activeToolUseId={snapshot.activeToolUseId}
+              runtimeTitles={runtimeTitles}
+              projects={projects}
+              layout={sidebarLayout ? "sidebar" : "tabs"}
+              onSelect={selectTool}
+              onContextChange={updateToolContext}
+              onProviderChange={updateToolProvider}
+              onAddAgent={(provider) => void createTool("agent", provider)}
+              onAddKind={(kind) => void createTool(kind)}
+              onClose={(use) => void runToolAction("archive", use)}
+              onRename={(use, title) => void renameToolUse(use, title)}
+              onReorder={(ids) => void reorderToolUses(ids)}
+            />
           </div>
-        ) : null}
-        <ToolUseTabStrip
-          useIds={useIds}
+        </div>
+        <ToolUseSwitcher
+          open={toolUseSwitcherOpen}
+          onOpenChange={setToolUseSwitcherOpen}
+          sessionsById={snapshot.sessionsById}
           usesById={snapshot.usesById}
           activeToolUseId={snapshot.activeToolUseId}
           runtimeTitles={runtimeTitles}
-          projects={projects}
           onSelect={selectTool}
-          onContextChange={updateToolContext}
-          onProviderChange={updateToolProvider}
-          onAddAgent={(provider) => void createTool("agent", provider)}
-          onAddKind={(kind) => void createTool(kind)}
-          onClose={(use) => void runToolAction("archive", use)}
-          onRename={(use, title) => void renameToolUse(use, title)}
-          onReorder={(ids) => void reorderToolUses(ids)}
+        />
+        <SessionSwitcher
+          open={switcherOpen}
+          onOpenChange={setSwitcherOpen}
+          sessions={visibleSessions}
+          archived={archivedSessions}
+          activeSessionId={snapshot.activeSessionId}
+          onSelect={(session) => selectSession(session.id)}
+          onRestore={(session) => void restoreSession(session)}
+          toolCounts={toolCounts}
+        />
+        {settingsOpen ? (
+          <Suspense fallback={null}>
+            <SettingsOverlay
+              open
+              onOpenChange={setSettingsOpen}
+              settings={appearanceSettings}
+              onSettingsChange={setAppearanceSettings}
+              themes={bundledThemeList}
+              onReset={resetAppearanceSettings}
+            />
+          </Suspense>
+        ) : null}
+        <CloseSessionDialog
+          sessionId={closeChoice?.sessionId}
+          onCancel={() => setCloseChoice(undefined)}
+          onClose={(mode) =>
+            closeChoice
+              ? void closeSession(closeChoice.sessionId, mode)
+              : undefined
+          }
         />
       </div>
-      <ToolUseSwitcher
-        open={toolUseSwitcherOpen}
-        onOpenChange={setToolUseSwitcherOpen}
-        sessionsById={snapshot.sessionsById}
-        usesById={snapshot.usesById}
-        activeToolUseId={snapshot.activeToolUseId}
-        runtimeTitles={runtimeTitles}
-        onSelect={selectTool}
-      />
-      <SessionSwitcher
-        open={switcherOpen}
-        onOpenChange={setSwitcherOpen}
-        sessions={visibleSessions}
-        archived={archivedSessions}
-        activeSessionId={snapshot.activeSessionId}
-        onSelect={(session) => selectSession(session.id)}
-        onRestore={(session) => void restoreSession(session)}
-        toolCounts={toolCounts}
-      />
-      {settingsOpen ? (
-        <Suspense fallback={null}>
-          <SettingsOverlay
-            open
-            onOpenChange={setSettingsOpen}
-            settings={appearanceSettings}
-            onSettingsChange={setAppearanceSettings}
-            themes={bundledThemeList}
-            onReset={resetAppearanceSettings}
-          />
-        </Suspense>
-      ) : null}
-      <CloseSessionDialog
-        sessionId={closeChoice?.sessionId}
-        onCancel={() => setCloseChoice(undefined)}
-        onClose={(mode) =>
-          closeChoice
-            ? void closeSession(closeChoice.sessionId, mode)
-            : undefined
-        }
-      />
-    </div>
     </TooltipProvider>
   );
 }

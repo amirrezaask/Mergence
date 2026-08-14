@@ -7,6 +7,15 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Symbols-only Nerd Font — PUA/icon fallback for terminals (p10k, starship, eza). */
+@font-face {
+  font-family: "Symbols Nerd Font Mono";
+  src: url("./fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: block;
+}
+
 @custom-variant dark (&:is(.dark *));
 
 /*
@@ -58,7 +67,7 @@
   --color-input: var(--input);
   --color-ring: var(--ring);
   --font-sans: "Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif;
-  --font-mono: "Commit Mono", ui-monospace, monospace;
+  --font-mono: "Commit Mono", "Symbols Nerd Font Mono", ui-monospace, monospace;
   --text-4xs: var(--yaade-fs-4xs);
   --text-3xs: var(--yaade-fs-3xs);
   --text-2xs: var(--yaade-fs-2xs);

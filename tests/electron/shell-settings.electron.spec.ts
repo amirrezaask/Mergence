@@ -247,6 +247,15 @@ test.describe("shell settings", () => {
           ),
         )
         .toContain("Commit Mono")
+      await expect
+        .poll(() =>
+          page.evaluate(() =>
+            getComputedStyle(document.documentElement)
+              .getPropertyValue("--font-mono")
+              .trim(),
+          ),
+        )
+        .toContain("Symbols Nerd Font Mono")
     } finally {
       await app.close()
     }
@@ -301,7 +310,7 @@ test.describe("shell settings", () => {
       await appearance.click()
       await expectLocatorCount(
         page.locator("[data-yaade-session-layout-option]"),
-        0,
+        2,
       )
       await expect
         .poll(() =>

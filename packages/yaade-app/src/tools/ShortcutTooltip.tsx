@@ -9,7 +9,7 @@ import {
 export function ShortcutTooltip(props: {
   readonly label: string;
   readonly shortcut?: string;
-  readonly side?: "top" | "bottom";
+  readonly side?: "top" | "bottom" | "left" | "right";
   readonly children: ReactElement;
 }) {
   return (

@@ -107,7 +107,9 @@ export {
   DEFAULT_UI_FONT_FAMILY,
   DEFAULT_MONO_FONT_FAMILY,
   DEFAULT_MONO_FONT_NAME,
+  NERD_FONT_FAMILY,
   buildMonoFontStack,
+  preloadNerdFont,
   CURATED_MONO_FONT_NAMES,
 } from "./theme/appearance-defaults.js"
 export { listSystemMonoFonts, isMonospaceFontFamily } from "./theme/system-mono-fonts.js"
