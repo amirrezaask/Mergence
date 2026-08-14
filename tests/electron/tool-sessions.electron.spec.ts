@@ -13,7 +13,13 @@ import {
   expectNotContainsText,
   expectSelectorVisible,
 } from "../shell/assert.js";
-import { expectListRows } from "../helpers/list.js";
+import {
+  expectLayout,
+  expectListRows,
+  expectNoOverlap,
+  expectRowSpacing,
+  expectRowTextVisible,
+} from "../helpers/list.js";
 import { REPO_ROOT, focusTerminal, pressMuxPrefix } from "./_launch.js";
 
 async function openToolSessionShell(page: ShellDriver): Promise<void> {
@@ -52,6 +58,11 @@ async function createTerminalToolUse(page: ShellDriver): Promise<void> {
   await waitForVisibleXterm(page);
   await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
+}
+
+async function createEditorToolUse(page: ShellDriver): Promise<void> {
+  await page.locator('[data-yaade-empty-tool="editor"]').click();
+  await page.waitForSelector('[data-yaade-editor-tool]', { timeout: 30_000 });
 }
 
 async function createSearchToolUse(
@@ -153,88 +164,26 @@ async function createTerminalViaApi(
   return id;
 }
 
-/** 1 */ test("boots a visible Session with Editor and Git tabs", async () => {
+/** 1 */ test("boots a visible empty Session without opening a tool", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
     await expectSelectorVisible(page, '[role="tablist"] [role="tab"]');
-    const projectName = await page.evaluate(() => {
-      const use = window.__yaadeAgent!.getState().toolUses?.[0];
-      return use?.context?.project?.projectName ?? "";
-    });
-    expect(projectName).toBeTruthy();
+    await expectSelectorVisible(page, '[data-yaade-session-empty]');
     await expectLocatorCount(
       page.locator('[data-yaade-tool-tabs] [data-yaade-tool-use]'),
-      2,
+      0,
     );
-    await expectContainsText(page, "[data-yaade-tool-tabs]", "Editor");
-    await expectContainsText(page, "[data-yaade-tool-tabs]", "Git History");
-    await expectContainsText(page, "[data-yaade-tool-tabs]", projectName);
-    await expectSelectorVisible(
-      page,
-      '[data-yaade-tool-tabs] [data-yaade-tool-index="1"]',
-    );
-    await expectSelectorVisible(page, '[data-yaade-editor-tool]');
-    await expectLocatorCount(
-      page.locator('[data-yaade-tool-tabs] button[aria-label^="Close"]'),
-      2,
-    );
-    const inactiveTab = page.locator(
-      '[data-yaade-tool-tabs] [data-yaade-tool-use]:not([data-active="true"])',
-    );
-    const inactiveTabId = await inactiveTab.getAttribute("data-yaade-tool-use");
-    if (!inactiveTabId) throw new Error("inactive tool tab has no id");
-    await inactiveTab.click();
+    await expectLocatorCount(page.locator('[data-yaade-editor-tool]'), 0);
     await page.waitForFunction(
-      (id) =>
-        document
-          .querySelector(`[data-yaade-tool-use="${id}"]`)
-          ?.getAttribute("data-active") === "true",
-      inactiveTabId,
+      () => {
+        const state = window.__yaadeAgent?.getState();
+        return !state?.activeToolUseId && (state?.toolUses?.length ?? 0) === 0;
+      },
     );
-    await expectLocatorCount(
-      page.locator("[data-yaade-tool-context-popover]"),
-      0,
-    );
-    await page
-      .locator('[data-yaade-tool-tabs] [data-yaade-tool-use][data-active="true"]')
-      .click();
-    await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
-    await expectSelectorVisible(page, '[data-yaade-new-tool="search"]');
-    await expectSelectorVisible(page, '[data-yaade-new-tool="agent"]');
-    await expectSelectorVisible(page, '[data-yaade-new-tool="terminal"]');
-    await expectSelectorVisible(page, '[data-yaade-new-tool="editor"]');
-    await page.locator('[data-yaade-new-tool="search"]').click();
-    await page.waitForSelector('[data-yaade-list-panel="project-search"]');
-    await openToolContext(page);
-    await expectSelectorVisible(page, "#tool-project");
-    await expectSelectorVisible(
-      page,
-      '[data-yaade-list-panel="project-search"]',
-    );
-    await expectLocatorCount(
-      page.locator(
-        '[data-yaade-tool-tabs] [data-yaade-tool-use] [data-slot="badge"]',
-      ),
-      0,
-    );
-    const selectedContrast = await page.evaluate(() => {
-      const row = document.querySelector<HTMLElement>(
-        '[data-yaade-tool-use][data-active="true"]',
-      );
-      const tabs = document.querySelector<HTMLElement>(
-        "[data-yaade-tool-tabs]",
-      );
-      return row && tabs
-        ? {
-            row: getComputedStyle(row).backgroundColor,
-            tabs: getComputedStyle(tabs).backgroundColor,
-          }
-        : null;
-    });
-    expect(selectedContrast).not.toBeNull();
-    expect(selectedContrast?.row).not.toBe(selectedContrast?.tabs);
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="editor"]');
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="git"]');
   } finally {
     await app.app.close();
   }
@@ -249,7 +198,7 @@ test("Editor tabs preserve dirty state, save, and reconnect the language server"
   try {
     const page = app.page;
     await openToolSessionShell(page);
-    await expectSelectorVisible(page, "[data-yaade-editor-tool]");
+    await createEditorToolUse(page);
     await page.getByRole("treeitem", { name: /index\.ts$/i }).click();
     await expectSelectorVisible(page, "[data-yaade-monaco-editor]");
     await mock.waitForClientMethod("textDocument/didOpen", {
@@ -314,6 +263,90 @@ test("Editor tabs preserve dirty state, save, and reconnect the language server"
   }
 });
 
+test("Editor references render and the compact Explorer toggles", async () => {
+  const mock = createMockLspHarness();
+  const app = await launchWeb({
+    env: mock.env,
+    workspaceRel: "fixtures/non-git-search",
+  });
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    await createEditorToolUse(page);
+    await page.getByRole("treeitem", { name: /index\.ts$/i }).click();
+    await expectSelectorVisible(page, "[data-yaade-monaco-editor]");
+    await mock.waitForClientMethod("textDocument/didOpen", {
+      timeoutMs: 15_000,
+    });
+
+    const explorerRow = page.getByRole("treeitem", { name: /index\.ts$/i });
+    const explorerFontSize = await explorerRow.evaluate(element =>
+      Number.parseFloat(getComputedStyle(element).fontSize),
+    );
+    expect(explorerFontSize).toBeGreaterThanOrEqual(12);
+
+    await expectLocatorCount(page.getByText("LSP on", { exact: true }), 0);
+    await expectLocatorCount(page.getByText("⌘P quick open", { exact: true }), 0);
+
+    const explorerToggle = page.locator("[data-yaade-editor-explorer-toggle]");
+    expect(await explorerToggle.getAttribute("aria-label")).toBe("Hide Explorer");
+    await explorerToggle.click();
+    await page
+      .locator("[data-yaade-editor-file-tree]")
+      .first()
+      .waitFor({ state: "hidden" });
+    expect(await explorerToggle.getAttribute("aria-label")).toBe("Show Explorer");
+    await explorerToggle.click();
+    await expectSelectorVisible(page, "[data-yaade-editor-file-tree]");
+
+    const editorTypography = await page
+      .locator("[data-yaade-monaco-editor] .view-line")
+      .first()
+      .evaluate(element => {
+        const style = getComputedStyle(element);
+        return {
+          fontFamily: style.fontFamily,
+          lineHeight: Number.parseFloat(style.lineHeight),
+        };
+      });
+    expect(editorTypography.fontFamily).toContain("Geist Mono Variable");
+    expect(editorTypography.lineHeight).toBeLessThanOrEqual(20);
+
+    const input = page.locator(
+      "[data-yaade-monaco-editor] textarea.inputarea",
+    );
+    await input.focus();
+    await page.keyboard.press("Control+Home");
+    const beforeReferences = mock.captures().length;
+    await page.keyboard.press("Shift+F12");
+    await mock.waitForClientMethod("textDocument/references", {
+      timeoutMs: 15_000,
+      afterCaptureCount: beforeReferences,
+    });
+
+    const references = ".reference-zone-widget";
+    const referenceRows = `${references} .monaco-list-row`;
+    await expectSelectorVisible(page, references);
+    await expectContainsText(page, references, "index.ts");
+    await expectNotContainsText(page, references, "No references");
+    await expectLayout(page, {
+      selector: referenceRows,
+      minItems: 2,
+      minUniqueTops: 2,
+      minRowHeight: 18,
+    });
+    await expectNoOverlap(page, { selector: referenceRows, minItems: 2 });
+    await expectRowSpacing(page, { selector: referenceRows, minItems: 2 });
+    await expectRowTextVisible(page, {
+      selector: referenceRows,
+      minItems: 2,
+    });
+  } finally {
+    await app.app.close();
+    mock.dispose();
+  }
+});
+
 test("Mod-P opens Editor Quick Open before and after a file is open", async () => {
   const app = await launchWeb({
     workspaceRel: path.join(REPO_ROOT, "fixtures/non-git-search"),
@@ -322,7 +355,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   try {
     const page = app.page;
     await openToolSessionShell(page);
-    await expectSelectorVisible(page, "[data-yaade-editor-tool]");
+    await createEditorToolUse(page);
     await expectContainsText(
       page,
       "[data-yaade-editor-tool]",
@@ -519,6 +552,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   try {
     const page = app.page;
     await openToolSessionShell(page);
+    await createEditorToolUse(page);
     const provider = await page.evaluate(async () => {
       const list = await window.yaade?.agents?.listProviders?.(true);
       return list?.find((item) => item.available)?.provider ?? null;
@@ -868,9 +902,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await openToolSessionShell(page);
     await ensureProjectGitRepo(page);
     const branch = `yaade-e2e-${Date.now()}`;
-    await page.locator('[data-yaade-new-tool="terminal"]').click();
-    await waitForVisibleXterm(page);
-    await openToolContext(page);
+    await createTerminalToolUse(page);
     await page.locator("#tool-checkout").click();
     await page.getByRole("option", { name: "New isolated branch…" }).click();
     await page.getByLabel("Isolated branch worktree").fill(branch);

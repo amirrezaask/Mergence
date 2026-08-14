@@ -95,6 +95,7 @@ describe("tool session keymap", () => {
     assert.equal(byCommand.get("tool.newSearch")?.key, "s")
     assert.equal(byCommand.get("tool.newEditor")?.key, "e")
     assert.equal(byCommand.get("tool.newGit")?.key, "g")
+    assert.equal(byCommand.get("sidebar.toggle")?.key, "b")
   })
 
   it("keeps HUD groups covering every visible binding", () => {
@@ -117,7 +118,11 @@ describe("tool session keymap", () => {
       toolSessionShortcutFor("tool.switch"),
       `${TOOL_SESSION_PREFIX} u`,
     )
-    assert.equal(toolSessionDirectShortcutFor("sidebar.toggle"), "Mod-b")
+    assert.equal(
+      toolSessionShortcutFor("sidebar.toggle"),
+      `${TOOL_SESSION_PREFIX} b`,
+    )
+    assert.equal(toolSessionDirectShortcutFor("sidebar.toggle"), undefined)
     assert.equal(toolSessionDirectShortcutFor("settings.show"), "Mod-,")
   })
 

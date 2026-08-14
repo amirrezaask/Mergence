@@ -104,6 +104,7 @@ export type ToolUseTabStripProps = {
   readonly onReorder: (ids: readonly ToolUseId[]) => void;
   readonly layout?: ToolUseNavigationLayout;
   readonly collapsed?: boolean;
+  readonly sidebarOrientation?: "horizontal" | "vertical";
 };
 
 export function ToolUseTabStrip(props: ToolUseTabStripProps) {
@@ -120,6 +121,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const isTwoSidebar = layout === "two-sidebars";
   const isSingleSidebar = layout === "single-sidebar";
   const isSidebar = isTwoSidebar || isSingleSidebar;
+
+  useEffect(() => {
+    if (!props.collapsed) return;
+    setContextPopoverId(null);
+    setAgentMenuOpen(false);
+  }, [props.collapsed]);
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -159,7 +166,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     return (
       <Popover
         key={id}
-        open={contextPopoverId === id}
+        open={!props.collapsed && contextPopoverId === id}
         onOpenChange={(open) => setContextPopoverId(open ? id : null)}
       >
         <PopoverAnchor asChild>
@@ -346,7 +353,10 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       role="toolbar"
       aria-label="New tool"
     >
-      <DropdownMenu open={agentMenuOpen} onOpenChange={setAgentMenuOpen}>
+      <DropdownMenu
+        open={!props.collapsed && agentMenuOpen}
+        onOpenChange={setAgentMenuOpen}
+      >
         <ShortcutTooltip
           label="New Agent"
           shortcut={toolSessionShortcutFor("tool.newAgent")}
@@ -474,20 +484,22 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         contentAs="nav"
         contentProps={{
           "aria-label": "Tool uses",
-          "aria-orientation": "vertical",
+          "aria-orientation": props.sidebarOrientation ?? "vertical",
           role: "tablist",
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
         className={cn(
-          "w-72 border-r-0 border-l border-sidebar-border bg-sidebar text-sidebar-foreground",
+          "w-full border-r-0 border-l border-sidebar-border bg-sidebar text-sidebar-foreground",
           !props.collapsed &&
             "max-md:h-12 max-md:w-full max-md:flex-row max-md:border-l-0 max-md:border-t",
           props.collapsed && "hidden",
         )}
         dataAttributes={{
           "data-yaade-tool-sidebar": "",
-          "data-yaade-sidebar-state": props.collapsed ? "collapsed" : "expanded",
+          "data-yaade-sidebar-state": props.collapsed
+            ? "collapsed"
+            : "expanded",
           // Keep the navigation hook stable for existing integrations.
           "data-yaade-tool-tabs": "",
         }}
@@ -502,7 +514,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     return (
       <section
         className={cn(
-          "flex min-h-0 flex-[3_1_0%] flex-col bg-sidebar text-sidebar-foreground",
+          "flex min-h-0 w-full flex-[3_1_0%] flex-col bg-sidebar text-sidebar-foreground",
           props.collapsed && "hidden",
           "max-md:h-12 max-md:flex-none max-md:flex-row",
         )}
@@ -520,7 +532,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         <nav
           className="min-h-0 flex-1 overflow-auto p-2 max-md:flex max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
           aria-label="Tool uses"
-          aria-orientation="vertical"
+          aria-orientation={props.sidebarOrientation ?? "vertical"}
           role="tablist"
         >
           {toolItems}

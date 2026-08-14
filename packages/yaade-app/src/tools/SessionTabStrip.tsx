@@ -26,6 +26,7 @@ export type SessionTabStripProps = {
   readonly toolCounts?: ReadonlyMap<SessionId, number>;
   readonly layout?: SessionNavigationLayout;
   readonly collapsed?: boolean;
+  readonly sidebarOrientation?: "horizontal" | "vertical";
 };
 
 export function SessionTabStrip(props: SessionTabStripProps) {
@@ -168,20 +169,22 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         contentAs="nav"
         contentProps={{
           "aria-label": "Sessions",
-          "aria-orientation": "vertical",
+          "aria-orientation": props.sidebarOrientation ?? "vertical",
           role: "tablist",
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
         className={cn(
-          "w-64 border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+          "w-full border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
           !props.collapsed &&
             "max-md:h-10 max-md:w-full max-md:flex-row max-md:border-r-0 max-md:border-b",
           props.collapsed && "hidden",
         )}
         dataAttributes={{
           "data-yaade-session-sidebar": "",
-          "data-yaade-sidebar-state": props.collapsed ? "collapsed" : "expanded",
+          "data-yaade-sidebar-state": props.collapsed
+            ? "collapsed"
+            : "expanded",
           // Keep the navigation hook stable for existing integrations.
           "data-yaade-session-tabs": "",
         }}
@@ -214,7 +217,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         <nav
           className="min-h-0 flex-1 overflow-auto p-2 max-md:flex max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
           aria-label="Sessions"
-          aria-orientation="vertical"
+          aria-orientation={props.sidebarOrientation ?? "vertical"}
           role="tablist"
         >
           {sessionItems}

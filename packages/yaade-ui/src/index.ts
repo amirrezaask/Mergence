@@ -17,6 +17,7 @@ export {
   type ProjectSidebarProps,
 } from "./shell/ProjectSidebar.js"
 export { SidebarShell, type SidebarShellProps } from "./shell/SidebarShell.js"
+export { useIsMobile } from "./hooks/use-mobile.js"
 export {
   ProjectWorkspaceSidebar,
   type ProjectWorkspaceSidebarProcess,

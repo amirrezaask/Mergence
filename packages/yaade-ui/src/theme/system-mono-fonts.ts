@@ -78,7 +78,7 @@ function familiesFromCurated(): string[] {
 /**
  * System monospace faces for the appearance picker.
  * Prefers Local Font Access (`queryLocalFonts`); otherwise curated + available.
- * Always includes the bundled Commit Mono default.
+ * Always includes the bundled Geist Mono default.
  */
 export async function listSystemMonoFonts(): Promise<string[]> {
   const fromLocal = await familiesFromLocalFonts()

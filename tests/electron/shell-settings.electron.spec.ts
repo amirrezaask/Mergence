@@ -246,7 +246,7 @@ test.describe("shell settings", () => {
               .trim(),
           ),
         )
-        .toContain("Commit Mono")
+        .toContain("Geist Mono Variable")
       await expect
         .poll(() =>
           page.evaluate(() =>

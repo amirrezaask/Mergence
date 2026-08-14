@@ -156,13 +156,15 @@ export function MonacoEditorHost({
       readOnly,
       scrollBeyondLastLine: false,
       minimap: { enabled: false },
-      stickyScroll: { enabled: true, maxLineCount: 5 },
+      stickyScroll: { enabled: true, maxLineCount: 3 },
       links: true,
       hover: { enabled: true, delay: 250 },
-      fontFamily: "var(--font-mono, 'Commit Mono', ui-monospace, monospace)",
+      fontFamily: "var(--font-mono, 'Geist Mono Variable', ui-monospace, monospace)",
+      fontWeight: "450",
       fontSize,
-      lineHeight: Math.round(fontSize * (22 / 14)),
-      padding: { top: 8, bottom: 8 },
+      lineHeight: Math.round(fontSize * (20 / 14)),
+      lineNumbersMinChars: 3,
+      padding: { top: 4, bottom: 4 },
       renderWhitespace: "selection",
       bracketPairColorization: { enabled: true },
       smoothScrolling: true,
@@ -328,7 +330,7 @@ export function MonacoEditorHost({
   useEffect(() => {
     editorRef.current?.updateOptions({
       fontSize,
-      lineHeight: Math.round(fontSize * (22 / 14)),
+      lineHeight: Math.round(fontSize * (20 / 14)),
     })
   }, [fontSize])
 

@@ -2,7 +2,7 @@ export const DEFAULT_UI_FONT_FAMILY =
   '"Geist Variable", "Geist", ui-sans-serif, system-ui, sans-serif'
 
 /** Bundled default monospace face (also listed in the settings picker). */
-export const DEFAULT_MONO_FONT_NAME = "Commit Mono"
+export const DEFAULT_MONO_FONT_NAME = "Geist Mono Variable"
 
 /**
  * Bundled symbols-only Nerd Font. Used as a fallback so PUA/icon glyphs

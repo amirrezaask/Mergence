@@ -287,14 +287,6 @@ async function handleTools(
           session,
         }),
       ]);
-      const project = runtime.db.projects()[0];
-      if (project) {
-        await requiredToolService(runtime).ensureDefaultToolsForSession(
-          session.id,
-          project,
-          clientId,
-        );
-      }
       return store.getSession(session.id) ?? session;
     }
     case "tools:reorderSessions": {

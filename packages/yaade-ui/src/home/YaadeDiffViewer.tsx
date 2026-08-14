@@ -82,7 +82,7 @@ function pierreUnsafeCss(fontSize: number): string {
     // which expands the host and gets clipped by our overflow-hidden parents.
     `[data-diff], [data-file] { --diffs-code-grid: var(--diffs-grid-number-column-width) minmax(0, 1fr); }`,
     `[data-diff-type="split"][data-overflow="scroll"] { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }`,
-    `pre, code { font-size: ${fontSize}px; font-family: var(--font-mono, 'Commit Mono', ui-monospace, monospace); }`,
+    `pre, code { font-size: ${fontSize}px; font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, monospace); }`,
     // Hunk action chips in annotation / gutter slots.
     `[data-yaade-hunk-actions] { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0; }`,
     `[data-yaade-hunk-actions] button { font: inherit; font-size: 0.77rem; line-height: 1.2; border-radius: 0.25rem; border: 1px solid var(--border); background: var(--secondary); color: var(--foreground); padding: 0.125rem 0.375rem; cursor: pointer; }`,

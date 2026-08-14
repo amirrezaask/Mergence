@@ -2,12 +2,11 @@
  * Signed-off Tool Session keymap. One command → one prefix key.
  *
  * Browser-reserved chords stay unbound. Shell actions live behind Ctrl-a
- * (send-prefix inside xterm with Ctrl-a Ctrl-a). Direct chords are limited to
- * platform conventions the browser actually delivers: settings and the
- * navigation sidebar visibility toggle.
+ * (send-prefix inside xterm with Ctrl-a Ctrl-a). The only direct chord is the
+ * platform-standard settings shortcut.
  *
  *   Open     a/t/s/e/g   Agent / Terminal / Search / Editor / Git
- *   Move     j/k/u/w     next / previous / switch tool / switch session
+ *   Move     b/j/k/u/w   sidebar / next / previous / switch tool / switch session
  *   Jump     1–9         ToolUse at that index (one HUD row, not nine)
  *   Session  c/x/X/,     new session / close tool / close session / settings
  *
@@ -65,6 +64,7 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
   { key: "s", command: "tool.newSearch", desc: "New Search", group: "open" },
   { key: "e", command: "tool.newEditor", desc: "New Editor", group: "open" },
   { key: "g", command: "tool.newGit", desc: "New Git", group: "open" },
+  { key: "b", command: "sidebar.toggle", desc: "Toggle sidebars", group: "move" },
   { key: "j", command: "tool.next", desc: "Next tool", group: "move" },
   { key: "k", command: "tool.previous", desc: "Previous tool", group: "move" },
   { key: "u", command: "tool.switch", desc: "Switch tool", group: "move" },
@@ -78,11 +78,6 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
 
 /** Direct chords. Everything else is prefix or context-local. */
 export const TOOL_SESSION_DIRECT_BINDINGS: readonly ToolSessionDirectBinding[] = [
-  {
-    key: "Mod-b",
-    command: "sidebar.toggle",
-    desc: "Toggle navigation sidebar(s)",
-  },
   { key: "Mod-,", command: "settings.show", desc: "Settings" },
 ]
 

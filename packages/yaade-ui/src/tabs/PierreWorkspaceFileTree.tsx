@@ -5,6 +5,11 @@ import { pierreTreeTokenStyle } from "@/lib/pierre-tree-theme.js"
 import { forwardPierreTreeWheel } from "@/lib/pierre-tree-scroll.js"
 import { cn } from "@/lib/utils.js"
 
+const explorerTreeStyle = {
+  ...pierreTreeTokenStyle,
+  fontSize: "var(--yaade-fs-sm)",
+}
+
 export type PierreWorkspaceFileTreeProps = {
   paths: readonly string[]
   selectedPath: string | null
@@ -97,7 +102,7 @@ export function PierreWorkspaceFileTree(props: PierreWorkspaceFileTreeProps) {
       className={cn("flex h-full min-h-0 flex-col bg-sidebar", className)}
       data-yaade-editor-file-tree=""
     >
-      <div className="flex h-10 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 text-xs font-medium text-sidebar-foreground">
+      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 text-sm font-medium text-sidebar-foreground">
         <FolderTree className="size-4 text-sidebar-primary" aria-hidden />
         <span className="min-w-0 flex-1 truncate">Explorer</span>
         <span className="font-mono text-3xs text-muted-foreground">
@@ -114,7 +119,7 @@ export function PierreWorkspaceFileTree(props: PierreWorkspaceFileTreeProps) {
           aria-label="Project files"
           onWheel={forwardPierreTreeWheel}
           className="h-full min-h-0 w-full min-w-0 bg-transparent"
-          style={pierreTreeTokenStyle}
+          style={explorerTreeStyle}
         />
       )}
     </div>

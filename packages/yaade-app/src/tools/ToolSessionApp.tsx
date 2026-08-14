@@ -35,11 +35,15 @@ import {
   Spinner,
   TooltipProvider,
 } from "@yaade/ui/primitives";
-import { WhichKeyPanel, cn } from "@yaade/ui";
+import { WhichKeyPanel, cn, useIsMobile } from "@yaade/ui";
 import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
-import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js";
+import {
+  MAX_SIDEBAR_WIDTH,
+  MIN_SIDEBAR_WIDTH,
+  useAppearanceSettings,
+} from "../hooks/useAppearanceSettings.js";
 import { createToolClient, type ToolClient } from "./tool-client.js";
 import {
   chooseSession,
@@ -51,6 +55,7 @@ import { type AgentProvider } from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
+import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
 import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
@@ -233,6 +238,7 @@ export function ToolSessionApp() {
   const sidebarLayout = twoSidebarLayout || singleSidebarLayout;
   const sidebarsCollapsed =
     sidebarLayout && appearanceSettings.sidebarCollapsed;
+  const sidebarOrientation = useIsMobile() ? "horizontal" : "vertical";
 
   const toggleSidebars = useCallback(() => {
     if (!sidebarLayout) return;
@@ -241,6 +247,19 @@ export function ToolSessionApp() {
       sidebarCollapsed: !previous.sidebarCollapsed,
     }));
   }, [setAppearanceSettings, sidebarLayout]);
+
+  const resizeSidebar = useCallback(
+    (width: number) => {
+      setAppearanceSettings((previous) => ({
+        ...previous,
+        sidebarWidth: Math.max(
+          MIN_SIDEBAR_WIDTH,
+          Math.min(MAX_SIDEBAR_WIDTH, width),
+        ),
+      }));
+    },
+    [setAppearanceSettings],
+  );
 
   const updateRuntimeTitle = useCallback(
     (use: ToolUse, title: string, source: RuntimeToolTitle["source"]) => {
@@ -666,7 +685,7 @@ export function ToolSessionApp() {
         return;
       if (!prefixPendingRef.current) {
         const direct = matchToolSessionDirectBinding(event);
-        if (direct && (direct.command !== "sidebar.toggle" || sidebarLayout)) {
+        if (direct) {
           event.preventDefault();
           event.stopPropagation();
           runPrefixCommand(direct.command);
@@ -738,7 +757,6 @@ export function ToolSessionApp() {
     runPrefixCommand,
     selected,
     settingsOpen,
-    sidebarLayout,
     switcherOpen,
     toolUseSwitcherOpen,
   ]);
@@ -811,11 +829,16 @@ export function ToolSessionApp() {
             variant="overlay"
             prefix={TOOL_SESSION_PREFIX}
             groups={TOOL_SESSION_PREFIX_GROUPS}
-            entries={toolSessionHudBindings().map((binding) => ({
-              key: binding.key,
-              desc: binding.desc,
-              group: binding.group,
-            }))}
+            entries={toolSessionHudBindings()
+              .filter(
+                (binding) =>
+                  sidebarLayout || binding.command !== "sidebar.toggle",
+              )
+              .map((binding) => ({
+                key: binding.key,
+                desc: binding.desc,
+                group: binding.group,
+              }))}
             onSelect={(key) => {
               clearPrefix();
               if (isToolSessionJumpKey(key)) {
@@ -853,16 +876,26 @@ export function ToolSessionApp() {
           />
         ) : null}
         <div
-          className={
+          className={cn(
+            "relative min-h-0 flex-1",
+            (twoSidebarLayout || singleSidebarLayout) &&
+              "grid max-md:flex max-md:flex-col",
+            !sidebarLayout && "flex flex-col",
+          )}
+          style={
             twoSidebarLayout
-              ? sidebarsCollapsed
-                ? "relative grid min-h-0 flex-1 grid-cols-[0rem_minmax(0,1fr)_0rem] max-md:flex max-md:flex-col"
-                : "relative grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)_18rem] max-md:flex max-md:flex-col"
+              ? {
+                  gridTemplateColumns: sidebarsCollapsed
+                    ? "0rem minmax(0, 1fr) 0rem"
+                    : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr) ${appearanceSettings.sidebarWidth}px`,
+                }
               : singleSidebarLayout
-                ? sidebarsCollapsed
-                  ? "relative grid min-h-0 flex-1 grid-cols-[0rem_minmax(0,1fr)] max-md:flex max-md:flex-col"
-                  : "relative grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)] max-md:flex max-md:flex-col"
-                : "relative flex min-h-0 flex-1 flex-col"
+                ? {
+                    gridTemplateColumns: sidebarsCollapsed
+                      ? "0rem minmax(0, 1fr)"
+                      : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr)`,
+                  }
+                : undefined
           }
         >
           {twoSidebarLayout ? (
@@ -872,6 +905,7 @@ export function ToolSessionApp() {
               toolCounts={toolCounts}
               layout="two-sidebars"
               collapsed={sidebarsCollapsed}
+              sidebarOrientation={sidebarOrientation}
               onSelect={selectSession}
               onClose={requestCloseSession}
               onOpenSettings={() => setSettingsOpen(true)}
@@ -882,7 +916,7 @@ export function ToolSessionApp() {
           ) : singleSidebarLayout ? (
             <aside
               className={cn(
-                "flex h-full min-h-0 w-72 min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+                "flex h-full min-h-0 w-full min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
                 sidebarsCollapsed && "hidden",
                 "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
               )}
@@ -900,6 +934,7 @@ export function ToolSessionApp() {
                 projects={projects}
                 layout="single-sidebar"
                 collapsed={sidebarsCollapsed}
+                sidebarOrientation={sidebarOrientation}
                 onSelect={selectTool}
                 onContextChange={updateToolContext}
                 onProviderChange={updateToolProvider}
@@ -915,6 +950,7 @@ export function ToolSessionApp() {
                 toolCounts={toolCounts}
                 layout="single-sidebar"
                 collapsed={sidebarsCollapsed}
+                sidebarOrientation={sidebarOrientation}
                 onSelect={selectSession}
                 onClose={requestCloseSession}
                 onOpenSettings={() => setSettingsOpen(true)}
@@ -924,7 +960,32 @@ export function ToolSessionApp() {
               />
             </aside>
           ) : null}
-          <main className="relative flex min-w-0 min-h-0 flex-1 flex-col">
+          {twoSidebarLayout && !sidebarsCollapsed ? (
+            <SidebarResizeHandle
+              value={appearanceSettings.sidebarWidth}
+              min={MIN_SIDEBAR_WIDTH}
+              max={MAX_SIDEBAR_WIDTH}
+              side="left"
+              label="Resize session sidebar"
+              onChange={resizeSidebar}
+            />
+          ) : null}
+          {singleSidebarLayout && !sidebarsCollapsed ? (
+            <SidebarResizeHandle
+              value={appearanceSettings.sidebarWidth}
+              min={MIN_SIDEBAR_WIDTH}
+              max={MAX_SIDEBAR_WIDTH}
+              side="left"
+              label="Resize sidebar"
+              onChange={resizeSidebar}
+            />
+          ) : null}
+          <main
+            className={cn(
+              "relative flex min-w-0 min-h-0 flex-1 flex-col",
+              sidebarLayout && "col-start-2",
+            )}
+          >
             {snapshot.connection === "reconciling" ||
             snapshot.connection === "offline" ? (
               <Alert className="m-4">
@@ -1019,7 +1080,7 @@ export function ToolSessionApp() {
             <div
               className={
                 twoSidebarLayout
-                  ? "relative min-h-0 min-w-0"
+                  ? "relative col-start-3 min-h-0 min-w-0"
                   : "relative shrink-0"
               }
             >
@@ -1032,6 +1093,7 @@ export function ToolSessionApp() {
                 projects={projects}
                 layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
                 collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
+                sidebarOrientation={sidebarOrientation}
                 onSelect={selectTool}
                 onContextChange={updateToolContext}
                 onProviderChange={updateToolProvider}
@@ -1042,6 +1104,16 @@ export function ToolSessionApp() {
                 onReorder={(ids) => void reorderToolUses(ids)}
               />
             </div>
+          ) : null}
+          {twoSidebarLayout && !sidebarsCollapsed ? (
+            <SidebarResizeHandle
+              value={appearanceSettings.sidebarWidth}
+              min={MIN_SIDEBAR_WIDTH}
+              max={MAX_SIDEBAR_WIDTH}
+              side="right"
+              label="Resize tool sidebar"
+              onChange={resizeSidebar}
+            />
           ) : null}
         </div>
         <ToolUseSwitcher
@@ -1251,18 +1323,20 @@ function CloseSessionDialog(props: {
             Live tools can keep running after this session is archived.
           </DialogDescription>
         </DialogHeader>
-        <DialogFooter>
+        <DialogFooter className="flex-wrap">
           <Button variant="outline" onClick={props.onCancel}>
             Cancel
           </Button>
           <Button
             variant="outline"
+            className="min-w-0 max-w-full whitespace-normal text-center"
             onClick={() => props.onClose("keep-running")}
           >
             Keep running and archive
           </Button>
           <Button
             variant="destructive"
+            className="min-w-0 max-w-full whitespace-normal text-center"
             onClick={() => props.onClose("stop-tools")}
           >
             Stop tools and archive

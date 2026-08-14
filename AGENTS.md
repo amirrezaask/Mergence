@@ -257,6 +257,7 @@ prefix key. Do not add aliases.
 | `s` | New Search | | `w` | Switch session (list) |
 | `e` | New Editor | | `1`–`9` | Jump tool by index |
 | `g` | New Git | | `c` | New session |
+| | | | `b` | Toggle navigation sidebar(s) |
 | | | | `x` | Close tool |
 | | | | `Shift-X` | Close session |
 | | | | `,` | Settings |

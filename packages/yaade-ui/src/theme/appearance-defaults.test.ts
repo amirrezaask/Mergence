@@ -35,7 +35,7 @@ describe("buildMonoFontStack", () => {
 
   it("inserts the nerd face into a prebuilt stack before generics", () => {
     assert.equal(
-      buildMonoFontStack('"Commit Mono", ui-monospace, monospace'),
+      buildMonoFontStack(`"${DEFAULT_MONO_FONT_NAME}", ui-monospace, monospace`),
       DEFAULT_MONO_FONT_FAMILY,
     )
   })

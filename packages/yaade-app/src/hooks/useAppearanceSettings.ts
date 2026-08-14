@@ -23,9 +23,9 @@ const FONT_SIZE_STORAGE_KEY = "jet-font-size"
 const APPEARANCE_STORAGE_KEY = "jet-appearance-settings"
 const DEFAULT_FONT_SIZE = 13
 const FONT_SIZE_STEP = 2
-const DEFAULT_SIDEBAR_WIDTH = 300
-const MIN_SIDEBAR_WIDTH = 240
-const MAX_SIDEBAR_WIDTH = 480
+export const DEFAULT_SIDEBAR_WIDTH = 300
+export const MIN_SIDEBAR_WIDTH = 240
+export const MAX_SIDEBAR_WIDTH = 480
 
 export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   themeId: defaultThemeId,
@@ -170,11 +170,12 @@ function normalizeMonoFontFamily(value: unknown): string {
   const trimmed = value.trim()
   if (!trimmed) return DEFAULT_MONO_FONT_NAME
   // Legacy builds may have persisted a full CSS stack.
-  if (trimmed.includes(",")) {
-    const primary = trimmed.split(",")[0]?.trim().replace(/^["']|["']$/g, "")
-    return primary || DEFAULT_MONO_FONT_NAME
-  }
-  return trimmed.replace(/^["']|["']$/g, "") || DEFAULT_MONO_FONT_NAME
+  const primary = trimmed.includes(",")
+    ? trimmed.split(",")[0]?.trim().replace(/^["']|["']$/g, "")
+    : trimmed.replace(/^["']|["']$/g, "")
+  // Commit Mono was the bundled default before the compact editor refresh.
+  if (!primary || primary === "Commit Mono") return DEFAULT_MONO_FONT_NAME
+  return primary
 }
 
 export function loadAppearanceSettings(): JetAppearanceSettings {

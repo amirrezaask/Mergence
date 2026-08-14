@@ -9,3 +9,6 @@
  */
 import "./monaco-css.js"
 import "monaco-editor/esm/vs/editor/editor.all.js"
+// `editor.all` registers the reference commands but not the standalone peek
+// controller that renders their results.
+import "monaco-editor/esm/vs/editor/standalone/browser/referenceSearch/standaloneReferenceSearch.js"

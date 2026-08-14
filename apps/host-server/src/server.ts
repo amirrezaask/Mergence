@@ -94,8 +94,6 @@ export async function startHostServer(
       return yield* HostRuntimeTag
     }),
   )
-  await runtime.toolService?.ensureDefaultTools()
-
   let inflightRpc = 0
 
   const server = createServer(async (req, res) => {

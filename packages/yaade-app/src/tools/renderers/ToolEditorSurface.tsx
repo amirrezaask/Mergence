@@ -7,14 +7,22 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { ChevronRight, FileCode2, RefreshCcw, Save, X } from "lucide-react"
+import {
+  ChevronRight,
+  FileCode2,
+  PanelLeftClose,
+  PanelLeftOpen,
+  RefreshCcw,
+  Save,
+  X,
+} from "lucide-react"
 import type { ToolUse } from "@yaade/rpc"
 import {
   fileUriToPath,
   languageIdFromPath,
   pathToFileUri,
 } from "@yaade/shared"
-import { lspStatusLabel, type LspStatus } from "@yaade/lsp"
+import type { LspStatus } from "@yaade/lsp"
 import {
   MonacoEditorHost,
   revealPosition,
@@ -159,6 +167,9 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
   const [activeUri, setActiveUri] = useState<string | null>(initialTabs.activeUri)
   const [filePaths, setFilePaths] = useState<readonly string[]>([])
   const [fileTreeLoading, setFileTreeLoading] = useState(true)
+  const [explorerOpen, setExplorerOpen] = useState(() =>
+    window.matchMedia("(min-width: 1024px)").matches,
+  )
   const [workspaceReady, setWorkspaceReady] = useState(false)
   const [quickOpen, setQuickOpen] = useState(false)
   const [opening, setOpening] = useState(false)
@@ -470,8 +481,12 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
       ) : null}
       <div className="flex min-h-0 flex-1">
         <aside
-          className="hidden w-72 shrink-0 border-r border-sidebar-border lg:block"
-          data-yaade-editor-file-tree=""
+          id={`editor-explorer-${props.use.id}`}
+          className={
+            explorerOpen
+              ? "w-56 shrink-0 border-r border-sidebar-border sm:w-64"
+              : "hidden"
+          }
         >
           <PierreWorkspaceFileTree
             paths={filePaths}
@@ -482,7 +497,7 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
         </aside>
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
           <div
-            className="flex h-9 shrink-0 items-end border-b border-border bg-muted/25"
+            className="flex h-8 shrink-0 items-end border-b border-border bg-muted/25"
             role="tablist"
             aria-label="Open files"
             data-yaade-editor-tabs=""
@@ -496,8 +511,8 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
                     key={uri}
                     className={
                       active
-                        ? "group flex min-w-32 max-w-56 items-center border-r border-border bg-background text-foreground"
-                        : "group flex min-w-32 max-w-56 items-center border-r border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
+                        ? "group flex min-w-28 max-w-48 items-center border-r border-border bg-background text-foreground"
+                        : "group flex min-w-28 max-w-48 items-center border-r border-border text-muted-foreground hover:bg-muted/45 hover:text-foreground"
                     }
                     data-yaade-editor-tab={uri}
                     data-active={active ? "true" : undefined}
@@ -507,7 +522,7 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
                       type="button"
                       role="tab"
                       aria-selected={active}
-                      className="min-w-0 flex-1 truncate px-2.5 py-2 text-left font-mono text-2xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
+                      className="min-w-0 flex-1 self-stretch truncate px-2 text-left font-mono text-2xs outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
                       onClick={() => setActiveUri(uri)}
                       title={fileUriToPath(uri)}
                     >
@@ -516,7 +531,7 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
                     </button>
                     <button
                       type="button"
-                      className="mr-1 grid size-6 shrink-0 place-items-center rounded-sm opacity-0 outline-none hover:bg-muted group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
+                      className="mr-1 grid size-5 shrink-0 place-items-center rounded-sm opacity-0 outline-none hover:bg-muted group-hover:opacity-100 group-focus-within:opacity-100 focus-visible:opacity-100 focus-visible:ring-1 focus-visible:ring-ring"
                       aria-label={`Close ${fileName(uri)}`}
                       onClick={() => requestCloseTab(uri)}
                     >
@@ -526,13 +541,22 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
                 )
               })}
             </div>
-            <div className="flex h-full shrink-0 items-center gap-1 border-l border-border px-1.5">
-              <span
-                className="hidden text-3xs text-muted-foreground xl:inline"
-                data-yaade-editor-lsp-status={lspStatus}
+            <div
+              className="flex h-full shrink-0 items-center gap-0.5 border-l border-border px-1"
+              data-yaade-editor-lsp-status={lspStatus}
+            >
+              <Button
+                type="button"
+                size="icon-xs"
+                variant="ghost"
+                aria-label={explorerOpen ? "Hide Explorer" : "Show Explorer"}
+                aria-controls={`editor-explorer-${props.use.id}`}
+                aria-pressed={explorerOpen}
+                data-yaade-editor-explorer-toggle=""
+                onClick={() => setExplorerOpen(open => !open)}
               >
-                {lspStatusLabel(lspStatus)}
-              </span>
+                {explorerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
+              </Button>
               {activeUri ? (
                 <Button
                   type="button"
@@ -550,7 +574,7 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
 
           {activeUri ? (
             <>
-              <div className="flex h-8 shrink-0 items-center gap-2 border-b border-border px-3">
+              <div className="flex h-7 shrink-0 items-center gap-1.5 border-b border-border px-2">
                 <nav
                   className="min-w-0 flex-1 overflow-hidden"
                   aria-label="File path"
@@ -577,13 +601,6 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
                     })}
                   </ol>
                 </nav>
-                <button
-                  type="button"
-                  className="shrink-0 font-mono text-3xs text-muted-foreground hover:text-foreground"
-                  onClick={() => setQuickOpen(true)}
-                >
-                  ⌘P quick open
-                </button>
               </div>
               {activeSnapshot?.externalConflict ? (
                 <div

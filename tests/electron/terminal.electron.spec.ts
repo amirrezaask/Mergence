@@ -142,12 +142,12 @@ test.describe("electron terminal", () => {
             '16px "Symbols Nerd Font Mono"',
             glyph,
           ),
-          tofu: draw('"Commit Mono"'),
-          fallback: draw('"Commit Mono", "Symbols Nerd Font Mono"'),
+          tofu: draw('"Geist Mono Variable"'),
+          fallback: draw('"Geist Mono Variable", "Symbols Nerd Font Mono"'),
         }
       })
 
-      expect(font.stack).toContain("Commit Mono")
+      expect(font.stack).toContain("Geist Mono Variable")
       expect(font.stack).toContain("Symbols Nerd Font Mono")
       expect(font.loaded).toBe(true)
       expect(font.fallback).not.toBe(font.tofu)

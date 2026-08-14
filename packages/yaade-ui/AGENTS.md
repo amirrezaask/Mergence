@@ -33,7 +33,7 @@ Scale (rem, ~px):
 
 Never write `text-[Npx]`. If a size is missing from the scale, add a token — don't inline.
 
-Fonts: `--font-sans` Geist, `--font-mono` Commit Mono.
+Fonts: `--font-sans` Geist, `--font-mono` Geist Mono.
 
 ### Motion
 `yaadeMotion` (from `@yaade/ui`) is the single source of animation timings: 100ms interaction, 160ms menus, and 200ms panels. CSS vars: `--yaade-motion-fast/hot/menu/overlay/panel/slow-menu/scroll/entity`; easing vars: `--yaade-ease-out/in-out/drawer`. Never hardcode durations; reference the token. Press feedback is the restrained global `0.98` scale.
