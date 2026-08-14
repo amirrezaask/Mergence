@@ -76,7 +76,10 @@ const providerLabels: Record<AgentProvider, string> = {
   pi: "Pi",
 };
 
-export type ToolUseNavigationLayout = "tabs" | "sidebar";
+export type ToolUseNavigationLayout =
+  | "tabs"
+  | "two-sidebars"
+  | "single-sidebar";
 
 export type ToolUseTabStripProps = {
   readonly useIds: readonly ToolUseId[];
@@ -100,6 +103,7 @@ export type ToolUseTabStripProps = {
   readonly onRename: (use: ToolUse, title: string) => void;
   readonly onReorder: (ids: readonly ToolUseId[]) => void;
   readonly layout?: ToolUseNavigationLayout;
+  readonly collapsed?: boolean;
 };
 
 export function ToolUseTabStrip(props: ToolUseTabStripProps) {
@@ -113,7 +117,9 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const layout = props.layout ?? "tabs";
-  const isSidebar = layout === "sidebar";
+  const isTwoSidebar = layout === "two-sidebars";
+  const isSingleSidebar = layout === "single-sidebar";
+  const isSidebar = isTwoSidebar || isSingleSidebar;
 
   useEffect(() => {
     if (!agentMenuOpen) return;
@@ -301,7 +307,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           </div>
         </PopoverAnchor>
         <PopoverContent
-          side={isSidebar ? "left" : "top"}
+          side={isSingleSidebar ? "right" : isTwoSidebar ? "left" : "top"}
           align="start"
           sideOffset={8}
           className="w-80 max-w-[calc(100vw-1rem)] p-0"
@@ -334,7 +340,8 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     <div
       className={cn(
         "flex h-full shrink-0 items-center gap-0.5 px-1",
-        isSidebar && "w-full justify-end px-0",
+        isTwoSidebar && "w-full justify-end px-0",
+        isSingleSidebar && "ml-auto px-0",
       )}
       role="toolbar"
       aria-label="New tool"
@@ -343,7 +350,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         <ShortcutTooltip
           label="New Agent"
           shortcut={toolSessionShortcutFor("tool.newAgent")}
-          side={isSidebar ? "left" : "top"}
+          side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
         >
           <DropdownMenuTrigger asChild>
             <Button
@@ -359,7 +366,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         </ShortcutTooltip>
         <DropdownMenuContent
           align="end"
-          side={isSidebar ? "left" : "top"}
+          side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
           className="w-56"
           data-yaade-agent-provider-menu
         >
@@ -398,7 +405,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       <ShortcutTooltip
         label="New Terminal"
         shortcut={toolSessionShortcutFor("tool.newTerminal")}
-        side={isSidebar ? "left" : "top"}
+        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
           size="icon-xs"
@@ -413,7 +420,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       <ShortcutTooltip
         label="New Search"
         shortcut={toolSessionShortcutFor("tool.newSearch")}
-        side={isSidebar ? "left" : "top"}
+        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
           size="icon-xs"
@@ -428,7 +435,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       <ShortcutTooltip
         label="New Editor"
         shortcut={toolSessionShortcutFor("tool.newEditor")}
-        side={isSidebar ? "left" : "top"}
+        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
           size="icon-xs"
@@ -443,7 +450,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       <ShortcutTooltip
         label="New Git History"
         shortcut={toolSessionShortcutFor("tool.newGit")}
-        side={isSidebar ? "left" : "top"}
+        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
           size="icon-xs"
@@ -458,7 +465,9 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     </div>
   );
 
-  if (isSidebar) {
+  const toolItems = props.useIds.map(renderToolUse);
+
+  if (isTwoSidebar) {
     return (
       <SidebarShell
         aria-label="Tool uses"
@@ -470,16 +479,53 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
-        className="w-72 border-r-0 border-l border-sidebar-border bg-sidebar text-sidebar-foreground max-md:h-12 max-md:w-full max-md:flex-row max-md:border-l-0 max-md:border-t"
+        className={cn(
+          "w-72 border-r-0 border-l border-sidebar-border bg-sidebar text-sidebar-foreground",
+          !props.collapsed &&
+            "max-md:h-12 max-md:w-full max-md:flex-row max-md:border-l-0 max-md:border-t",
+          props.collapsed && "hidden",
+        )}
         dataAttributes={{
           "data-yaade-tool-sidebar": "",
+          "data-yaade-sidebar-state": props.collapsed ? "collapsed" : "expanded",
           // Keep the navigation hook stable for existing integrations.
           "data-yaade-tool-tabs": "",
         }}
         footer={newToolActions}
       >
-        {props.useIds.map(renderToolUse)}
+        {toolItems}
       </SidebarShell>
+    );
+  }
+
+  if (isSingleSidebar) {
+    return (
+      <section
+        className={cn(
+          "flex min-h-0 flex-[3_1_0%] flex-col bg-sidebar text-sidebar-foreground",
+          props.collapsed && "hidden",
+          "max-md:h-12 max-md:flex-none max-md:flex-row",
+        )}
+        aria-label="Tool uses"
+        data-yaade-tool-sidebar=""
+        data-yaade-sidebar-state={props.collapsed ? "collapsed" : "expanded"}
+        data-yaade-tool-tabs=""
+      >
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
+          <span className="text-3xs font-bold uppercase tracking-[0.1em] text-sidebar-foreground/60">
+            Tool uses
+          </span>
+          {newToolActions}
+        </div>
+        <nav
+          className="min-h-0 flex-1 overflow-auto p-2 max-md:flex max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
+          aria-label="Tool uses"
+          aria-orientation="vertical"
+          role="tablist"
+        >
+          {toolItems}
+        </nav>
+      </section>
     );
   }
 
@@ -493,7 +539,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         aria-label="Tool uses"
         role="tablist"
       >
-        {props.useIds.map(renderToolUse)}
+        {toolItems}
       </nav>
       <Separator orientation="vertical" className="h-7" />
       {newToolActions}

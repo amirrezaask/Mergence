@@ -1,7 +1,7 @@
 import { useRef, useState } from "react";
 import { Plus, Settings, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
-import { SidebarShell } from "@yaade/ui";
+import { SidebarShell, cn } from "@yaade/ui";
 import { Button, Input } from "@yaade/ui/primitives";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import {
@@ -9,7 +9,10 @@ import {
   toolSessionShortcutFor,
 } from "./tool-session-keymap.js";
 
-export type SessionNavigationLayout = "tabs" | "sidebar";
+export type SessionNavigationLayout =
+  | "tabs"
+  | "two-sidebars"
+  | "single-sidebar";
 
 export type SessionTabStripProps = {
   readonly sessions: readonly AppSession[];
@@ -22,6 +25,7 @@ export type SessionTabStripProps = {
   readonly onReorder: (ids: readonly SessionId[]) => void;
   readonly toolCounts?: ReadonlyMap<SessionId, number>;
   readonly layout?: SessionNavigationLayout;
+  readonly collapsed?: boolean;
 };
 
 export function SessionTabStrip(props: SessionTabStripProps) {
@@ -85,7 +89,79 @@ export function SessionTabStrip(props: SessionTabStripProps) {
     </div>
   );
 
-  if (layout === "sidebar") {
+  const sessionItems = props.sessions.map((session, index) => {
+    const active = session.id === props.activeSessionId;
+    const toolCount = props.toolCounts?.get(session.id) ?? 0;
+    return (
+      <div
+        key={session.id}
+        role="tab"
+        tabIndex={active ? 0 : -1}
+        aria-selected={active}
+        data-active={active ? "true" : undefined}
+        draggable={editingId !== session.id}
+        onDragStart={() => {
+          dragId.current = session.id;
+        }}
+        onDragOver={(event) => event.preventDefault()}
+        onDrop={() => moveSession(session.id, index)}
+        className="group relative flex min-h-11 w-full shrink-0 items-center rounded-md border border-transparent px-1 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] focus-within:ring-2 focus-within:ring-sidebar-ring/50 hover:bg-sidebar-accent/70 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-36"
+      >
+        <span
+          className="absolute inset-y-2 left-0 w-0.5 origin-center scale-y-0 rounded-full bg-sidebar-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-y-100"
+          aria-hidden
+        />
+        {editingId === session.id ? (
+          <Input
+            aria-label={`Rename ${session.title}`}
+            className="h-7 min-w-0 flex-1 border-sidebar-primary/50 bg-sidebar px-1.5"
+            autoFocus
+            value={draftTitle}
+            onChange={(event) => setDraftTitle(event.target.value)}
+            onBlur={() => finishRename(session)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") finishRename(session);
+              if (event.key === "Escape") setEditingId(null);
+            }}
+          />
+        ) : (
+          <button
+            type="button"
+            className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors group-data-[active=true]:text-sidebar-accent-foreground"
+            onClick={() => props.onSelect(session.id)}
+            onDoubleClick={() => {
+              setDraftTitle(session.title);
+              setEditingId(session.id);
+            }}
+          >
+            <span className="grid size-5 shrink-0 place-items-center rounded border border-sidebar-border font-mono text-3xs tabular-nums text-sidebar-foreground/55 group-data-[active=true]:border-sidebar-primary/50 group-data-[active=true]:text-sidebar-primary">
+              {index + 1}
+            </span>
+            <span className="min-w-0 flex-1 truncate">{session.title}</span>
+            {toolCount > 0 ? (
+              <span
+                className="shrink-0 rounded-full bg-sidebar/70 px-1.5 font-mono text-3xs tabular-nums text-sidebar-foreground/60"
+                data-yaade-session-tool-count={toolCount}
+              >
+                {toolCount}
+              </span>
+            ) : null}
+          </button>
+        )}
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label={`Close ${session.title}`}
+          className="ml-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
+          onClick={() => props.onClose(session.id)}
+        >
+          <X />
+        </Button>
+      </div>
+    );
+  });
+
+  if (layout === "two-sidebars") {
     return (
       <SidebarShell
         aria-label="Sessions"
@@ -97,88 +173,53 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
-        className="w-64 border-r border-sidebar-border bg-sidebar text-sidebar-foreground max-md:h-10 max-md:w-full max-md:flex-row max-md:border-r-0 max-md:border-b"
+        className={cn(
+          "w-64 border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+          !props.collapsed &&
+            "max-md:h-10 max-md:w-full max-md:flex-row max-md:border-r-0 max-md:border-b",
+          props.collapsed && "hidden",
+        )}
         dataAttributes={{
           "data-yaade-session-sidebar": "",
+          "data-yaade-sidebar-state": props.collapsed ? "collapsed" : "expanded",
           // Keep the navigation hook stable for existing integrations.
           "data-yaade-session-tabs": "",
         }}
         footer={sidebarActions}
       >
-        {props.sessions.map((session, index) => {
-          const active = session.id === props.activeSessionId;
-          const toolCount = props.toolCounts?.get(session.id) ?? 0;
-          return (
-            <div
-              key={session.id}
-              role="tab"
-              tabIndex={active ? 0 : -1}
-              aria-selected={active}
-              data-active={active ? "true" : undefined}
-              draggable={editingId !== session.id}
-              onDragStart={() => {
-                dragId.current = session.id;
-              }}
-              onDragOver={(event) => event.preventDefault()}
-              onDrop={() => moveSession(session.id, index)}
-              className="group relative flex min-h-11 w-full shrink-0 items-center rounded-md border border-transparent px-1 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] focus-within:ring-2 focus-within:ring-sidebar-ring/50 hover:bg-sidebar-accent/70 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-36"
-            >
-              <span
-                className="absolute inset-y-2 left-0 w-0.5 origin-center scale-y-0 rounded-full bg-sidebar-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-y-100"
-                aria-hidden
-              />
-              {editingId === session.id ? (
-                <Input
-                  aria-label={`Rename ${session.title}`}
-                  className="h-7 min-w-0 flex-1 border-sidebar-primary/50 bg-sidebar px-1.5"
-                  autoFocus
-                  value={draftTitle}
-                  onChange={(event) => setDraftTitle(event.target.value)}
-                  onBlur={() => finishRename(session)}
-                  onKeyDown={(event) => {
-                    if (event.key === "Enter") finishRename(session);
-                    if (event.key === "Escape") setEditingId(null);
-                  }}
-                />
-              ) : (
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors group-data-[active=true]:text-sidebar-accent-foreground"
-                  onClick={() => props.onSelect(session.id)}
-                  onDoubleClick={() => {
-                    setDraftTitle(session.title);
-                    setEditingId(session.id);
-                  }}
-                >
-                  <span className="grid size-5 shrink-0 place-items-center rounded border border-sidebar-border font-mono text-3xs tabular-nums text-sidebar-foreground/55 group-data-[active=true]:border-sidebar-primary/50 group-data-[active=true]:text-sidebar-primary">
-                    {index + 1}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {session.title}
-                  </span>
-                  {toolCount > 0 ? (
-                    <span
-                      className="shrink-0 rounded-full bg-sidebar/70 px-1.5 font-mono text-3xs tabular-nums text-sidebar-foreground/60"
-                      data-yaade-session-tool-count={toolCount}
-                    >
-                      {toolCount}
-                    </span>
-                  ) : null}
-                </button>
-              )}
-              <Button
-                size="icon-xs"
-                variant="ghost"
-                aria-label={`Close ${session.title}`}
-                className="ml-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
-                onClick={() => props.onClose(session.id)}
-              >
-                <X />
-              </Button>
-            </div>
-          );
-        })}
+        {sessionItems}
       </SidebarShell>
+    );
+  }
+
+  if (layout === "single-sidebar") {
+    return (
+      <section
+        className={cn(
+          "flex min-h-0 flex-[2_1_0%] flex-col border-t border-sidebar-border bg-sidebar text-sidebar-foreground",
+          props.collapsed && "hidden",
+          "max-md:h-10 max-md:flex-none max-md:flex-row",
+        )}
+        aria-label="Sessions"
+        data-yaade-session-sidebar=""
+        data-yaade-sidebar-state={props.collapsed ? "collapsed" : "expanded"}
+        data-yaade-session-tabs=""
+      >
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
+          <span className="text-3xs font-bold uppercase tracking-[0.1em] text-sidebar-foreground/60">
+            Sessions
+          </span>
+          <div className="ml-auto">{sidebarActions}</div>
+        </div>
+        <nav
+          className="min-h-0 flex-1 overflow-auto p-2 max-md:flex max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
+          aria-label="Sessions"
+          aria-orientation="vertical"
+          role="tablist"
+        >
+          {sessionItems}
+        </nav>
+      </section>
     );
   }
 

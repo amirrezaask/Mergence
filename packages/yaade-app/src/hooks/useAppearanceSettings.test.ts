@@ -32,10 +32,12 @@ describe("normalizeThemeId", () => {
 })
 
 describe("session layout", () => {
-  it("preserves tab bars and sidebars", () => {
+  it("preserves the available navigation layouts", () => {
     assert.equal(normalizeSessionLayout("tabs"), "tabs")
-    assert.equal(normalizeSessionLayout("sidebar"), "sidebar")
-    assert.equal(normalizeSessionLayout("cards"), "sidebar")
+    assert.equal(normalizeSessionLayout("two-sidebars"), "two-sidebars")
+    assert.equal(normalizeSessionLayout("single-sidebar"), "single-sidebar")
+    assert.equal(normalizeSessionLayout("sidebar"), "two-sidebars")
+    assert.equal(normalizeSessionLayout("cards"), "two-sidebars")
   })
 })
 

@@ -35,7 +35,7 @@ import {
   Spinner,
   TooltipProvider,
 } from "@yaade/ui/primitives";
-import { WhichKeyPanel } from "@yaade/ui";
+import { WhichKeyPanel, cn } from "@yaade/ui";
 import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
@@ -227,6 +227,20 @@ export function ToolSessionApp() {
       ),
     [snapshot.usesById],
   );
+  const twoSidebarLayout = appearanceSettings.sessionLayout === "two-sidebars";
+  const singleSidebarLayout =
+    appearanceSettings.sessionLayout === "single-sidebar";
+  const sidebarLayout = twoSidebarLayout || singleSidebarLayout;
+  const sidebarsCollapsed =
+    sidebarLayout && appearanceSettings.sidebarCollapsed;
+
+  const toggleSidebars = useCallback(() => {
+    if (!sidebarLayout) return;
+    setAppearanceSettings((previous) => ({
+      ...previous,
+      sidebarCollapsed: !previous.sidebarCollapsed,
+    }));
+  }, [setAppearanceSettings, sidebarLayout]);
 
   const updateRuntimeTitle = useCallback(
     (use: ToolUse, title: string, source: RuntimeToolTitle["source"]) => {
@@ -629,6 +643,7 @@ export function ToolSessionApp() {
       if (command === "session.close" && activeSession)
         requestCloseSession(activeSession.id);
       if (command === "settings.show") setSettingsOpen(true);
+      if (command === "sidebar.toggle") toggleSidebars();
     },
     [
       activeSession,
@@ -640,6 +655,7 @@ export function ToolSessionApp() {
       selectTool,
       selected,
       snapshot.usesById,
+      toggleSidebars,
       useIds,
     ],
   );
@@ -650,7 +666,7 @@ export function ToolSessionApp() {
         return;
       if (!prefixPendingRef.current) {
         const direct = matchToolSessionDirectBinding(event);
-        if (direct) {
+        if (direct && (direct.command !== "sidebar.toggle" || sidebarLayout)) {
           event.preventDefault();
           event.stopPropagation();
           runPrefixCommand(direct.command);
@@ -722,6 +738,7 @@ export function ToolSessionApp() {
     runPrefixCommand,
     selected,
     settingsOpen,
+    sidebarLayout,
     switcherOpen,
     toolUseSwitcherOpen,
   ]);
@@ -780,7 +797,6 @@ export function ToolSessionApp() {
     [client],
   );
 
-  const sidebarLayout = appearanceSettings.sessionLayout === "sidebar";
   const renderPrefixHud = (placement: "main" | "dock") =>
     prefixPending ? (
       <div
@@ -820,6 +836,7 @@ export function ToolSessionApp() {
         className="flex h-full min-h-0 flex-col bg-background text-foreground"
         data-yaade-shell="tool-session"
         data-yaade-session-layout={appearanceSettings.sessionLayout}
+        data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
       >
         {!sidebarLayout ? (
           <SessionTabStrip
@@ -837,17 +854,24 @@ export function ToolSessionApp() {
         ) : null}
         <div
           className={
-            sidebarLayout
-              ? "relative grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)_18rem] max-md:flex max-md:flex-col"
-              : "relative flex min-h-0 flex-1 flex-col"
+            twoSidebarLayout
+              ? sidebarsCollapsed
+                ? "relative grid min-h-0 flex-1 grid-cols-[0rem_minmax(0,1fr)_0rem] max-md:flex max-md:flex-col"
+                : "relative grid min-h-0 flex-1 grid-cols-[16rem_minmax(0,1fr)_18rem] max-md:flex max-md:flex-col"
+              : singleSidebarLayout
+                ? sidebarsCollapsed
+                  ? "relative grid min-h-0 flex-1 grid-cols-[0rem_minmax(0,1fr)] max-md:flex max-md:flex-col"
+                  : "relative grid min-h-0 flex-1 grid-cols-[18rem_minmax(0,1fr)] max-md:flex max-md:flex-col"
+                : "relative flex min-h-0 flex-1 flex-col"
           }
         >
-          {sidebarLayout ? (
+          {twoSidebarLayout ? (
             <SessionTabStrip
               sessions={visibleSessions}
               activeSessionId={snapshot.activeSessionId}
               toolCounts={toolCounts}
-              layout="sidebar"
+              layout="two-sidebars"
+              collapsed={sidebarsCollapsed}
               onSelect={selectSession}
               onClose={requestCloseSession}
               onOpenSettings={() => setSettingsOpen(true)}
@@ -855,6 +879,50 @@ export function ToolSessionApp() {
               onRename={(id, title) => void renameSession(id, title)}
               onReorder={(ids) => void reorderSessions(ids)}
             />
+          ) : singleSidebarLayout ? (
+            <aside
+              className={cn(
+                "flex h-full min-h-0 w-72 min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+                sidebarsCollapsed && "hidden",
+                "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
+              )}
+              aria-label="Navigation"
+              data-yaade-single-sidebar=""
+              data-yaade-sidebar-state={
+                sidebarsCollapsed ? "collapsed" : "expanded"
+              }
+            >
+              <ToolUseTabStrip
+                useIds={useIds}
+                usesById={snapshot.usesById}
+                activeToolUseId={snapshot.activeToolUseId}
+                runtimeTitles={runtimeTitles}
+                projects={projects}
+                layout="single-sidebar"
+                collapsed={sidebarsCollapsed}
+                onSelect={selectTool}
+                onContextChange={updateToolContext}
+                onProviderChange={updateToolProvider}
+                onAddAgent={(provider) => void createTool("agent", provider)}
+                onAddKind={(kind) => void createTool(kind)}
+                onClose={(use) => void runToolAction("archive", use)}
+                onRename={(use, title) => void renameToolUse(use, title)}
+                onReorder={(ids) => void reorderToolUses(ids)}
+              />
+              <SessionTabStrip
+                sessions={visibleSessions}
+                activeSessionId={snapshot.activeSessionId}
+                toolCounts={toolCounts}
+                layout="single-sidebar"
+                collapsed={sidebarsCollapsed}
+                onSelect={selectSession}
+                onClose={requestCloseSession}
+                onOpenSettings={() => setSettingsOpen(true)}
+                onCreate={() => void createSession()}
+                onRename={(id, title) => void renameSession(id, title)}
+                onReorder={(ids) => void reorderSessions(ids)}
+              />
+            </aside>
           ) : null}
           <main className="relative flex min-w-0 min-h-0 flex-1 flex-col">
             {snapshot.connection === "reconciling" ||
@@ -947,29 +1015,34 @@ export function ToolSessionApp() {
             )}
             {sidebarLayout ? renderPrefixHud("main") : null}
           </main>
-          <div
-            className={
-              sidebarLayout ? "relative min-h-0 min-w-0" : "relative shrink-0"
-            }
-          >
-            {!sidebarLayout ? renderPrefixHud("dock") : null}
-            <ToolUseTabStrip
-              useIds={useIds}
-              usesById={snapshot.usesById}
-              activeToolUseId={snapshot.activeToolUseId}
-              runtimeTitles={runtimeTitles}
-              projects={projects}
-              layout={sidebarLayout ? "sidebar" : "tabs"}
-              onSelect={selectTool}
-              onContextChange={updateToolContext}
-              onProviderChange={updateToolProvider}
-              onAddAgent={(provider) => void createTool("agent", provider)}
-              onAddKind={(kind) => void createTool(kind)}
-              onClose={(use) => void runToolAction("archive", use)}
-              onRename={(use, title) => void renameToolUse(use, title)}
-              onReorder={(ids) => void reorderToolUses(ids)}
-            />
-          </div>
+          {twoSidebarLayout || !sidebarLayout ? (
+            <div
+              className={
+                twoSidebarLayout
+                  ? "relative min-h-0 min-w-0"
+                  : "relative shrink-0"
+              }
+            >
+              {!sidebarLayout ? renderPrefixHud("dock") : null}
+              <ToolUseTabStrip
+                useIds={useIds}
+                usesById={snapshot.usesById}
+                activeToolUseId={snapshot.activeToolUseId}
+                runtimeTitles={runtimeTitles}
+                projects={projects}
+                layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
+                collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
+                onSelect={selectTool}
+                onContextChange={updateToolContext}
+                onProviderChange={updateToolProvider}
+                onAddAgent={(provider) => void createTool("agent", provider)}
+                onAddKind={(kind) => void createTool(kind)}
+                onClose={(use) => void runToolAction("archive", use)}
+                onRename={(use, title) => void renameToolUse(use, title)}
+                onReorder={(ids) => void reorderToolUses(ids)}
+              />
+            </div>
+          ) : null}
         </div>
         <ToolUseSwitcher
           open={toolUseSwitcherOpen}

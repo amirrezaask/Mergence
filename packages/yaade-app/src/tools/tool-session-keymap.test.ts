@@ -117,6 +117,7 @@ describe("tool session keymap", () => {
       toolSessionShortcutFor("tool.switch"),
       `${TOOL_SESSION_PREFIX} u`,
     )
+    assert.equal(toolSessionDirectShortcutFor("sidebar.toggle"), "Mod-b")
     assert.equal(toolSessionDirectShortcutFor("settings.show"), "Mod-,")
   })
 

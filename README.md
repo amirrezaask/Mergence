@@ -21,9 +21,9 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 
-- Sessions and ToolUses support two navigation layouts: **Tab bar** keeps Sessions at the top and ToolUses in a bottom taskbar; **Sidebars** puts Sessions on the left and ToolUses on the right. Switch layouts from Settings → Appearance → Navigation layout.
-- In either layout, `+` creates a Session with Editor and Git History tools; Settings stays beside the Session navigation.
-- The Sidebar layout keeps both rails visible while the active ToolUse owns the center viewport; each tool pane retains its project and checkout context
+- Sessions and ToolUses support three navigation layouts: **Tab bar** keeps Sessions at the top and ToolUses in a bottom taskbar; **Two sidebars** puts Sessions on the left and ToolUses on the right; **Single sidebar** combines both into one left rail with ToolUses above Sessions. Switch layouts from Settings → Appearance → Navigation layout. In either sidebar layout, `Cmd-b` / `Ctrl-b` collapses or restores the navigation.
+- In any layout, `+` creates a Session with Editor and Git History tools; Settings stays beside the Session navigation.
+- The sidebar layouts keep the active ToolUse in the center viewport; each tool pane retains its project and checkout context
 - ToolUse tab titles include the project name (for example, `yaade: Git History`) and stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
 - Every Session starts with Editor and Git History tabs; all ToolUse tabs can be reordered or closed
 - Each ToolUse tab opens a context popover for project, worktree, and kind-specific options (project names are shown; IDs remain internal)
@@ -84,6 +84,7 @@ Direct:
 
 | Chord | Action |
 | --- | --- |
+| `Cmd-b` / `Ctrl-b` | Collapse or restore the navigation sidebar(s) |
 | `Cmd-k` / `Ctrl-k` | Switch between current ToolUses across every visible Session |
 | `Cmd-p` / `Ctrl-p` | Quick-open a project file in EditorTool or SearchTool, with or without an open file |
 | `Mod-Shift-p` | Open the Session switcher / palette |

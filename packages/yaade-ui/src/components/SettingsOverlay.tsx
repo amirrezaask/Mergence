@@ -2,6 +2,7 @@ import type { YaadeTheme } from "@yaade/shared"
 import {
   Bell,
   Brush,
+  Columns2,
   Monitor,
   Moon,
   PanelLeft,
@@ -58,7 +59,7 @@ import { DEFAULT_MONO_FONT_NAME } from "../theme/appearance-defaults.js"
 import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 
 /** Navigation chrome for the Session shell. */
-export type SessionLayout = "tabs" | "sidebar"
+export type SessionLayout = "tabs" | "two-sidebars" | "single-sidebar"
 export type ColorSchemeMode = "system" | "light" | "dark"
 /** Preferred file editor for quick open / search / go-to-definition. */
 export type PreferredEditor = "monaco" | "neovim"
@@ -71,7 +72,7 @@ export type JetAppearanceSettings = {
   monoFontFamily: string
   /** Session and ToolUse navigation chrome. */
   sessionLayout: SessionLayout
-  /** Whether the Mission Control sidebar is collapsed (icon mode). */
+  /** Whether the Session/ToolUse sidebars are collapsed. */
   sidebarCollapsed: boolean
   /** Sidebar expanded width in px (clamped 240–480). */
   sidebarWidth: number
@@ -506,7 +507,7 @@ export function SettingsOverlay({
                           Navigation layout
                         </FieldLabel>
                         <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Choose between compact bars or dedicated session and tool sidebars.
+                          Choose compact bars, two sidebars, or one combined navigation sidebar.
                         </FieldDescription>
                       </FieldContent>
                       <ToggleGroup
@@ -517,7 +518,12 @@ export function SettingsOverlay({
                         aria-label="Navigation layout"
                         className="w-full"
                         onValueChange={value => {
-                          if (value !== "tabs" && value !== "sidebar") return
+                          if (
+                            value !== "tabs" &&
+                            value !== "two-sidebars" &&
+                            value !== "single-sidebar"
+                          )
+                            return
                           onSettingsChange(
                             settingPatch(settings, { sessionLayout: value }),
                           )
@@ -533,13 +539,22 @@ export function SettingsOverlay({
                           Tab bar
                         </ToggleGroupItem>
                         <ToggleGroupItem
-                          value="sidebar"
-                          aria-label="Sidebar layout"
+                          value="two-sidebars"
+                          aria-label="Two sidebars layout"
                           className="flex-1"
-                          data-yaade-session-layout-option="sidebar"
+                          data-yaade-session-layout-option="two-sidebars"
+                        >
+                          <Columns2 aria-hidden />
+                          Two sidebars
+                        </ToggleGroupItem>
+                        <ToggleGroupItem
+                          value="single-sidebar"
+                          aria-label="Single sidebar layout"
+                          className="flex-1"
+                          data-yaade-session-layout-option="single-sidebar"
                         >
                           <PanelLeft aria-hidden />
-                          Sidebars
+                          Single sidebar
                         </ToggleGroupItem>
                       </ToggleGroup>
                     </Field>

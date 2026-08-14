@@ -32,7 +32,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   colorSchemeMode: "system",
   fontSize: DEFAULT_FONT_SIZE,
   monoFontFamily: DEFAULT_MONO_FONT_NAME,
-  sessionLayout: "sidebar",
+  sessionLayout: "two-sidebars",
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarProjectFilterPath: null,
@@ -82,7 +82,11 @@ export function themeIdForColorSchemeMode(
 }
 
 export function normalizeSessionLayout(value: unknown): SessionLayout {
-  return value === "tabs" || value === "sidebar" ? value : "sidebar"
+  if (value === "tabs") return "tabs"
+  if (value === "single-sidebar") return "single-sidebar"
+  // `sidebar` was the persisted name for the two-rail layout.
+  if (value === "two-sidebars" || value === "sidebar") return "two-sidebars"
+  return "two-sidebars"
 }
 
 function normalizeProjectFilterPath(value: unknown): string | null {
