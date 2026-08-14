@@ -39,7 +39,13 @@ test("Git History is available as a Session tool", async () => {
     }
 
     await openToolSessionShell(page);
-    await page.locator('button[title="New Git History"]').click();
+    await page
+      .locator("[data-yaade-tool-tabs] [data-yaade-tool-use]")
+      .filter({ hasText: "Git History" })
+      .click();
+    await page.waitForSelector('[data-yaade-list-panel="git-history"]', {
+      timeout: 30_000,
+    });
     await expectListRows(page, {
       panel: "git-history",
       minItems: 2,

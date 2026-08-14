@@ -242,29 +242,39 @@ action behind the prefix.
 
 ### The prefix key
 
-Because nearly every chord a multiplexer wants is reserved, mux actions live
-behind a tmux-style prefix. Source of truth:
-`packages/yaade-app/src/mux/mux-keymap.ts`.
+Because nearly every chord a multiplexer wants is reserved, shell actions live
+behind a tmux-style prefix. Press **`Ctrl-a`** twice inside xterm to send a
+literal `^A` (tmux `send-prefix`).
 
-Prefix: **`Ctrl-a`**. Press it twice to send a literal `^A` to the shell
-(tmux `send-prefix`).
+**Canonical grammar** is the Tool Session shell. Source of truth:
+`packages/yaade-app/src/tools/tool-session-keymap.ts`. One command → one
+prefix key. Do not add aliases.
 
 | `Ctrl-a` + | Action | | `Ctrl-a` + | Action |
 | --- | --- | --- | --- | --- |
-| `c` | New pane | | `w` | Switch pane (list) |
-| `d` | Split right | | `t` | New browser tab |
-| `Shift-D` | Split down | | `n` | Open Neovim |
-| `x` | Close pane | | `g` | Open Git |
-| `z` | Zoom pane (toggle) | | `p` | Command palette |
-| `h` `j` `k` `l` | Focus left/down/up/right | | `.` | Change directory |
-| arrows | Focus left/down/up/right | | `,` | Settings |
-| | | | `=` `-` | Font bigger / smaller |
+| `a` | New Agent | | `j` / `k` | Next / previous tool |
+| `t` | New Terminal | | `u` | Switch tool (list) |
+| `s` | New Search | | `w` | Switch session (list) |
+| `e` | New Editor | | `1`–`9` | Jump tool by index |
+| `g` | New Git | | `c` | New session |
+| | | | `x` | Close tool |
+| | | | `Shift-X` | Close session |
+| | | | `,` | Settings |
 
-Direct (non-prefix) chords are deliberately limited to two:
-`Mod-Shift-p` (palette) and `Mod-,` (settings).
+Direct chords: **`Mod-,` only** (settings — OS convention). Settings is the
+sole dual-path (`Ctrl-a ,` stays on the HUD). Context-local: `Mod-p` opens
+Quick Open while Editor or Search is focused (VS Code muscle memory).
 
-`MUX_PREFIX_BINDINGS` feeds both `registerUser` and the `WhichKeyPanel` hint
-footer, so the on-screen hints can never drift from what is bound.
+Do **not** bind `Mod-k` or `Mod-Shift-p` in the Tool Session shell. Both are
+risky, and both were aliases of prefix commands (`u` / `w`).
+
+`TOOL_SESSION_PREFIX_BINDINGS` feeds the WhichKey HUD, so on-screen hints
+cannot drift from what is bound.
+
+**Legacy mux** (`/_project`) keeps its own table in
+`packages/yaade-app/src/mux/mux-keymap.ts` (`MUX_PREFIX_BINDINGS`). Direct
+chords there remain `Mod-Shift-p` (palette) and `Mod-,` (settings). Do not
+extend that table — the mux shell is compat-only.
 
 ### Dispatch pipeline
 
@@ -470,8 +480,9 @@ window.__yaadeAgent.getPerfMeasures() // User Timing measures (jet:*)
 1. Decide layer — shared / panels / workspace / ui / app / host-server.
 2. Add types to `@yaade/shared` or `@yaade/rpc` if cross-cutting.
 3. Register the command in `MuxApp`'s command effect.
-4. If it needs a shortcut, add it to `MUX_PREFIX_BINDINGS` — do **not** invent a
-   new `Mod-` chord.
+4. If it needs a shortcut, add it to `TOOL_SESSION_PREFIX_BINDINGS` — do **not**
+   invent a new `Mod-` chord or a second key for an existing command. Legacy mux
+   only: `MUX_PREFIX_BINDINGS`.
 5. `pnpm -r typecheck`.
 6. Unit test with `node:test`; register the file in `package.json` for
    `@yaade/app`.

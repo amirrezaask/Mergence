@@ -1,7 +1,8 @@
 import { Bot, FileCode2, GitBranch, Search, Terminal } from "lucide-react";
 import type { AppSession, ToolKind, ToolUse, ToolUseId } from "@yaade/rpc";
-import { PaletteShell, type PaletteShellItem } from "@yaade/ui";
-import { toolUseDisplayTitle, type RuntimeToolTitle } from "./tool-title.js";
+import { formatKeyBinding, PaletteShell, type PaletteShellItem } from "@yaade/ui";
+import { toolUseContextCaption, toolUseWorkTitle, type RuntimeToolTitle } from "./tool-title.js";
+import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 
 const toolIcons: Record<ToolKind, typeof Bot> = {
   agent: Bot,
@@ -31,7 +32,7 @@ export function ToolUseSwitcher(props: {
     if (use.archivedAt) continue;
     const session = props.sessionsById.get(use.sessionId);
     if (!session || session.archivedAt) continue;
-    const title = toolUseDisplayTitle(use, props.runtimeTitles.get(use.id));
+    const title = toolUseWorkTitle(use, props.runtimeTitles.get(use.id));
     items.push({
       key: use.id,
       value: `${title} ${session.title} ${use.context.project.projectName} ${use.kind}`,
@@ -44,7 +45,7 @@ export function ToolUseSwitcher(props: {
       open={props.open}
       onOpenChange={props.onOpenChange}
       title="Switch tool"
-      description="Jump to a current tool across all sessions."
+      description={`Jump to a current tool across all sessions (${formatKeyBinding(toolSessionShortcutFor("tool.switch") ?? "Ctrl-a u")}).`}
       placeholder="Search tools, sessions, or projects…"
       size="picker"
       items={items}
@@ -70,7 +71,7 @@ export function ToolUseSwitcher(props: {
                 {entry.title}
               </span>
               <span className="block truncate text-xs text-muted-foreground">
-                {entry.session.title} · {entry.use.context.project.projectName}
+                {entry.session.title} · {toolUseContextCaption(entry.use)}
               </span>
             </span>
             <span className="shrink-0 font-mono text-3xs text-muted-foreground">

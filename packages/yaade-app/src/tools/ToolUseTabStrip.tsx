@@ -3,7 +3,6 @@ import {
   Bot,
   FileCode2,
   GitBranch,
-  LoaderCircle,
   Search,
   Terminal as TerminalIcon,
   X,
@@ -27,13 +26,38 @@ import {
   Popover,
   PopoverAnchor,
   PopoverContent,
+  Separator,
+  Spinner,
 } from "@yaade/ui/primitives";
 import {
   ToolContextControls,
   type AgentProvider,
   type ProviderOption,
 } from "./ToolContextControls.js";
-import { toolUseDisplayTitle, type RuntimeToolTitle } from "./tool-title.js";
+import { ShortcutTooltip } from "./ShortcutTooltip.js";
+import {
+  toolUseContextCaption,
+  toolUseWorkTitle,
+  type RuntimeToolTitle,
+} from "./tool-title.js";
+import { toolSessionShortcutFor } from "./tool-session-keymap.js";
+
+function toolStatusClass(status: ToolUse["status"]): string {
+  switch (status) {
+    case "running":
+    case "waiting":
+      return "bg-success";
+    case "starting":
+    case "created":
+      return "bg-info";
+    case "failed":
+    case "cancelled":
+    case "disconnected":
+      return "bg-destructive";
+    default:
+      return "bg-muted-foreground/45";
+  }
+}
 
 const toolIcon: Record<ToolKind, typeof Bot> = {
   agent: Bot,
@@ -113,12 +137,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   };
 
   return (
-    <header
-      className="flex h-9 shrink-0 items-center border-b border-border bg-card/55 backdrop-blur-xl"
+    <footer
+      className="flex h-12 shrink-0 items-center border-t border-border bg-card"
       data-yaade-tool-tabs
     >
       <nav
-        className="flex h-full min-w-0 flex-1 items-end gap-0.5 overflow-x-auto px-1 pt-1"
+        className="flex h-full min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto px-1 py-1"
         aria-label="Tool uses"
         role="tablist"
       >
@@ -127,10 +151,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           if (!use) return null;
           const Icon = toolIcon[use.kind];
           const active = id === props.activeToolUseId;
-          const displayTitle = toolUseDisplayTitle(
+          const workTitle = toolUseWorkTitle(
             use,
             props.runtimeTitles.get(id),
           );
+          const contextCaption = toolUseContextCaption(use);
+          const jump = index < 9 ? String(index + 1) : undefined;
           return (
             <Popover
               key={id}
@@ -146,6 +172,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                   aria-expanded={contextPopoverId === id}
                   data-active={active ? "true" : undefined}
                   data-yaade-tool-use={id}
+                  data-yaade-tool-index={jump}
                   draggable={editingId !== id}
                   onDragStart={() => {
                     dragId.current = id;
@@ -170,19 +197,31 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                     }
                     setContextPopoverId(id);
                   }}
-                  className="group relative flex h-7 min-w-28 max-w-56 shrink-0 items-center rounded-t-md border border-b-0 border-transparent px-0.5 transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] data-[active=true]:border-border data-[active=true]:bg-background"
+                  className="group relative flex h-full min-w-36 max-w-64 shrink-0 items-center gap-1 rounded-md border border-transparent px-1.5 transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 data-[active=true]:border-border data-[active=true]:bg-background"
                 >
                   <span
-                    className="absolute inset-x-2 top-0 h-0.5 origin-center scale-x-0 rounded-full bg-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-x-100"
+                    className="absolute inset-y-1.5 left-0 w-0.5 origin-center scale-y-0 rounded-full bg-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-y-100"
                     aria-hidden
                   />
-                  <span className="grid size-5 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors group-data-[active=true]:text-primary">
+                  {jump ? (
+                    <span
+                      className="w-3 shrink-0 text-center font-mono text-3xs tabular-nums text-muted-foreground group-data-[active=true]:text-primary"
+                      aria-hidden
+                    >
+                      {jump}
+                    </span>
+                  ) : null}
+                  <span className="relative grid size-5 shrink-0 place-items-center text-muted-foreground group-data-[active=true]:text-foreground">
                     <Icon className="size-3.5" aria-hidden />
+                    <span
+                      className={`absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-2 ring-card group-data-[active=true]:ring-background ${toolStatusClass(use.status)}`}
+                      aria-hidden
+                    />
                   </span>
                   {editingId === id ? (
                     <Input
                       aria-label={`Rename ${use.title}`}
-                      className="h-6 min-w-0 flex-1 border-primary/50 bg-background px-1.5"
+                      className="h-7 min-w-0 flex-1 border-primary/50 bg-background px-1.5"
                       autoFocus
                       value={draftTitle}
                       onClick={(event) => event.stopPropagation()}
@@ -197,19 +236,30 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                   ) : (
                     <button
                       type="button"
-                      className="min-w-0 flex-1 truncate px-0.5 text-left text-xs font-medium text-muted-foreground outline-none transition-colors group-data-[active=true]:text-foreground"
+                      className="min-w-0 flex-1 truncate text-left outline-none"
                       onDoubleClick={() => {
                         setDraftTitle(use.title);
                         setEditingId(id);
                       }}
                     >
-                      <span data-yaade-tool-title>{displayTitle}</span>
+                      <span
+                        className="block truncate text-xs font-medium text-muted-foreground group-data-[active=true]:text-foreground"
+                        data-yaade-tool-title
+                      >
+                        {workTitle}
+                      </span>
+                      <span
+                        className="block truncate font-mono text-3xs text-muted-foreground"
+                        data-yaade-tool-context
+                      >
+                        {contextCaption}
+                      </span>
                     </button>
                   )}
                   <Button
                     size="icon-xs"
                     variant="ghost"
-                    aria-label={`Close ${displayTitle}`}
+                    aria-label={`Close ${workTitle}`}
                     className="ml-0.5 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -228,9 +278,9 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                 data-yaade-tool-context-popover
               >
                 <div className="border-b border-border px-3 py-2">
-                  <p className="text-sm font-medium">Tool context</p>
+                  <p className="text-sm font-medium">Project and worktree</p>
                   <p className="truncate text-2xs text-muted-foreground">
-                    Choose where this tool runs
+                    This tool only. Other tools keep their own checkout.
                   </p>
                 </div>
                 <ToolContextControls
@@ -250,28 +300,26 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           );
         })}
       </nav>
-      <div className="flex h-full shrink-0 items-center gap-0.5 border-l border-border/70 px-1">
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="New Search"
-          title="New Search"
-          onClick={() => props.onAddKind("search")}
-        >
-          <Search />
-        </Button>
+      <Separator orientation="vertical" className="h-7" />
+      <div className="flex h-full shrink-0 items-center gap-0.5 px-1">
         <DropdownMenu open={agentMenuOpen} onOpenChange={setAgentMenuOpen}>
-          <DropdownMenuTrigger asChild>
-            <Button
-              size="icon-xs"
-              variant="default"
-              aria-label="New Agent"
-              title="New Agent"
-              aria-haspopup="menu"
-            >
-              <Bot />
-            </Button>
-          </DropdownMenuTrigger>
+          <ShortcutTooltip
+            label="New Agent"
+            shortcut={toolSessionShortcutFor("tool.newAgent")}
+            side="top"
+          >
+            <DropdownMenuTrigger asChild>
+              <Button
+                size="icon-xs"
+                variant="default"
+                aria-label="New Agent"
+                aria-haspopup="menu"
+                data-yaade-new-tool="agent"
+              >
+                <Bot />
+              </Button>
+            </DropdownMenuTrigger>
+          </ShortcutTooltip>
           <DropdownMenuContent
             align="end"
             side="top"
@@ -281,7 +329,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             <DropdownMenuLabel>Choose an agent provider</DropdownMenuLabel>
             {loadingProviders ? (
               <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-                <LoaderCircle className="size-3.5 animate-spin" aria-hidden />
+                <Spinner className="size-3.5" aria-hidden />
                 Checking available providers…
               </div>
             ) : providers.length > 0 ? (
@@ -310,25 +358,63 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             )}
           </DropdownMenuContent>
         </DropdownMenu>
-        <Button
-          size="icon-xs"
-          variant="secondary"
-          aria-label="New Terminal"
-          title="New Terminal"
-          onClick={() => props.onAddKind("terminal")}
+        <ShortcutTooltip
+          label="New Terminal"
+          shortcut={toolSessionShortcutFor("tool.newTerminal")}
         >
-          <TerminalIcon />
-        </Button>
-        <Button
-          size="icon-xs"
-          variant="ghost"
-          aria-label="New Git History"
-          title="New Git History"
-          onClick={() => props.onAddKind("git")}
+          <Button
+            size="icon-xs"
+            variant="secondary"
+            aria-label="New Terminal"
+            data-yaade-new-tool="terminal"
+            onClick={() => props.onAddKind("terminal")}
+          >
+            <TerminalIcon />
+          </Button>
+        </ShortcutTooltip>
+        <ShortcutTooltip
+          label="New Search"
+          shortcut={toolSessionShortcutFor("tool.newSearch")}
         >
-          <GitBranch />
-        </Button>
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="New Search"
+            data-yaade-new-tool="search"
+            onClick={() => props.onAddKind("search")}
+          >
+            <Search />
+          </Button>
+        </ShortcutTooltip>
+        <ShortcutTooltip
+          label="New Editor"
+          shortcut={toolSessionShortcutFor("tool.newEditor")}
+        >
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="New Editor"
+            data-yaade-new-tool="editor"
+            onClick={() => props.onAddKind("editor")}
+          >
+            <FileCode2 />
+          </Button>
+        </ShortcutTooltip>
+        <ShortcutTooltip
+          label="New Git History"
+          shortcut={toolSessionShortcutFor("tool.newGit")}
+        >
+          <Button
+            size="icon-xs"
+            variant="ghost"
+            aria-label="New Git History"
+            data-yaade-new-tool="git"
+            onClick={() => props.onAddKind("git")}
+          >
+            <GitBranch />
+          </Button>
+        </ShortcutTooltip>
       </div>
-    </header>
+    </footer>
   );
 }

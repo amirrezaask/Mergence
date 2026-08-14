@@ -29,22 +29,39 @@ export function compactToolTitle(value: string, maxLength = 72): string {
   return `${compact.slice(0, maxLength - 1).trimEnd()}…`;
 }
 
+export function toolUseWorkTitle(
+  use: ToolUse,
+  runtimeTitle?: RuntimeToolTitle,
+): string {
+  if (use.input.kind === "search") {
+    return compactToolTitle(use.input.query) || "Search";
+  }
+  return (
+    runtimeTitle?.title ||
+    compactToolTitle(use.title) ||
+    (use.kind === "agent"
+      ? "Agent"
+      : use.kind === "editor"
+        ? "Editor"
+        : use.kind === "git"
+          ? "Git History"
+          : "Terminal")
+  );
+}
+
+/** Project and worktree — always shown, never baked into the work title. */
+export function toolUseContextCaption(use: ToolUse): string {
+  const project = compactToolTitle(use.context.project.projectName);
+  const checkout = compactToolTitle(use.context.checkoutLabel);
+  if (project && checkout) return `${project} · ${checkout}`;
+  return project || checkout;
+}
+
 export function toolUseDisplayTitle(
   use: ToolUse,
   runtimeTitle?: RuntimeToolTitle,
 ): string {
-  const title =
-    use.input.kind === "search"
-      ? compactToolTitle(use.input.query) || "Search"
-      : runtimeTitle?.title ||
-        compactToolTitle(use.title) ||
-        (use.kind === "agent"
-          ? "Agent"
-          : use.kind === "editor"
-            ? "Editor"
-            : use.kind === "git"
-              ? "Git History"
-              : "Terminal");
+  const title = toolUseWorkTitle(use, runtimeTitle);
   const projectName = compactToolTitle(use.context.project.projectName);
   return projectName ? compactToolTitle(`${projectName}: ${title}`) : title;
 }

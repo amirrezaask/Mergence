@@ -111,7 +111,12 @@ export {
   CURATED_MONO_FONT_NAMES,
 } from "./theme/appearance-defaults.js"
 export { listSystemMonoFonts, isMonospaceFontFamily } from "./theme/system-mono-fonts.js"
-export { WhichKeyPanel, type WhichKeyEntry } from "./components/WhichKeyPanel.js"
+export {
+  WhichKeyPanel,
+  type WhichKeyEntry,
+  type WhichKeyGroup,
+} from "./components/WhichKeyPanel.js"
+export { KeyBindingKbd } from "./components/KeyBindingKbd.js"
 export { PromptDialog, type PromptDialogProps } from "./components/PromptDialog.js"
 export {
   bundledThemes,

@@ -14,7 +14,7 @@ import {
   expectSelectorVisible,
 } from "../shell/assert.js";
 import { expectListRows } from "../helpers/list.js";
-import { REPO_ROOT, focusTerminal } from "./_launch.js";
+import { REPO_ROOT, focusTerminal, pressMuxPrefix } from "./_launch.js";
 
 async function openToolSessionShell(page: ShellDriver): Promise<void> {
   await page.evaluate(() => {
@@ -48,7 +48,7 @@ async function waitForVisibleXterm(page: ShellDriver): Promise<void> {
 }
 
 async function createTerminalToolUse(page: ShellDriver): Promise<void> {
-  await page.locator('button[title="New Terminal"]').click();
+  await page.locator('[data-yaade-new-tool="terminal"]').click();
   await waitForVisibleXterm(page);
   await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
@@ -58,7 +58,7 @@ async function createSearchToolUse(
   page: ShellDriver,
   query: string,
 ): Promise<void> {
-  await page.locator('button[title="New Search"]').click();
+  await page.locator('[data-yaade-new-tool="search"]').click();
   await page.waitForSelector('[data-yaade-list-panel="project-search"]', {
     timeout: 30_000,
   });
@@ -168,15 +168,12 @@ async function createTerminalViaApi(
       page.locator('[data-yaade-tool-tabs] [data-yaade-tool-use]'),
       2,
     );
-    await expectContainsText(
+    await expectContainsText(page, "[data-yaade-tool-tabs]", "Editor");
+    await expectContainsText(page, "[data-yaade-tool-tabs]", "Git History");
+    await expectContainsText(page, "[data-yaade-tool-tabs]", projectName);
+    await expectSelectorVisible(
       page,
-      '[data-yaade-tool-tabs]',
-      `${projectName}: Editor`,
-    );
-    await expectContainsText(
-      page,
-      '[data-yaade-tool-tabs]',
-      `${projectName}: Git History`,
+      '[data-yaade-tool-tabs] [data-yaade-tool-index="1"]',
     );
     await expectSelectorVisible(page, '[data-yaade-editor-tool]');
     await expectLocatorCount(
@@ -204,10 +201,11 @@ async function createTerminalViaApi(
       .locator('[data-yaade-tool-tabs] [data-yaade-tool-use][data-active="true"]')
       .click();
     await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
-    await expectSelectorVisible(page, 'button[title="New Search"]');
-    await expectSelectorVisible(page, 'button[title="New Agent"]');
-    await expectSelectorVisible(page, 'button[title="New Terminal"]');
-    await page.locator('button[title="New Search"]').click();
+    await expectSelectorVisible(page, '[data-yaade-new-tool="search"]');
+    await expectSelectorVisible(page, '[data-yaade-new-tool="agent"]');
+    await expectSelectorVisible(page, '[data-yaade-new-tool="terminal"]');
+    await expectSelectorVisible(page, '[data-yaade-new-tool="editor"]');
+    await page.locator('[data-yaade-new-tool="search"]').click();
     await page.waitForSelector('[data-yaade-list-panel="project-search"]');
     await openToolContext(page);
     await expectSelectorVisible(page, "#tool-project");
@@ -490,9 +488,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await page.waitForFunction(
       () => (window.__yaadeAgent?.getState().sessions?.length ?? 0) >= 2,
     );
-    await page.keyboard.press(
-      `${process.platform === "darwin" ? "Meta" : "Control"}+KeyK`,
-    );
+    await pressMuxPrefix(page, "KeyU");
     await expectListRows(page, {
       panel: "yaade:palette",
       minItems: 1,
@@ -528,7 +524,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       return list?.find((item) => item.available)?.provider ?? null;
     });
     test.skip(!provider, "no agent CLI provider available on this host");
-    await page.locator('button[title="New Agent"]').click();
+    await page.locator('[data-yaade-new-tool="agent"]').click();
     const providerMenu = page.locator("[data-yaade-agent-provider-menu]");
     await expectSelectorVisible(page, "[data-yaade-agent-provider-menu]");
     await providerMenu
@@ -872,7 +868,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await openToolSessionShell(page);
     await ensureProjectGitRepo(page);
     const branch = `yaade-e2e-${Date.now()}`;
-    await page.locator('button[title="New Terminal"]').click();
+    await page.locator('[data-yaade-new-tool="terminal"]').click();
     await waitForVisibleXterm(page);
     await openToolContext(page);
     await page.locator("#tool-checkout").click();
@@ -881,25 +877,28 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await page.getByLabel("Isolated branch worktree").press("Enter");
     await page.waitForFunction(
       () => {
-        const use = (window.__yaadeAgent?.getState().toolUses ?? [])[0] as
-          | { context?: { managedWorktree?: boolean } }
-          | undefined;
-        return use?.context?.managedWorktree === true;
+        const state = window.__yaadeAgent?.getState();
+        const uses = (state?.toolUses ?? []) as readonly {
+          id?: string;
+          context?: { managedWorktree?: boolean };
+        }[];
+        const active = uses.find((use) => use.id === state?.activeToolUseId);
+        return active?.context?.managedWorktree === true;
       },
       null,
       { timeout: 30_000 },
     );
     const checkout = await page.evaluate(() => {
-      const use = (window.__yaadeAgent!.getState().toolUses ?? [])[0] as
-        | {
-            context?: {
-              checkoutPath?: string;
-              checkoutLabel?: string;
-              managedWorktree?: boolean;
-            };
-          }
-        | undefined;
-      return use?.context;
+      const state = window.__yaadeAgent!.getState();
+      const uses = (state.toolUses ?? []) as readonly {
+        id?: string;
+        context?: {
+          checkoutPath?: string;
+          checkoutLabel?: string;
+          managedWorktree?: boolean;
+        };
+      }[];
+      return uses.find((use) => use.id === state.activeToolUseId)?.context;
     });
     expect(checkout?.checkoutPath ?? "").toContain(".yaade/worktrees");
     expect(checkout?.managedWorktree).toBe(true);
@@ -1250,6 +1249,57 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       `${process.platform === "darwin" ? "Meta" : "Control"}+Comma`,
     );
     await expectLocatorVisible(page.locator("[data-yaade-settings-overlay]"));
+  } finally {
+    await app.app.close();
+  }
+});
+
+/** 20 */ test("prefix Ctrl-a shows the tool HUD; s opens Search", async () => {
+  const app = await launchWeb({});
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    await page.locator("[data-yaade-session-tabs]").click();
+    await page.keyboard.down("Control");
+    await page.keyboard.press("a");
+    await page.keyboard.up("Control");
+    await expectSelectorVisible(page, "[data-yaade-which-key]");
+    await expectContainsText(page, "[data-yaade-which-key]", "New Agent");
+    await expectContainsText(page, "[data-yaade-which-key]", "New Search");
+    await expectContainsText(page, "[data-yaade-which-key]", "Open");
+    await page.locator('[data-yaade-which-key-item="s"]').click();
+    await page.waitForSelector('[data-yaade-list-panel="project-search"]', {
+      timeout: 30_000,
+    });
+    await expectLocatorCount(page.locator("[data-yaade-which-key]"), 0);
+  } finally {
+    await app.app.close();
+  }
+});
+
+/** 21 */ test("closing every ToolUse shows the tool launcher", async () => {
+  const app = await launchWeb({});
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    await page.waitForFunction(
+      () => (window.__yaadeAgent?.getState().toolUses?.length ?? 0) >= 1,
+    );
+    await page.evaluate(async () => {
+      const uses = window.__yaadeAgent!.getState().toolUses ?? [];
+      for (const use of uses) {
+        await window.__yaadeAgent!.closeToolUse!(use.id);
+      }
+    });
+    await expectSelectorVisible(page, "[data-yaade-session-empty]");
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="agent"]');
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="terminal"]');
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="search"]');
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="editor"]');
+    await expectSelectorVisible(page, '[data-yaade-empty-tool="git"]');
+    await expectContainsText(page, "[data-yaade-session-empty]", "Start a tool");
+    await page.locator('[data-yaade-empty-tool="terminal"]').click();
+    await waitForVisibleXterm(page);
   } finally {
     await app.app.close();
   }

@@ -600,7 +600,7 @@ export function SettingsOverlay({
                           Editor
                         </FieldLabel>
                         <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Quick open, project search, and go-to-definition open files here. Ctrl-a n always opens Neovim.
+                          Quick open, project search, and go-to-definition open files in the Editor tool.
                         </FieldDescription>
                       </FieldContent>
                       <ToggleGroup

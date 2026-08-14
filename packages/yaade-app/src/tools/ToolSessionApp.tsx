@@ -9,7 +9,6 @@ import {
   lazy,
   type ComponentType,
 } from "react";
-import { Activity, LoaderCircle } from "lucide-react";
 import type {
   CheckoutTarget,
   CreateToolUse,
@@ -33,13 +32,11 @@ import {
   DialogFooter,
   DialogHeader,
   DialogTitle,
-  Empty,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyMedia,
-  EmptyTitle,
+  Spinner,
+  TooltipProvider,
 } from "@yaade/ui/primitives";
 import { WhichKeyPanel } from "@yaade/ui";
+import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
 import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js";
@@ -56,10 +53,16 @@ import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
+import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
-  TOOL_SESSION_DIRECT_BINDINGS,
   TOOL_SESSION_PREFIX,
-  TOOL_SESSION_PREFIX_BINDINGS,
+  TOOL_SESSION_PREFIX_GROUPS,
+  isToolSessionJumpKey,
+  matchToolSessionContextBinding,
+  matchToolSessionDirectBinding,
+  matchToolSessionPrefixBinding,
+  serializeToolSessionPrefixKey,
+  toolSessionHudBindings,
 } from "./tool-session-keymap.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
@@ -150,6 +153,15 @@ export function ToolSessionApp() {
   }, [prefixPending]);
 
   useEffect(() => {
+    if (!prefixPending) return;
+    const timeout = window.setTimeout(() => {
+      prefixPendingRef.current = false;
+      setPrefixPending(false);
+    }, CHORD_TIMEOUT_MS);
+    return () => window.clearTimeout(timeout);
+  }, [prefixPending]);
+
+  useEffect(() => {
     client.start();
     void client.hydrate().catch(() => undefined);
     return () => client.dispose();
@@ -198,6 +210,13 @@ export function ToolSessionApp() {
   const useIds = activeSession
     ? (snapshot.useIdsBySession.get(activeSession.id) ?? [])
     : [];
+  const toolCounts = useMemo(() => {
+    const counts = new Map<SessionId, number>();
+    for (const [id, ids] of snapshot.useIdsBySession) {
+      counts.set(id, ids.length);
+    }
+    return counts;
+  }, [snapshot.useIdsBySession]);
   const selected = snapshot.activeToolUseId
     ? snapshot.usesById.get(snapshot.activeToolUseId)
     : undefined;
@@ -569,43 +588,81 @@ export function ToolSessionApp() {
     visibleSessions,
   ]);
 
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (switcherOpen || toolUseSwitcherOpen || settingsOpen || closeChoice) return;
-      const primary = event.metaKey || event.ctrlKey;
-      if (
-        primary &&
-        !event.shiftKey &&
-        !event.altKey &&
-        (event.key.toLowerCase() === "k" || event.code === "KeyK")
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        setToolUseSwitcherOpen(true);
-        return;
-      }
-      if (
-        primary &&
-        !event.shiftKey &&
-        !event.altKey &&
-        (selected?.kind === "search" || selected?.kind === "editor") &&
-        (event.key.toLowerCase() === "p" || event.code === "KeyP")
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
+  const clearPrefix = useCallback(() => {
+    prefixPendingRef.current = false;
+    setPrefixPending(false);
+  }, []);
+
+  const runPrefixCommand = useCallback(
+    (command: string, jumpIndex = 0) => {
+      if (command === "session.new") void createSession();
+      if (command === "tool.newTerminal") void createTool("terminal");
+      if (command === "editor.quickOpen") {
         window.dispatchEvent(new Event("yaade:quick-open"));
         return;
       }
-      if (
-        primary &&
-        !event.shiftKey &&
-        !event.altKey &&
-        event.key === ","
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        setSettingsOpen(true);
+      if (command === "tool.newAgent") void createTool("agent");
+      if (command === "tool.newSearch") void createTool("search");
+      if (command === "tool.newEditor") void createTool("editor");
+      if (command === "tool.newGit") void createTool("git");
+      if (command === "session.switch")
+        void refreshArchived().then(() => setSwitcherOpen(true));
+      if (command === "tool.switch") setToolUseSwitcherOpen(true);
+      if (command === "tool.next" || command === "tool.previous") {
+        if (!selected || useIds.length === 0) return;
+        const index = useIds.indexOf(selected.id);
+        const nextIndex =
+          command === "tool.next"
+            ? (index + 1) % useIds.length
+            : (index - 1 + useIds.length) % useIds.length;
+        const next = snapshot.usesById.get(useIds[nextIndex]!);
+        if (next) selectTool(next);
+      }
+      if (command === "tool.jump") {
+        const id = useIds[jumpIndex];
+        if (!id) return;
+        const next = snapshot.usesById.get(id);
+        if (next) selectTool(next);
+      }
+      if (command === "tool.close" && selected)
+        void runToolAction("archive", selected);
+      if (command === "session.close" && activeSession)
+        requestCloseSession(activeSession.id);
+      if (command === "settings.show") setSettingsOpen(true);
+    },
+    [
+      activeSession,
+      createSession,
+      createTool,
+      refreshArchived,
+      requestCloseSession,
+      runToolAction,
+      selectTool,
+      selected,
+      snapshot.usesById,
+      useIds,
+    ],
+  );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (switcherOpen || toolUseSwitcherOpen || settingsOpen || closeChoice)
         return;
+      if (!prefixPendingRef.current) {
+        const direct = matchToolSessionDirectBinding(event);
+        if (direct) {
+          event.preventDefault();
+          event.stopPropagation();
+          runPrefixCommand(direct.command);
+          return;
+        }
+        const context = matchToolSessionContextBinding(event, selected?.kind);
+        if (context) {
+          event.preventDefault();
+          event.stopPropagation();
+          runPrefixCommand(context.command);
+          return;
+        }
       }
 
       const target = event.target as HTMLElement | null;
@@ -613,33 +670,8 @@ export function ToolSessionApp() {
         target?.closest("input, textarea, [contenteditable=true]"),
       );
       const inXterm = Boolean(target?.closest(".xterm"));
-      if (inEditable && !inXterm) return;
+      if (!prefixPendingRef.current && inEditable && !inXterm) return;
 
-      const chord = [
-        event.metaKey || event.ctrlKey ? "Mod" : null,
-        event.shiftKey ? "Shift" : null,
-        event.altKey ? "Alt" : null,
-        event.key.length === 1 ? event.key : event.code.replace(/^Key/, ""),
-      ]
-        .filter(Boolean)
-        .join("-");
-
-      const matchDirect = TOOL_SESSION_DIRECT_BINDINGS.find(
-        (binding) =>
-          binding.key === chord || binding.key === `Mod-Shift-${event.key}`,
-      );
-      void matchDirect;
-      if (
-        !prefixPendingRef.current &&
-        (event.key === "p" || event.code === "KeyP") &&
-        event.shiftKey &&
-        (event.metaKey || event.ctrlKey)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        void refreshArchived().then(() => setSwitcherOpen(true));
-        return;
-      }
       if (
         !prefixPendingRef.current &&
         event.ctrlKey &&
@@ -658,8 +690,8 @@ export function ToolSessionApp() {
       if (!prefixPendingRef.current) return;
       event.preventDefault();
       event.stopPropagation();
-      prefixPendingRef.current = false;
-      setPrefixPending(false);
+      clearPrefix();
+      if (event.key === "Escape") return;
       if (
         event.ctrlKey &&
         (event.key === "a" || event.code === "KeyA") &&
@@ -673,58 +705,25 @@ export function ToolSessionApp() {
         );
         return;
       }
-      const key =
-        event.shiftKey && event.key.length === 1
-          ? `Shift-${event.key.toUpperCase()}`
-          : event.key.length === 1
-            ? event.key.toLowerCase()
-            : event.key;
-      const binding = TOOL_SESSION_PREFIX_BINDINGS.find(
-        (item) => item.key === key || item.key === event.key,
-      );
-      if (!binding) return;
-      if (binding.command === "session.new") void createSession();
-      if (binding.command === "tool.new") void createTool();
-      if (binding.command === "session.switch")
-        void refreshArchived().then(() => setSwitcherOpen(true));
-      if (
-        binding.command === "tool.next" ||
-        binding.command === "tool.previous"
-      ) {
-        if (!selected || useIds.length === 0) return;
-        const index = useIds.indexOf(selected.id);
-        const nextIndex =
-          binding.command === "tool.next"
-            ? (index + 1) % useIds.length
-            : (index - 1 + useIds.length) % useIds.length;
-        const next = snapshot.usesById.get(useIds[nextIndex]!);
-        if (next) selectTool(next);
+      const key = serializeToolSessionPrefixKey(event);
+      if (isToolSessionJumpKey(key)) {
+        runPrefixCommand("tool.jump", Number(key) - 1);
+        return;
       }
-      if (binding.command === "tool.close" && selected)
-        void runToolAction("archive", selected);
-      if (binding.command === "session.close" && activeSession)
-        requestCloseSession(activeSession.id);
-      if (binding.command === "ui.showCommandPalette")
-        void refreshArchived().then(() => setSwitcherOpen(true));
-      if (binding.command === "settings.show") setSettingsOpen(true);
+      const binding = matchToolSessionPrefixBinding(key);
+      if (!binding) return;
+      runPrefixCommand(binding.command);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
   }, [
-    activeSession,
+    clearPrefix,
     closeChoice,
-    createSession,
-    createTool,
-    refreshArchived,
-    requestCloseSession,
-    runToolAction,
-    selectTool,
+    runPrefixCommand,
     selected,
     settingsOpen,
-    snapshot.usesById,
     switcherOpen,
     toolUseSwitcherOpen,
-    useIds,
   ]);
 
   const updateToolContext = useCallback(
@@ -781,12 +780,8 @@ export function ToolSessionApp() {
     [client],
   );
 
-  const whichKeyEntries = TOOL_SESSION_PREFIX_BINDINGS.map((binding) => ({
-    key: binding.key,
-    desc: binding.desc,
-  }));
-
   return (
+    <TooltipProvider delayDuration={400} skipDelayDuration={200}>
     <div
       className="flex h-full min-h-0 flex-col bg-background text-foreground"
       data-yaade-shell="tool-session"
@@ -794,6 +789,7 @@ export function ToolSessionApp() {
       <SessionTabStrip
         sessions={visibleSessions}
         activeSessionId={snapshot.activeSessionId}
+        toolCounts={toolCounts}
         onSelect={selectSession}
         onClose={requestCloseSession}
         onOpenSettings={() => setSettingsOpen(true)}
@@ -824,7 +820,10 @@ export function ToolSessionApp() {
               <AlertDescription>{actionError}</AlertDescription>
             </Alert>
           ) : null}
-          {selected ? (
+          {snapshot.connection === "connecting" &&
+          visibleSessions.length === 0 ? (
+            <SessionBootState />
+          ) : selected ? (
             <ToolUseViewport
               selected={selected}
               processUses={processUses.filter((use) =>
@@ -881,28 +880,55 @@ export function ToolSessionApp() {
               }}
             />
           ) : (
-            <EmptySession />
+            <SessionEmptyState
+              onAddKind={(kind) => void createTool(kind)}
+              onAddAgent={(provider) => void createTool("agent", provider)}
+            />
           )}
         </main>
       </div>
-      <ToolUseTabStrip
-        useIds={useIds}
-        usesById={snapshot.usesById}
-        activeToolUseId={snapshot.activeToolUseId}
-        runtimeTitles={runtimeTitles}
-        projects={projects}
-        onSelect={selectTool}
-        onContextChange={updateToolContext}
-        onProviderChange={updateToolProvider}
-        onAddAgent={(provider) => void createTool("agent", provider)}
-        onAddKind={(kind) => void createTool(kind)}
-        onClose={(use) => void runToolAction("archive", use)}
-        onRename={(use, title) => void renameToolUse(use, title)}
-        onReorder={(ids) => void reorderToolUses(ids)}
-      />
-      {prefixPending ? (
-        <WhichKeyPanel prefix={TOOL_SESSION_PREFIX} entries={whichKeyEntries} />
-      ) : null}
+      <div className="relative shrink-0">
+        {prefixPending ? (
+          <div className="pointer-events-none absolute inset-x-0 bottom-full z-20 flex justify-center px-2 pb-2">
+            <div className="pointer-events-auto w-full max-w-4xl">
+              <WhichKeyPanel
+                variant="overlay"
+                prefix={TOOL_SESSION_PREFIX}
+                groups={TOOL_SESSION_PREFIX_GROUPS}
+                entries={toolSessionHudBindings().map((binding) => ({
+                  key: binding.key,
+                  desc: binding.desc,
+                  group: binding.group,
+                }))}
+                onSelect={(key) => {
+                  clearPrefix();
+                  if (isToolSessionJumpKey(key)) {
+                    runPrefixCommand("tool.jump", Number(key) - 1);
+                    return;
+                  }
+                  const binding = matchToolSessionPrefixBinding(key);
+                  if (binding) runPrefixCommand(binding.command);
+                }}
+              />
+            </div>
+          </div>
+        ) : null}
+        <ToolUseTabStrip
+          useIds={useIds}
+          usesById={snapshot.usesById}
+          activeToolUseId={snapshot.activeToolUseId}
+          runtimeTitles={runtimeTitles}
+          projects={projects}
+          onSelect={selectTool}
+          onContextChange={updateToolContext}
+          onProviderChange={updateToolProvider}
+          onAddAgent={(provider) => void createTool("agent", provider)}
+          onAddKind={(kind) => void createTool(kind)}
+          onClose={(use) => void runToolAction("archive", use)}
+          onRename={(use, title) => void renameToolUse(use, title)}
+          onReorder={(ids) => void reorderToolUses(ids)}
+        />
+      </div>
       <ToolUseSwitcher
         open={toolUseSwitcherOpen}
         onOpenChange={setToolUseSwitcherOpen}
@@ -920,6 +946,7 @@ export function ToolSessionApp() {
         activeSessionId={snapshot.activeSessionId}
         onSelect={(session) => selectSession(session.id)}
         onRestore={(session) => void restoreSession(session)}
+        toolCounts={toolCounts}
       />
       {settingsOpen ? (
         <Suspense fallback={null}>
@@ -943,32 +970,7 @@ export function ToolSessionApp() {
         }
       />
     </div>
-  );
-}
-
-function EmptySession() {
-  return (
-    <div className="grid h-full place-items-center overflow-hidden p-6 md:p-10">
-      <Empty className="relative max-w-xl border border-border bg-card/55 px-8 py-12 shadow-none backdrop-blur-sm">
-        <div
-          className="pointer-events-none absolute inset-x-16 top-0 h-px bg-gradient-to-r from-transparent via-primary/70 to-transparent"
-          aria-hidden
-        />
-        <EmptyHeader>
-          <EmptyMedia
-            variant="icon"
-            className="border border-primary/30 bg-primary/14 text-primary"
-          >
-            <Activity />
-          </EmptyMedia>
-          <EmptyTitle>What do you want to run?</EmptyTitle>
-        </EmptyHeader>
-        <EmptyDescription>
-          Start directly in this session. You can switch project or checkout
-          inside the tool.
-        </EmptyDescription>
-      </Empty>
-    </div>
+    </TooltipProvider>
   );
 }
 
@@ -1091,8 +1093,8 @@ function SelectedToolUse(props: {
   return (
     <Suspense
       fallback={
-        <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
-          <LoaderCircle className="mr-2 size-4 animate-spin" />
+        <div className="flex flex-1 items-center justify-center gap-2 text-sm text-muted-foreground">
+          <Spinner />
           Opening tool…
         </div>
       }

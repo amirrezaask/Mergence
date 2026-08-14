@@ -181,7 +181,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
       className={
         props.presentation === "popover"
           ? "flex flex-col gap-3 p-3"
-          : "flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card/55 px-3 py-2 backdrop-blur-sm"
+          : "flex shrink-0 flex-wrap items-center gap-2 border-b border-border bg-card px-3 py-2"
       }
       data-yaade-tool-context
     >

@@ -3,7 +3,12 @@ import { describe, it } from "node:test"
 import { Schema } from "effect"
 import { AppSession, SessionId, ToolUseId, type ToolUse } from "@yaade/rpc"
 import { ToolSessionStore } from "./tool-store.js"
-import { nextRuntimeToolTitle, toolUseDisplayTitle } from "./tool-title.js"
+import {
+  nextRuntimeToolTitle,
+  toolUseContextCaption,
+  toolUseDisplayTitle,
+  toolUseWorkTitle,
+} from "./tool-title.js"
 
 const sessionId = Schema.decodeUnknownSync(SessionId)("ses-a")
 const useId = Schema.decodeUnknownSync(ToolUseId)("use-a")
@@ -66,6 +71,8 @@ describe("smart ToolUse titles", () => {
         running: false,
       },
     }
+    assert.equal(toolUseWorkTitle(search), "updateUseContext")
+    assert.equal(toolUseContextCaption(search), "p · Main")
     assert.equal(toolUseDisplayTitle(search), "p: updateUseContext")
 
     const agent: ToolUse = {
