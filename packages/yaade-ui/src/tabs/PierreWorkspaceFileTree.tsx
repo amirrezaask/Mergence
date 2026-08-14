@@ -34,10 +34,16 @@ export function PierreWorkspaceFileTree(props: PierreWorkspaceFileTreeProps) {
   const selectedPathRef = useRef(selectedPath)
   selectedPathRef.current = selectedPath
   const syncingSelectionRef = useRef(false)
-  const selectedDirectories = useMemo(
-    () => (selectedPath ? parentDirectories(selectedPath) : []),
-    [selectedPath],
-  )
+  const selectedDirectories = useMemo(() => {
+    const directories = new Set(selectedPath ? parentDirectories(selectedPath) : [])
+    // Keep the first project level visible so files can be opened directly,
+    // while leaving deeper folders collapsed until the user expands them.
+    for (const path of paths) {
+      const firstSlash = path.indexOf("/")
+      if (firstSlash > 0) directories.add(path.slice(0, firstSlash))
+    }
+    return [...directories]
+  }, [paths, selectedPath])
 
   const { model } = useFileTree({
     paths,

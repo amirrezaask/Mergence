@@ -168,17 +168,10 @@ export function QuickOpenOverlay({
         <>
           <FileIcon path={entry.path} />
           <span
-            className="flex min-w-0 flex-1 items-baseline gap-2"
+            className="min-w-0 flex-1 truncate font-mono text-xs text-foreground"
             title={entry.path}
           >
-            <span className="truncate font-medium text-foreground">
-              {entry.name}
-            </span>
-            {entry.directory ? (
-              <span className="min-w-0 flex-1 truncate font-mono text-xs text-muted-foreground">
-                {entry.directory}
-              </span>
-            ) : null}
+            {entry.path}
           </span>
         </>
       )}

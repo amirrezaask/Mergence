@@ -37,7 +37,7 @@ compatibility; the primary product surface is the Session shell.
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **AgentTool**    | Launches a supported agent CLI in a PTY                                                                                       |
 | **TerminalTool** | Launches a shell in a PTY                                                                                                     |
-| **SearchTool**   | Host-owned project content search with durable per-file context cards; source opens in syntax-highlighted Monaco with breadcrumbs, a token-themed Pierre file tree on the right, and VS Code-style Quick Open |
+| **SearchTool**   | Host-owned project content search with durable per-file context cards; opening a hit enters the same Monaco workspace surface as EditorTool, including the left Explorer, shared buffers/LSP, breadcrumbs, and VS Code-style Quick Open |
 | **EditorTool** | Opens the active checkout in the Monaco editor and file explorer; one tab is created per Session |
 | **GitHistoryTool** | Opens the active checkout's virtualized commit history, including uncommitted changes and commit diffs; one tab is created per Session |
 
