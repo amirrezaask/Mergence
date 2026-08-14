@@ -236,7 +236,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               )}
             >
               <Icon
-                className={cn("size-3.5", isSidebar && "size-4")}
+                className={cn("size-3.5", isSidebar && "size-5")}
                 aria-hidden
               />
               <span
@@ -348,7 +348,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       className={cn(
         "flex h-full shrink-0 items-center gap-0.5 px-1",
         isTwoSidebar && "w-full justify-end px-0",
-        isSingleSidebar && "ml-auto px-0",
+        isSingleSidebar && "flex-1 px-0",
       )}
       role="toolbar"
       aria-label="New tool"
@@ -364,8 +364,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         >
           <DropdownMenuTrigger asChild>
             <Button
-              size="icon-xs"
+              size={isSidebar ? "icon-lg" : "icon-xs"}
               variant="default"
+              className={cn(
+                isSingleSidebar && "flex-1",
+                isSidebar && "[&_svg]:size-5",
+              )}
               aria-label="New Agent"
               aria-haspopup="menu"
               data-yaade-new-tool="agent"
@@ -418,8 +422,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
-          size="icon-xs"
+          size={isSidebar ? "icon-lg" : "icon-xs"}
           variant="secondary"
+          className={cn(
+            isSingleSidebar && "flex-1",
+            isSidebar && "[&_svg]:size-5",
+          )}
           aria-label="New Terminal"
           data-yaade-new-tool="terminal"
           onClick={() => props.onAddKind("terminal")}
@@ -433,8 +441,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
-          size="icon-xs"
+          size={isSidebar ? "icon-lg" : "icon-xs"}
           variant="ghost"
+          className={cn(
+            isSingleSidebar && "flex-1",
+            isSidebar && "[&_svg]:size-5",
+          )}
           aria-label="New Search"
           data-yaade-new-tool="search"
           onClick={() => props.onAddKind("search")}
@@ -448,8 +460,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
-          size="icon-xs"
+          size={isSidebar ? "icon-lg" : "icon-xs"}
           variant="ghost"
+          className={cn(
+            isSingleSidebar && "flex-1",
+            isSidebar && "[&_svg]:size-5",
+          )}
           aria-label="New Editor"
           data-yaade-new-tool="editor"
           onClick={() => props.onAddKind("editor")}
@@ -463,8 +479,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
       >
         <Button
-          size="icon-xs"
+          size={isSidebar ? "icon-lg" : "icon-xs"}
           variant="ghost"
+          className={cn(
+            isSingleSidebar && "flex-1",
+            isSidebar && "[&_svg]:size-5",
+          )}
           aria-label="New Git History"
           data-yaade-new-tool="git"
           onClick={() => props.onAddKind("git")}
@@ -523,10 +543,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         data-yaade-sidebar-state={props.collapsed ? "collapsed" : "expanded"}
         data-yaade-tool-tabs=""
       >
-        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
-          <span className="text-3xs font-bold uppercase tracking-[0.1em] text-sidebar-foreground/60">
-            Tool uses
-          </span>
+        <div className="flex h-9 shrink-0 items-center border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
           {newToolActions}
         </div>
         <nav

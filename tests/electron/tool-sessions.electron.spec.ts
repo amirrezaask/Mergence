@@ -657,6 +657,28 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
         }),
       )
       .toBe(true);
+
+    const includeChip = page.locator('[data-yaade-project-search-filter="include"]');
+    await includeChip.click();
+    const includeInput = page.getByRole("textbox", { name: "Files to include" });
+    await includeInput.waitFor({ state: "visible" });
+    await includeInput.fill("src/**");
+    expect(await includeChip.getAttribute("data-active")).toBe("true");
+    await page.keyboard.press("Escape");
+    await includeInput.waitFor({ state: "hidden" });
+    await includeChip.click();
+    await includeInput.fill("");
+    expect(await includeChip.getAttribute("data-active")).toBe("false");
+    await page.keyboard.press("Escape");
+    await page.waitForFunction(
+      () =>
+        document.querySelectorAll(
+          '[data-yaade-list-panel="project-search"] [data-yaade-list-item]',
+        ).length > 0,
+      null,
+      { timeout: 10_000 },
+    );
+
     await expectListRows(page, {
       panel: "project-search",
       minItems: 1,

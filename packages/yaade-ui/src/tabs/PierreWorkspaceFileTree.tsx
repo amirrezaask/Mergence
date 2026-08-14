@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils.js"
 
 const explorerTreeStyle = {
   ...pierreTreeTokenStyle,
-  fontSize: "var(--yaade-fs-sm)",
+  "--trees-font-size-override": "var(--yaade-fs-base)",
 }
 
 export type PierreWorkspaceFileTreeProps = {

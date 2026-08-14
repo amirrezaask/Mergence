@@ -9,6 +9,14 @@ import {
 import type { ProjectSearchOptions, ProjectSearchResult } from "@yaade/shared"
 import { ChevronDown, ChevronRight, Copy, FileCode2, Search } from "lucide-react"
 import { Button } from "../components/ui/button.js"
+import {
+  Popover,
+  PopoverContent,
+  PopoverDescription,
+  PopoverHeader,
+  PopoverTitle,
+  PopoverTrigger,
+} from "../components/ui/popover.js"
 import { Input } from "../components/ui/input.js"
 import { Spinner } from "../components/ui/spinner.js"
 import { cn } from "../lib/utils.js"
@@ -50,6 +58,61 @@ function parseGlobs(value: string | undefined): string[] | undefined {
 
 function formatGlobs(globs: string[] | undefined): string {
   return globs?.join(", ") ?? ""
+}
+
+function SearchGlobPopover({
+  label,
+  value,
+  placeholder,
+  ariaLabel,
+  onValueChange,
+}: {
+  label: string
+  value: string
+  placeholder: string
+  ariaLabel: string
+  onValueChange: (value: string) => void
+}) {
+  const filter = label.toLowerCase()
+
+  return (
+    <Popover>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          size="xs"
+          variant={value ? "secondary" : "ghost"}
+          className="h-7 max-w-28 gap-1 px-1.5 text-3xs"
+          aria-label={`Configure ${ariaLabel.toLowerCase()}`}
+          data-yaade-project-search-filter={filter}
+          data-active={value ? "true" : "false"}
+        >
+          <span>{label}</span>
+          <ChevronDown aria-hidden />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        className="w-80 p-3"
+        data-yaade-project-search-filter-popover={filter}
+      >
+        <PopoverHeader>
+          <PopoverTitle className="text-sm">{label} files</PopoverTitle>
+          <PopoverDescription className="text-xs">
+            Use comma-separated globs to match project paths.
+          </PopoverDescription>
+        </PopoverHeader>
+        <Input
+          autoFocus
+          aria-label={ariaLabel}
+          value={value}
+          onChange={event => onValueChange(event.target.value)}
+          placeholder={placeholder}
+          className="mt-3 h-8 font-mono text-xs"
+        />
+      </PopoverContent>
+    </Popover>
+  )
 }
 
 /** Cache file bodies; only fetch paths that have been requested (viewport / page). */
@@ -403,11 +466,11 @@ export function ProjectSearchPanel({
             onChange={event => onQueryChange(event.target.value)}
             placeholder="Search project…"
             aria-label="Search project"
-            className="h-9 pr-36 pl-9 font-mono text-sm"
+            className="h-9 pr-[20rem] pl-9 font-mono text-sm"
             data-yaade-project-search-input=""
           />
           <div
-            className="absolute inset-y-1 right-1 flex items-center gap-0.5 bg-card pl-1"
+            className="absolute inset-y-1 right-1 flex max-w-[calc(100%-3rem)] items-center gap-0.5 overflow-x-auto bg-card pl-1 [scrollbar-width:none]"
             data-yaade-project-search-options=""
           >
             {(
@@ -429,6 +492,20 @@ export function ProjectSearchPanel({
                 {label}
               </Button>
             ))}
+            <SearchGlobPopover
+              label="Include"
+              value={include}
+              placeholder="src/**"
+              ariaLabel="Files to include"
+              onValueChange={value => patchOptions({ include: parseGlobs(value) })}
+            />
+            <SearchGlobPopover
+              label="Exclude"
+              value={exclude}
+              placeholder="**/*.test.ts"
+              ariaLabel="Files to exclude"
+              onValueChange={value => patchOptions({ exclude: parseGlobs(value) })}
+            />
           </div>
         </div>
         <div className="flex h-4 items-center">
@@ -441,26 +518,6 @@ export function ProjectSearchPanel({
               {truncated ? "+" : ""} file{buckets.length === 1 ? "" : "s"}
             </span>
           ) : null}
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <Input
-            aria-label="Files to include"
-            value={include}
-            onChange={event =>
-              patchOptions({ include: parseGlobs(event.target.value) })
-            }
-            placeholder="Include: src/**"
-            className="h-7 font-mono text-xs"
-          />
-          <Input
-            aria-label="Files to exclude"
-            value={exclude}
-            onChange={event =>
-              patchOptions({ exclude: parseGlobs(event.target.value) })
-            }
-            placeholder="Exclude: **/*.test.ts"
-            className="h-7 font-mono text-xs"
-          />
         </div>
       </div>
 
