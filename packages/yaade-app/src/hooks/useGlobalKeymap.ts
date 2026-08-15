@@ -6,7 +6,6 @@ import {
   createChordState,
   isChordBinding,
   isEditorKeyBinding,
-  keyEventMatchesBinding,
   keyEventMatchesBindingPart,
   parseBindingKey,
   resolveKeydownBinding,
@@ -14,6 +13,7 @@ import {
   type KeymapContext,
   type WorkspaceService,
 } from "@yaade/workspace"
+import { isMuxPaletteHardwire } from "../keybindings.js"
 import { useLatest } from "./useLatest.js"
 
 export type GlobalKeymapRefs = {
@@ -137,10 +137,7 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
         // revision → snapshot pipeline (repeated empty-map races). Everything
         // else reaches the terminal through the prefix key, which the browser
         // has no claim on.
-        if (
-          keyEventMatchesBinding(e, "Mod-Shift-p") ||
-          keyEventMatchesBinding(e, "Cmd-Shift-p")
-        ) {
+        if (isMuxPaletteHardwire(e)) {
           e.preventDefault()
           e.stopPropagation()
           void executeCommandRef.current("ui.showCommandPalette")

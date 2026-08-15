@@ -12,6 +12,7 @@ export type ModalEditorBuffer = {
 export type ModalEditorTabBarProps = {
   buffers: ModalEditorBuffer[]
   activeTabId: string | null
+  focused?: boolean
   onActivateBuffer: (tabId: string) => void
   onCloseBuffer: (tabId: string) => void
   className?: string
@@ -21,6 +22,7 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
   const {
     buffers,
     activeTabId,
+    focused = false,
     onActivateBuffer,
     onCloseBuffer,
     className,
@@ -52,7 +54,7 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
               data-active={active ? "" : undefined}
               data-yaade-session-tab-pill=""
               className={cn(
-                "group relative flex max-w-40 min-w-0 shrink-0 items-center gap-0.5 rounded-sm border px-1.5",
+                "group relative flex max-w-40 min-w-0 shrink-0 cursor-pointer items-stretch rounded-sm border",
                 active
                   ? "border-border/50 bg-muted/60 text-foreground"
                   : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground",
@@ -62,9 +64,22 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
                 if (event.button === 1) {
                   event.preventDefault()
                   onCloseBuffer(buffer.tabId)
+                  return
                 }
+                if (event.button !== 0) return
+                if ((event.target as HTMLElement).closest("button[aria-label^='Close ']")) {
+                  return
+                }
+                onActivateBuffer(buffer.tabId)
               }}
             >
+              {active && focused ? (
+                <span
+                  data-yaade-pane-tab-indicator=""
+                  className="pointer-events-none absolute inset-x-1.5 top-0 h-px bg-primary"
+                  aria-hidden
+                />
+              ) : null}
               <button
                 type="button"
                 role="tab"
@@ -75,25 +90,25 @@ export function ModalEditorTabBar(props: ModalEditorTabBarProps) {
                 data-dirty={buffer.dirty ? "" : undefined}
                 tabIndex={active ? 0 : -1}
                 className={cn(
-                  "min-w-0 flex-1 truncate text-left text-3xs font-medium leading-none outline-none focus-visible:underline focus-visible:underline-offset-2",
+                  "flex min-w-0 flex-1 items-center gap-0.5 px-1.5 text-left text-3xs font-medium leading-none outline-none focus-visible:underline focus-visible:underline-offset-2",
                   buffer.preview && "italic",
                 )}
                 onClick={() => onActivateBuffer(buffer.tabId)}
                 title={buffer.label}
               >
-                {buffer.label}
+                <span className="min-w-0 truncate">{buffer.label}</span>
+                {buffer.dirty ? (
+                  <span
+                    data-yaade-buffer-dirty=""
+                    className="size-1 shrink-0 rounded-full bg-primary"
+                    aria-label="Unsaved changes"
+                  />
+                ) : null}
               </button>
-              {buffer.dirty ? (
-                <span
-                  data-yaade-buffer-dirty=""
-                  className="size-1 shrink-0 rounded-full bg-primary"
-                  aria-label="Unsaved changes"
-                />
-              ) : null}
               <button
                 type="button"
                 aria-label={`Close ${buffer.label}`}
-                className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
+                className="mr-1 inline-flex size-4 shrink-0 self-center items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
                 onClick={event => {
                   event.stopPropagation()
                   onCloseBuffer(buffer.tabId)

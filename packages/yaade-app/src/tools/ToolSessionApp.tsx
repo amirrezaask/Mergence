@@ -43,7 +43,7 @@ import {
   PanelRightOpen,
 } from "lucide-react";
 import { WhichKeyPanel, cn, useIsMobile, type TabDndHandlers } from "@yaade/ui";
-import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
+import { CHORD_TIMEOUT_MS, keyEventMatchesBinding } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
 import {
@@ -91,9 +91,10 @@ import {
   matchToolSessionContextBinding,
   matchToolSessionDirectBinding,
   matchToolSessionPrefixBinding,
+  prefixLiteralByte,
   serializeToolSessionPrefixKey,
   toolSessionHudBindings,
-} from "./tool-session-keymap.js";
+} from "../keybindings.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
 const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
@@ -870,11 +871,7 @@ export function ToolSessionApp() {
 
       if (
         !prefixPendingRef.current &&
-        event.ctrlKey &&
-        !event.metaKey &&
-        !event.altKey &&
-        !event.shiftKey &&
-        (event.key === "a" || event.code === "KeyA")
+        keyEventMatchesBinding(event, TOOL_SESSION_PREFIX)
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -888,17 +885,16 @@ export function ToolSessionApp() {
       event.stopPropagation();
       clearPrefix();
       if (event.key === "Escape") return;
-      if (
-        event.ctrlKey &&
-        (event.key === "a" || event.code === "KeyA") &&
-        inTerminal
-      ) {
-        void window.yaade?.terminal?.write?.(
-          selected?.output.kind === "process"
-            ? (selected.output.ptyId ?? "")
-            : "",
-          "\u0001",
-        );
+      if (keyEventMatchesBinding(event, TOOL_SESSION_PREFIX) && inTerminal) {
+        const byte = prefixLiteralByte(TOOL_SESSION_PREFIX);
+        if (byte) {
+          void window.yaade?.terminal?.write?.(
+            selected?.output.kind === "process"
+              ? (selected.output.ptyId ?? "")
+              : "",
+            byte,
+          );
+        }
         return;
       }
       const key = serializeToolSessionPrefixKey(event);
@@ -1327,17 +1323,17 @@ export function ToolSessionApp() {
                     <AlertDescription>{actionError}</AlertDescription>
                   </Alert>
                 ) : null}
-                {sidebarLayout ? (
+                {sidebarLayout && sidebarsCollapsed ? (
                   <SidebarHoverToggle
                     side="left"
-                    collapsed={sidebarsCollapsed}
+                    collapsed
                     onToggle={toggleSidebars}
                   />
                 ) : null}
-                {twoSidebarLayout ? (
+                {twoSidebarLayout && sidebarsCollapsed ? (
                   <SidebarHoverToggle
                     side="right"
-                    collapsed={sidebarsCollapsed}
+                    collapsed
                     onToggle={toggleSidebars}
                   />
                 ) : null}

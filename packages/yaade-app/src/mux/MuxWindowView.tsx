@@ -168,6 +168,7 @@ function PaneChromeShell(props: {
             <ModalEditorTabBar
               buffers={editorBuffers}
               activeTabId={tabId}
+              focused={focused}
               onActivateBuffer={id => onActivateEditorTab?.(id)}
               onCloseBuffer={id => onCloseEditorTab?.(id)}
               className="min-h-0 w-full"

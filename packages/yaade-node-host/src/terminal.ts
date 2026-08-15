@@ -8,6 +8,12 @@ import {
   applyShellCwdReporting,
   parseOsc7Cwd,
 } from "./terminal-osc7.js"
+import {
+  createDa1Scanner,
+  feedDa1Queries,
+  TERMINAL_DA1_RESPONSE,
+  type Da1Scanner,
+} from "./terminal-da.js"
 
 /**
  * This is a bounded transcript, not a serialized terminal state. Once the
@@ -133,6 +139,8 @@ type TerminalEntry = {
   dataDisposable: pty.IDisposable | null
   exitDisposable: pty.IDisposable | null
   exitWaiters: Array<(result: { exitCode: number | null; signal?: string }) => void>
+  /** Incomplete DA1 prefix (`ESC` / `ESC[` / `ESC[0`) spanning PTY reads. */
+  da1Scanner: Da1Scanner
 }
 
 function pausePtyForFlowControl(entry: TerminalEntry): void {
@@ -405,11 +413,17 @@ export class TerminalHost {
       dataDisposable: null,
       exitDisposable: null,
       exitWaiters: [],
+      da1Scanner: createDa1Scanner(),
     }
     this.entries.set(id, entry)
 
     entry.dataDisposable = proc.onData(data => {
       if (entry.disposed) return
+      // Answer DA1 here — fish's 10s timer starts at spawn, not at Ghostty mount.
+      const da1Queries = feedDa1Queries(entry.da1Scanner, data)
+      if (da1Queries > 0 && entry.proc) {
+        for (let i = 0; i < da1Queries; i++) entry.proc.write(TERMINAL_DA1_RESPONSE)
+      }
       const oscCwd = parseOsc7Cwd(data)
       if (oscCwd) {
         try {

@@ -137,6 +137,7 @@ import {
   MUX_DIRECT_BINDINGS,
   MUX_PREFIX,
   MUX_PREFIX_BINDINGS,
+  MUX_UNZOOM_BINDING,
   muxPrefixBindingKey,
   prefixLiteralByte,
 } from "./mux-keymap.js";
@@ -3752,7 +3753,7 @@ export function MuxApp({
       // Escape belongs to the terminal — vim, less and fzf all need it. Claim
       // it only to restore a zoomed pane while focus sits outside the PTY.
       bind(
-        "Escape",
+        MUX_UNZOOM_BINDING.key,
         () => {
           unzoomIfNeeded();
         },
@@ -4991,6 +4992,7 @@ export function MuxApp({
                   <ModalEditorTabBar
                     buffers={surfaceEditorBuffers}
                     activeTabId={editorsActiveTabId}
+                    focused
                     onActivateBuffer={(tabId) => {
                       if (!activeWindow) return;
                       const panelId = findPanelWithTab(

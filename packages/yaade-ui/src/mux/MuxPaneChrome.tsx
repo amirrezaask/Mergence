@@ -216,7 +216,12 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           className={cn(
             "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 border-b px-1.5",
             "border-border bg-card",
-            focused && "bg-secondary/30 after:absolute after:top-0 after:left-2 after:h-px after:w-16 after:bg-primary",
+            focused && "bg-secondary/30",
+            // Title-only panes keep a short focus hairline over the process tile.
+            // Tabbed panes own their own indicator on the active tab.
+            focused &&
+              !center &&
+              "after:absolute after:top-0 after:left-2 after:h-px after:w-16 after:bg-primary",
             isDragging && "opacity-45",
             className,
           )}
@@ -274,7 +279,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           <div
             ref={contextRef}
             data-yaade-session-header-context=""
-            className="flex min-h-0 min-w-0 flex-1 items-center overflow-hidden"
+            className="flex min-h-0 min-w-0 flex-1 items-stretch self-stretch overflow-hidden"
           >
             {center}
           </div>

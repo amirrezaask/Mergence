@@ -79,17 +79,37 @@ export type ToolTilingWorkspaceProps = {
   readonly renderTool: (use: ToolUse, focused: boolean) => ReactNode;
 };
 
-function EmptyTile() {
+function EmptyTile(props: {
+  readonly onAddKind: (kind: ToolKind) => void;
+}) {
   return (
     <div
-      className="flex h-full min-h-40 flex-col items-center justify-center gap-2 px-6 text-center text-muted-foreground"
+      className="flex h-full min-h-40 flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground"
       data-yaade-empty-tool-tile=""
     >
       <PanelTopOpen className="size-5" aria-hidden />
       <p className="text-xs font-medium text-foreground">Open a tool here</p>
       <p className="max-w-56 text-2xs leading-relaxed">
-        Select a tool from navigation or drag one onto this pane.
+        Pick a tool for this pane, or drag one onto it.
       </p>
+      <div className="flex flex-wrap items-center justify-center gap-1.5">
+        {paneToolKinds.map((item) => {
+          const Icon = item.icon;
+          return (
+            <Button
+              key={item.kind}
+              type="button"
+              variant="outline"
+              size="sm"
+              data-yaade-empty-tile-tool={item.kind}
+              onClick={() => props.onAddKind(item.kind)}
+            >
+              <Icon data-icon="inline-start" />
+              {item.label}
+            </Button>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -199,6 +219,7 @@ function ToolPaneTab(props: {
   readonly use: ToolUse;
   readonly title: string;
   readonly active: boolean;
+  readonly focused: boolean;
   readonly projects: readonly ProjectTarget[];
   readonly onActivate: () => void;
   readonly onClose: () => void;
@@ -214,7 +235,7 @@ function ToolPaneTab(props: {
       <PopoverAnchor asChild>
         <div
           className={cn(
-            "group/tool-pane-tab flex h-6 max-w-44 min-w-20 shrink-0 items-center gap-1 rounded-sm border px-1.5",
+            "group/tool-pane-tab relative flex h-full max-w-44 min-w-20 shrink-0 cursor-pointer items-stretch rounded-sm border",
             props.active
               ? "border-border/60 bg-muted/70 text-foreground"
               : "border-transparent text-muted-foreground hover:bg-muted/40 hover:text-foreground",
@@ -222,9 +243,16 @@ function ToolPaneTab(props: {
           data-yaade-tool-pane-tab={props.use.id}
           data-active={props.active ? "" : undefined}
           onMouseDown={(event) => {
-            if (event.button !== 1) return;
-            event.preventDefault();
-            props.onClose();
+            if (event.button === 1) {
+              event.preventDefault();
+              props.onClose();
+              return;
+            }
+            if (event.button !== 0) return;
+            if ((event.target as HTMLElement).closest("button[aria-label^='Close ']")) {
+              return;
+            }
+            props.onActivate();
           }}
           onContextMenu={(event) => {
             event.preventDefault();
@@ -233,27 +261,35 @@ function ToolPaneTab(props: {
             setContextOpen(true);
           }}
         >
-          <span
-            className={cn(
-              "size-1.5 shrink-0 rounded-full",
-              statusClass(props.use.status),
-            )}
-            aria-hidden
-          />
+          {props.active && props.focused ? (
+            <span
+              data-yaade-pane-tab-indicator=""
+              className="pointer-events-none absolute inset-x-1.5 top-0 h-px bg-primary"
+              aria-hidden
+            />
+          ) : null}
           <DockTabHandle
             panelId={props.panelId}
             tabId={props.use.id}
             label={props.title}
             active={props.active}
-            className="min-w-0 flex-1 cursor-grab touch-none truncate text-left text-3xs font-medium outline-none active:cursor-grabbing focus-visible:underline focus-visible:underline-offset-2"
+            className="flex min-w-0 flex-1 cursor-grab items-center gap-1 px-1.5 text-left text-3xs font-medium outline-none touch-none active:cursor-grabbing focus-visible:underline focus-visible:underline-offset-2"
             onActivate={props.onActivate}
           >
-            {props.title}
+            <span
+              data-yaade-pane-tab-status=""
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                statusClass(props.use.status),
+              )}
+              aria-hidden
+            />
+            <span className="min-w-0 truncate">{props.title}</span>
           </DockTabHandle>
           <button
             type="button"
             aria-label={`Close ${props.title}`}
-            className="inline-flex size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/tool-pane-tab:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
+            className="mr-1 inline-flex size-4 shrink-0 self-center items-center justify-center rounded-sm text-muted-foreground opacity-0 transition-opacity group-hover/tool-pane-tab:opacity-100 hover:bg-accent hover:text-foreground focus-visible:opacity-100"
             onClick={(event) => {
               event.stopPropagation();
               props.onClose();
@@ -320,6 +356,7 @@ function handleTabKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
 function ToolPaneTabBar(props: {
   readonly panelId: PanelId;
   readonly view: Extract<ToolPaneView, { kind: "tabs" }>;
+  readonly focused: boolean;
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
   readonly projects: readonly ProjectTarget[];
@@ -338,7 +375,7 @@ function ToolPaneTabBar(props: {
   return (
     <DockTabBarDropTarget
       panelId={props.panelId}
-      className="flex h-full min-w-0 flex-1 items-center gap-px overflow-x-auto"
+      className="flex h-full min-w-0 flex-1 items-stretch gap-px overflow-x-auto"
       activeClassName="bg-primary/5"
       ariaLabel="Pane tools"
       onKeyDown={handleTabKeyDown}
@@ -356,6 +393,7 @@ function ToolPaneTabBar(props: {
               props.runtimeTitles.get(toolUseId),
             )}
             active={props.view.activeToolUseId === toolUseId}
+            focused={props.focused}
             projects={props.projects}
             onActivate={() => props.onActivate(toolUseId, use)}
             onClose={() => props.onClose(toolUseId)}
@@ -400,6 +438,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
               <ToolPaneTabBar
                 panelId={panelId}
                 view={view}
+                focused={meta.focused}
                 usesById={props.usesById}
                 runtimeTitles={props.runtimeTitles}
                 projects={props.projects}
@@ -428,10 +467,22 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
   const renderContent = useCallback(
     (view: ToolPaneView, _panelId: PanelId, meta: PanelSlotMeta) => {
       if (view.kind === "empty") {
-        return openToolIds.length === 0 ? props.empty : <EmptyTile />;
+        return openToolIds.length === 0 ? (
+          props.empty
+        ) : (
+          <EmptyTile
+            onAddKind={(kind) => props.onAddTool(_panelId, kind)}
+          />
+        );
       }
       const use = props.usesById.get(view.activeToolUseId);
-      if (!use) return <EmptyTile />;
+      if (!use) {
+        return (
+          <EmptyTile
+            onAddKind={(kind) => props.onAddTool(_panelId, kind)}
+          />
+        );
+      }
       return (
         <div
           key={use.id}

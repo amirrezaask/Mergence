@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useRef, useState, type KeyboardEvent } from "react";
 import { Plus, Settings, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
 import { SidebarShell, cn } from "@yaade/ui";
@@ -8,6 +8,38 @@ import {
   toolSessionDirectShortcutFor,
   toolSessionShortcutFor,
 } from "./tool-session-keymap.js";
+
+function handleSessionTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
+  if (
+    !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(
+      event.key,
+    )
+  ) {
+    return;
+  }
+  const tabs = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'),
+  ];
+  if (tabs.length === 0) return;
+  const current = Math.max(
+    0,
+    tabs.indexOf(document.activeElement as HTMLElement),
+  );
+  const next =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (current +
+            (event.key === "ArrowRight" || event.key === "ArrowDown"
+              ? 1
+              : -1) +
+            tabs.length) %
+          tabs.length;
+  event.preventDefault();
+  tabs[next]?.focus();
+  tabs[next]?.click();
+}
 
 export type SessionNavigationLayout =
   | "tabs"
@@ -93,48 +125,60 @@ export function SessionTabStrip(props: SessionTabStripProps) {
   const sessionItems = props.sessions.map((session, index) => {
     const active = session.id === props.activeSessionId;
     const toolCount = props.toolCounts?.get(session.id) ?? 0;
+    const editing = editingId === session.id;
     return (
       <div
         key={session.id}
         role="tab"
         tabIndex={active ? 0 : -1}
         aria-selected={active}
+        aria-label={session.title}
+        data-yaade-session={session.id}
         data-active={active ? "true" : undefined}
-        draggable={editingId !== session.id}
+        draggable={!editing}
         onDragStart={() => {
           dragId.current = session.id;
         }}
         onDragOver={(event) => event.preventDefault()}
         onDrop={() => moveSession(session.id, index)}
-        className="group relative flex min-h-11 w-full shrink-0 items-center rounded-md border border-transparent px-1 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] focus-within:ring-2 focus-within:ring-sidebar-ring/50 hover:bg-sidebar-accent/70 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-36"
+        onClick={() => {
+          if (!editing) props.onSelect(session.id);
+        }}
+        onDoubleClick={() => {
+          if (editing) return;
+          setDraftTitle(session.title);
+          setEditingId(session.id);
+        }}
+        onKeyDown={(event) => {
+          if (editing) return;
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            props.onSelect(session.id);
+          }
+        }}
+        className="group relative flex min-h-11 w-full shrink-0 cursor-pointer items-center rounded-md border border-transparent px-1 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-36"
       >
         <span
           className="absolute inset-y-2 left-0 w-0.5 origin-center scale-y-0 rounded-full bg-sidebar-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-y-100"
           aria-hidden
         />
-        {editingId === session.id ? (
+        {editing ? (
           <Input
             aria-label={`Rename ${session.title}`}
             className="h-7 min-w-0 flex-1 border-sidebar-primary/50 bg-sidebar px-1.5"
             autoFocus
             value={draftTitle}
+            onClick={(event) => event.stopPropagation()}
             onChange={(event) => setDraftTitle(event.target.value)}
             onBlur={() => finishRename(session)}
             onKeyDown={(event) => {
+              event.stopPropagation();
               if (event.key === "Enter") finishRename(session);
               if (event.key === "Escape") setEditingId(null);
             }}
           />
         ) : (
-          <button
-            type="button"
-            className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors group-data-[active=true]:text-sidebar-accent-foreground"
-            onClick={() => props.onSelect(session.id)}
-            onDoubleClick={() => {
-              setDraftTitle(session.title);
-              setEditingId(session.id);
-            }}
-          >
+          <span className="flex min-h-8 min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 transition-colors group-data-[active=true]:text-sidebar-accent-foreground">
             <span className="grid size-5 shrink-0 place-items-center rounded border border-sidebar-border font-mono text-3xs tabular-nums text-sidebar-foreground/55 group-data-[active=true]:border-sidebar-primary/50 group-data-[active=true]:text-sidebar-primary">
               {index + 1}
             </span>
@@ -147,14 +191,17 @@ export function SessionTabStrip(props: SessionTabStripProps) {
                 {toolCount}
               </span>
             ) : null}
-          </button>
+          </span>
         )}
         <Button
           size="icon-xs"
           variant="ghost"
           aria-label={`Close ${session.title}`}
           className="ml-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
-          onClick={() => props.onClose(session.id)}
+          onClick={(event) => {
+            event.stopPropagation();
+            props.onClose(session.id);
+          }}
         >
           <X />
         </Button>
@@ -171,6 +218,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           "aria-label": "Sessions",
           "aria-orientation": props.sidebarOrientation ?? "vertical",
           role: "tablist",
+          onKeyDown: handleSessionTabKeyDown,
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
@@ -199,7 +247,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
     return (
       <section
         className={cn(
-          "flex min-h-0 flex-[2_1_0%] flex-col border-t border-sidebar-border bg-sidebar text-sidebar-foreground",
+          "flex min-h-0 flex-[2_1_0%] flex-col bg-sidebar text-sidebar-foreground",
           props.collapsed && "hidden",
           "max-md:h-10 max-md:flex-none max-md:flex-row",
         )}
@@ -219,6 +267,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           aria-label="Sessions"
           aria-orientation={props.sidebarOrientation ?? "vertical"}
           role="tablist"
+          onKeyDown={handleSessionTabKeyDown}
         >
           {sessionItems}
         </nav>
@@ -252,52 +301,65 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         className="flex h-full min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto px-1"
         aria-label="Sessions"
         role="tablist"
+        onKeyDown={handleSessionTabKeyDown}
       >
         {props.sessions.map((session, index) => {
           const active = session.id === props.activeSessionId;
           const toolCount = props.toolCounts?.get(session.id) ?? 0;
+          const editing = editingId === session.id;
           return (
             <div
               key={session.id}
               role="tab"
               tabIndex={active ? 0 : -1}
               aria-selected={active}
+              aria-label={session.title}
+              data-yaade-session={session.id}
               data-active={active ? "true" : undefined}
-              draggable={editingId !== session.id}
+              draggable={!editing}
               onDragStart={() => {
                 dragId.current = session.id;
               }}
               onDragOver={(event) => event.preventDefault()}
               onDrop={() => moveSession(session.id, index)}
-              className="group relative flex h-full min-w-24 shrink-0 items-center px-0.5 outline-none transition-[color,background-color] duration-[var(--yaade-motion-hot)] focus-visible:bg-accent data-[active=true]:bg-background"
+              onClick={() => {
+                if (!editing) props.onSelect(session.id);
+              }}
+              onDoubleClick={() => {
+                if (editing) return;
+                setDraftTitle(session.title);
+                setEditingId(session.id);
+              }}
+              onKeyDown={(event) => {
+                if (editing) return;
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  props.onSelect(session.id);
+                }
+              }}
+              className="group relative flex h-full min-w-24 shrink-0 cursor-pointer items-center px-0.5 outline-none transition-[color,background-color] duration-[var(--yaade-motion-hot)] focus-visible:bg-accent data-[active=true]:bg-background"
             >
               <span
                 className="absolute inset-x-2 bottom-0 h-0.5 origin-center scale-x-0 rounded-full bg-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-x-100"
                 aria-hidden
               />
-              {editingId === session.id ? (
+              {editing ? (
                 <Input
                   aria-label={`Rename ${session.title}`}
                   className="h-6 min-w-24 border-primary/50 bg-background px-1.5"
                   autoFocus
                   value={draftTitle}
+                  onClick={(event) => event.stopPropagation()}
                   onChange={(event) => setDraftTitle(event.target.value)}
                   onBlur={() => finishRename(session)}
                   onKeyDown={(event) => {
+                    event.stopPropagation();
                     if (event.key === "Enter") finishRename(session);
                     if (event.key === "Escape") setEditingId(null);
                   }}
                 />
               ) : (
-                <button
-                  type="button"
-                  className="flex min-w-0 flex-1 items-center overflow-hidden px-1.5 text-left text-xs font-medium text-muted-foreground outline-none transition-colors group-data-[active=true]:text-foreground"
-                  onClick={() => props.onSelect(session.id)}
-                  onDoubleClick={() => {
-                    setDraftTitle(session.title);
-                    setEditingId(session.id);
-                  }}
-                >
+                <span className="flex min-h-full min-w-0 flex-1 items-center overflow-hidden px-1.5 text-left text-xs font-medium text-muted-foreground transition-colors group-data-[active=true]:text-foreground">
                   <span className="truncate">{session.title}</span>
                   {toolCount > 0 ? (
                     <span
@@ -307,14 +369,17 @@ export function SessionTabStrip(props: SessionTabStripProps) {
                       {toolCount}
                     </span>
                   ) : null}
-                </button>
+                </span>
               )}
               <Button
                 size="icon-xs"
                 variant="ghost"
                 aria-label={`Close ${session.title}`}
                 className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
-                onClick={() => props.onClose(session.id)}
+                onClick={(event) => {
+                  event.stopPropagation();
+                  props.onClose(session.id);
+                }}
               >
                 <X />
               </Button>

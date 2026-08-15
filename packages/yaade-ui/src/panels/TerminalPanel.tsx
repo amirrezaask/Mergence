@@ -6,6 +6,7 @@ import { Button } from "../components/ui/button.js"
 import { Spinner } from "../components/ui/spinner.js"
 import { GhosttyTerminalSurface } from "./ghostty/surface.js"
 import type { GhosttyColor, GhosttyTheme } from "./ghostty/core.js"
+import { stripDa1Responses } from "./terminal-da.js"
 import { createTerminalInputWriter } from "./terminal-input-writer.js"
 import { createTerminalOutputWriter } from "./terminal-output-writer.js"
 import { terminalKeybindingData } from "./terminal-keybindings.js"
@@ -314,9 +315,12 @@ export function TerminalPanel({
     let ackRetryTimer: ReturnType<typeof setTimeout> | null = null
 
     const enqueueTerminalInput = (data: string) => {
-      if (data.length === 0) return
-      if (inputWriter) inputWriter.enqueue(data)
-      else pendingTerminalInput.push(data)
+      // Host already answered DA1 on the PTY. Drop Ghostty's copy so fish
+      // does not see a second response as typed input after startup.
+      const payload = stripDa1Responses(data)
+      if (payload.length === 0) return
+      if (inputWriter) inputWriter.enqueue(payload)
+      else pendingTerminalInput.push(payload)
     }
     let ackInFlight = false
 

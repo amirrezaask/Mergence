@@ -1,4 +1,11 @@
-import { Suspense, lazy, useEffect, useRef, useState } from "react";
+import {
+  Suspense,
+  lazy,
+  useEffect,
+  useRef,
+  useState,
+  type KeyboardEvent,
+} from "react";
 import {
   ArrowRight,
   Bot,
@@ -99,6 +106,38 @@ function checkoutTargetForUse(use: ToolUse): CheckoutTarget {
     kind: "existing-worktree",
     path: use.context.checkoutPath,
   });
+}
+
+function handleToolTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
+  if (
+    !["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Home", "End"].includes(
+      event.key,
+    )
+  ) {
+    return;
+  }
+  const tabs = [
+    ...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'),
+  ];
+  if (tabs.length === 0) return;
+  const current = Math.max(
+    0,
+    tabs.indexOf(document.activeElement as HTMLElement),
+  );
+  const next =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (current +
+            (event.key === "ArrowRight" || event.key === "ArrowDown"
+              ? 1
+              : -1) +
+            tabs.length) %
+          tabs.length;
+  event.preventDefault();
+  tabs[next]?.focus();
+  tabs[next]?.click();
 }
 
 function toolKindLabel(kind: ToolKind): string {
@@ -323,10 +362,23 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               event.stopPropagation();
               setContextPopoverId(id);
             }}
+            onKeyDown={(event) => {
+              if (event.key !== "Enter" && event.key !== " ") return;
+              if (editingId === id) return;
+              event.preventDefault();
+              setLaunchPopoverKind(null);
+              setLaunchContext(null);
+              if (!active || !openInWorkspace) {
+                props.onSelect(use);
+                setContextPopoverId(null);
+                return;
+              }
+              setContextPopoverId(id);
+            }}
             className={cn(
-              "group relative flex shrink-0 items-center outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)]",
+              "group relative flex shrink-0 cursor-pointer items-center outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)]",
               isSidebar
-                ? "min-h-14 w-full min-w-0 gap-2 rounded-md border border-transparent px-2 py-1.5 focus-within:ring-2 focus-within:ring-sidebar-ring/50 hover:bg-sidebar-accent/70 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-44"
+                ? "min-h-14 w-full min-w-0 gap-2 rounded-md border border-transparent px-2 py-1.5 hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-44"
                 : "h-full min-w-36 max-w-64 gap-1 rounded-md border border-transparent px-1.5 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 data-[active=true]:border-border data-[active=true]:bg-background",
             )}
           >
@@ -744,6 +796,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           "aria-label": props.sectionLabel ?? "Tool uses",
           "aria-orientation": props.sidebarOrientation ?? "vertical",
           role: "tablist",
+          onKeyDown: handleToolTabKeyDown,
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
@@ -778,7 +831,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     return (
       <section
         className={cn(
-          "flex min-h-0 w-full flex-[3_1_0%] flex-col bg-sidebar text-sidebar-foreground",
+          "flex min-h-0 w-full flex-[3_1_0%] flex-col border-t border-sidebar-border bg-sidebar text-sidebar-foreground",
           props.collapsed && "hidden",
           "max-md:h-12 max-md:flex-none max-md:flex-row",
         )}
@@ -800,6 +853,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           aria-label={props.sectionLabel ?? "Tool uses"}
           aria-orientation={props.sidebarOrientation ?? "vertical"}
           role="tablist"
+          onKeyDown={handleToolTabKeyDown}
         >
           {toolItems.length > 0 ? (
             toolItems
@@ -822,6 +876,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         className="flex h-full min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto px-1 py-1"
         aria-label="Tool uses"
         role="tablist"
+        onKeyDown={handleToolTabKeyDown}
       >
         {toolItems}
       </nav>

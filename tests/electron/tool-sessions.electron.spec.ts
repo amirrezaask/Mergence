@@ -1545,6 +1545,26 @@ test("pane tiles contain ToolUse tabs and the sidebar lists sessions and agents"
     await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
     await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 1);
 
+    const activeTab = page.locator("[data-yaade-tool-pane-tab][data-active]");
+    const indicator = activeTab.locator("[data-yaade-pane-tab-indicator]");
+    const processTile = page.locator("[data-yaade-mux-pane-process]").first();
+    await expectLocatorVisible(indicator);
+    const [tabBox, indicatorBox, processBox] = await Promise.all([
+      activeTab.boundingBox(),
+      indicator.boundingBox(),
+      processTile.boundingBox(),
+    ]);
+    if (!tabBox || !indicatorBox) {
+      throw new Error("active pane tab indicator geometry missing");
+    }
+    expect(indicatorBox.x).toBeGreaterThanOrEqual(tabBox.x);
+    expect(indicatorBox.x + indicatorBox.width).toBeLessThanOrEqual(
+      tabBox.x + tabBox.width + 1,
+    );
+    if (processBox) {
+      expect(indicatorBox.x).toBeGreaterThan(processBox.x + processBox.width);
+    }
+
     const firstTab = page.locator(
       `[data-yaade-tool-pane-tab="${firstId}"]`,
     );
@@ -1648,6 +1668,140 @@ test("pane tiles contain ToolUse tabs and the sidebar lists sessions and agents"
           .querySelector('[data-yaade-shell="tool-session"]')
           ?.getAttribute("data-yaade-sidebars-state") === "expanded",
     );
+  } finally {
+    await app.app.close();
+  }
+});
+
+async function clickLocatorPadding(
+  page: ShellDriver,
+  locator: ReturnType<ShellDriver["locator"]>,
+  inset = { x: 4, y: 4 },
+): Promise<void> {
+  const box = await locator.boundingBox();
+  if (!box) throw new Error("clickLocatorPadding: missing geometry");
+  await page.mouse.click(box.x + inset.x, box.y + inset.y);
+}
+
+test("sidebar session rows and pane tabs switch from the full hit target", async () => {
+  const app = await launchWeb({});
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+
+    const firstSessionId = await page.evaluate(
+      () => window.__yaadeAgent!.getState().activeSessionId,
+    );
+    if (!firstSessionId) throw new Error("boot session missing");
+    const firstTermId = await createTerminalViaApi(page, "hit-target-one");
+
+    await page.locator("[data-yaade-new-session]").click();
+    await page.waitForFunction(
+      (id) => window.__yaadeAgent?.getState().activeSessionId !== id,
+      firstSessionId,
+      { timeout: 15_000 },
+    );
+    const secondSessionId = await page.evaluate(
+      () => window.__yaadeAgent!.getState().activeSessionId,
+    );
+    if (!secondSessionId) throw new Error("second session missing");
+    await createTerminalViaApi(page, "hit-target-two");
+
+    const firstSession = page.locator(
+      `[data-yaade-session="${firstSessionId}"]`,
+    );
+    const secondSession = page.locator(
+      `[data-yaade-session="${secondSessionId}"]`,
+    );
+    await expectLocatorVisible(firstSession);
+    await expectLocatorVisible(secondSession);
+
+    const firstSessionBox = await firstSession.boundingBox();
+    if (!firstSessionBox) throw new Error("session row geometry missing");
+    expect(firstSessionBox.height).toBeGreaterThanOrEqual(32);
+    expect(firstSessionBox.width).toBeGreaterThan(80);
+
+    await clickLocatorPadding(page, firstSession);
+    await page.waitForFunction(
+      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
+      firstSessionId,
+    );
+    await expectLocatorVisible(
+      page.locator(`[data-yaade-session="${firstSessionId}"][data-active]`),
+    );
+    await expectLocatorVisible(
+      page.locator(`[data-yaade-tool-pane-tab="${firstTermId}"][data-active]`),
+    );
+
+    await firstSession.focus();
+    await page.keyboard.press("ArrowDown");
+    await page.waitForFunction(
+      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
+      secondSessionId,
+    );
+
+    await firstSession.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
+      firstSessionId,
+    );
+
+    await secondSession.focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
+      secondSessionId,
+    );
+
+    await firstSession.locator('button[aria-label^="Close "]').click();
+    await expectLocatorVisible(page.getByRole("dialog"));
+    await expectContainsText(page, '[role="dialog"]', "Close session?");
+    await page.getByRole("button", { name: "Cancel" }).click();
+    await page.waitForFunction(
+      () => document.querySelector('[role="dialog"]') == null,
+    );
+    expect(
+      await page.evaluate(() => window.__yaadeAgent!.getState().activeSessionId),
+    ).toBe(secondSessionId);
+
+    const secondTermId = await page.evaluate(
+      () => window.__yaadeAgent!.getState().activeToolUseId,
+    );
+    if (!secondTermId) throw new Error("second session tool missing");
+    const extraTermId = await createTerminalViaApi(page, "hit-target-three");
+    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
+
+    const inactiveTab = page.locator(
+      `[data-yaade-tool-pane-tab="${secondTermId}"]`,
+    );
+    await expectLocatorVisible(inactiveTab);
+    await inactiveTab.locator("[data-yaade-pane-tab-status]").click();
+    await expectLocatorVisible(
+      page.locator(`[data-yaade-tool-pane-tab="${secondTermId}"][data-active]`),
+    );
+    await page.waitForFunction(
+      (id) => window.__yaadeAgent?.getState().activeToolUseId === id,
+      secondTermId,
+    );
+
+    await page
+      .locator(`[data-yaade-tool-pane-tab="${secondTermId}"]`)
+      .getByRole("tab")
+      .focus();
+    await page.keyboard.press("ArrowRight");
+    await expectLocatorVisible(
+      page.locator(`[data-yaade-tool-pane-tab="${extraTermId}"][data-active]`),
+    );
+
+    const pane = page.locator("[data-yaade-panel-leaf]").first();
+    await pane.getByRole("button", { name: "Split right" }).click();
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
+    await expectSelectorVisible(page, "[data-yaade-empty-tool-tile]");
+    await expectLocatorCount(page.locator("[data-yaade-empty-tile-tool]"), 4);
+    await page.locator('[data-yaade-empty-tile-tool="terminal"]').click();
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
+    await expectLocatorCount(page.locator("[data-yaade-empty-tool-tile]"), 0);
   } finally {
     await app.app.close();
   }

@@ -247,7 +247,7 @@ behind a tmux-style prefix. Press **`Ctrl-a`** twice inside xterm to send a
 literal `^A` (tmux `send-prefix`).
 
 **Canonical grammar** is the Tool Session shell. Source of truth:
-`packages/yaade-app/src/tools/tool-session-keymap.ts`. One command → one
+`packages/yaade-app/src/keybindings.ts`. One command → one
 prefix key. Do not add aliases.
 
 | `Ctrl-a` + | Action | | `Ctrl-a` + | Action |
@@ -272,10 +272,10 @@ risky, and both were aliases of prefix commands (`u` / `w`).
 `TOOL_SESSION_PREFIX_BINDINGS` feeds the WhichKey HUD, so on-screen hints
 cannot drift from what is bound.
 
-**Legacy mux** (`/_project`) keeps its own table in
-`packages/yaade-app/src/mux/mux-keymap.ts` (`MUX_PREFIX_BINDINGS`). Direct
-chords there remain `Mod-Shift-p` (palette) and `Mod-,` (settings). Do not
-extend that table — the mux shell is compat-only.
+**Legacy mux** (`/_project`) keeps its own table in the same catalog
+(`MUX_PREFIX_BINDINGS`). Direct chords there remain `Mod-Shift-p` (palette)
+and `Mod-,` (settings). Do not extend that table — the mux shell is
+compat-only.
 
 ### Dispatch pipeline
 
@@ -481,9 +481,10 @@ window.__yaadeAgent.getPerfMeasures() // User Timing measures (jet:*)
 1. Decide layer — shared / panels / workspace / ui / app / host-server.
 2. Add types to `@yaade/shared` or `@yaade/rpc` if cross-cutting.
 3. Register the command in `MuxApp`'s command effect.
-4. If it needs a shortcut, add it to `TOOL_SESSION_PREFIX_BINDINGS` — do **not**
-   invent a new `Mod-` chord or a second key for an existing command. Legacy mux
-   only: `MUX_PREFIX_BINDINGS`.
+4. If it needs a shortcut, add it to `TOOL_SESSION_PREFIX_BINDINGS` in
+   `packages/yaade-app/src/keybindings.ts` — do **not** invent a new `Mod-`
+   chord or a second key for an existing command. Legacy mux only:
+   `MUX_PREFIX_BINDINGS` in that same file.
 5. `pnpm -r typecheck`.
 6. Unit test with `node:test`; register the file in `package.json` for
    `@yaade/app`.
@@ -544,6 +545,7 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 | `packages/yaade-app/src/main.tsx` | Entry: `createWebTransport` → `window.yaade`, mounts `AppRoot` |
 | `packages/yaade-app/src/AppRoot.tsx` | `/` → ToolSessionApp; legacy routes otherwise |
 | `packages/yaade-app/src/tools/ToolSessionApp.tsx` | Session shell composition |
+| `packages/yaade-app/src/keybindings.ts` | Command key catalog (Tool Session + legacy mux) |
 | `packages/yaade-app/src/tools/tool-store.ts` | Normalized browser store (no PTY bytes) |
 | `packages/yaade-app/src/tools/tool-session-routing.ts` | `/?s=&u=` parse/build |
 | `packages/yaade-rpc/src/tool-session.ts` | Session/ToolUse contracts |

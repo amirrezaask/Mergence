@@ -411,3 +411,49 @@ test("getCwd returns spawn cwd and tracks process cd", async () => {
     fs.rmSync(tmp, { recursive: true, force: true })
   }
 })
+
+test("answers a Primary Device Attributes query before any renderer attaches", async () => {
+  const terminal = new TerminalHost()
+  const chunks: string[] = []
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const seen = new Promise<void>((resolve, reject) => {
+    timeout = setTimeout(() => reject(new Error("DA1 host reply timed out")), 5_000)
+    terminal.setEmit((channel, args) => {
+      if (channel !== "terminal:data") return
+      const data = String(args[1] ?? "")
+      chunks.push(data)
+      terminal.acknowledgeData(String(args[0] ?? ""), data.length)
+      if (chunks.join("").includes("DA1-HOST-OK")) resolve()
+    })
+  })
+
+  try {
+    terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          `
+            if (!process.stdin.isTTY) { process.stdout.write('DA1-HOST-NOTTY'); process.exit(2); }
+            process.stdin.setRawMode(true);
+            process.stdin.resume();
+            process.stdin.on('data', (chunk) => {
+              if (!/\\x1b\\[\\?[\\d;]*c/.test(chunk.toString('utf8'))) return;
+              process.stdout.write('DA1-HOST-OK');
+              process.exit(0);
+            });
+            process.stdout.write('\\x1b[0c');
+            setTimeout(() => { process.stdout.write('DA1-HOST-TIMEOUT'); process.exit(1); }, 2000).unref();
+          `,
+        ],
+      },
+      "terminal-da1-host-test",
+    )
+    await seen
+    assert.doesNotMatch(chunks.join(""), /DA1-HOST-TIMEOUT/)
+  } finally {
+    if (timeout) clearTimeout(timeout)
+    terminal.stopAll()
+  }
+})

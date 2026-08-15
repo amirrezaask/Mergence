@@ -14,7 +14,7 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "tsc -p tsconfig.json",
     "postinstall": "node scripts/fix-node-pty-perms.mjs",
-    "test": "tsx --test --test-force-exit src/fs.test.ts src/fs-mutations.test.ts src/git-commit-diff.test.ts src/git-apply-patch.test.ts src/latest-root-task-queue.test.ts src/lsp-bridge.test.ts src/lsp-config.test.ts src/lsp-host.test.ts src/lsp-registry.test.ts src/search.test.ts src/shell-env.test.ts src/tasks.test.ts src/terminal.test.ts src/terminal-cwd.test.ts src/terminal-osc7.test.ts src/effect-terminal.test.ts"
+    "test": "tsx --test --test-force-exit src/fs.test.ts src/fs-mutations.test.ts src/git-commit-diff.test.ts src/git-apply-patch.test.ts src/latest-root-task-queue.test.ts src/lsp-bridge.test.ts src/lsp-config.test.ts src/lsp-host.test.ts src/lsp-registry.test.ts src/search.test.ts src/shell-env.test.ts src/tasks.test.ts src/terminal.test.ts src/terminal-cwd.test.ts src/terminal-da.test.ts src/terminal-osc7.test.ts src/effect-terminal.test.ts"
   },
   "devDependencies": {
     "@types/node": "^22.15.29",
