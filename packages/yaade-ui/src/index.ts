@@ -1,5 +1,11 @@
 export { PanelDock, type PanelDockProps, type PanelSlotMeta } from "./dock/PanelDock.js"
 export { TabDndRoot, type TabDndHandlers, useDropHot } from "./dock/TabDndRoot.js"
+export {
+  DockTabBarDropTarget,
+  DockTabHandle,
+  type DockTabBarDropTargetProps,
+  type DockTabHandleProps,
+} from "./dock/DockTabHandle.js"
 export { DockSourceHandle, type DockSourceHandleProps } from "./dock/DockSourceHandle.js"
 export {
   PanelFloatingPopover,

@@ -68,14 +68,17 @@ import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
 import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
+import { agentProviderFromTerminal } from "./agent-process.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
+  activateToolTab,
   closeToolPanel,
   createToolWorkspace,
   dockToolView,
   focusToolPanel,
   openToolView,
   removeMissingToolViews,
+  reorderToolTabs,
   resizeToolSplit,
   splitToolPanel,
   toolIdsInWorkspace,
@@ -175,6 +178,9 @@ export function ToolSessionApp() {
   const [runtimeTitles, setRuntimeTitles] = useState<
     ReadonlyMap<ToolUseId, RuntimeToolTitle>
   >(() => new Map());
+  const [terminalProcessNames, setTerminalProcessNames] = useState<
+    ReadonlyMap<ToolUseId, string>
+  >(() => new Map());
   const prefixPendingRef = useRef(false);
   const toolUsesRef = useRef(snapshot.usesById);
   toolUsesRef.current = snapshot.usesById;
@@ -197,6 +203,62 @@ export function ToolSessionApp() {
     void client.hydrate().catch(() => undefined);
     return () => client.dispose();
   }, [client]);
+
+  useEffect(() => {
+    const terminalApi = window.yaade?.terminal;
+    if (!terminalApi?.getForegroundProcess) return;
+    let cancelled = false;
+
+    const tick = async () => {
+      const candidates = new Map<ToolUseId, string>();
+      for (const use of toolUsesRef.current.values()) {
+        if (
+          use.kind === "terminal" &&
+          !use.archivedAt &&
+          isLive(use) &&
+          use.output.kind === "process" &&
+          use.output.ptyId
+        ) {
+          candidates.set(use.id, use.output.ptyId);
+        }
+      }
+      const entries = await Promise.all(
+        [...candidates].map(async ([toolUseId, ptyId]) => {
+          try {
+            return [
+              toolUseId,
+              await terminalApi.getForegroundProcess(ptyId),
+            ] as const;
+          } catch {
+            return [toolUseId, null] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      const next = new Map<ToolUseId, string>();
+      for (const [toolUseId, processName] of entries) {
+        if (processName) next.set(toolUseId, processName);
+      }
+      setTerminalProcessNames((previous) => {
+        if (
+          previous.size === next.size &&
+          [...next].every(([id, name]) => previous.get(id) === name)
+        ) {
+          return previous;
+        }
+        return next;
+      });
+    };
+
+    void tick();
+    const handle = window.setInterval(() => void tick(), 2_000);
+    window.addEventListener("yaade:host-reconnected", tick);
+    return () => {
+      cancelled = true;
+      window.clearInterval(handle);
+      window.removeEventListener("yaade:host-reconnected", tick);
+    };
+  }, [snapshot.usesById]);
 
   useEffect(() => {
     void window.yaade?.tools
@@ -241,6 +303,33 @@ export function ToolSessionApp() {
   const useIds = activeSession
     ? (snapshot.useIdsBySession.get(activeSession.id) ?? [])
     : [];
+  const agentUseIds = useMemo(() => {
+    const ids: ToolUseId[] = [];
+    for (const sessionId of snapshot.visibleSessionIds) {
+      for (const id of snapshot.useIdsBySession.get(sessionId) ?? []) {
+        const use = snapshot.usesById.get(id);
+        if (!use) continue;
+        const detectedProvider = agentProviderFromTerminal(
+          terminalProcessNames.get(id),
+          runtimeTitles.get(id)?.title,
+        );
+        if (use.kind === "agent" || detectedProvider) ids.push(id);
+      }
+    }
+    return ids;
+  }, [
+    runtimeTitles,
+    snapshot.useIdsBySession,
+    snapshot.usesById,
+    snapshot.visibleSessionIds,
+    terminalProcessNames,
+  ]);
+  const agentLikeUseIds = useMemo(() => new Set(agentUseIds), [agentUseIds]);
+  const sessionTitlesById = useMemo(() => {
+    const titles = new Map<SessionId, string>();
+    for (const session of visibleSessions) titles.set(session.id, session.title);
+    return titles;
+  }, [visibleSessions]);
   const toolCounts = useMemo(() => {
     const counts = new Map<SessionId, number>();
     for (const [id, ids] of snapshot.useIdsBySession) {
@@ -892,6 +981,7 @@ export function ToolSessionApp() {
     () => new Set(toolIdsInWorkspace(activeToolWorkspace)),
     [activeToolWorkspace],
   );
+  const activeSessionUseIds = useMemo(() => new Set(useIds), [useIds]);
 
   const toolUseIdForDrag = useCallback(
     (tabId: string): ToolUseId | undefined => useIds.find((id) => id === tabId),
@@ -909,10 +999,17 @@ export function ToolSessionApp() {
 
   const toolTabDnd = useMemo((): TabDndHandlers => {
     return {
-      onTabReorder: () => undefined,
+      onTabReorder: (panelId, tabId, toIndex) => {
+        if (!activeSession) return;
+        const toolUseId = toolUseIdForDrag(tabId);
+        if (!toolUseId) return;
+        updateToolWorkspace(activeSession.id, (workspace) =>
+          reorderToolTabs(workspace, panelId, toolUseId, toIndex),
+        );
+      },
       tabIdsForPanel: (panelId) => {
         const view = activeToolWorkspace.tree.getView(panelId);
-        return view?.kind === "tool" ? [view.toolUseId] : [];
+        return view?.kind === "tabs" ? [...view.toolUseIds] : [];
       },
       onTabDrop: (_source, sourceTabId, target, action) => {
         if (!activeSession) return;
@@ -944,6 +1041,30 @@ export function ToolSessionApp() {
     updateToolWorkspace,
   ]);
 
+  const closeWorkspacePane = useCallback(
+    (panelId: PanelId) => {
+      if (!activeSession) return;
+      const view = activeToolWorkspace.tree.getView(panelId);
+      if (view?.kind === "tabs") {
+        for (const toolUseId of view.toolUseIds) {
+          const use = snapshot.usesById.get(toolUseId);
+          if (use) void runToolAction("archive", use);
+        }
+        return;
+      }
+      updateToolWorkspace(activeSession.id, (workspace) =>
+        closeToolPanel(workspace, panelId),
+      );
+    },
+    [
+      activeSession,
+      activeToolWorkspace,
+      runToolAction,
+      snapshot.usesById,
+      updateToolWorkspace,
+    ],
+  );
+
   const handleToolPanelEvent = useCallback(
     (event: PanelEvent) => {
       if (!activeSession) return;
@@ -953,13 +1074,9 @@ export function ToolSessionApp() {
         );
         return;
       }
-      if (event.type === "panelClose") {
-        updateToolWorkspace(activeSession.id, (workspace) =>
-          closeToolPanel(workspace, event.panelId),
-        );
-      }
+      if (event.type === "panelClose") closeWorkspacePane(event.panelId);
     },
-    [activeSession, updateToolWorkspace],
+    [activeSession, closeWorkspacePane, updateToolWorkspace],
   );
 
   const focusWorkspacePanel = useCallback(
@@ -971,6 +1088,25 @@ export function ToolSessionApp() {
       if (use) activateDockedTool(use);
     },
     [activeSession, activateDockedTool, updateToolWorkspace],
+  );
+
+  const activateWorkspaceTab = useCallback(
+    (panelId: PanelId, toolUseId: ToolUseId, use?: ToolUse) => {
+      if (!activeSession) return;
+      updateToolWorkspace(activeSession.id, (workspace) =>
+        activateToolTab(workspace, panelId, toolUseId),
+      );
+      if (use) activateDockedTool(use);
+    },
+    [activeSession, activateDockedTool, updateToolWorkspace],
+  );
+
+  const closeWorkspaceTab = useCallback(
+    (_panelId: PanelId, toolUseId: ToolUseId) => {
+      const use = snapshot.usesById.get(toolUseId);
+      if (use) void runToolAction("archive", use);
+    },
+    [runToolAction, snapshot.usesById],
   );
 
   const renderPrefixHud = (placement: "main" | "dock") =>
@@ -1086,31 +1222,6 @@ export function ToolSessionApp() {
                     sidebarsCollapsed ? "collapsed" : "expanded"
                   }
                 >
-                  <ToolUseTabStrip
-                    useIds={useIds}
-                    usesById={snapshot.usesById}
-                    activeToolUseId={snapshot.activeToolUseId}
-                    openToolUseIds={openToolUseIds}
-                    runtimeTitles={runtimeTitles}
-                    projects={projects}
-                    layout="single-sidebar"
-                    collapsed={sidebarsCollapsed}
-                    sidebarOrientation={sidebarOrientation}
-                    dockable
-                    onSelect={selectTool}
-                    onContextChange={updateToolContext}
-                    onProviderChange={updateToolProvider}
-                    onAddAgent={(provider) =>
-                      void createTool("agent", provider)
-                    }
-                    onAddKind={(kind) => void createTool(kind)}
-                    onAddWithContext={(kind, project, checkout) =>
-                      void createTool(kind, undefined, { project, checkout })
-                    }
-                    onClose={(use) => void runToolAction("archive", use)}
-                    onRename={(use, title) => void renameToolUse(use, title)}
-                    onReorder={(ids) => void reorderToolUses(ids)}
-                  />
                   <SessionTabStrip
                     sessions={visibleSessions}
                     activeSessionId={snapshot.activeSessionId}
@@ -1124,6 +1235,38 @@ export function ToolSessionApp() {
                     onCreate={() => void createSession()}
                     onRename={(id, title) => void renameSession(id, title)}
                     onReorder={(ids) => void reorderSessions(ids)}
+                  />
+                  <ToolUseTabStrip
+                    useIds={agentUseIds}
+                    usesById={snapshot.usesById}
+                    activeToolUseId={snapshot.activeToolUseId}
+                    openToolUseIds={openToolUseIds}
+                    runtimeTitles={runtimeTitles}
+                    projects={projects}
+                    sessionTitlesById={sessionTitlesById}
+                    agentLikeUseIds={agentLikeUseIds}
+                    sectionLabel="Agents"
+                    emptyLabel="No agents yet"
+                    newToolKinds={["agent"]}
+                    layout="single-sidebar"
+                    collapsed={sidebarsCollapsed}
+                    sidebarOrientation={sidebarOrientation}
+                    dockable
+                    dockableUseIds={activeSessionUseIds}
+                    onSelect={selectTool}
+                    onContextChange={updateToolContext}
+                    onProviderChange={updateToolProvider}
+                    onAddAgent={(provider) =>
+                      void createTool("agent", provider)
+                    }
+                    onAddKind={(kind) => void createTool(kind)}
+                    onAddWithContext={(kind, project, checkout) =>
+                      void createTool(kind, undefined, { project, checkout })
+                    }
+                    onClose={(use) => void runToolAction("archive", use)}
+                    onRename={(use, title) => void renameToolUse(use, title)}
+                    onReorder={() => undefined}
+                    onToggleSidebar={toggleSidebars}
                   />
                 </aside>
               ) : null}
@@ -1196,19 +1339,24 @@ export function ToolSessionApp() {
                     workspace={activeToolWorkspace}
                     usesById={snapshot.usesById}
                     runtimeTitles={runtimeTitles}
+                    projects={projects}
                     tabDnd={toolTabDnd}
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
+                    onActivateTab={activateWorkspaceTab}
+                    onCloseTab={closeWorkspaceTab}
+                    onAddTool={(panelId, kind) => {
+                      focusWorkspacePanel(panelId);
+                      void createTool(kind);
+                    }}
+                    onContextChange={updateToolContext}
+                    onProviderChange={updateToolProvider}
                     onSplit={(panelId, edge) =>
                       updateToolWorkspace(activeSession.id, (workspace) =>
                         splitToolPanel(workspace, panelId, edge),
                       )
                     }
-                    onCloseView={(panelId) =>
-                      updateToolWorkspace(activeSession.id, (workspace) =>
-                        closeToolPanel(workspace, panelId),
-                      )
-                    }
+                    onCloseView={closeWorkspacePane}
                     empty={
                       <SessionEmptyState
                         onAddKind={(kind) => void createTool(kind)}
@@ -1300,16 +1448,26 @@ export function ToolSessionApp() {
                 >
                   {!sidebarLayout ? renderPrefixHud("dock") : null}
                   <ToolUseTabStrip
-                    useIds={useIds}
+                    useIds={twoSidebarLayout ? agentUseIds : useIds}
                     usesById={snapshot.usesById}
                     activeToolUseId={snapshot.activeToolUseId}
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
+                    sessionTitlesById={
+                      twoSidebarLayout ? sessionTitlesById : undefined
+                    }
+                    agentLikeUseIds={
+                      twoSidebarLayout ? agentLikeUseIds : undefined
+                    }
+                    sectionLabel={twoSidebarLayout ? "Agents" : undefined}
+                    emptyLabel={twoSidebarLayout ? "No agents yet" : undefined}
+                    newToolKinds={twoSidebarLayout ? ["agent"] : undefined}
                     layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
                     collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
                     sidebarOrientation={sidebarOrientation}
                     dockable
+                    dockableUseIds={activeSessionUseIds}
                     onSelect={selectTool}
                     onContextChange={updateToolContext}
                     onProviderChange={updateToolProvider}
@@ -1322,7 +1480,10 @@ export function ToolSessionApp() {
                     }
                     onClose={(use) => void runToolAction("archive", use)}
                     onRename={(use, title) => void renameToolUse(use, title)}
-                    onReorder={(ids) => void reorderToolUses(ids)}
+                    onReorder={(ids) => {
+                      if (!twoSidebarLayout) void reorderToolUses(ids);
+                    }}
+                    onToggleSidebar={twoSidebarLayout ? toggleSidebars : undefined}
                   />
                 </div>
               ) : null}

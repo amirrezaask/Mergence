@@ -35,7 +35,9 @@ async function openToolSessionShell(page: ShellDriver): Promise<void> {
 }
 
 async function openToolContext(page: ShellDriver): Promise<void> {
-  await page.locator('[data-yaade-tool-use][data-active="true"]').click();
+  await page
+    .locator('[data-yaade-tool-pane-tab][data-active]')
+    .click({ button: "right" });
   await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
 }
 
@@ -54,7 +56,9 @@ async function waitForVisibleTerminalSurface(page: ShellDriver): Promise<void> {
 }
 
 async function createTerminalToolUse(page: ShellDriver): Promise<void> {
-  await page.locator('[data-yaade-new-tool="terminal"]').click();
+  await page.locator("[data-yaade-pane-new-tool]").first().click();
+  await expectSelectorVisible(page, "[data-yaade-pane-tool-menu]");
+  await page.locator('[data-yaade-pane-new-tool-kind="terminal"]').click();
   await waitForVisibleTerminalSurface(page);
   await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
@@ -69,7 +73,9 @@ async function createSearchToolUse(
   page: ShellDriver,
   query: string,
 ): Promise<void> {
-  await page.locator('[data-yaade-new-tool="search"]').click();
+  await page.locator("[data-yaade-pane-new-tool]").first().click();
+  await expectSelectorVisible(page, "[data-yaade-pane-tool-menu]");
+  await page.locator('[data-yaade-pane-new-tool-kind="search"]').click();
   await page.waitForSelector('[data-yaade-list-panel="project-search"]', {
     timeout: 30_000,
   });
@@ -486,7 +492,9 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await page.waitForFunction(
       () => {
         const title = document
-          .querySelector("[data-yaade-tool-title]")
+          .querySelector(
+            '[data-yaade-tool-pane-tab][data-active] button[role="tab"]',
+          )
           ?.textContent?.trim();
         return Boolean(title && title !== "Terminal");
       },
@@ -698,7 +706,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     });
     await expectContainsText(
       page,
-      "[data-yaade-tool-tabs]",
+      "[data-yaade-tool-pane-tab][data-active]",
       "nonGitSearchFixture",
     );
     await expectNotContainsText(
@@ -1073,7 +1081,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   }
 });
 
-/** 13 */ test("LRU keeps at most six process viewports while host PTYs survive", async () => {
+/** 13 */ test("pane tabs render one process viewport while host PTYs survive", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
@@ -1082,24 +1090,9 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     for (let i = 0; i < 7; i += 1) {
       ids.push(await createTerminalViaApi(page, `term-${i}`));
     }
-    await page.waitForFunction(
-      () =>
-        Number(
-          document
-            .querySelector("[data-yaade-viewport-count]")
-            ?.getAttribute("data-yaade-viewport-count") ?? "0",
-        ) <= 6,
-      null,
-      { timeout: 15_000 },
-    );
-    const viewportCount = await page.evaluate(() =>
-      Number(
-        document
-          .querySelector("[data-yaade-viewport-count]")
-          ?.getAttribute("data-yaade-viewport-count") ?? "0",
-      ),
-    );
-    expect(viewportCount).toBeLessThanOrEqual(6);
+    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 7);
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 1);
     const firstId = ids[0]!;
     await page.evaluate(async (id) => {
       await window.__yaadeAgent!.selectToolUse!(id);
@@ -1202,25 +1195,26 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   }
 });
 
-/** 17 */ test("mobile ToolUse taskbar keeps the selected ToolUse visible", async () => {
+/** 17 */ test("mobile pane tabs keep the selected ToolUse visible", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await page.setViewportSize({ width: 390, height: 844 });
     await openToolSessionShell(page);
     await createTerminalViaApi(page, "mobile-term");
-    const toolTabs = page.locator("[data-yaade-tool-tabs]");
-    await expectSelectorVisible(page, "[data-yaade-tool-tabs]");
     await expectSelectorVisible(
       page,
-      '[data-yaade-tool-tabs] [data-yaade-tool-use][data-active="true"]',
+      '[data-yaade-tool-pane-tab][data-active]',
     );
-    const toolTabsBox = await toolTabs.boundingBox();
-    const viewportHeight = await page.evaluate(() => window.innerHeight);
-    expect(toolTabsBox).not.toBeNull();
-    expect(
-      (toolTabsBox?.y ?? 0) + (toolTabsBox?.height ?? 0),
-    ).toBeGreaterThanOrEqual(viewportHeight - 2);
+    const activeTabBox = await page
+      .locator('[data-yaade-tool-pane-tab][data-active]')
+      .boundingBox();
+    const viewportWidth = await page.evaluate(() => window.innerWidth);
+    expect(activeTabBox).not.toBeNull();
+    expect(activeTabBox?.x ?? -1).toBeGreaterThanOrEqual(0);
+    expect((activeTabBox?.x ?? 0) + (activeTabBox?.width ?? 0)).toBeLessThanOrEqual(
+      viewportWidth,
+    );
     await waitForVisibleTerminalSurface(page);
   } finally {
     await app.app.close();
@@ -1374,7 +1368,6 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       }
     });
     await expectSelectorVisible(page, "[data-yaade-session-empty]");
-    await expectSelectorVisible(page, '[data-yaade-empty-tool="agent"]');
     await expectSelectorVisible(page, '[data-yaade-empty-tool="terminal"]');
     await expectSelectorVisible(page, '[data-yaade-empty-tool="search"]');
     await expectSelectorVisible(page, '[data-yaade-empty-tool="editor"]');
@@ -1388,7 +1381,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
 });
 
 /** 22 */ test(
-  "right-clicking a tool shortcut opens a contextual launcher",
+  "pane tool menu creates a tool and tab right-click edits its context",
   async () => {
     const homeDir = fs.mkdtempSync(
       path.join(path.dirname(REPO_ROOT), "yaade-e2e-home-"),
@@ -1399,13 +1392,14 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       await openToolSessionShell(page);
       await ensureProjectGitRepo(page);
 
-      await page.locator('[data-yaade-new-tool="terminal"]').click({
-        button: "right",
-      });
-      await expectSelectorVisible(
-        page,
-        '[data-yaade-tool-launch-popover="terminal"]',
+      await page.locator("[data-yaade-pane-new-tool]").click();
+      await expectLocatorCount(
+        page.locator("[data-yaade-pane-new-tool-kind]"),
+        4,
       );
+      await page.locator('[data-yaade-pane-new-tool-kind="terminal"]').click();
+      await waitForVisibleTerminalSurface(page);
+      await openToolContext(page);
       await expectSelectorVisible(page, "#tool-project");
       await expectSelectorVisible(page, "#tool-checkout");
 
@@ -1416,11 +1410,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
         .click();
       await page.getByLabel("Isolated branch worktree").fill(branch);
       await page.getByLabel("Isolated branch worktree").press("Enter");
-      await page
-        .locator('[data-yaade-open-tool-with-context="terminal"]')
-        .click();
 
-      await waitForVisibleTerminalSurface(page);
       await page.waitForFunction(
         (expectedBranch) => {
           const state = window.__yaadeAgent?.getState();
@@ -1438,11 +1428,8 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
         { timeout: 30_000 },
       );
 
-      await page.locator('[data-yaade-tool-use][data-active="true"]').click({
-        button: "right",
-      });
+      await openToolContext(page);
       await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
-      await expectSelectorVisible(page, "[data-yaade-open-tool-use]");
     } finally {
       await app.app.close();
       fs.rmSync(homeDir, { recursive: true, force: true });
@@ -1450,48 +1437,50 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   },
 );
 
-test("tools tile independently while sidebar residents stay open", async () => {
+test("pane tiles contain ToolUse tabs and the sidebar lists sessions and agents", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
+    await expectContainsText(page, "[data-yaade-single-sidebar]", "Sessions");
+    await expectContainsText(page, "[data-yaade-single-sidebar]", "Agents");
+
     const firstId = await createTerminalViaApi(page, "tile-one");
     const secondId = await createTerminalViaApi(page, "tile-two");
 
-    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
-    await expectLocatorCount(
-      page.locator('[data-yaade-tool-tabs] [data-yaade-tool-use]'),
-      2,
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
+    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 1);
+
+    const firstTab = page.locator(
+      `[data-yaade-tool-pane-tab="${firstId}"]`,
     );
-
-    const firstTile = page.locator(`[data-yaade-tool-tile="${firstId}"]`);
-    await firstTile
-      .locator("xpath=ancestor::*[@data-yaade-panel-leaf][1]")
-      .getByRole("button", { name: "Close pane" })
-      .click();
-
+    await firstTab.locator('button[aria-label^="Close "]').click();
     await expectLocatorCount(
-      page.locator(`[data-yaade-tool-tile="${firstId}"]`),
+      page.locator(`[data-yaade-tool-pane-tab="${firstId}"]`),
       0,
-    );
-    await expectLocatorCount(
-      page.locator(`[data-yaade-tool-use="${firstId}"]`),
-      1,
     );
     await page.waitForFunction(
       (id) =>
-        (window.__yaadeAgent?.getState().toolUses ?? []).some(
+        !(window.__yaadeAgent?.getState().toolUses ?? []).some(
           (use: { id: string }) => use.id === id,
         ),
       firstId,
     );
 
-    const secondTile = page.locator(`[data-yaade-tool-tile="${secondId}"]`);
-    const dockSource = page.locator(`[data-yaade-dock-source="${firstId}"]`);
-    await page.waitForSelector(`[data-yaade-dock-source="${firstId}"]`);
-    const sourceBox = await dockSource.boundingBox();
-    const targetBox = await secondTile.boundingBox();
-    if (!sourceBox || !targetBox) throw new Error("tool drag target missing");
+    const pane = page.locator("[data-yaade-panel-leaf]").first();
+    await pane.getByRole("button", { name: "Split right" }).click();
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
+    const thirdId = await createTerminalViaApi(page, "tile-three");
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
+
+    const source = page
+      .locator(`[data-yaade-tool-pane-tab="${thirdId}"]`)
+      .getByRole("tab");
+    const target = page.locator(`[data-yaade-tool-tile="${secondId}"]`);
+    const sourceBox = await source.boundingBox();
+    const targetBox = await target.boundingBox();
+    if (!sourceBox || !targetBox) throw new Error("tool tab drag target missing");
     await page.mouse.move(
       sourceBox.x + sourceBox.width / 2,
       sourceBox.y + sourceBox.height / 2,
@@ -1506,23 +1495,51 @@ test("tools tile independently while sidebar residents stay open", async () => {
       targetBox.y + targetBox.height / 2,
       { steps: 20 },
     );
-    await page.waitForTimeout(30);
     await page.mouse.up();
-    await expectSelectorVisible(page, `[data-yaade-tool-tile="${firstId}"]`);
-    await expectLocatorCount(
-      page.locator(`[data-yaade-tool-tile="${secondId}"]`),
-      0,
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
+    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
+
+    const thirdPtyId = await page.evaluate((id) => {
+      const use = (window.__yaadeAgent?.getState().toolUses ?? []).find(
+        (candidate: { id: string }) => candidate.id === id,
+      ) as { output?: { ptyId?: string } } | undefined;
+      return use?.output?.ptyId ?? null;
+    }, thirdId);
+    if (!thirdPtyId) throw new Error("terminal PTY missing");
+    await page.evaluate(() => {
+      const terminal = window.yaade?.terminal;
+      if (!terminal) throw new Error("terminal API missing");
+      terminal.getForegroundProcess = async () => "claude";
+    });
+    await expectSelectorVisible(
+      page,
+      `[data-yaade-tool-use="${thirdId}"][data-yaade-detected-agent]`,
     );
 
-    await page.locator(`[data-yaade-tool-use="${secondId}"]`).click();
-    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
-    await expectSelectorVisible(page, `[data-yaade-tool-tile="${secondId}"]`);
+    await page
+      .locator(`[data-yaade-tool-pane-tab="${thirdId}"]`)
+      .click({ button: "right" });
+    await expectSelectorVisible(
+      page,
+      `[data-yaade-pane-tab-context="${thirdId}"]`,
+    );
+    await page.keyboard.press("Escape");
+
+    await page.locator("[data-yaade-pane-new-tool]").click();
+    await expectLocatorCount(
+      page.locator("[data-yaade-pane-new-tool-kind]"),
+      4,
+    );
+    await expectLocatorCount(
+      page.locator('[data-yaade-pane-new-tool-kind="agent"]'),
+      0,
+    );
+    await page.keyboard.press("Escape");
 
     const leftHoverZone = page.locator(
       '[data-yaade-sidebar-hover-zone="left"]',
     );
-    await leftHoverZone.hover();
-    await leftHoverZone.getByRole("button", { name: "Hide sidebars" }).click();
+    await page.locator("[data-yaade-sidebar-toolbar-toggle]").click();
     await page.waitForFunction(
       () =>
         document

@@ -4,10 +4,13 @@ import { Schema } from "effect";
 import { ToolUseId } from "@yaade/rpc";
 import {
   MAX_TOOL_TILES,
+  activateToolTab,
   closeToolPanel,
+  closeToolTab,
   createToolWorkspace,
   dockToolView,
   openToolView,
+  reorderToolTabs,
   splitToolPanel,
   toolIdsInWorkspace,
 } from "./tool-tiling.js";
@@ -15,27 +18,60 @@ import {
 const toolId = (suffix: string) =>
   Schema.decodeUnknownSync(ToolUseId)(`use-${suffix}`);
 
+function focusedTabs(workspace: ReturnType<typeof createToolWorkspace>) {
+  const view = workspace.tree.getView(workspace.focusedPanelId);
+  assert.equal(view?.kind, "tabs");
+  return view?.kind === "tabs" ? view : undefined;
+}
+
 describe("tool tiling workspace", () => {
-  it("opens tools into tiles and focuses an existing tile", () => {
+  it("opens tools as tabs in the focused pane", () => {
     const first = toolId("first");
     const second = toolId("second");
     let workspace = openToolView(createToolWorkspace(), first);
     workspace = openToolView(workspace, second);
 
     assert.deepEqual(toolIdsInWorkspace(workspace), [first, second]);
-    const focusedBefore = workspace.focusedPanelId;
+    assert.deepEqual(focusedTabs(workspace)?.toolUseIds, [first, second]);
+    assert.equal(focusedTabs(workspace)?.activeToolUseId, second);
+
     workspace = openToolView(workspace, first);
-    assert.notEqual(workspace.focusedPanelId.id, focusedBefore.id);
+    assert.equal(focusedTabs(workspace)?.activeToolUseId, first);
     assert.deepEqual(toolIdsInWorkspace(workspace), [first, second]);
   });
 
-  it("closing a tile only removes its view", () => {
+  it("activates and reorders tabs without changing panes", () => {
     const first = toolId("first");
-    const workspace = openToolView(createToolWorkspace(), first);
-    const closed = closeToolPanel(workspace, workspace.focusedPanelId);
+    const second = toolId("second");
+    let workspace = openToolView(createToolWorkspace(), first);
+    workspace = openToolView(workspace, second);
+    workspace = activateToolTab(
+      workspace,
+      workspace.focusedPanelId,
+      first,
+    );
+    workspace = reorderToolTabs(
+      workspace,
+      workspace.focusedPanelId,
+      second,
+      0,
+    );
 
-    assert.deepEqual(toolIdsInWorkspace(closed), []);
-    assert.equal(closed.tree.getView(closed.focusedPanelId)?.kind, "empty");
+    assert.deepEqual(focusedTabs(workspace)?.toolUseIds, [second, first]);
+    assert.equal(focusedTabs(workspace)?.activeToolUseId, first);
+  });
+
+  it("closing a tab or pane only removes workspace views", () => {
+    const first = toolId("first");
+    const second = toolId("second");
+    let workspace = openToolView(createToolWorkspace(), first);
+    workspace = openToolView(workspace, second);
+    workspace = closeToolTab(workspace, workspace.focusedPanelId, first);
+
+    assert.deepEqual(toolIdsInWorkspace(workspace), [second]);
+    workspace = closeToolPanel(workspace, workspace.focusedPanelId);
+    assert.deepEqual(toolIdsInWorkspace(workspace), []);
+    assert.equal(workspace.tree.getView(workspace.focusedPanelId)?.kind, "empty");
   });
 
   it("drops a sidebar tool at a panel edge", () => {
@@ -51,26 +87,75 @@ describe("tool tiling workspace", () => {
     assert.equal(docked.tree.root.kind, "column");
   });
 
-  it("caps mounted tiles and reuses the focused tile", () => {
-    let workspace = createToolWorkspace();
-    for (let index = 0; index < MAX_TOOL_TILES + 1; index += 1) {
-      workspace = openToolView(workspace, toolId(String(index)));
-    }
+  it("drops a tool in the center as a tab", () => {
+    const first = toolId("first");
+    const second = toolId("second");
+    const workspace = openToolView(createToolWorkspace(), first);
+    const docked = dockToolView(workspace, second, workspace.focusedPanelId, {
+      kind: "moveToPane",
+    });
 
-    assert.equal(toolIdsInWorkspace(workspace).length, MAX_TOOL_TILES);
-    assert.equal(
-      toolIdsInWorkspace(workspace).includes(toolId(String(MAX_TOOL_TILES))),
-      true,
-    );
+    assert.deepEqual(focusedTabs(docked)?.toolUseIds, [first, second]);
+    assert.equal(focusedTabs(docked)?.activeToolUseId, second);
   });
 
-  it("opens a tool in an explicit empty split", () => {
+  it("moves a tab between panes and removes an empty source pane", () => {
     const first = toolId("first");
     const second = toolId("second");
     let workspace = openToolView(createToolWorkspace(), first);
-    workspace = splitToolPanel(workspace, workspace.focusedPanelId, "right");
+    const firstPanel = workspace.focusedPanelId;
+    workspace = splitToolPanel(workspace, firstPanel, "right");
     workspace = openToolView(workspace, second);
+    const secondPanel = workspace.focusedPanelId;
 
+    workspace = dockToolView(workspace, second, firstPanel, {
+      kind: "moveToPane",
+    });
+
+    assert.equal(workspace.tree.getLeaf(secondPanel), null);
     assert.deepEqual(toolIdsInWorkspace(workspace), [first, second]);
+    assert.deepEqual(focusedTabs(workspace)?.toolUseIds, [first, second]);
+  });
+
+  it("splits one tab out of a multi-tab pane", () => {
+    const first = toolId("first");
+    const second = toolId("second");
+    let workspace = openToolView(createToolWorkspace(), first);
+    workspace = openToolView(workspace, second);
+    const sourcePanel = workspace.focusedPanelId;
+
+    workspace = dockToolView(workspace, second, sourcePanel, {
+      kind: "split",
+      edge: "right",
+    });
+
+    assert.equal(workspace.tree.root.kind, "row");
+    assert.deepEqual(toolIdsInWorkspace(workspace), [first, second]);
+    assert.deepEqual(focusedTabs(workspace)?.toolUseIds, [second]);
+  });
+
+  it("caps panes while allowing more tabs", () => {
+    let workspace = createToolWorkspace();
+    workspace = openToolView(workspace, toolId("first"));
+    for (let index = 1; index < MAX_TOOL_TILES + 2; index += 1) {
+      workspace = splitToolPanel(
+        workspace,
+        workspace.focusedPanelId,
+        "right",
+      );
+    }
+
+    let panes = 0;
+    workspace.tree.visitLeaves(() => {
+      panes += 1;
+    });
+    assert.equal(panes, MAX_TOOL_TILES);
+
+    workspace = openToolView(workspace, toolId("extra-a"));
+    workspace = openToolView(workspace, toolId("extra-b"));
+    assert.deepEqual(focusedTabs(workspace)?.toolUseIds, [
+      toolId("extra-a"),
+      toolId("extra-b"),
+    ]);
   });
 });

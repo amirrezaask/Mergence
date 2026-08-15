@@ -79,6 +79,64 @@ test("optional maxCharsPerFlush still slices across frames for tests", () => {
   assert.deepEqual(writes, ["abcd", "efgh"])
 })
 
+test("parses flood output when animation frames are suspended", () => {
+  const writes: string[] = []
+  const frames: Array<() => void> = []
+  const fallbacks: Array<() => void> = []
+  const cancelledFrames: number[] = []
+  const writer = createTerminalOutputWriter({
+    write: (data, onPainted) => {
+      writes.push(data)
+      onPainted?.()
+    },
+    schedule: cb => {
+      frames.push(cb)
+      return frames.length
+    },
+    cancel: id => cancelledFrames.push(id),
+    scheduleFrameFallback: cb => {
+      fallbacks.push(cb)
+      return fallbacks.length
+    },
+    cancelFrameFallback: () => {},
+    interactiveMaxChars: 0,
+  })
+
+  // fish's Primary Device Attributes query can arrive behind enough startup
+  // output to take the flood/rAF path. Background tabs suspend that clock.
+  writer.enqueue(`${"x".repeat(1_024)}\x1b[0c`)
+  assert.equal(writes.length, 0)
+  assert.equal(frames.length, 1)
+  assert.equal(fallbacks.length, 1)
+
+  fallbacks[0]!()
+  assert.deepEqual(writes, [`${"x".repeat(1_024)}\x1b[0c`])
+  assert.deepEqual(cancelledFrames, [1])
+})
+
+test("parses terminal queries immediately while the frame clock is inactive", async () => {
+  const writes: string[] = []
+  let frameCount = 0
+  const writer = createTerminalOutputWriter({
+    write: (data, onPainted) => {
+      writes.push(data)
+      onPainted?.()
+    },
+    schedule: () => {
+      frameCount += 1
+      return frameCount
+    },
+    cancel: () => {},
+    frameClockActive: () => false,
+    interactiveMaxChars: 0,
+  })
+
+  writer.enqueue(`${"x".repeat(1_024)}\x1b[0c`)
+  await Promise.resolve()
+  assert.deepEqual(writes, [`${"x".repeat(1_024)}\x1b[0c`])
+  assert.equal(frameCount, 0)
+})
+
 test("default flush feeds the full coalesced chunk (no 16KiB starve)", () => {
   const writes: string[] = []
   const scheduled: Array<() => void> = []

@@ -2,11 +2,8 @@ import type { YaadeTheme } from "@yaade/shared"
 import {
   Bell,
   Brush,
-  Columns2,
   Monitor,
   Moon,
-  PanelLeft,
-  PanelTop,
   RotateCcw,
   SlidersHorizontal,
   Sun,
@@ -495,66 +492,6 @@ export function SettingsOverlay({
                         >
                           <Moon aria-hidden />
                           Dark
-                        </ToggleGroupItem>
-                      </ToggleGroup>
-                    </Field>
-                    <Field
-                      orientation="responsive"
-                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
-                    >
-                      <FieldContent className="min-w-0">
-                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
-                          Navigation layout
-                        </FieldLabel>
-                        <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Choose compact bars, two sidebars, or one combined navigation sidebar.
-                        </FieldDescription>
-                      </FieldContent>
-                      <ToggleGroup
-                        type="single"
-                        variant="outline"
-                        size="sm"
-                        value={settings.sessionLayout}
-                        aria-label="Navigation layout"
-                        className="w-full"
-                        onValueChange={value => {
-                          if (
-                            value !== "tabs" &&
-                            value !== "two-sidebars" &&
-                            value !== "single-sidebar"
-                          )
-                            return
-                          onSettingsChange(
-                            settingPatch(settings, { sessionLayout: value }),
-                          )
-                        }}
-                      >
-                        <ToggleGroupItem
-                          value="tabs"
-                          aria-label="Tab bar layout"
-                          className="flex-1"
-                          data-yaade-session-layout-option="tabs"
-                        >
-                          <PanelTop aria-hidden />
-                          Tab bar
-                        </ToggleGroupItem>
-                        <ToggleGroupItem
-                          value="two-sidebars"
-                          aria-label="Two sidebars layout"
-                          className="flex-1"
-                          data-yaade-session-layout-option="two-sidebars"
-                        >
-                          <Columns2 aria-hidden />
-                          Two sidebars
-                        </ToggleGroupItem>
-                        <ToggleGroupItem
-                          value="single-sidebar"
-                          aria-label="Single sidebar layout"
-                          className="flex-1"
-                          data-yaade-session-layout-option="single-sidebar"
-                        >
-                          <PanelLeft aria-hidden />
-                          Single sidebar
                         </ToggleGroupItem>
                       </ToggleGroup>
                     </Field>

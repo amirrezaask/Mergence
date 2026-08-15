@@ -32,7 +32,7 @@ export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   colorSchemeMode: "system",
   fontSize: DEFAULT_FONT_SIZE,
   monoFontFamily: DEFAULT_MONO_FONT_NAME,
-  sessionLayout: "two-sidebars",
+  sessionLayout: "single-sidebar",
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarProjectFilterPath: null,
@@ -81,12 +81,10 @@ export function themeIdForColorSchemeMode(
   return siblingThemeForScheme(themeId, scheme).id
 }
 
-export function normalizeSessionLayout(value: unknown): SessionLayout {
-  if (value === "tabs") return "tabs"
-  if (value === "single-sidebar") return "single-sidebar"
-  // `sidebar` was the persisted name for the two-rail layout.
-  if (value === "two-sidebars" || value === "sidebar") return "two-sidebars"
-  return "two-sidebars"
+export function normalizeSessionLayout(_value: unknown): SessionLayout {
+  // The tiled Tool Session shell has one navigation model. Older persisted
+  // tab-bar and two-sidebar values migrate to the combined sidebar.
+  return "single-sidebar"
 }
 
 function normalizeProjectFilterPath(value: unknown): string | null {

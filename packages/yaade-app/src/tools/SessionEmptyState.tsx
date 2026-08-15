@@ -1,5 +1,4 @@
 import {
-  Bot,
   FileCode2,
   GitBranch,
   Search,
@@ -28,13 +27,6 @@ type ToolTile = {
 }
 
 const TOOL_TILES: readonly ToolTile[] = [
-  {
-    kind: "agent",
-    label: "Agent",
-    hint: "CLI coding agent",
-    command: "tool.newAgent",
-    Icon: Bot,
-  },
   {
     kind: "terminal",
     label: "Terminal",
@@ -75,7 +67,7 @@ export function SessionBootState() {
     >
       <div className="flex w-full max-w-3xl flex-col items-center gap-6">
         <Skeleton className="h-4 w-28" />
-        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
           {TOOL_TILES.map(tile => (
             <Skeleton key={tile.kind} className="h-28 rounded-md" />
           ))}
@@ -104,7 +96,7 @@ export function SessionEmptyState(props: {
       </EmptyHeader>
 
       <EmptyContent className="max-w-3xl gap-6">
-        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-5">
+        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
           {TOOL_TILES.map(tile => {
             const shortcut = toolSessionShortcutFor(tile.command)
             const Icon = tile.Icon

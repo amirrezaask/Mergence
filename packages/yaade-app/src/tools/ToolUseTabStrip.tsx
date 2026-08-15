@@ -4,6 +4,8 @@ import {
   Bot,
   FileCode2,
   GitBranch,
+  PanelLeftClose,
+  PanelRightClose,
   Search,
   Terminal as TerminalIcon,
   X,
@@ -11,6 +13,7 @@ import {
 import type {
   CheckoutTarget,
   ProjectTarget,
+  SessionId,
   ToolKind,
   ToolUse,
   ToolUseId,
@@ -131,6 +134,7 @@ export type ToolUseTabStripProps = {
   ) => Promise<void>;
   readonly onAddAgent: (provider: AgentProvider) => void;
   readonly onAddKind: (kind: ToolKind) => void;
+  readonly newToolKinds?: readonly ToolKind[];
   readonly onAddWithContext: (
     kind: ToolKind,
     project: ProjectTarget,
@@ -139,7 +143,13 @@ export type ToolUseTabStripProps = {
   readonly onClose: (use: ToolUse) => void;
   readonly onRename: (use: ToolUse, title: string) => void;
   readonly onReorder: (ids: readonly ToolUseId[]) => void;
+  readonly onToggleSidebar?: () => void;
+  readonly sectionLabel?: string;
+  readonly emptyLabel?: string;
+  readonly sessionTitlesById?: ReadonlyMap<SessionId, string>;
+  readonly agentLikeUseIds?: ReadonlySet<ToolUseId>;
   readonly dockable?: boolean;
+  readonly dockableUseIds?: ReadonlySet<ToolUseId>;
   readonly layout?: ToolUseNavigationLayout;
   readonly collapsed?: boolean;
   readonly sidebarOrientation?: "horizontal" | "vertical";
@@ -164,6 +174,13 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const isTwoSidebar = layout === "two-sidebars";
   const isSingleSidebar = layout === "single-sidebar";
   const isSidebar = isTwoSidebar || isSingleSidebar;
+  const newToolKinds = props.newToolKinds ?? [
+    "agent",
+    "terminal",
+    "search",
+    "editor",
+    "git",
+  ];
 
   useEffect(() => {
     if (!props.collapsed) return;
@@ -233,11 +250,18 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const renderToolUse = (id: ToolUseId, index: number) => {
     const use = props.usesById.get(id);
     if (!use) return null;
-    const Icon = toolIcon[use.kind];
+    const Icon = props.agentLikeUseIds?.has(id) ? Bot : toolIcon[use.kind];
     const active = id === props.activeToolUseId;
     const openInWorkspace = props.openToolUseIds?.has(id) ?? active;
+    const dockable =
+      Boolean(props.dockable) &&
+      (!props.dockableUseIds || props.dockableUseIds.has(id));
     const workTitle = toolUseWorkTitle(use, props.runtimeTitles.get(id));
     const contextCaption = toolUseContextCaption(use);
+    const sessionTitle = props.sessionTitlesById?.get(use.sessionId);
+    const secondaryCaption = sessionTitle
+      ? `${sessionTitle} · ${contextCaption}`
+      : contextCaption;
     const jump = index < 9 ? String(index + 1) : undefined;
 
     return (
@@ -256,8 +280,13 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             data-active={active ? "true" : undefined}
             data-open-in-workspace={openInWorkspace ? "true" : undefined}
             data-yaade-tool-use={id}
+            data-yaade-detected-agent={
+              use.kind !== "agent" && props.agentLikeUseIds?.has(id)
+                ? ""
+                : undefined
+            }
             data-yaade-tool-index={jump}
-            draggable={!props.dockable && editingId !== id}
+            draggable={!dockable && !props.dockable && editingId !== id}
             onDragStart={() => {
               if (!props.dockable) dragId.current = id;
             }}
@@ -354,10 +383,10 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             ) : (
               <button
                 type="button"
-                draggable={props.dockable && editingId !== id}
+                draggable={dockable && editingId !== id}
                 className="min-w-0 flex-1 truncate text-left outline-none"
                 onDragStart={() => {
-                  if (props.dockable) dragId.current = id;
+                  if (dockable) dragId.current = id;
                 }}
                 onDoubleClick={() => {
                   setDraftTitle(use.title);
@@ -381,11 +410,11 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                   )}
                   data-yaade-tool-context
                 >
-                  {contextCaption}
+                  {secondaryCaption}
                 </span>
               </button>
             )}
-            {props.dockable ? (
+            {dockable ? (
               <Suspense fallback={null}>
                 <DockSourceHandle
                   tabId={id}
@@ -525,9 +554,9 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         isSingleSidebar && "flex-1 px-0",
       )}
       role="toolbar"
-      aria-label="New tool"
+      aria-label={props.sectionLabel ? `${props.sectionLabel} actions` : "New tool"}
     >
-      {!isSingleSidebar ? (
+      {newToolKinds.includes("agent") ? (
         <Popover
           open={!props.collapsed && launchPopoverKind === "agent"}
           onOpenChange={(open) => {
@@ -615,7 +644,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         </Popover>
       ) : null}
 
-      {contextLaunchKinds.map((kind) => {
+      {contextLaunchKinds.filter((kind) => newToolKinds.includes(kind)).map((kind) => {
         const Icon = toolIcon[kind];
         const label = `New ${toolKindLabel(kind)}`;
         const shortcut = toolSessionShortcutFor(
@@ -674,6 +703,27 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           </Popover>
         );
       })}
+      {isSidebar && props.onToggleSidebar ? (
+        <>
+          <Separator orientation="vertical" className="mx-0.5 h-6" />
+          <ShortcutTooltip
+            label="Hide sidebars"
+            shortcut={toolSessionShortcutFor("sidebar.toggle")}
+            side={launchSide}
+          >
+            <Button
+              size="icon-lg"
+              variant="ghost"
+              className="[&_svg]:size-5"
+              aria-label="Hide sidebars"
+              data-yaade-sidebar-toolbar-toggle
+              onClick={props.onToggleSidebar}
+            >
+              {isTwoSidebar ? <PanelRightClose /> : <PanelLeftClose />}
+            </Button>
+          </ShortcutTooltip>
+        </>
+      ) : null}
     </div>
   );
 
@@ -682,10 +732,10 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   if (isTwoSidebar) {
     return (
       <SidebarShell
-        aria-label="Tool uses"
+        aria-label={props.sectionLabel ?? "Tool uses"}
         contentAs="nav"
         contentProps={{
-          "aria-label": "Tool uses",
+          "aria-label": props.sectionLabel ?? "Tool uses",
           "aria-orientation": props.sidebarOrientation ?? "vertical",
           role: "tablist",
         }}
@@ -707,7 +757,13 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         }}
         footer={newToolActions}
       >
-        {toolItems}
+        {toolItems.length > 0 ? (
+          toolItems
+        ) : (
+          <p className="px-2 py-3 text-xs text-sidebar-foreground/50">
+            {props.emptyLabel ?? "No tools yet"}
+          </p>
+        )}
       </SidebarShell>
     );
   }
@@ -720,21 +776,32 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           props.collapsed && "hidden",
           "max-md:h-12 max-md:flex-none max-md:flex-row",
         )}
-        aria-label="Tool uses"
+        aria-label={props.sectionLabel ?? "Tool uses"}
         data-yaade-tool-sidebar=""
         data-yaade-sidebar-state={props.collapsed ? "collapsed" : "expanded"}
         data-yaade-tool-tabs=""
       >
-        <div className="flex h-9 shrink-0 items-center border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
-          {newToolActions}
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
+          <span className="shrink-0 text-3xs font-bold uppercase tracking-[0.1em] text-sidebar-foreground/60">
+            {props.sectionLabel ?? "Tools"}
+          </span>
+          <div className="ml-auto flex min-w-0 items-center">
+            {newToolActions}
+          </div>
         </div>
         <nav
           className="min-h-0 flex-1 overflow-auto p-2 max-md:flex max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
-          aria-label="Tool uses"
+          aria-label={props.sectionLabel ?? "Tool uses"}
           aria-orientation={props.sidebarOrientation ?? "vertical"}
           role="tablist"
         >
-          {toolItems}
+          {toolItems.length > 0 ? (
+            toolItems
+          ) : (
+            <p className="px-2 py-3 text-xs text-sidebar-foreground/50">
+              {props.emptyLabel ?? "No tools yet"}
+            </p>
+          )}
         </nav>
       </section>
     );

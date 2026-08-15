@@ -21,16 +21,13 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 
-- Sessions and ToolUses support three navigation layouts: **Tab bar** keeps Sessions at the top and ToolUses in a bottom taskbar; **Two sidebars** puts Sessions on the left and ToolUses on the right; **Single sidebar** combines both into one left rail with ToolUses above Sessions. Switch layouts from Settings → Appearance → Navigation layout. In either sidebar layout, `Ctrl-a b` collapses or restores the navigation; hover the workspace edge to reveal the same toggle.
-- In any layout, `+` creates an empty Session; add tools from the Session shell. Settings stays beside the Session navigation.
-- ToolUses remain resident in navigation while the center workspace tiles only the tools you open or drag into it. Tiles split right/down, resize at their dividers, and rearrange by dragging their headers.
-- Closing a workspace tile closes only that view. The ToolUse and its host process remain open until you close it from navigation.
-- ToolUse tab titles include the project name (for example, `yaade: Git History`) and stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
-- Sessions do not auto-open tools; all ToolUse tabs can be reordered or closed
-- Each ToolUse tab opens a context popover for project, worktree, and kind-specific options (project names are shown; IDs remain internal)
-- Right-click a new-tool shortcut to choose its project and worktree before opening it; the launcher keeps that context on the new ToolUse
-- Changing project or agent provider restarts the underlying process; the change itself does not fail
-- Selecting a ToolUse focuses its existing tile or opens it beside the focused tile (up to six mounted tiles)
+- The sidebar has two sections: Sessions, then Agents from every Session. `Ctrl-a b` collapses or restores it; hover the workspace edge to reveal the same toggle. Older tab-bar and two-sidebar preferences migrate automatically to this layout.
+- The Sessions section creates and switches Sessions; the Agents section creates agents and lists agents across every Session. Terminal ToolUses running a recognized agent CLI are detected from foreground-process/Ghostty identity and appear there too.
+- The center workspace is a tiled pane tree, and each pane is a tab group of ToolUses. Dropping on a pane center groups a ToolUse as a tab; dropping on an edge creates a split, up to six panes.
+- Each pane titlebar has a `+` menu for Terminal, Git, Editor, and Search. Agents are created from the Agents section, not the tool menu.
+- Closing a ToolUse tab—or closing its containing pane—archives the ToolUse and kills its process. Dragging and rearranging tabs does not restart them.
+- Right-click a pane tab to open its project, worktree, and kind-specific context popover. Changing project or agent provider persists the change and restarts the underlying process.
+- ToolUse tab titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its Ghostty terminal title.
 - Closing a Session with live tools offers Keep running / Stop tools / Cancel
 - Archived Sessions restore from the Session switcher (`Ctrl-a w` / palette)
 

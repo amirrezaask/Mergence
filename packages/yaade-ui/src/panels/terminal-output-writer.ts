@@ -41,6 +41,14 @@ export type TerminalOutputWriterOptions = {
   schedule?: (cb: () => void) => number
   cancel?: (id: number) => void
   /**
+   * Browser tabs may suspend animation frames. Keep parsing PTY output on a
+   * timer so terminal queries cannot block a shell while the tab is hidden.
+   */
+  scheduleFrameFallback?: (cb: () => void, delayMs: number) => number
+  cancelFrameFallback?: (id: number) => void
+  maxFrameWaitMs?: number
+  frameClockActive?: () => boolean
+  /**
    * Safety parachute for live output only — with host PTY pause/resume, pending
    * should stay near one frame. Oldest live chunks shed if something else is
    * broken. Replay is never shed because it is the state reconstruction input.
@@ -78,6 +86,16 @@ export function createTerminalOutputWriter(
     (typeof cancelAnimationFrame === "function"
       ? (id: number) => cancelAnimationFrame(id)
       : (id: number) => clearTimeout(id))
+  const scheduleFrameFallback =
+    options.scheduleFrameFallback ??
+    ((cb: () => void, delayMs: number) =>
+      setTimeout(cb, delayMs) as unknown as number)
+  const cancelFrameFallback =
+    options.cancelFrameFallback ?? ((id: number) => clearTimeout(id))
+  const maxFrameWaitMs = options.maxFrameWaitMs ?? 100
+  const frameClockActive =
+    options.frameClockActive ??
+    (() => typeof document === "undefined" || document.visibilityState !== "hidden")
   const maxPending = options.maxPendingChars ?? TERMINAL_OUTPUT_MAX_PENDING_CHARS
   const maxPerFlush = options.maxCharsPerFlush ?? Number.POSITIVE_INFINITY
   const interactiveMax =
@@ -91,6 +109,7 @@ export function createTerminalOutputWriter(
   let replayChars = 0
   let needsRefresh = false
   let raf = 0
+  let frameFallback = 0
   let microScheduled = false
   let disposed = false
   /** Once true, stay on rAF until the queue drains (flood mode). */
@@ -217,7 +236,24 @@ export function createTerminalOutputWriter(
     if (disposed || raf) return
     // Cancel a pending interactive microtask — flood wins.
     microScheduled = false
-    raf = schedule(() => flushNow(false))
+    raf = schedule(() => {
+      if (!raf) return
+      raf = 0
+      if (frameFallback) {
+        cancelFrameFallback(frameFallback)
+        frameFallback = 0
+      }
+      flushNow(false)
+    })
+    // requestAnimationFrame is suspended in background tabs. Parsing must not
+    // be: shells such as fish wait synchronously for DA/DSR query responses.
+    frameFallback = scheduleFrameFallback(() => {
+      frameFallback = 0
+      if (!raf) return
+      cancel(raf)
+      raf = 0
+      flushNow(false)
+    }, maxFrameWaitMs)
   }
 
   const scheduleMicro = () => {
@@ -233,6 +269,18 @@ export function createTerminalOutputWriter(
   }
 
   const scheduleNext = () => {
+    if (!frameClockActive()) {
+      if (raf) {
+        cancel(raf)
+        raf = 0
+      }
+      if (frameFallback) {
+        cancelFrameFallback(frameFallback)
+        frameFallback = 0
+      }
+      scheduleMicro()
+      return
+    }
     if (floodMode || pendingChars > interactiveMax) {
       floodMode = true
       scheduleRaf()
@@ -261,6 +309,10 @@ export function createTerminalOutputWriter(
         cancel(raf)
         raf = 0
       }
+      if (frameFallback) {
+        cancelFrameFallback(frameFallback)
+        frameFallback = 0
+      }
       microScheduled = false
       // Replay must land fully before connect. It bypasses the live queue cap,
       // the per-frame slice, and flow-control acknowledgements.
@@ -273,6 +325,10 @@ export function createTerminalOutputWriter(
       if (raf) {
         cancel(raf)
         raf = 0
+      }
+      if (frameFallback) {
+        cancelFrameFallback(frameFallback)
+        frameFallback = 0
       }
       microScheduled = false
       pendingParts.length = 0

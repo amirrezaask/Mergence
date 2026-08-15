@@ -9,7 +9,7 @@
     "dev:host-server": "pnpm --filter @yaade/host-server start",
     "test:e2e": "playwright test --project=web-e2e",
     "typecheck": "turbo run typecheck",
-    "lint": "turbo run lint",
+    "lint": "oxlint --config oxlint.config.mjs --disable-nested-config .",
     "test": "pnpm --filter yaade test && pnpm --filter @yaade/rpc test && pnpm --filter @yaade/shared test && pnpm --filter @yaade/panels test && pnpm --filter @yaade/agent-telemetry test && pnpm --filter @yaade/ui test && pnpm --filter @yaade/workspace test && pnpm --filter @yaade/lsp test && pnpm --filter @yaade/monaco test && pnpm --filter @yaade/node-host test && pnpm --filter @yaade/host-client test && pnpm --filter @yaade/app test && pnpm --filter @yaade/host-server test",
     "test:bench": "playwright test --project=bench",
     "extract:vscode-keybindings": "node scripts/extract-vscode-mac-keybindings.mjs && node scripts/generate-default-keybindings.mjs",
@@ -18,6 +18,7 @@
     "rebuild:native": "node packages/yaade-node-host/scripts/fix-node-pty-perms.mjs"
   },
   "devDependencies": {
+    "@oxlint/plugins": "1.78.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.15.29",
     "@wdio/cli": "^9.12.0",
@@ -27,6 +28,7 @@
     "babel-plugin-react-compiler": "^1.0.0",
     "effect": "3.22.1",
     "expect-webdriverio": "^5.1.0",
+    "oxlint": "1.78.0",
     "tsx": "^4.23.0",
     "turbo": "^2.10.4",
     "typescript": "^7.0.2"

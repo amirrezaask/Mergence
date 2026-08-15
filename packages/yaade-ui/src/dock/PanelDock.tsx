@@ -146,8 +146,7 @@ function PanelSplitNode<TView>({
         <Fragment key={splitPanelDomId(path, index)}>
           {index > 0 ? (
             <ResizableHandle
-              withHandle
-              className="transition-colors duration-[var(--yaade-motion-fast)] hover:bg-primary/20"
+              className="bg-border/80 transition-colors duration-[var(--yaade-motion-fast)] hover:bg-primary/60 active:bg-primary focus-visible:bg-primary data-[orientation=horizontal]:w-0.5 data-[orientation=vertical]:h-0.5"
               onDoubleClick={() => {
                 const equal = children.map(() => 1 / children.length)
                 props.onEvent({ type: "splitRatiosChanged", path, ratios: equal })

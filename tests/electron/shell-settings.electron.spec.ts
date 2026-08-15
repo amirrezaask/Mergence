@@ -310,17 +310,17 @@ test.describe("shell settings", () => {
       await appearance.click()
       await expectLocatorCount(
         page.locator("[data-yaade-session-layout-option]"),
-        3,
+        0,
       )
       await expect
         .poll(() =>
           page.evaluate(() => {
             const raw = localStorage.getItem("jet-appearance-settings")
-            if (!raw) return "two-sidebars"
-            return JSON.parse(raw).sessionLayout ?? "two-sidebars"
+            if (!raw) return "single-sidebar"
+            return JSON.parse(raw).sessionLayout ?? "single-sidebar"
           }),
         )
-        .toBe("two-sidebars")
+        .toBe("single-sidebar")
 
       await page.getByRole("button", { name: "Close settings" }).click()
       await openSettings(page)
