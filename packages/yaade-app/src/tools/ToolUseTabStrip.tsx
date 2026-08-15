@@ -508,89 +508,93 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       role="toolbar"
       aria-label="New tool"
     >
-      <Popover
-        open={!props.collapsed && launchPopoverKind === "agent"}
-        onOpenChange={(open) => {
-          if (!open && launchPopoverKind === "agent") {
-            setLaunchPopoverKind(null);
-            setLaunchContext(null);
-          }
-        }}
-      >
-        <PopoverAnchor asChild>
-          <span className="inline-flex">
-            <DropdownMenu
-              open={!props.collapsed && agentMenuOpen}
-              onOpenChange={setAgentMenuOpen}
-            >
-              <ShortcutTooltip
-                label="New Agent"
-                shortcut={toolSessionShortcutFor("tool.newAgent")}
-                side={launchSide}
+      {!isSingleSidebar ? (
+        <Popover
+          open={!props.collapsed && launchPopoverKind === "agent"}
+          onOpenChange={(open) => {
+            if (!open && launchPopoverKind === "agent") {
+              setLaunchPopoverKind(null);
+              setLaunchContext(null);
+            }
+          }}
+        >
+          <PopoverAnchor asChild>
+            <span className="inline-flex">
+              <DropdownMenu
+                open={!props.collapsed && agentMenuOpen}
+                onOpenChange={setAgentMenuOpen}
               >
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    size={isSidebar ? "icon-lg" : "icon-xs"}
-                    variant="ghost"
-                    className={cn(
-                      isSingleSidebar && "flex-1",
-                      isSidebar && "[&_svg]:size-5",
-                    )}
-                    aria-label="New Agent"
-                    aria-haspopup="menu"
-                    data-yaade-new-tool="agent"
-                    onContextMenu={(event) => {
-                      event.preventDefault();
-                      event.stopPropagation();
-                      openLaunchPopover("agent");
-                    }}
-                  >
-                    <Bot />
-                  </Button>
-                </DropdownMenuTrigger>
-              </ShortcutTooltip>
-              <DropdownMenuContent
-                align="end"
-                side={launchSide}
-                className="w-56"
-                data-yaade-agent-provider-menu
-              >
-                <DropdownMenuLabel>Choose an agent provider</DropdownMenuLabel>
-                {loadingProviders ? (
-                  <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-                    <Spinner className="size-3.5" aria-hidden />
-                    Checking available providers…
-                  </div>
-                ) : providers.length > 0 ? (
-                  providers.map((option) => (
-                    <DropdownMenuItem
-                      key={option.provider}
-                      disabled={!option.available}
-                      data-yaade-agent-provider={option.provider}
-                      onSelect={() => props.onAddAgent(option.provider)}
+                <ShortcutTooltip
+                  label="New Agent"
+                  shortcut={toolSessionShortcutFor("tool.newAgent")}
+                  side={launchSide}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      size={isSidebar ? "icon-lg" : "icon-xs"}
+                      variant="ghost"
+                      className={cn(
+                        isSingleSidebar && "flex-1",
+                        isSidebar && "[&_svg]:size-5",
+                      )}
+                      aria-label="New Agent"
+                      aria-haspopup="menu"
+                      data-yaade-new-tool="agent"
+                      onContextMenu={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        openLaunchPopover("agent");
+                      }}
                     >
-                      <AgentProviderIcon agent={option.provider} />
-                      <span className="min-w-0 flex-1 truncate">
-                        {providerLabels[option.provider]}
-                      </span>
-                      {!option.available ? (
-                        <span className="text-2xs text-muted-foreground">
-                          unavailable
+                      <Bot />
+                    </Button>
+                  </DropdownMenuTrigger>
+                </ShortcutTooltip>
+                <DropdownMenuContent
+                  align="end"
+                  side={launchSide}
+                  className="w-56"
+                  data-yaade-agent-provider-menu
+                >
+                  <DropdownMenuLabel>
+                    Choose an agent provider
+                  </DropdownMenuLabel>
+                  {loadingProviders ? (
+                    <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                      <Spinner className="size-3.5" aria-hidden />
+                      Checking available providers…
+                    </div>
+                  ) : providers.length > 0 ? (
+                    providers.map((option) => (
+                      <DropdownMenuItem
+                        key={option.provider}
+                        disabled={!option.available}
+                        data-yaade-agent-provider={option.provider}
+                        onSelect={() => props.onAddAgent(option.provider)}
+                      >
+                        <AgentProviderIcon agent={option.provider} />
+                        <span className="min-w-0 flex-1 truncate">
+                          {providerLabels[option.provider]}
                         </span>
-                      ) : null}
-                    </DropdownMenuItem>
-                  ))
-                ) : (
-                  <div className="px-2 py-2 text-xs text-muted-foreground">
-                    No providers found.
-                  </div>
-                )}
-              </DropdownMenuContent>
-            </DropdownMenu>
-          </span>
-        </PopoverAnchor>
-        {renderLaunchPopover("agent")}
-      </Popover>
+                        {!option.available ? (
+                          <span className="text-2xs text-muted-foreground">
+                            unavailable
+                          </span>
+                        ) : null}
+                      </DropdownMenuItem>
+                    ))
+                  ) : (
+                    <div className="px-2 py-2 text-xs text-muted-foreground">
+                      No providers found.
+                    </div>
+                  )}
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </span>
+          </PopoverAnchor>
+          {renderLaunchPopover("agent")}
+        </Popover>
+      ) : null}
 
       {contextLaunchKinds.map((kind) => {
         const Icon = toolIcon[kind];
@@ -616,9 +620,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             }}
           >
             <PopoverAnchor asChild>
-              <span
-                className={cn("inline-flex", isSingleSidebar && "flex-1")}
-              >
+              <span className={cn("inline-flex", isSingleSidebar && "flex-1")}>
                 <ShortcutTooltip
                   label={label}
                   shortcut={shortcut}

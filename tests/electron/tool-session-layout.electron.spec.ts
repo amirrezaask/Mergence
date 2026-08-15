@@ -3,6 +3,7 @@ import type { ShellDriver } from "../shell/driver.js";
 import { launchWeb } from "../shell/launch-web.js";
 import {
   expectLocatorAttribute,
+  expectLocatorCount,
   expectLocatorHidden,
   expectLocatorVisible,
   expectSelectorVisible,
@@ -237,6 +238,7 @@ test("shows tools above sessions in the single sidebar layout", async () => {
     await expectLocatorVisible(sidebar);
     await expectLocatorVisible(tools);
     await expectLocatorVisible(sessions);
+    await expectLocatorCount(tools.locator('[data-yaade-new-tool="agent"]'), 0);
     const sidebarBox = await sidebar.boundingBox();
     const toolsBox = await tools.boundingBox();
     const sessionsBox = await sessions.boundingBox();
