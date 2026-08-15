@@ -56,9 +56,9 @@ _yaade_user_zdotdir="\${YAADE_USER_ZDOTDIR:-$HOME}"
 [[ -o login && -f "$_yaade_user_zdotdir/.zlogin" ]] && source "$_yaade_user_zdotdir/.zlogin"
 
 _yaade_osc7() {
-  builtin printf '\\033]7;file://%s%s\\033\\\\' "\$HOST" "\$PWD"
+  builtin printf '\\033]7;file://%s%s\\033\\\\' "$HOST" "$PWD"
 }
-if [[ -z "\$YAADE_OSC7_HOOKED" ]]; then
+if [[ -z "$YAADE_OSC7_HOOKED" ]]; then
   YAADE_OSC7_HOOKED=1
   autoload -Uz add-zsh-hook 2>/dev/null
   if typeset -f add-zsh-hook >/dev/null 2>&1; then
@@ -78,11 +78,11 @@ if [[ -f "\${YAADE_USER_BASHRC:-$HOME/.bashrc}" ]]; then
   source "\${YAADE_USER_BASHRC:-$HOME/.bashrc}"
 fi
 _yaade_osc7() {
-  printf '\\033]7;file://%s%s\\033\\\\' "\${HOSTNAME:-}" "\$PWD"
+  printf '\\033]7;file://%s%s\\033\\\\' "\${HOSTNAME:-}" "$PWD"
 }
 if [[ -z "\${YAADE_OSC7_HOOKED:-}" ]]; then
   YAADE_OSC7_HOOKED=1
-  PROMPT_COMMAND="_yaade_osc7\${PROMPT_COMMAND:+; \$PROMPT_COMMAND}"
+  PROMPT_COMMAND="_yaade_osc7\${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
   _yaade_osc7
 fi
 `

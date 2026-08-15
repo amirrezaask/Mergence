@@ -1592,69 +1592,81 @@ function HistoryList(props: {
             if (includeWorkingTree && item.index === 0) {
               const active = selectedHash === GIT_WORKING_TREE_ID
               return (
-                <Button
-                  type="button"
-                  variant="ghost"
+                <div
+                  ref={virtualizer.measureElement}
+                  data-index={item.index}
                   key={GIT_WORKING_TREE_ID}
-                  data-yaade-list-item=""
-                  data-yaade-git-working-tree=""
-                  data-active={active ? "" : undefined}
-                  onClick={() => onSelect(GIT_WORKING_TREE_ID)}
-                  className={cn(
-                    "absolute top-0 left-0 grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center justify-normal gap-2 rounded-md px-2.5 py-1.5 text-left font-normal",
-                    active
-                      ? "bg-muted text-foreground"
-                      : "text-foreground/90 hover:bg-muted/50",
-                  )}
-                  style={{ height: item.size, transform: `translateY(${item.start}px)` }}
+                  className="absolute top-0 left-0 grid w-full"
+                  style={{ minHeight: item.size, transform: `translateY(${item.start}px)` }}
                 >
-                  <div className="min-w-0">
-                    <span className="block truncate text-xs">
-                      Uncommitted
-                    </span>
-                    <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
-                      {dirtyCount === 0
-                        ? "Working tree clean"
-                        : `${dirtyCount} file${dirtyCount === 1 ? "" : "s"} changed`}
-                    </span>
-                  </div>
-                  <div className="text-right font-mono text-3xs tabular-nums text-muted-foreground">
-                    <span className="block">HEAD</span>
-                  </div>
-                </Button>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    data-yaade-list-item=""
+                    data-yaade-git-working-tree=""
+                    data-active={active ? "" : undefined}
+                    onClick={() => onSelect(GIT_WORKING_TREE_ID)}
+                    className={cn(
+                      "h-auto w-full grid-cols-[minmax(0,1fr)_auto] items-center justify-normal gap-2 rounded-md px-2.5 py-1.5 text-left font-normal whitespace-normal",
+                      active
+                        ? "bg-muted text-foreground"
+                        : "text-foreground/90 hover:bg-muted/50",
+                    )}
+                  >
+                    <div className="min-w-0">
+                      <span className="block truncate text-xs">
+                        Uncommitted
+                      </span>
+                      <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
+                        {dirtyCount === 0
+                          ? "Working tree clean"
+                          : `${dirtyCount} file${dirtyCount === 1 ? "" : "s"} changed`}
+                      </span>
+                    </div>
+                    <div className="text-right font-mono text-3xs tabular-nums text-muted-foreground">
+                      <span className="block">HEAD</span>
+                    </div>
+                  </Button>
+                </div>
               )
             }
             const commit = commits[includeWorkingTree ? item.index - 1 : item.index]
             if (!commit) return null
             const active = commit.hash === selectedHash
             return (
-              <Button
-                type="button"
-                variant="ghost"
+              <div
+                ref={virtualizer.measureElement}
+                data-index={item.index}
                 key={commit.hash}
-                data-yaade-list-item=""
-                data-active={active ? "" : undefined}
-                onClick={() => onSelect(commit.hash)}
-                className={cn(
-                  "absolute top-0 left-0 grid w-full shrink-0 grid-cols-[minmax(0,1fr)_auto] items-center justify-normal gap-2 rounded-md px-2.5 py-1.5 text-left font-normal",
-                  active
-                    ? "bg-muted text-foreground"
-                    : "text-foreground/90 hover:bg-muted/50",
-                )}
-                style={{ height: item.size, transform: `translateY(${item.start}px)` }}
+                className="absolute top-0 left-0 grid w-full"
+                style={{ minHeight: item.size, transform: `translateY(${item.start}px)` }}
               >
-                <div className="min-w-0">
-                  <span className="block truncate text-xs">{commit.subject}</span>
-                  <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
-                    {commit.author}
-                    <span className="mx-1 text-border">·</span>
-                    {dateFormatter.format(new Date(commit.authoredAt))}
+                <Button
+                  type="button"
+                  variant="ghost"
+                  data-yaade-list-item=""
+                  data-active={active ? "" : undefined}
+                  onClick={() => onSelect(commit.hash)}
+                  className={cn(
+                    "h-auto w-full grid-cols-[minmax(0,1fr)_auto] items-center justify-normal gap-2 rounded-md px-2.5 py-1.5 text-left font-normal whitespace-normal",
+                    active
+                      ? "bg-muted text-foreground"
+                      : "text-foreground/90 hover:bg-muted/50",
+                  )}
+                >
+                  <div className="min-w-0">
+                    <span className="block whitespace-normal break-words text-xs">{commit.subject}</span>
+                    <span className="mt-0.5 block truncate text-3xs text-muted-foreground">
+                      {commit.author}
+                      <span className="mx-1 text-border">·</span>
+                      {dateFormatter.format(new Date(commit.authoredAt))}
+                    </span>
+                  </div>
+                  <span className="font-mono text-3xs tabular-nums text-muted-foreground">
+                    {commit.shortHash}
                   </span>
-                </div>
-                <span className="font-mono text-3xs tabular-nums text-muted-foreground">
-                  {commit.shortHash}
-                </span>
-              </Button>
+                </Button>
+              </div>
             )
           })}
           {error ? <HistoryRetry error={error} onRetry={onRetry} /> : null}

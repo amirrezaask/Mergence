@@ -127,7 +127,7 @@ function PanelSplitNode<TView>({
       id={splitGroupDomId(path)}
       orientation={orientation}
       defaultLayout={defaultLayout}
-      className="h-full w-full"
+      className="h-full w-full gap-0"
       onLayoutChanged={(layout, meta) => {
         // Library already defers pointer-drag commits until release; skip
         // mount/constraint recomputes so MuxApp does not clone the tree.
@@ -146,7 +146,13 @@ function PanelSplitNode<TView>({
         <Fragment key={splitPanelDomId(path, index)}>
           {index > 0 ? (
             <ResizableHandle
-              className="bg-border/80 transition-colors duration-[var(--yaade-motion-fast)] hover:bg-primary/60 active:bg-primary focus-visible:bg-primary data-[orientation=horizontal]:w-0.5 data-[orientation=vertical]:h-0.5"
+              orientation={orientation}
+              data-yaade-pane-separator=""
+              aria-label={
+                orientation === "horizontal"
+                  ? "Resize panes horizontally"
+                  : "Resize panes vertically"
+              }
               onDoubleClick={() => {
                 const equal = children.map(() => 1 / children.length)
                 props.onEvent({ type: "splitRatiosChanged", path, ratios: equal })

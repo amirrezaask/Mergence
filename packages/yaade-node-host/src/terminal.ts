@@ -344,7 +344,7 @@ export class TerminalHost {
       TERM: "xterm-256color",
       COLORTERM: "truecolor",
       HOME: process.env.HOME ?? os.homedir(),
-      ...(launch?.env ?? {}),
+      ...launch?.env,
     } as Record<string, string>
 
     for (const candidate of candidates) {

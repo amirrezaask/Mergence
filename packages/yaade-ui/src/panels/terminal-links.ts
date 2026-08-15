@@ -43,7 +43,7 @@ export interface WrappedTerminalLinkLine {
 }
 
 const FILE_URI_RE =
-  /file:\/\/[^\s'\")\]]+?(?::(\d+))?(?::(\d+))?(?=$|[\s'\")\]])/g
+  /file:\/\/[^\s'")\]]+?(?::(\d+))?(?::(\d+))?(?=$|[\s'")\]])/g
 const ABS_UNIX_PATH_RE =
   /(?:^|[\s('"])(\/(?:[^\s:']+\/)*[^\s:']+)(?::(\d+))?(?::(\d+))?/g
 const REL_PATH_RE =
@@ -51,7 +51,7 @@ const REL_PATH_RE =
 
 /** Match http(s) URLs without consuming common sentence punctuation. */
 const URL_RE =
-  /(https?|HTTPS?):[/]{2}[^\s"'!*(){}|\\\^<>`]*[^\s"':,.!?{}|\\\^~\[\]`()<>]/g
+  /(https?|HTTPS?):[/]{2}[^\s"'!*(){}|\\^<>`]*[^\s"':,.!?{}|\\^~[\]`()<>]/g
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/gi
 const FILE_PATH_PATTERN =
   /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g

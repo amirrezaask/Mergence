@@ -17,6 +17,6 @@ export class EditorRecoveryQueue {
   }
 
   async waitForIdle(): Promise<void> {
-    await Promise.all([...this.tails.values()])
+    await Promise.all(this.tails.values())
   }
 }

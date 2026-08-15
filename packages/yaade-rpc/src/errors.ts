@@ -153,7 +153,7 @@ export function hostErrorWire(error: HostRpcError): {
       : error._tag === "ProjectTargetUnavailable"
         ? { projectPath: error.projectPath, toolError: error._tag }
         : error._tag === "PathOutsideRoots"
-          ? { ...(error.path ? { path: error.path } : {}) }
+          ? (error.path ? { path: error.path } : {})
           : error._tag === "ToolUseConflict"
           ? {
               toolUseId: error.toolUseId,

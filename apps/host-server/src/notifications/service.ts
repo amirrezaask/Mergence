@@ -780,7 +780,7 @@ export class NotificationService {
   ): AppNotification | null {
     const existing = this.get(id)
     if (!existing) return null
-    const merged = { ...(existing.delivery ?? {}), ...delivery }
+    const merged = { ...existing.delivery, ...delivery }
     this.db
       .prepare(
         `UPDATE app_notifications SET delivery_json=?, updated_at=? WHERE id=?`,
@@ -954,7 +954,7 @@ export class NotificationService {
     const ts = nowIso()
     const metadata = {
       ...existing.metadata,
-      ...(raw.metadata ?? {}),
+      ...raw.metadata,
       enrichedFrom: raw.source,
     }
     this.db

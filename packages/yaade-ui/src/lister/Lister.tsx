@@ -689,7 +689,7 @@ export function Lister<T>({
           const posStyle = {
             transform: `translateY(${v.start}px)`,
             height: rowHeight,
-            ...(itemStyle?.(entry.node) ?? {}),
+            ...itemStyle?.(entry.node),
           } as const
 
           const flatRow =

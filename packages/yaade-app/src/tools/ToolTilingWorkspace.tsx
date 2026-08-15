@@ -445,7 +445,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
 
   return (
     <div
-      className="h-full min-h-0 w-full gap-1.5 p-1.5 [&_[data-slot=resizable-panel-group]]:gap-1.5"
+      className="h-full min-h-0 w-full p-1.5"
       data-yaade-tool-workspace=""
       data-yaade-viewport-count={openToolIds.length}
       data-yaade-pane-count={paneCount}

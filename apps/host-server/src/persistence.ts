@@ -181,7 +181,7 @@ function mergeProjectSessionLayouts(
   return {
     ...base,
     tree: {
-      ...(baseTree ?? {}),
+      ...baseTree,
       root,
       nextPanelId: nextPanelId.value,
     },
@@ -438,9 +438,9 @@ export class ProjectDatabase {
         }
 
         const seenTabs = new Set(payload.sessions.map(leaf => leaf.ptyTabId))
-        const gitRoots = { ...(payload.gitRoots ?? {}) }
-        const editorFiles = { ...(payload.editorFiles ?? {}) }
-        const editorViewStates = { ...(payload.editorViewStates ?? {}) }
+        const gitRoots = { ...payload.gitRoots }
+        const editorFiles = { ...payload.editorFiles }
+        const editorViewStates = { ...payload.editorViewStates }
 
         for (const loser of losers) {
           let loserPayload = emptyProjectSessionPayload()
