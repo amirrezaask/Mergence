@@ -54,7 +54,7 @@ export function buildMonoFontStack(family: string): string {
   return withNerdFontFallback(quoted)
 }
 
-/** Kick off the symbols webfont so xterm's atlas isn't built against tofu. */
+/** Kick off the symbols webfont so the terminal canvas isn't measured against tofu. */
 export function preloadNerdFont(): void {
   if (typeof document === "undefined" || !document.fonts?.load) return
   void document.fonts

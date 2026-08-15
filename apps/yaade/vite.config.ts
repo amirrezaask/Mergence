@@ -60,7 +60,6 @@ export default defineConfig(({ command }) => ({
             const shikiLang = /@shikijs\/langs\/dist\/([^/.]+)/.exec(id)?.[1]
             if (shikiLang) return `shiki-lang-${shikiLang}`
             if (id.includes("shiki") || id.includes("@shikijs")) return "shiki"
-            if (id.includes("@xterm")) return "xterm"
           }
         },
       },

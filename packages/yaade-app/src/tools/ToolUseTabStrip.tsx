@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import {
+  ArrowRight,
   Bot,
   FileCode2,
   GitBranch,
@@ -14,6 +15,7 @@ import type {
   ToolUse,
   ToolUseId,
 } from "@yaade/rpc";
+import { ExistingWorktreeCheckout, MainCheckout } from "@yaade/rpc";
 import { AgentProviderIcon, SidebarShell, cn } from "@yaade/ui";
 import {
   Button,
@@ -33,6 +35,7 @@ import {
   ToolContextControls,
   type AgentProvider,
   type ProviderOption,
+  type ToolContextSelection,
 } from "./ToolContextControls.js";
 import {
   toolUseContextCaption,
@@ -76,6 +79,32 @@ const providerLabels: Record<AgentProvider, string> = {
   pi: "Pi",
 };
 
+function checkoutTargetForUse(use: ToolUse): CheckoutTarget {
+  if (use.context.checkoutKey === "main") {
+    return MainCheckout.make({ kind: "main" });
+  }
+  return ExistingWorktreeCheckout.make({
+    kind: "existing-worktree",
+    path: use.context.checkoutPath,
+    ...(use.context.branch ? { branch: use.context.branch } : {}),
+  });
+}
+
+function toolKindLabel(kind: ToolKind): string {
+  switch (kind) {
+    case "agent":
+      return "Agent";
+    case "terminal":
+      return "Terminal";
+    case "search":
+      return "Search";
+    case "editor":
+      return "Editor";
+    case "git":
+      return "Git";
+  }
+}
+
 export type ToolUseNavigationLayout =
   | "tabs"
   | "two-sidebars"
@@ -99,6 +128,11 @@ export type ToolUseTabStripProps = {
   ) => Promise<void>;
   readonly onAddAgent: (provider: AgentProvider) => void;
   readonly onAddKind: (kind: ToolKind) => void;
+  readonly onAddWithContext: (
+    kind: ToolKind,
+    project: ProjectTarget,
+    checkout: CheckoutTarget,
+  ) => void;
   readonly onClose: (use: ToolUse) => void;
   readonly onRename: (use: ToolUse, title: string) => void;
   readonly onReorder: (ids: readonly ToolUseId[]) => void;
@@ -114,6 +148,11 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const [contextPopoverId, setContextPopoverId] = useState<ToolUseId | null>(
     null,
   );
+  const [launchPopoverKind, setLaunchPopoverKind] = useState<ToolKind | null>(
+    null,
+  );
+  const [launchContext, setLaunchContext] =
+    useState<ToolContextSelection | null>(null);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
@@ -125,6 +164,8 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   useEffect(() => {
     if (!props.collapsed) return;
     setContextPopoverId(null);
+    setLaunchPopoverKind(null);
+    setLaunchContext(null);
     setAgentMenuOpen(false);
   }, [props.collapsed]);
 
@@ -153,6 +194,37 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     setEditingId(null);
     if (next && next !== use.title) props.onRename(use, next);
   };
+
+  const openLaunchPopover = (kind: ToolKind) => {
+    setContextPopoverId(null);
+    setAgentMenuOpen(false);
+    const activeUse = props.activeToolUseId
+      ? props.usesById.get(props.activeToolUseId)
+      : undefined;
+    const project = activeUse?.context.project ?? props.projects[0];
+    setLaunchPopoverKind(kind);
+    setLaunchContext(
+      project
+        ? {
+            project,
+            checkout: activeUse
+              ? checkoutTargetForUse(activeUse)
+              : MainCheckout.make({ kind: "main" }),
+          }
+        : null,
+    );
+  };
+
+  useEffect(() => {
+    if (!launchPopoverKind || launchContext || props.projects.length === 0)
+      return;
+    const firstProject = props.projects[0];
+    if (!firstProject) return;
+    setLaunchContext({
+      project: firstProject,
+      checkout: MainCheckout.make({ kind: "main" }),
+    });
+  }, [launchContext, launchPopoverKind, props.projects]);
 
   const renderToolUse = (id: ToolUseId, index: number) => {
     const use = props.usesById.get(id);
@@ -196,11 +268,18 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               props.onReorder(ids);
             }}
             onClick={() => {
+              setLaunchPopoverKind(null);
+              setLaunchContext(null);
               if (!active) {
                 props.onSelect(use);
                 setContextPopoverId(null);
                 return;
               }
+              setContextPopoverId(id);
+            }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
               setContextPopoverId(id);
             }}
             className={cn(
@@ -338,10 +417,86 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               props.onProviderChange(use, provider)
             }
           />
+          <div className="border-t border-border p-3">
+            <Button
+              className="w-full"
+              aria-label="Open tool use with selected context"
+              onClick={() => {
+                props.onSelect(use);
+                setContextPopoverId(null);
+              }}
+              data-yaade-open-tool-use={id}
+            >
+              <ArrowRight data-icon="inline-start" />
+              Open tool use
+            </Button>
+          </div>
         </PopoverContent>
       </Popover>
     );
   };
+
+  const launchSide = isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top";
+  const renderLaunchPopover = (kind: ToolKind) => {
+    const label = toolKindLabel(kind);
+    return (
+      <PopoverContent
+        side={launchSide}
+        align="end"
+        sideOffset={8}
+        className="w-80 max-w-[calc(100vw-1rem)] p-0"
+        data-yaade-tool-context-popover
+        data-yaade-tool-launch-popover={kind}
+      >
+        <div className="border-b border-border px-3 py-2">
+          <p className="text-sm font-medium">Open {label}</p>
+          <p className="truncate text-2xs text-muted-foreground">
+            Choose the project and worktree for this tool.
+          </p>
+        </div>
+        {launchContext ? (
+          <ToolContextControls
+            key={`launch-context-${kind}`}
+            initialContext={launchContext}
+            projects={props.projects}
+            presentation="popover"
+            onChange={async (project, checkout) => {
+              setLaunchContext({ project, checkout });
+            }}
+          />
+        ) : (
+          <p className="p-3 text-xs text-muted-foreground">
+            No known projects yet.
+          </p>
+        )}
+        <div className="border-t border-border p-3">
+          <Button
+            className="w-full"
+            aria-label={`Open ${label} with selected context`}
+            disabled={!launchContext}
+            onClick={() => {
+              if (!launchContext) return;
+              const next = launchContext;
+              setLaunchPopoverKind(null);
+              setLaunchContext(null);
+              props.onAddWithContext(kind, next.project, next.checkout);
+            }}
+            data-yaade-open-tool-with-context={kind}
+          >
+            <ArrowRight data-icon="inline-start" />
+            Open {label}
+          </Button>
+        </div>
+      </PopoverContent>
+    );
+  };
+
+  const contextLaunchKinds: readonly ToolKind[] = [
+    "terminal",
+    "search",
+    "editor",
+    "git",
+  ];
 
   const newToolActions = (
     <div
@@ -353,145 +508,151 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       role="toolbar"
       aria-label="New tool"
     >
-      <DropdownMenu
-        open={!props.collapsed && agentMenuOpen}
-        onOpenChange={setAgentMenuOpen}
+      <Popover
+        open={!props.collapsed && launchPopoverKind === "agent"}
+        onOpenChange={(open) => {
+          if (!open && launchPopoverKind === "agent") {
+            setLaunchPopoverKind(null);
+            setLaunchContext(null);
+          }
+        }}
       >
-        <ShortcutTooltip
-          label="New Agent"
-          shortcut={toolSessionShortcutFor("tool.newAgent")}
-          side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
-        >
-          <DropdownMenuTrigger asChild>
-            <Button
-              size={isSidebar ? "icon-lg" : "icon-xs"}
-              variant="default"
-              className={cn(
-                isSingleSidebar && "flex-1",
-                isSidebar && "[&_svg]:size-5",
-              )}
-              aria-label="New Agent"
-              aria-haspopup="menu"
-              data-yaade-new-tool="agent"
+        <PopoverAnchor asChild>
+          <span className="inline-flex">
+            <DropdownMenu
+              open={!props.collapsed && agentMenuOpen}
+              onOpenChange={setAgentMenuOpen}
             >
-              <Bot />
-            </Button>
-          </DropdownMenuTrigger>
-        </ShortcutTooltip>
-        <DropdownMenuContent
-          align="end"
-          side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
-          className="w-56"
-          data-yaade-agent-provider-menu
-        >
-          <DropdownMenuLabel>Choose an agent provider</DropdownMenuLabel>
-          {loadingProviders ? (
-            <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-              <Spinner className="size-3.5" aria-hidden />
-              Checking available providers…
-            </div>
-          ) : providers.length > 0 ? (
-            providers.map((option) => (
-              <DropdownMenuItem
-                key={option.provider}
-                disabled={!option.available}
-                data-yaade-agent-provider={option.provider}
-                onSelect={() => props.onAddAgent(option.provider)}
+              <ShortcutTooltip
+                label="New Agent"
+                shortcut={toolSessionShortcutFor("tool.newAgent")}
+                side={launchSide}
               >
-                <AgentProviderIcon agent={option.provider} />
-                <span className="min-w-0 flex-1 truncate">
-                  {providerLabels[option.provider]}
-                </span>
-                {!option.available ? (
-                  <span className="text-2xs text-muted-foreground">
-                    unavailable
-                  </span>
-                ) : null}
-              </DropdownMenuItem>
-            ))
-          ) : (
-            <div className="px-2 py-2 text-xs text-muted-foreground">
-              No providers found.
-            </div>
-          )}
-        </DropdownMenuContent>
-      </DropdownMenu>
-      <ShortcutTooltip
-        label="New Terminal"
-        shortcut={toolSessionShortcutFor("tool.newTerminal")}
-        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
-      >
-        <Button
-          size={isSidebar ? "icon-lg" : "icon-xs"}
-          variant="secondary"
-          className={cn(
-            isSingleSidebar && "flex-1",
-            isSidebar && "[&_svg]:size-5",
-          )}
-          aria-label="New Terminal"
-          data-yaade-new-tool="terminal"
-          onClick={() => props.onAddKind("terminal")}
-        >
-          <TerminalIcon />
-        </Button>
-      </ShortcutTooltip>
-      <ShortcutTooltip
-        label="New Search"
-        shortcut={toolSessionShortcutFor("tool.newSearch")}
-        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
-      >
-        <Button
-          size={isSidebar ? "icon-lg" : "icon-xs"}
-          variant="ghost"
-          className={cn(
-            isSingleSidebar && "flex-1",
-            isSidebar && "[&_svg]:size-5",
-          )}
-          aria-label="New Search"
-          data-yaade-new-tool="search"
-          onClick={() => props.onAddKind("search")}
-        >
-          <Search />
-        </Button>
-      </ShortcutTooltip>
-      <ShortcutTooltip
-        label="New Editor"
-        shortcut={toolSessionShortcutFor("tool.newEditor")}
-        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
-      >
-        <Button
-          size={isSidebar ? "icon-lg" : "icon-xs"}
-          variant="ghost"
-          className={cn(
-            isSingleSidebar && "flex-1",
-            isSidebar && "[&_svg]:size-5",
-          )}
-          aria-label="New Editor"
-          data-yaade-new-tool="editor"
-          onClick={() => props.onAddKind("editor")}
-        >
-          <FileCode2 />
-        </Button>
-      </ShortcutTooltip>
-      <ShortcutTooltip
-        label="New Git History"
-        shortcut={toolSessionShortcutFor("tool.newGit")}
-        side={isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top"}
-      >
-        <Button
-          size={isSidebar ? "icon-lg" : "icon-xs"}
-          variant="ghost"
-          className={cn(
-            isSingleSidebar && "flex-1",
-            isSidebar && "[&_svg]:size-5",
-          )}
-          aria-label="New Git History"
-          data-yaade-new-tool="git"
-          onClick={() => props.onAddKind("git")}
-        >
-          <GitBranch />
-        </Button>
-      </ShortcutTooltip>
+                <DropdownMenuTrigger asChild>
+                  <Button
+                    size={isSidebar ? "icon-lg" : "icon-xs"}
+                    variant="ghost"
+                    className={cn(
+                      isSingleSidebar && "flex-1",
+                      isSidebar && "[&_svg]:size-5",
+                    )}
+                    aria-label="New Agent"
+                    aria-haspopup="menu"
+                    data-yaade-new-tool="agent"
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openLaunchPopover("agent");
+                    }}
+                  >
+                    <Bot />
+                  </Button>
+                </DropdownMenuTrigger>
+              </ShortcutTooltip>
+              <DropdownMenuContent
+                align="end"
+                side={launchSide}
+                className="w-56"
+                data-yaade-agent-provider-menu
+              >
+                <DropdownMenuLabel>Choose an agent provider</DropdownMenuLabel>
+                {loadingProviders ? (
+                  <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                    <Spinner className="size-3.5" aria-hidden />
+                    Checking available providers…
+                  </div>
+                ) : providers.length > 0 ? (
+                  providers.map((option) => (
+                    <DropdownMenuItem
+                      key={option.provider}
+                      disabled={!option.available}
+                      data-yaade-agent-provider={option.provider}
+                      onSelect={() => props.onAddAgent(option.provider)}
+                    >
+                      <AgentProviderIcon agent={option.provider} />
+                      <span className="min-w-0 flex-1 truncate">
+                        {providerLabels[option.provider]}
+                      </span>
+                      {!option.available ? (
+                        <span className="text-2xs text-muted-foreground">
+                          unavailable
+                        </span>
+                      ) : null}
+                    </DropdownMenuItem>
+                  ))
+                ) : (
+                  <div className="px-2 py-2 text-xs text-muted-foreground">
+                    No providers found.
+                  </div>
+                )}
+              </DropdownMenuContent>
+            </DropdownMenu>
+          </span>
+        </PopoverAnchor>
+        {renderLaunchPopover("agent")}
+      </Popover>
+
+      {contextLaunchKinds.map((kind) => {
+        const Icon = toolIcon[kind];
+        const label = `New ${toolKindLabel(kind)}`;
+        const shortcut = toolSessionShortcutFor(
+          kind === "terminal"
+            ? "tool.newTerminal"
+            : kind === "search"
+              ? "tool.newSearch"
+              : kind === "editor"
+                ? "tool.newEditor"
+                : "tool.newGit",
+        );
+        return (
+          <Popover
+            key={kind}
+            open={!props.collapsed && launchPopoverKind === kind}
+            onOpenChange={(open) => {
+              if (!open && launchPopoverKind === kind) {
+                setLaunchPopoverKind(null);
+                setLaunchContext(null);
+              }
+            }}
+          >
+            <PopoverAnchor asChild>
+              <span
+                className={cn("inline-flex", isSingleSidebar && "flex-1")}
+              >
+                <ShortcutTooltip
+                  label={label}
+                  shortcut={shortcut}
+                  side={launchSide}
+                >
+                  <Button
+                    size={isSidebar ? "icon-lg" : "icon-xs"}
+                    variant="ghost"
+                    className={cn(
+                      isSingleSidebar && "flex-1",
+                      isSidebar && "[&_svg]:size-5",
+                    )}
+                    aria-label={label}
+                    data-yaade-new-tool={kind}
+                    onClick={() => {
+                      setLaunchPopoverKind(null);
+                      setLaunchContext(null);
+                      props.onAddKind(kind);
+                    }}
+                    onContextMenu={(event) => {
+                      event.preventDefault();
+                      event.stopPropagation();
+                      openLaunchPopover(kind);
+                    }}
+                  >
+                    <Icon />
+                  </Button>
+                </ShortcutTooltip>
+              </span>
+            </PopoverAnchor>
+            {renderLaunchPopover(kind)}
+          </Popover>
+        );
+      })}
     </div>
   );
 

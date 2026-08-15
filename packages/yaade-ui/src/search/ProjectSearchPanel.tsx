@@ -558,9 +558,19 @@ export function ProjectSearchPanel({
             ref={setLoadMoreRef}
             className="flex min-h-10 items-center justify-center px-3 py-3 text-muted-foreground"
             data-yaade-project-search-sentinel=""
-            aria-hidden={!loadMoreBusy}
           >
-            {loadMoreBusy ? <Spinner className="size-3.5" /> : null}
+            {loadMoreBusy ? (
+              <Spinner className="size-3.5" />
+            ) : (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={loadNextPage}
+              >
+                Load more matches
+              </Button>
+            )}
           </div>
         ) : null}
       </div>

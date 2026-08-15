@@ -41,7 +41,7 @@ export async function insertDroppedPathsIntoTerminal(
   const text = formatDroppedPaths(paths)
   if (!text) return false
   await terminal.write(ptyId, text)
-  panel.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")?.focus()
+  panel.querySelector<HTMLTextAreaElement>("[data-yaade-terminal-input]")?.focus()
   return true
 }
 

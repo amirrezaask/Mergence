@@ -352,9 +352,9 @@ export async function focusTerminal(page: ShellDriver): Promise<void> {
   await page.evaluate(() => {
     window.__yaadeAgent?.focusTerminal?.()
   })
-  // Best-effort DOM focus — xterm.focus() above is the authoritative path.
+  // Best-effort DOM focus — the registry focus path above is authoritative.
   await page
-    .locator("[data-yaade-terminal-panel] .xterm-helper-textarea")
+    .locator("[data-yaade-terminal-panel] [data-yaade-terminal-input]")
     .first()
     .focus({ timeout: 5_000 })
     .catch(() => undefined)
@@ -376,7 +376,7 @@ export async function openSettings(page: ShellDriver): Promise<void> {
 
 export async function showTerminal(page: ShellDriver): Promise<void> {
   await waitForMux(page)
-  await page.waitForSelector("[data-yaade-terminal-panel] .xterm", {
+  await page.waitForSelector("[data-yaade-terminal-panel] [data-yaade-terminal-canvas]", {
     timeout: 30_000,
   })
 }

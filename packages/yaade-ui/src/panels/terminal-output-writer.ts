@@ -1,16 +1,13 @@
 /**
- * Coalesce PTY → xterm writes onto animation frames for floods; flush
- * interactive echoes on a microtask (skip rAF) so key→paint stays near one
- * frame like VS Code's direct `raw.write`.
+ * Coalesce PTY writes onto animation frames for floods; flush interactive
+ * echoes on a microtask (skip rAF) so key→paint stays near one frame.
  *
- * Design (match VS Code / xterm.js / t3code):
- * - rAF-batch WS chunks so we call `term.write` ~once/frame under flood.
- * - Hand **all** pending bytes to `term.write` each flush. xterm's internal
- *   WriteBuffer already time-slices parse work (~12 ms) and yields to the
- *   renderer — a second per-frame byte cap + wait-for-paint gate starves that
- *   buffer and is what made agent TUIs visually choke.
- * - Use the write callback only for cursor sync + flow-control ack, never to
- *   block the next flush.
+ * Design:
+ * - rAF-batch WS chunks so we call the terminal parser ~once/frame under flood.
+ * - Hand all pending bytes to the parser by default. Renderers that parse
+ *   synchronously (Ghostty) may opt into a bounded per-frame slice.
+ * - Use the write callback only for flow-control ack, never to block the next
+ *   flush.
  */
 
 export type TerminalOutputWriter = {
@@ -25,7 +22,7 @@ export type TerminalOutputWriterOptions = {
   /** Called after a coalesced write paints (once per flush). */
   onPainted?: () => void
   /**
-   * Called with the char count once xterm has parsed the flushed chunk.
+   * Called with the char count once the terminal has parsed the flushed chunk.
    * Hosts use this for VS Code-style PTY flow-control acks.
    */
   onParsed?: (charCount: number) => void
@@ -42,8 +39,8 @@ export type TerminalOutputWriterOptions = {
    */
   maxPendingChars?: number
   /**
-   * Optional test/debug cap. Production must leave this unset so xterm's own
-   * WriteBuffer owns throughput slicing.
+   * Optional test/debug cap. Production leaves this unset so the terminal's
+   * parser owns throughput slicing.
    */
   maxCharsPerFlush?: number
   /**
@@ -99,6 +96,16 @@ export function createTerminalOutputWriter(
     }
   }
 
+  const safeChunkLength = (value: string, requested: number): number => {
+    if (requested >= value.length) return value.length
+    if (requested <= 0) return 0
+    // Never feed a lone UTF-16 surrogate to the UTF-8 terminal parser. Escape
+    // sequences may be split across frames, but code points may not.
+    const previous = value.charCodeAt(requested - 1)
+    if (previous >= 0xd800 && previous <= 0xdbff) return requested + 1
+    return requested
+  }
+
   /** Take up to `limit` chars, leave the rest queued. */
   const takePending = (limit: number): string => {
     if (pendingParts.length === 0 || limit <= 0) return ""
@@ -121,10 +128,11 @@ export function createTerminalOutputWriter(
         taken += head.length
         pendingChars -= head.length
       } else {
-        out.push(head.slice(0, room))
-        pendingParts[0] = head.slice(room)
-        pendingChars -= room
-        taken += room
+        const chunkLength = Math.min(head.length, safeChunkLength(head, room))
+        out.push(head.slice(0, chunkLength))
+        pendingParts[0] = head.slice(chunkLength)
+        pendingChars -= chunkLength
+        taken += chunkLength
       }
     }
     return out.length === 1 ? out[0]! : out.join("")
@@ -146,8 +154,8 @@ export function createTerminalOutputWriter(
       if (pendingChars === 0) floodMode = false
       return
     }
-    // term.write is non-blocking — do NOT gate the next flush on this callback.
-    // xterm's WriteBuffer time-slices parse; starving it was the TUI choke.
+    // Terminal writes are non-blocking — do NOT gate the next flush on this
+    // callback. The parser owns its throughput scheduling.
     options.write(data, () => {
       if (disposed) return
       options.onParsed?.(data.length)
@@ -199,7 +207,7 @@ export function createTerminalOutputWriter(
       pendingParts.push(data)
       pendingChars += data.length
       shedOldest()
-      // Only scan for DECCTCEM when a refresh hook is wired (Dom fallback).
+      // Only scan for DECCTCEM when a refresh hook is wired (legacy fallback).
       if (
         trackCursorRefresh &&
         (data.includes("\x1b[?25l") || data.includes("\x1b[?25h"))

@@ -7,28 +7,22 @@ import {
   useRef,
   useState,
   type ReactNode,
-} from "react"
-import type {
-  HqAgentSummary,
-  ProjectSession,
-} from "@yaade/rpc"
+} from "react";
+import type { HqAgentSummary, ProjectSession } from "@yaade/rpc";
 import {
   fileUriToPath,
   pathToFileUri,
   type GitWorktree,
   type YaadeTheme,
-} from "@yaade/shared"
+} from "@yaade/shared";
 import {
   isTerminalTabId,
   terminalTabId,
   type AgentRunInfo,
   type TerminalInstanceInfo,
-} from "@yaade/workspace"
-import { AgentProviderIcon } from "@yaade/ui/agent-picker"
-import {
-  AppShell,
-  cn,
-} from "@yaade/ui/project"
+} from "@yaade/workspace";
+import { AgentProviderIcon } from "@yaade/ui/agent-picker";
+import { AppShell, cn } from "@yaade/ui/project";
 import {
   ConfirmDialogHost,
   ProjectWorkspaceSidebar,
@@ -38,12 +32,10 @@ import {
   type ProjectWorkspaceSidebarProcess,
   type ProjectWorkspaceSidebarSearch,
   type ProjectWorkspaceSidebarWorktree,
-} from "@yaade/ui"
-import { bundledThemeList } from "@yaade/ui/appearance"
-import {
-  Button,
-} from "@yaade/ui/primitives"
-import { showYaadeToast, Toaster } from "@yaade/ui/toast"
+} from "@yaade/ui";
+import { bundledThemeList } from "@yaade/ui/appearance";
+import { Button } from "@yaade/ui/primitives";
+import { showYaadeToast, Toaster } from "@yaade/ui/toast";
 import {
   ArrowLeft,
   ArrowRight,
@@ -52,129 +44,125 @@ import {
   PanelLeft,
   Plus,
   X,
-} from "lucide-react"
-import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js"
-import { useHqOverview } from "../hooks/useHqOverview.js"
-import { preloadMuxApp } from "../mux/preload.js"
+} from "lucide-react";
+import { useAppearanceSettings } from "../hooks/useAppearanceSettings.js";
+import { useHqOverview } from "../hooks/useHqOverview.js";
+import { preloadMuxApp } from "../mux/preload.js";
 import type {
   MuxLaunchAction,
   MuxLaunchRequest,
   MuxSurface,
-} from "../mux/MuxApp.js"
-import { formatAppDocumentTitle } from "../build-branding.js"
+} from "../mux/MuxApp.js";
+import { formatAppDocumentTitle } from "../build-branding.js";
 import {
   projectRouteFromSearch,
   pushProjectRoute,
   replaceProjectRoute,
   type ProjectView,
   workspaceDocumentTitle,
-} from "../url-workspace.js"
+} from "../url-workspace.js";
 import {
   createProjectSession,
   listProjectSessions,
   openCheckoutSession,
   removeProjectWorktree,
-} from "../project-session-client.js"
+} from "../project-session-client.js";
 import {
   loadProjectSurfaceState,
   saveProjectSurfaceState,
   type ProjectSurfaceSelection,
-} from "../project-surface-state-client.js"
-import { defaultAgentWorktreeName } from "./agent-worktree-name.js"
+} from "../project-surface-state-client.js";
+import { defaultAgentWorktreeName } from "./agent-worktree-name.js";
 import {
   claimHqAgentLaunch,
   clearHqAgentLaunch,
   peekHqAgentLaunch,
-} from "./hq-agent-launch.js"
-import { OpenProjectOverlay } from "./OpenProjectOverlay.js"
+} from "./hq-agent-launch.js";
+import { OpenProjectOverlay } from "./OpenProjectOverlay.js";
 import {
   CheckoutPicker,
   checkoutLabelForPath,
   sameCheckoutPath,
   selectionFromPaths,
   type CheckoutSelection,
-} from "./CheckoutPicker.js"
-import { CreateWorktreeDialog } from "./CreateWorktreeDialog.js"
-import {
-  RunningProjectSurface,
-} from "./ProjectProcessSurfaces.js"
+} from "./CheckoutPicker.js";
+import { CreateWorktreeDialog } from "./CreateWorktreeDialog.js";
+import { RunningProjectSurface } from "./ProjectProcessSurfaces.js";
 import {
   ProcessLaunchMenu,
   type ProcessLaunchSelection,
-} from "./ProjectLaunchMenus.js"
+} from "./ProjectLaunchMenus.js";
 import {
   processStatusLabel,
   useProjectProcessSidebar,
-} from "./project-process-sidebar.js"
-import { useProjectSearchEntries } from "./use-project-search-entries.js"
+} from "./project-process-sidebar.js";
+import { useProjectSearchEntries } from "./use-project-search-entries.js";
 
-const ProjectSearchSurface = lazy(() => import("./ProjectSearchSurface.js"))
+const ProjectSearchSurface = lazy(() => import("./ProjectSearchSurface.js"));
 import {
   createProjectSearch,
   getProjectSearch,
   listProjectSearches,
   removeProjectSearch,
   restoreProjectSearches,
-} from "./project-search-store.js"
+} from "./project-search-store.js";
 
 const GitWorkspace = lazy(() =>
-  import("@yaade/ui/git").then(m => ({ default: m.GitWorkspace })),
-)
+  import("@yaade/ui/git").then((m) => ({ default: m.GitWorkspace })),
+);
 function preloadSettingsOverlay() {
-  return import("@yaade/ui/settings")
+  return import("@yaade/ui/settings");
 }
 
-const MuxApp = lazy(() =>
-  preloadMuxApp().then(m => ({ default: m.MuxApp })),
-)
+const MuxApp = lazy(() => preloadMuxApp().then((m) => ({ default: m.MuxApp })));
 const SettingsOverlay = lazy(() =>
-  preloadSettingsOverlay().then(m => ({ default: m.SettingsOverlay })),
-)
+  preloadSettingsOverlay().then((m) => ({ default: m.SettingsOverlay })),
+);
 
 export type ProjectPageProps = {
-  projectId: string
-  projectName: string
-  projectPath: string
-  homeDir: string
-  machineHostname: string
-  routeRevision?: number
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  homeDir: string;
+  machineHostname: string;
+  routeRevision?: number;
   /** Active session — surface workspace renders in-page when set. */
-  session: ProjectSession | null
+  session: ProjectSession | null;
   /** One-shot launch requested from HQ before navigating into this project. */
   agentLaunchIntent?: {
-    id: string
-    driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"]
-    useWorktree?: boolean
-    worktreeName?: string
-  } | null
-  onAgentLaunchIntentHandled?: (intentId: string) => void
+    id: string;
+    driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"];
+    useWorktree?: boolean;
+    worktreeName?: string;
+  } | null;
+  onAgentLaunchIntentHandled?: (intentId: string) => void;
   /** Focus a specific agent leaf when opening from HQ agent list. */
-  initialAgentFocusTabId?: string | null
-  routeError?: string | null
-  onInitialAgentFocusHandled?: () => void
-  onOpenSession: (sessionId: string) => Promise<void>
+  initialAgentFocusTabId?: string | null;
+  routeError?: string | null;
+  onInitialAgentFocusHandled?: () => void;
+  onOpenSession: (sessionId: string) => Promise<void>;
   /** Clear the active session (leave surface view, keep project chrome). */
-  onClearSession?: () => void
-  onNavigateProject: (absolutePath: string) => void
-  onOpenHq: () => void
-}
+  onClearSession?: () => void;
+  onNavigateProject: (absolutePath: string) => void;
+  onOpenHq: () => void;
+};
 
 type ActiveCheckout = {
-  cwdPath: string
-  label: string
-  checkoutKey: string
-}
+  cwdPath: string;
+  label: string;
+  checkoutKey: string;
+};
 
 function isSurfaceView(view: ProjectView): view is MuxSurface {
-  return view === "running" || view === "editors"
+  return view === "running" || view === "editors";
 }
 
 function surfaceForView(view: ProjectView): MuxSurface | null {
-  return isSurfaceView(view) ? view : null
+  return isSurfaceView(view) ? view : null;
 }
 
 function mainCheckout(projectPath: string): ActiveCheckout {
-  return { cwdPath: projectPath, label: "Main", checkoutKey: "main" }
+  return { cwdPath: projectPath, label: "Main", checkoutKey: "main" };
 }
 
 function checkoutFromPaths(
@@ -183,63 +171,63 @@ function checkoutFromPaths(
   label?: string | null,
   checkoutKey?: string | null,
 ): ActiveCheckout {
-  if (sameCheckoutPath(cwdPath, projectPath)) return mainCheckout(projectPath)
+  if (sameCheckoutPath(cwdPath, projectPath)) return mainCheckout(projectPath);
   return {
     cwdPath,
     label: label?.trim() || cwdPath,
     checkoutKey: checkoutKey?.trim() || cwdPath,
-  }
+  };
 }
 
 function checkoutRouteKey(checkout: ActiveCheckout): string | null {
-  return checkout.checkoutKey === "main" ? null : checkout.checkoutKey
+  return checkout.checkoutKey === "main" ? null : checkout.checkoutKey;
 }
 
 function safeCodeRelativePath(value: string): string | null {
-  if (!value || value.startsWith("/") || value.includes("\\")) return null
-  const parts = value.split("/").filter(part => part && part !== ".")
-  if (parts.length === 0 || parts.some(part => part === "..")) return null
-  return parts.join("/")
+  if (!value || value.startsWith("/") || value.includes("\\")) return null;
+  const parts = value.split("/").filter((part) => part && part !== ".");
+  if (parts.length === 0 || parts.some((part) => part === "..")) return null;
+  return parts.join("/");
 }
 
 function projectWorktreeLabel(worktree: GitWorktree): string {
-  if (worktree.branch) return worktree.branch.replace(/^refs\/heads\//, "")
+  if (worktree.branch) return worktree.branch.replace(/^refs\/heads\//, "");
   if (worktree.detached && worktree.head) {
-    return `detached@${worktree.head.slice(0, 7)}`
+    return `detached@${worktree.head.slice(0, 7)}`;
   }
-  return worktree.path.split("/").filter(Boolean).pop() ?? worktree.path
+  return worktree.path.split("/").filter(Boolean).pop() ?? worktree.path;
 }
 
 function useProjectWorktrees(projectPath: string) {
-  const [worktrees, setWorktrees] = useState<GitWorktree[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [worktrees, setWorktrees] = useState<GitWorktree[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      const api = window.yaade?.git
-      if (!api) throw new Error("Git service unavailable")
-      const rootUri = pathToFileUri(projectPath)
-      const isRepo = await api.isRepo(rootUri)
-      const rows = isRepo ? await api.worktreeList(rootUri) : []
+      const api = window.yaade?.git;
+      if (!api) throw new Error("Git service unavailable");
+      const rootUri = pathToFileUri(projectPath);
+      const isRepo = await api.isRepo(rootUri);
+      const rows = isRepo ? await api.worktreeList(rootUri) : [];
       setWorktrees(
-        rows.filter(worktree => !worktree.bare && !worktree.prunable),
-      )
+        rows.filter((worktree) => !worktree.bare && !worktree.prunable),
+      );
     } catch (reason) {
-      setWorktrees([])
-      setError(reason instanceof Error ? reason.message : String(reason))
+      setWorktrees([]);
+      setError(reason instanceof Error ? reason.message : String(reason));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }, [projectPath])
+  }, [projectPath]);
 
   useEffect(() => {
-    void refresh()
-  }, [refresh])
+    void refresh();
+  }, [refresh]);
 
-  return { worktrees, loading, error, refresh }
+  return { worktrees, loading, error, refresh };
 }
 
 function ProjectSurfaceSlot({
@@ -250,14 +238,14 @@ function ProjectSurfaceSlot({
   children,
   className,
 }: {
-  panel: string
-  active: boolean
-  mounted?: boolean
-  fallback: ReactNode
-  children: ReactNode
-  className?: string
+  panel: string;
+  active: boolean;
+  mounted?: boolean;
+  fallback: ReactNode;
+  children: ReactNode;
+  className?: string;
 }) {
-  if (!mounted) return null
+  if (!mounted) return null;
   return (
     <div
       className={cn(
@@ -281,7 +269,7 @@ function ProjectSurfaceSlot({
         {children}
       </Suspense>
     </div>
-  )
+  );
 }
 
 function ProjectGitSurface({
@@ -291,11 +279,11 @@ function ProjectGitSurface({
   theme,
   activeCheckout,
 }: {
-  view: "history" | "changes"
-  active: boolean
-  rootUri: string
-  theme: YaadeTheme
-  activeCheckout: ActiveCheckout
+  view: "history" | "changes";
+  active: boolean;
+  rootUri: string;
+  theme: YaadeTheme;
+  activeCheckout: ActiveCheckout;
 }) {
   return (
     <GitWorkspace
@@ -307,21 +295,21 @@ function ProjectGitSurface({
       active={active}
       onOpenFile={() => undefined}
     />
-  )
+  );
 }
 
 function agentFocusTabId(identity: string | null): string | null {
-  if (!identity) return null
-  return isTerminalTabId(identity) ? identity : terminalTabId(identity)
+  if (!identity) return null;
+  return isTerminalTabId(identity) ? identity : terminalTabId(identity);
 }
 
 function processStatusVariant(
   status: TerminalInstanceInfo["processState"],
 ): "default" | "secondary" | "destructive" | "outline" {
-  if (status === "running") return "default"
-  if (status === "starting") return "outline"
-  if (status === "failed") return "destructive"
-  return "secondary"
+  if (status === "running") return "default";
+  if (status === "starting") return "outline";
+  if (status === "failed") return "destructive";
+  return "secondary";
 }
 
 export function ProjectPage({
@@ -342,404 +330,456 @@ export function ProjectPage({
   onNavigateProject,
   onOpenHq,
 }: ProjectPageProps) {
-  const hq = useHqOverview()
+  const hq = useHqOverview();
   const {
     appearanceSettings,
     setAppearanceSettings,
     activeTheme,
     resetAppearanceSettings,
-  } = useAppearanceSettings()
+  } = useAppearanceSettings();
   const [view, setView] = useState<ProjectView>(
     () => projectRouteFromSearch().view,
-  )
-  const [settingsOpen, setSettingsOpen] = useState(false)
-  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false)
+  );
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [projectSwitcherOpen, setProjectSwitcherOpen] = useState(false);
   const [surfaceSelections, setSurfaceSelections] = useState<
-    Partial<Record<Exclude<ProjectView, "history" | "search">, ProjectSurfaceSelection>>
-  >({})
-  const [historicalRun, setHistoricalRun] = useState<AgentRunInfo | null>(null)
-  const [agentLookupComplete, setAgentLookupComplete] = useState(false)
-  const [agentLookupMissing, setAgentLookupMissing] = useState(false)
+    Partial<
+      Record<
+        Exclude<ProjectView, "history" | "search">,
+        ProjectSurfaceSelection
+      >
+    >
+  >({});
+  const [historicalRun, setHistoricalRun] = useState<AgentRunInfo | null>(null);
+  const [agentLookupComplete, setAgentLookupComplete] = useState(false);
+  const [agentLookupMissing, setAgentLookupMissing] = useState(false);
   const [historyMounted, setHistoryMounted] = useState(
     () => projectRouteFromSearch().view === "history",
-  )
+  );
   const [searchRailOpen, setSearchRailOpen] = useState(
     () =>
       projectRouteFromSearch().view === "search" ||
       Boolean(projectRouteFromSearch().searchId),
-  )
-  const [surfaceStateLoaded, setSurfaceStateLoaded] = useState(false)
+  );
+  const [surfaceStateLoaded, setSurfaceStateLoaded] = useState(false);
   const [activeCheckout, setActiveCheckout] = useState<ActiveCheckout>(() =>
     mainCheckout(projectPath),
-  )
+  );
   const [editorCheckout, setEditorCheckout] = useState<ActiveCheckout>(() =>
     mainCheckout(projectPath),
-  )
-  const [defaultBranch, setDefaultBranch] = useState("main")
+  );
+  const [defaultBranch, setDefaultBranch] = useState("main");
   const [focusAgentTabId, setFocusAgentTabId] = useState<string | null>(
     agentFocusTabId(initialAgentFocusTabId),
-  )
-  const [processPickerOpen, setProcessPickerOpen] = useState(false)
-  const [worktreeCreateOpen, setWorktreeCreateOpen] = useState(false)
+  );
+  const [processPickerOpen, setProcessPickerOpen] = useState(false);
+  const [worktreeCreateOpen, setWorktreeCreateOpen] = useState(false);
   // Seed from the module queue so StrictMode remounts still see the HQ intent.
   const [launchRequest, setLaunchRequest] = useState<MuxLaunchRequest | null>(
     () => {
-      const queued = peekHqAgentLaunch(projectId)
+      const queued = peekHqAgentLaunch(projectId);
       return queued
         ? {
             id: queued.id,
             action: { kind: "agent", driverId: queued.driverId },
           }
-        : null
+        : null;
     },
-  )
-  const launchSequenceRef = useRef(0)
-  const restoredEditorLocationRef = useRef<string | null>(null)
+  );
+  const launchSequenceRef = useRef(0);
+  const restoredEditorLocationRef = useRef<string | null>(null);
   const preferredSurfaceRef = useRef<MuxSurface | null>(
     (() => {
-      if (!session) return null
-      const initialView = projectRouteFromSearch().view
-      return isSurfaceView(initialView) ? initialView : "running"
+      if (!session) return null;
+      const initialView = projectRouteFromSearch().view;
+      return isSurfaceView(initialView) ? initialView : "running";
     })(),
-  )
-  const rootUri = useMemo(() => pathToFileUri(projectPath), [projectPath])
+  );
+  const rootUri = useMemo(() => pathToFileUri(projectPath), [projectPath]);
   const {
     worktrees,
     loading: worktreesLoading,
     error: worktreesError,
     refresh: refreshWorktrees,
-  } = useProjectWorktrees(projectPath)
-  const title = workspaceDocumentTitle(projectPath, homeDir)
+  } = useProjectWorktrees(projectPath);
+  const title = workspaceDocumentTitle(projectPath, homeDir);
 
   useEffect(() => {
-    document.title = formatAppDocumentTitle(title)
-  }, [title])
+    document.title = formatAppDocumentTitle(title);
+  }, [title]);
 
   useEffect(() => {
-    const route = projectRouteFromSearch()
-    setView(route.view)
-    if (route.searchId || route.view === "search") setSearchRailOpen(true)
+    const route = projectRouteFromSearch();
+    setView(route.view);
+    if (route.searchId || route.view === "search") setSearchRailOpen(true);
     if (route.searchId && !route.filePath) {
       window.requestAnimationFrame(() => {
-        window.dispatchEvent(new Event("yaade:focus-search-result"))
-      })
+        window.dispatchEvent(new Event("yaade:focus-search-result"));
+      });
     }
-    if (route.view === "history") setHistoryMounted(true)
+    if (route.view === "history") setHistoryMounted(true);
     if (route.view === "running") {
-      setSurfaceSelections(current => ({
+      setSurfaceSelections((current) => ({
         ...current,
         running: {
           ...current.running,
           processId: route.processId,
           runId: route.processId,
         },
-      }))
+      }));
     }
-  }, [routeRevision])
+  }, [routeRevision]);
 
   useEffect(() => {
-    const route = projectRouteFromSearch()
-    const relative = route.filePath ? safeCodeRelativePath(route.filePath) : null
+    const route = projectRouteFromSearch();
+    const relative = route.filePath
+      ? safeCodeRelativePath(route.filePath)
+      : null;
     if (!session || route.view !== "editors" || !relative) {
-      restoredEditorLocationRef.current = null
-      return
+      restoredEditorLocationRef.current = null;
+      return;
     }
-    const key = `${route.checkoutKey ?? "main"}\0${relative}\0${route.line ?? 1}\0${route.column ?? 1}`
-    if (restoredEditorLocationRef.current === key) return
-    restoredEditorLocationRef.current = key
-    const root = editorCheckout.cwdPath.replace(/\/+$/, "")
-    launchSequenceRef.current += 1
+
+    // The route is authoritative for a deep link. A worktree key is normally
+    // its absolute checkout path; legacy symbolic keys can only be resolved
+    // once the persisted editor checkout has caught up. Do not claim the
+    // location until the root is known, otherwise a later checkout update
+    // cannot retry the launch.
+    const rootPath =
+      !route.checkoutKey || route.checkoutKey === "main"
+        ? projectPath
+        : route.checkoutKey.startsWith("/")
+          ? route.checkoutKey
+          : editorCheckout.checkoutKey === route.checkoutKey
+            ? editorCheckout.cwdPath
+            : null;
+    if (!rootPath) return;
+
+    const key = `${route.checkoutKey ?? "main"}\0${relative}\0${route.line ?? 1}\0${route.column ?? 1}`;
+    if (restoredEditorLocationRef.current === key) return;
+    restoredEditorLocationRef.current = key;
+    launchSequenceRef.current += 1;
     setLaunchRequest({
       id: `route-${Date.now()}-${launchSequenceRef.current}`,
       action: {
         kind: "editor",
-        filePath: `${root}/${relative}`,
+        filePath: `${rootPath.replace(/\/+$/, "")}/${relative}`,
         line: route.line ?? undefined,
         column: route.column ?? undefined,
-        preview: true,
+        preview: route.preview ?? true,
       },
-    })
-  }, [editorCheckout.cwdPath, routeRevision, session, view])
+    });
+  }, [
+    editorCheckout.checkoutKey,
+    editorCheckout.cwdPath,
+    projectPath,
+    routeRevision,
+    session,
+    view,
+  ]);
 
   useEffect(() => {
-    setDefaultBranch("main")
-    setSurfaceStateLoaded(false)
-    setActiveCheckout(mainCheckout(projectPath))
-    setEditorCheckout(mainCheckout(projectPath))
-  }, [projectPath])
+    setDefaultBranch("main");
+    setSurfaceStateLoaded(false);
+    setActiveCheckout(mainCheckout(projectPath));
+    setEditorCheckout(mainCheckout(projectPath));
+  }, [projectPath]);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     void window.yaade?.git
       ?.defaultBranch(rootUri)
-      .then(branch => {
-        if (!cancelled && branch?.trim()) setDefaultBranch(branch.trim())
+      .then((branch) => {
+        if (!cancelled && branch?.trim()) setDefaultBranch(branch.trim());
       })
       .catch(() => {
         /* keep "main" fallback */
-      })
+      });
     return () => {
-      cancelled = true
-    }
-  }, [rootUri])
+      cancelled = true;
+    };
+  }, [rootUri]);
 
   useEffect(() => {
-    let cancelled = false
+    let cancelled = false;
     void Promise.all([
       loadProjectSurfaceState(projectId),
       listProjectSessions(projectPath),
-    ]).then(([rows, sessions]) => {
-      if (cancelled) return
-      const validWorkspaceIds = new Set(
-        sessions.filter(item => !item.archivedAt).map(item => item.id),
-      )
-      const next: Partial<
-        Record<Exclude<ProjectView, "history" | "search">, ProjectSurfaceSelection>
-      > = {}
-      for (const row of rows) {
-        if (row.surface === "search") {
-          const tabs = Array.isArray(row.state.searchTabs)
-            ? row.state.searchTabs.filter(
-                tab =>
-                  tab &&
-                  typeof tab.id === "string" &&
-                  typeof tab.query === "string" &&
-                  typeof tab.checkoutPath === "string" &&
-                  typeof tab.checkoutKey === "string",
-              )
-            : []
-          restoreProjectSearches(projectPath, tabs)
-          if (typeof row.state.searchRailOpen === "boolean") {
-            setSearchRailOpen(row.state.searchRailOpen)
+    ])
+      .then(([rows, sessions]) => {
+        if (cancelled) return;
+        const validWorkspaceIds = new Set(
+          sessions.filter((item) => !item.archivedAt).map((item) => item.id),
+        );
+        const next: Partial<
+          Record<
+            Exclude<ProjectView, "history" | "search">,
+            ProjectSurfaceSelection
+          >
+        > = {};
+        for (const row of rows) {
+          if (row.surface === "search") {
+            const tabs = Array.isArray(row.state.searchTabs)
+              ? row.state.searchTabs.filter(
+                  (tab) =>
+                    tab &&
+                    typeof tab.id === "string" &&
+                    typeof tab.query === "string" &&
+                    typeof tab.checkoutPath === "string" &&
+                    typeof tab.checkoutKey === "string",
+                )
+              : [];
+            restoreProjectSearches(projectPath, tabs);
+            // A file route is an explicit navigation into the editor with the
+            // search rail still open. Do not let an older persisted rail
+            // preference race this navigation and hide the search surface.
+            const route = projectRouteFromSearch();
+            if (route.filePath) {
+              setSearchRailOpen(true);
+            } else if (typeof row.state.searchRailOpen === "boolean") {
+              setSearchRailOpen(row.state.searchRailOpen);
+            }
+            continue;
           }
-          continue
-        }
-        if (row.surface === "changes") {
-          const path =
-            typeof row.state.checkoutPath === "string" && row.state.checkoutPath.trim()
-              ? row.state.checkoutPath.trim()
-              : projectPath
-          const key =
-            typeof row.state.checkoutKey === "string" && row.state.checkoutKey.trim()
-              ? row.state.checkoutKey.trim()
-              : sameCheckoutPath(path, projectPath)
-                ? "main"
-                : path
-          next.changes = {
-            checkoutKey: key,
-            checkoutPath: path,
+          if (row.surface === "changes") {
+            const path =
+              typeof row.state.checkoutPath === "string" &&
+              row.state.checkoutPath.trim()
+                ? row.state.checkoutPath.trim()
+                : projectPath;
+            const key =
+              typeof row.state.checkoutKey === "string" &&
+              row.state.checkoutKey.trim()
+                ? row.state.checkoutKey.trim()
+                : sameCheckoutPath(path, projectPath)
+                  ? "main"
+                  : path;
+            next.changes = {
+              checkoutKey: key,
+              checkoutPath: path,
+            };
+            continue;
           }
-          continue
-        }
-        if (
-          row.surface === "running" ||
-          row.surface === "agents" ||
-          row.surface === "terminals"
-        ) {
-          const processId =
-            row.state.processId ?? row.state.runId ?? row.state.terminalId ?? null
-          next.running = {
-            ...next.running,
-            ...row.state,
-            processId,
-            runId: processId,
-            workspaceId:
-              row.state.workspaceId && validWorkspaceIds.has(row.state.workspaceId)
-                ? row.state.workspaceId
-                : null,
+          if (
+            row.surface === "running" ||
+            row.surface === "agents" ||
+            row.surface === "terminals"
+          ) {
+            const processId =
+              row.state.processId ??
+              row.state.runId ??
+              row.state.terminalId ??
+              null;
+            next.running = {
+              ...next.running,
+              ...row.state,
+              processId,
+              runId: processId,
+              workspaceId:
+                row.state.workspaceId &&
+                validWorkspaceIds.has(row.state.workspaceId)
+                  ? row.state.workspaceId
+                  : null,
+            };
+            continue;
           }
-          continue
-        }
-        if (row.surface === "editors") {
-          next.editors = {
-            ...row.state,
-            workspaceId:
-              row.state.workspaceId && validWorkspaceIds.has(row.state.workspaceId)
-                ? row.state.workspaceId
-                : null,
+          if (row.surface === "editors") {
+            next.editors = {
+              ...row.state,
+              workspaceId:
+                row.state.workspaceId &&
+                validWorkspaceIds.has(row.state.workspaceId)
+                  ? row.state.workspaceId
+                  : null,
+            };
           }
         }
-      }
-      setSurfaceSelections(next)
-      setSurfaceStateLoaded(true)
+        setSurfaceSelections(next);
+        setSurfaceStateLoaded(true);
 
-      const route = projectRouteFromSearch()
-      const savedEditor = next.editors
-      const editorPath =
-        route.view === "editors" && route.checkoutKey === "main"
-          ? projectPath
-          : route.view === "editors" && route.checkoutKey?.startsWith("/")
-            ? route.checkoutKey
-            : savedEditor?.checkoutPath ?? projectPath
-      setEditorCheckout(
-        checkoutFromPaths(
-          projectPath,
-          editorPath,
-          checkoutLabelForPath(projectPath, editorPath),
-          route.view === "editors" ? route.checkoutKey : savedEditor?.checkoutKey,
-        ),
-      )
-      if (route.checkoutKey && route.checkoutKey !== "main") {
-        const fromSurface = next.changes?.checkoutPath
-        const cwdPath =
-          fromSurface && !sameCheckoutPath(fromSurface, projectPath)
-            ? fromSurface
-            : route.checkoutKey.startsWith("/")
+        const route = projectRouteFromSearch();
+        const savedEditor = next.editors;
+        const editorPath =
+          route.view === "editors" && route.checkoutKey === "main"
+            ? projectPath
+            : route.view === "editors" && route.checkoutKey?.startsWith("/")
               ? route.checkoutKey
-              : projectPath
-        if (!sameCheckoutPath(cwdPath, projectPath)) {
+              : (savedEditor?.checkoutPath ?? projectPath);
+        setEditorCheckout(
+          checkoutFromPaths(
+            projectPath,
+            editorPath,
+            checkoutLabelForPath(projectPath, editorPath),
+            route.view === "editors"
+              ? route.checkoutKey
+              : savedEditor?.checkoutKey,
+          ),
+        );
+        if (route.checkoutKey && route.checkoutKey !== "main") {
+          const fromSurface = next.changes?.checkoutPath;
+          const cwdPath =
+            fromSurface && !sameCheckoutPath(fromSurface, projectPath)
+              ? fromSurface
+              : route.checkoutKey.startsWith("/")
+                ? route.checkoutKey
+                : projectPath;
+          if (!sameCheckoutPath(cwdPath, projectPath)) {
+            setActiveCheckout(
+              checkoutFromPaths(
+                projectPath,
+                cwdPath,
+                checkoutLabelForPath(projectPath, cwdPath),
+                route.checkoutKey,
+              ),
+            );
+          }
+        } else if (route.checkoutKey === "main") {
+          setActiveCheckout(mainCheckout(projectPath));
+        } else {
+          const summary = next.changes;
+          const path = summary?.checkoutPath ?? projectPath;
           setActiveCheckout(
             checkoutFromPaths(
               projectPath,
-              cwdPath,
-              checkoutLabelForPath(projectPath, cwdPath),
-              route.checkoutKey,
+              path,
+              checkoutLabelForPath(projectPath, path),
+              summary?.checkoutKey ??
+                (sameCheckoutPath(path, projectPath) ? "main" : path),
             ),
-          )
+          );
         }
-      } else if (route.checkoutKey === "main") {
-        setActiveCheckout(mainCheckout(projectPath))
-      } else {
-        const summary = next.changes
-        const path = summary?.checkoutPath ?? projectPath
-        setActiveCheckout(
-          checkoutFromPaths(
-            projectPath,
-            path,
-            checkoutLabelForPath(projectPath, path),
-            summary?.checkoutKey ??
-              (sameCheckoutPath(path, projectPath) ? "main" : path),
-          ),
-        )
-      }
-    }).catch(() => {
-      /* project remains usable with Main defaults */
-    })
+      })
+      .catch(() => {
+        /* project remains usable with Main defaults */
+      });
     return () => {
-      cancelled = true
-    }
-  }, [projectId, projectPath])
+      cancelled = true;
+    };
+  }, [projectId, projectPath]);
 
   useEffect(() => {
-    const runId = projectRouteFromSearch().processId
+    const runId = projectRouteFromSearch().processId;
     if (!runId) {
-      setHistoricalRun(null)
-      setAgentLookupComplete(false)
-      setAgentLookupMissing(false)
-      return
+      setHistoricalRun(null);
+      setAgentLookupComplete(false);
+      setAgentLookupMissing(false);
+      return;
     }
-    let cancelled = false
-    void window.yaade?.agents?.get(runId).then(run => {
-      if (cancelled) return
+    let cancelled = false;
+    void window.yaade?.agents?.get(runId).then((run) => {
+      if (cancelled) return;
       setHistoricalRun(
         run && run.processState !== "running" && run.processState !== "starting"
           ? run
           : null,
-      )
-      setAgentLookupMissing(run == null)
-      setAgentLookupComplete(true)
-    })
+      );
+      setAgentLookupMissing(run == null);
+      setAgentLookupComplete(true);
+    });
     return () => {
-      cancelled = true
-    }
-  }, [initialAgentFocusTabId])
+      cancelled = true;
+    };
+  }, [initialAgentFocusTabId]);
 
   // Opening / restoring a workspace keeps the selected surface. Missing telemetry
   // must not clear a just-launched agent while HQ reconciliation catches up.
   // Changes checkout is independent of the session row (always Main).
   useEffect(() => {
     if (session) {
-      const preferred = preferredSurfaceRef.current ?? "running"
-      setView(current =>
+      const preferred = preferredSurfaceRef.current ?? "running";
+      setView((current) =>
         current === "history" || current === "changes" ? preferred : current,
-      )
-      setSurfaceSelections(current => {
+      );
+      setSurfaceSelections((current) => {
         const selection = {
           ...current[preferred],
           workspaceId: session.id,
-        }
-        void saveProjectSurfaceState(projectId, preferred, selection)
-        return { ...current, [preferred]: selection }
-      })
+        };
+        void saveProjectSurfaceState(projectId, preferred, selection);
+        return { ...current, [preferred]: selection };
+      });
     } else {
-      preferredSurfaceRef.current = null
+      preferredSurfaceRef.current = null;
     }
     // Intentionally omit activeCheckout — only react to session identity.
-  }, [projectId, session?.id]) // eslint-disable-line react-hooks/exhaustive-deps -- session identity only
+  }, [projectId, session?.id]); // eslint-disable-line react-hooks/exhaustive-deps -- session identity only
 
   useEffect(() => {
-    if (!initialAgentFocusTabId) return
-    preferredSurfaceRef.current = "running"
-    setFocusAgentTabId(agentFocusTabId(initialAgentFocusTabId))
-    setView("running")
-    onInitialAgentFocusHandled?.()
-  }, [initialAgentFocusTabId, onInitialAgentFocusHandled])
+    if (!initialAgentFocusTabId) return;
+    preferredSurfaceRef.current = "running";
+    setFocusAgentTabId(agentFocusTabId(initialAgentFocusTabId));
+    setView("running");
+    onInitialAgentFocusHandled?.();
+  }, [initialAgentFocusTabId, onInitialAgentFocusHandled]);
 
   const persistChangesCheckout = useCallback(
     (checkout: ActiveCheckout) => {
-      setSurfaceSelections(current => ({
+      setSurfaceSelections((current) => ({
         ...current,
         changes: {
           checkoutKey: checkout.checkoutKey,
           checkoutPath: checkout.cwdPath,
         },
-      }))
+      }));
       void saveProjectSurfaceState(projectId, "changes", {
         checkoutKey: checkout.checkoutKey,
         checkoutPath: checkout.cwdPath,
-      })
+      });
     },
     [projectId],
-  )
+  );
 
   const persistEditorCheckout = useCallback(
     (checkout: ActiveCheckout) => {
       const selection = {
         checkoutKey: checkout.checkoutKey,
         checkoutPath: checkout.cwdPath,
-      }
-      setEditorCheckout(checkout)
-      setSurfaceSelections(current => ({
+      };
+      setEditorCheckout(checkout);
+      setSurfaceSelections((current) => ({
         ...current,
         editors: { ...current.editors, ...selection },
-      }))
-      void saveProjectSurfaceState(projectId, "editors", selection)
+      }));
+      void saveProjectSurfaceState(projectId, "editors", selection);
     },
     [projectId],
-  )
+  );
 
   const ensureProjectSession = useCallback(async () => {
-    if (session) return session
-    const next = await openCheckoutSession({ rootPath: projectPath, title: "Main" })
-    await onOpenSession(next.id)
-    return next
-  }, [onOpenSession, projectPath, session])
+    if (session) return session;
+    const next = await openCheckoutSession({
+      rootPath: projectPath,
+      title: "Main",
+    });
+    await onOpenSession(next.id);
+    return next;
+  }, [onOpenSession, projectPath, session]);
 
   const openSurface = useCallback(
     async (surface: MuxSurface) => {
-      preferredSurfaceRef.current = surface
-      const muxReady = preloadMuxApp()
-      const next = await ensureProjectSession()
-      await muxReady
-      setView(surface)
+      preferredSurfaceRef.current = surface;
+      const muxReady = preloadMuxApp();
+      const next = await ensureProjectSession();
+      await muxReady;
+      setView(surface);
       const selection = {
         ...surfaceSelections[surface],
         workspaceId: next.id,
-      }
-      setSurfaceSelections(current => ({
+      };
+      setSurfaceSelections((current) => ({
         ...current,
         [surface]: selection,
-      }))
-      void saveProjectSurfaceState(projectId, surface, selection)
+      }));
+      void saveProjectSurfaceState(projectId, surface, selection);
       pushProjectRoute(location.pathname, {
         view: surface,
         workspaceId: next.id,
         checkoutKey: selection.checkoutKey ?? null,
         processId: surface === "running" ? focusAgentTabId : null,
-      })
+      });
     },
     [ensureProjectSession, focusAgentTabId, projectId, surfaceSelections],
-  )
+  );
 
   const handleSelectHistoryCheckout = useCallback(
     async (input: CheckoutSelection) => {
@@ -748,20 +788,20 @@ export function ProjectPage({
         input.cwdPath,
         input.title,
         input.checkoutKey,
-      )
-      setActiveCheckout(checkout)
-      persistChangesCheckout(checkout)
-      setHistoryMounted(true)
-      setView("history")
+      );
+      setActiveCheckout(checkout);
+      persistChangesCheckout(checkout);
+      setHistoryMounted(true);
+      setView("history");
       pushProjectRoute(location.pathname, {
         view: "history",
         workspaceId: null,
         checkoutKey: checkoutRouteKey(checkout),
         processId: null,
-      })
+      });
     },
     [persistChangesCheckout, projectPath],
-  )
+  );
 
   const handleSelectEditorCheckout = useCallback(
     async (input: CheckoutSelection) => {
@@ -770,34 +810,40 @@ export function ProjectPage({
         input.cwdPath,
         input.title,
         input.checkoutKey,
-      )
-      persistEditorCheckout(checkout)
+      );
+      persistEditorCheckout(checkout);
       pushProjectRoute(location.pathname, {
         view: "editors",
         workspaceId: session?.id ?? null,
         checkoutKey: checkoutRouteKey(checkout),
         processId: null,
-      })
+      });
     },
     [persistEditorCheckout, projectPath, session],
-  )
+  );
 
   const handleCreateEditorWorktree = useCallback(
-    async (input: { branch: string; baseRef?: string }): Promise<CheckoutSelection> => {
+    async (input: {
+      branch: string;
+      baseRef?: string;
+    }): Promise<CheckoutSelection> => {
       const created = await createProjectSession({
         rootPath: projectPath,
         title: "Main",
         worktree: input,
-      })
-      const wt = created.createdWorktree
-      if (!wt) throw new Error("Worktree was not created")
-      return selectionFromPaths(projectPath, wt.path, wt.branch, wt.branch)
+      });
+      const wt = created.createdWorktree;
+      if (!wt) throw new Error("Worktree was not created");
+      return selectionFromPaths(projectPath, wt.path, wt.branch, wt.branch);
     },
     [projectPath],
-  )
+  );
 
   const handleCreateWorktree = useCallback(
-    async (input: { branch: string; baseRef?: string }): Promise<CheckoutSelection> => {
+    async (input: {
+      branch: string;
+      baseRef?: string;
+    }): Promise<CheckoutSelection> => {
       const created = await createProjectSession({
         rootPath: projectPath,
         title: "Main",
@@ -805,32 +851,32 @@ export function ProjectPage({
           branch: input.branch,
           baseRef: input.baseRef,
         },
-      })
-      const wt = created.createdWorktree
-      if (!wt) throw new Error("Worktree was not created")
+      });
+      const wt = created.createdWorktree;
+      if (!wt) throw new Error("Worktree was not created");
       const selection = selectionFromPaths(
         projectPath,
         wt.path,
         wt.branch,
         wt.branch,
-      )
+      );
       const checkout = checkoutFromPaths(
         projectPath,
         selection.cwdPath,
         selection.title,
         selection.checkoutKey,
-      )
-      setActiveCheckout(checkout)
-      persistChangesCheckout(checkout)
-      await refreshWorktrees()
-      if (!session) await onOpenSession(created.id)
+      );
+      setActiveCheckout(checkout);
+      persistChangesCheckout(checkout);
+      await refreshWorktrees();
+      if (!session) await onOpenSession(created.id);
       pushProjectRoute(location.pathname, {
         view,
         workspaceId: created.id,
         checkoutKey: checkoutRouteKey(checkout),
         processId: view === "running" ? focusAgentTabId : null,
-      })
-      return selection
+      });
+      return selection;
     },
     [
       focusAgentTabId,
@@ -841,20 +887,20 @@ export function ProjectPage({
       session,
       view,
     ],
-  )
+  );
 
   const handleSelectAgent = useCallback(
     async (agent: HqAgentSummary) => {
-      preferredSurfaceRef.current = "running"
-      setFocusAgentTabId(agentFocusTabId(agent.sessionId))
-      const muxReady = preloadMuxApp()
-      await muxReady
-      setView("running")
-      await onOpenSession(agent.projectSessionId)
+      preferredSurfaceRef.current = "running";
+      setFocusAgentTabId(agentFocusTabId(agent.sessionId));
+      const muxReady = preloadMuxApp();
+      await muxReady;
+      setView("running");
+      await onOpenSession(agent.projectSessionId);
       const runId =
         "runId" in agent && typeof agent.runId === "string"
           ? agent.runId
-          : agent.sessionId
+          : agent.sessionId;
       const selection = {
         workspaceId: agent.projectSessionId,
         checkoutKey: sameCheckoutPath(agent.cwdPath, projectPath)
@@ -863,84 +909,89 @@ export function ProjectPage({
         checkoutPath: agent.cwdPath,
         processId: runId,
         runId,
-      }
-      setSurfaceSelections(current => ({
+      };
+      setSurfaceSelections((current) => ({
         ...current,
         running: selection,
-      }))
-      void saveProjectSurfaceState(projectId, "running", selection)
+      }));
+      void saveProjectSurfaceState(projectId, "running", selection);
       pushProjectRoute(location.pathname, {
         view: "running",
         workspaceId: agent.projectSessionId,
-        checkoutKey: selection.checkoutKey === "main" ? null : selection.checkoutKey,
+        checkoutKey:
+          selection.checkoutKey === "main" ? null : selection.checkoutKey,
         processId: runId,
-      })
+      });
     },
     [onOpenSession, projectId, projectPath],
-  )
+  );
 
   const handleLaunchAction = useCallback(
     async (action: MuxLaunchAction) => {
-      launchSequenceRef.current += 1
+      launchSequenceRef.current += 1;
       const request: MuxLaunchRequest = {
         id: `launch-${Date.now()}-${launchSequenceRef.current}`,
         action,
-      }
-      setLaunchRequest(request)
+      };
+      setLaunchRequest(request);
       const surface: MuxSurface =
         action.kind === "agent"
           ? "running"
           : action.kind === "editor"
             ? "editors"
-            : "running"
-      preferredSurfaceRef.current = surface
+            : "running";
+      preferredSurfaceRef.current = surface;
       try {
-        await openSurface(surface)
+        await openSurface(surface);
       } catch (error) {
-        setLaunchRequest(current => (current?.id === request.id ? null : current))
+        setLaunchRequest((current) =>
+          current?.id === request.id ? null : current,
+        );
         showYaadeToast(
-          error instanceof Error ? error.message : "Could not open the workspace.",
+          error instanceof Error
+            ? error.message
+            : "Could not open the workspace.",
           { variant: "destructive" },
-        )
+        );
       }
     },
     [openSurface],
-  )
+  );
 
   const openAgentLaunch = useCallback(
     async (input: {
-      requestId: string
-      driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"]
-      useWorktree?: boolean
-      worktreeName?: string
-      checkoutPath?: string
-      checkoutKey?: string
-      checkoutLabel?: string
+      requestId: string;
+      driverId: Extract<MuxLaunchAction, { kind: "agent" }>["driverId"];
+      useWorktree?: boolean;
+      worktreeName?: string;
+      checkoutPath?: string;
+      checkoutKey?: string;
+      checkoutLabel?: string;
     }) => {
-      let checkoutPath = input.checkoutPath ?? projectPath
-      let checkoutKey = input.checkoutKey ?? "main"
+      let checkoutPath = input.checkoutPath ?? projectPath;
+      let checkoutKey = input.checkoutKey ?? "main";
 
-      preferredSurfaceRef.current = "running"
+      preferredSurfaceRef.current = "running";
       try {
         if (input.useWorktree) {
           const branch =
             input.worktreeName?.trim() ||
-            defaultAgentWorktreeName(input.driverId)
+            defaultAgentWorktreeName(input.driverId);
           const created = await createProjectSession({
             rootPath: projectPath,
             title: "Main",
             worktree: { branch },
-          })
-          const wt = created.createdWorktree
-          if (!wt) throw new Error("Worktree was not created")
-          checkoutPath = wt.path
-          checkoutKey = wt.path
+          });
+          const wt = created.createdWorktree;
+          if (!wt) throw new Error("Worktree was not created");
+          checkoutPath = wt.path;
+          checkoutKey = wt.path;
         }
 
         // Agents are project-scoped processes (same as terminals). Do not open a
         // mux session here — that stacks InstanceSidebar on ProjectWorkspaceSidebar.
-        const api = window.yaade?.terminal
-        if (!api) throw new Error("Terminal service unavailable")
+        const api = window.yaade?.terminal;
+        if (!api) throw new Error("Terminal service unavailable");
         const instance = await api.createInstance({
           projectId,
           ...(session?.id ? { workspaceId: session.id } : {}),
@@ -949,37 +1000,37 @@ export function ProjectPage({
           checkoutKey,
           checkoutPath,
           title: `${input.driverId.charAt(0).toUpperCase()}${input.driverId.slice(1)} agent`,
-        })
-        const processId = instance.id
+        });
+        const processId = instance.id;
         const selection = {
           workspaceId: session?.id ?? null,
           checkoutKey,
           checkoutPath,
           processId,
           runId: processId,
-        }
-        setSurfaceSelections(current => ({ ...current, running: selection }))
-        void saveProjectSurfaceState(projectId, "running", selection)
-        setFocusAgentTabId(agentFocusTabId(processId))
-        clearHqAgentLaunch(input.requestId)
-        setLaunchRequest(null)
-        onAgentLaunchIntentHandled?.(input.requestId)
-        setView("running")
+        };
+        setSurfaceSelections((current) => ({ ...current, running: selection }));
+        void saveProjectSurfaceState(projectId, "running", selection);
+        setFocusAgentTabId(agentFocusTabId(processId));
+        clearHqAgentLaunch(input.requestId);
+        setLaunchRequest(null);
+        onAgentLaunchIntentHandled?.(input.requestId);
+        setView("running");
         replaceProjectRoute(location.pathname, {
           view: "running",
           workspaceId: session?.id ?? null,
           checkoutKey: checkoutKey === "main" ? null : checkoutKey,
           processId,
-        })
+        });
       } catch (error) {
-        setLaunchRequest(current =>
+        setLaunchRequest((current) =>
           current?.id === input.requestId ? null : current,
-        )
-        throw error
+        );
+        throw error;
       }
     },
     [onAgentLaunchIntentHandled, projectId, projectPath, session],
-  )
+  );
 
   const handleLaunchRequestHandled = useCallback(
     (
@@ -987,33 +1038,35 @@ export function ProjectPage({
       result?: { agentTabId?: string | null; agentRunId?: string | null },
     ) => {
       const launchedCheckout =
-        launchRequest?.action.kind === "agent" ? launchRequest.action : null
-      clearHqAgentLaunch(requestId)
-      setLaunchRequest(current => (current?.id === requestId ? null : current))
-      onAgentLaunchIntentHandled?.(requestId)
+        launchRequest?.action.kind === "agent" ? launchRequest.action : null;
+      clearHqAgentLaunch(requestId);
+      setLaunchRequest((current) =>
+        current?.id === requestId ? null : current,
+      );
+      onAgentLaunchIntentHandled?.(requestId);
       if (result?.agentTabId) {
-        setFocusAgentTabId(result.agentTabId)
-        setView("running")
-        preferredSurfaceRef.current = "running"
-        const processId = result.agentRunId ?? result.agentTabId
+        setFocusAgentTabId(result.agentTabId);
+        setView("running");
+        preferredSurfaceRef.current = "running";
+        const processId = result.agentRunId ?? result.agentTabId;
         const selection = {
           workspaceId: session?.id ?? null,
           checkoutKey: launchedCheckout?.checkoutKey ?? "main",
           checkoutPath: launchedCheckout?.checkoutPath ?? projectPath,
           processId,
           runId: processId,
-        }
-        setSurfaceSelections(current => ({ ...current, running: selection }))
-        void saveProjectSurfaceState(projectId, "running", selection)
+        };
+        setSurfaceSelections((current) => ({ ...current, running: selection }));
+        void saveProjectSurfaceState(projectId, "running", selection);
         pushProjectRoute(location.pathname, {
           view: "running",
           workspaceId: session?.id ?? null,
           checkoutKey:
             launchedCheckout?.checkoutKey === "main"
               ? null
-              : launchedCheckout?.checkoutKey ?? null,
+              : (launchedCheckout?.checkoutKey ?? null),
           processId,
-        })
+        });
       }
     },
     [
@@ -1023,10 +1076,10 @@ export function ProjectPage({
       projectPath,
       session,
     ],
-  )
+  );
 
   useEffect(() => {
-    const queued = peekHqAgentLaunch(projectId)
+    const queued = peekHqAgentLaunch(projectId);
     const intent =
       agentLaunchIntent ??
       (queued
@@ -1036,40 +1089,40 @@ export function ProjectPage({
             useWorktree: queued.useWorktree,
             worktreeName: queued.worktreeName,
           }
-        : null)
-    if (!intent) return
+        : null);
+    if (!intent) return;
     if (!claimHqAgentLaunch(intent.id)) {
-      preferredSurfaceRef.current = "running"
-      setView("running")
-      return
+      preferredSurfaceRef.current = "running";
+      setView("running");
+      return;
     }
 
-    let cancelled = false
+    let cancelled = false;
     void openAgentLaunch({
       requestId: intent.id,
       driverId: intent.driverId,
       useWorktree: intent.useWorktree,
       worktreeName: intent.worktreeName,
-    }).catch(error => {
-      if (cancelled) return
-      clearHqAgentLaunch(intent.id)
-      onAgentLaunchIntentHandled?.(intent.id)
+    }).catch((error) => {
+      if (cancelled) return;
+      clearHqAgentLaunch(intent.id);
+      onAgentLaunchIntentHandled?.(intent.id);
       showYaadeToast(
         error instanceof Error
           ? error.message
           : "Could not open the workspace for agent launch.",
         { variant: "destructive" },
-      )
-    })
+      );
+    });
     return () => {
-      cancelled = true
-    }
+      cancelled = true;
+    };
   }, [
     agentLaunchIntent,
     onAgentLaunchIntentHandled,
     openAgentLaunch,
     projectId,
-  ])
+  ]);
 
   const handleRemoveWorktree = useCallback(
     async (input: { cwdPath: string; branch: string | null }) => {
@@ -1080,32 +1133,32 @@ export function ProjectPage({
         confirmLabel: "Remove worktree",
         cancelLabel: "Cancel",
         destructive: true,
-      })
-      if (!confirmed) return
+      });
+      if (!confirmed) return;
       try {
         await removeProjectWorktree({
           rootPath: projectPath,
           worktreePath: input.cwdPath,
-        })
-        await refreshWorktrees()
-        const checkout = mainCheckout(projectPath)
-        setActiveCheckout(checkout)
-        persistChangesCheckout(checkout)
+        });
+        await refreshWorktrees();
+        const checkout = mainCheckout(projectPath);
+        setActiveCheckout(checkout);
+        persistChangesCheckout(checkout);
         pushProjectRoute(location.pathname, {
           view,
-          workspaceId: view === "editors" ? session?.id ?? null : null,
+          workspaceId: view === "editors" ? (session?.id ?? null) : null,
           checkoutKey: null,
-        })
+        });
       } catch (error) {
         showYaadeToast(
           error instanceof Error ? error.message : "Could not remove worktree",
           { variant: "destructive" },
-        )
-        throw error
+        );
+        throw error;
       }
     },
     [persistChangesCheckout, projectPath, refreshWorktrees, session, view],
-  )
+  );
 
   const handleRemoveEditorWorktree = useCallback(
     async (input: { cwdPath: string; branch: string | null }) => {
@@ -1116,44 +1169,44 @@ export function ProjectPage({
         confirmLabel: "Remove worktree",
         cancelLabel: "Cancel",
         destructive: true,
-      })
-      if (!confirmed) return
+      });
+      if (!confirmed) return;
       try {
         await removeProjectWorktree({
           rootPath: projectPath,
           worktreePath: input.cwdPath,
-        })
-        const checkout = mainCheckout(projectPath)
-        persistEditorCheckout(checkout)
+        });
+        const checkout = mainCheckout(projectPath);
+        persistEditorCheckout(checkout);
         pushProjectRoute(location.pathname, {
           view: "editors",
           workspaceId: session?.id ?? null,
           checkoutKey: null,
           processId: null,
-        })
+        });
       } catch (error) {
         showYaadeToast(
           error instanceof Error ? error.message : "Could not remove worktree",
           { variant: "destructive" },
-        )
-        throw error
+        );
+        throw error;
       }
     },
     [persistEditorCheckout, projectPath, session],
-  )
+  );
 
   const ensureCheckoutSession = useCallback(
     async (surface: MuxSurface) => {
-      await openSurface(surface)
+      await openSurface(surface);
     },
     [openSurface],
-  )
+  );
 
   const processSidebar = useProjectProcessSidebar(
     projectId,
     activeCheckout.checkoutKey,
     activeCheckout.cwdPath,
-  )
+  );
 
   const handleProcessSelect = useCallback(
     (
@@ -1167,12 +1220,12 @@ export function ProjectPage({
         checkoutKey: checkout?.checkoutKey ?? activeCheckout.checkoutKey,
         checkoutPath: checkout?.checkoutPath ?? activeCheckout.cwdPath,
         workspaceId: session?.id ?? null,
-      }
-      setSurfaceSelections(current => ({ ...current, running: selection }))
-      void saveProjectSurfaceState(projectId, "running", selection)
-      preferredSurfaceRef.current = "running"
-      setFocusAgentTabId(agentFocusTabId(processId))
-      setView("running")
+      };
+      setSurfaceSelections((current) => ({ ...current, running: selection }));
+      void saveProjectSurfaceState(projectId, "running", selection);
+      preferredSurfaceRef.current = "running";
+      setFocusAgentTabId(agentFocusTabId(processId));
+      setView("running");
       replaceProjectRoute(location.pathname, {
         view: "running",
         // Keep an open mux session in the URL; otherwise stay process-scoped.
@@ -1188,20 +1241,26 @@ export function ProjectPage({
             )
           : checkoutRouteKey(activeCheckout),
         processId,
-      })
+      });
     },
-    [activeCheckout, projectId, projectPath, session, surfaceSelections.running],
-  )
+    [
+      activeCheckout,
+      projectId,
+      projectPath,
+      session,
+      surfaceSelections.running,
+    ],
+  );
 
   const activeProcessId =
     projectRouteFromSearch().processId ??
     surfaceSelections.running?.processId ??
     surfaceSelections.running?.runId ??
-    null
+    null;
 
   const runningSidebarItems = useMemo<ProjectWorkspaceSidebarProcess[]>(
     () =>
-      processSidebar.processes.map(instance => ({
+      processSidebar.processes.map((instance) => ({
         id: instance.id,
         label: instance.title,
         subtitle: `${instance.checkoutKey === "main" ? "Main" : instance.checkoutKey}`,
@@ -1218,20 +1277,20 @@ export function ProjectPage({
       processSidebar.closeProcess,
       processSidebar.processes,
     ],
-  )
+  );
 
-  const searchEntries = useProjectSearchEntries(projectPath)
+  const searchEntries = useProjectSearchEntries(projectPath);
   const activeSearchId =
     view === "search" || view === "editors"
-      ? projectRouteFromSearch().searchId ?? searchEntries[0]?.id ?? null
-      : null
+      ? (projectRouteFromSearch().searchId ?? searchEntries[0]?.id ?? null)
+      : null;
 
   const openSearchView = useCallback(
     async (searchId: string) => {
-      const next = await ensureProjectSession()
-      setView("search")
-      setSearchRailOpen(true)
-      const entry = getProjectSearch(projectPath, searchId)
+      const next = await ensureProjectSession();
+      setView("search");
+      setSearchRailOpen(true);
+      const entry = getProjectSearch(projectPath, searchId);
       pushProjectRoute(location.pathname, {
         view: "search",
         workspaceId: next.id,
@@ -1239,38 +1298,38 @@ export function ProjectPage({
         processId: null,
         searchId,
         searchQuery: entry?.query || null,
-      })
+      });
     },
     [ensureProjectSession, projectPath],
-  )
+  );
 
   const handleNewSearch = useCallback(() => {
     const entry = createProjectSearch(projectPath, {
       checkoutPath: editorCheckout.cwdPath,
       checkoutKey: editorCheckout.checkoutKey,
-    })
-    void openSearchView(entry.id)
-  }, [editorCheckout, openSearchView, projectPath])
+    });
+    void openSearchView(entry.id);
+  }, [editorCheckout, openSearchView, projectPath]);
 
   const handleCloseSearch = useCallback(
     (searchId: string) => {
-      removeProjectSearch(projectPath, searchId)
-      if (activeSearchId !== searchId) return
-      const remaining = searchEntries.filter(entry => entry.id !== searchId)
+      removeProjectSearch(projectPath, searchId);
+      if (activeSearchId !== searchId) return;
+      const remaining = searchEntries.filter((entry) => entry.id !== searchId);
       if (remaining[0]) {
-        void openSearchView(remaining[0].id)
-        return
+        void openSearchView(remaining[0].id);
+        return;
       }
-      setSearchRailOpen(false)
-      setHistoryMounted(true)
-      setView("history")
+      setSearchRailOpen(false);
+      setHistoryMounted(true);
+      setView("history");
       pushProjectRoute(location.pathname, {
         view: "history",
         workspaceId: session?.id ?? null,
         checkoutKey: checkoutRouteKey(activeCheckout),
         processId: null,
         searchId: null,
-      })
+      });
     },
     [
       activeCheckout,
@@ -1280,11 +1339,11 @@ export function ProjectPage({
       searchEntries,
       session?.id,
     ],
-  )
+  );
 
   const searchSidebarItems = useMemo<ProjectWorkspaceSidebarSearch[]>(
     () =>
-      searchEntries.map(entry => ({
+      searchEntries.map((entry) => ({
         id: entry.id,
         label: entry.query.trim() || "New search",
         selected: activeSearchId === entry.id,
@@ -1292,17 +1351,17 @@ export function ProjectPage({
         onClose: () => handleCloseSearch(entry.id),
       })),
     [activeSearchId, handleCloseSearch, openSearchView, searchEntries],
-  )
+  );
 
   const handleSearchSelectResult = useCallback(
     async (
       result: import("@yaade/shared").ProjectSearchResult,
       disposition: "preview" | "pinned" = "preview",
     ) => {
-      const nextSession = await ensureProjectSession()
+      const nextSession = await ensureProjectSession();
       const search = activeSearchId
         ? getProjectSearch(projectPath, activeSearchId)
-        : null
+        : null;
       const checkout = search
         ? checkoutFromPaths(
             projectPath,
@@ -1310,20 +1369,20 @@ export function ProjectPage({
             checkoutLabelForPath(projectPath, search.checkoutPath),
             search.checkoutKey,
           )
-        : editorCheckout
+        : editorCheckout;
       if (!sameCheckoutPath(checkout.cwdPath, editorCheckout.cwdPath)) {
-        persistEditorCheckout(checkout)
+        persistEditorCheckout(checkout);
       }
-      const relative = safeCodeRelativePath(result.path.replace(/^\/+/, ""))
-      if (!relative) return
-      const root = checkout.cwdPath.replace(/\/+$/, "")
-      const line = result.line > 0 ? result.line : 1
-      const column = result.column > 0 ? result.column : 1
-      restoredEditorLocationRef.current = `${checkoutRouteKey(checkout) ?? "main"}\0${relative}\0${line}\0${column}`
-      preferredSurfaceRef.current = "editors"
-      setSearchRailOpen(true)
-      setView("editors")
-      launchSequenceRef.current += 1
+      const relative = safeCodeRelativePath(result.path.replace(/^\/+/, ""));
+      if (!relative) return;
+      const root = checkout.cwdPath.replace(/\/+$/, "");
+      const line = result.line > 0 ? result.line : 1;
+      const column = result.column > 0 ? result.column : 1;
+      restoredEditorLocationRef.current = `${checkoutRouteKey(checkout) ?? "main"}\0${relative}\0${line}\0${column}`;
+      preferredSurfaceRef.current = "editors";
+      setSearchRailOpen(true);
+      setView("editors");
+      launchSequenceRef.current += 1;
       setLaunchRequest({
         id: `search-${Date.now()}-${launchSequenceRef.current}`,
         action: {
@@ -1333,7 +1392,7 @@ export function ProjectPage({
           column,
           preview: disposition !== "pinned",
         },
-      })
+      });
       pushProjectRoute(location.pathname, {
         view: "editors",
         workspaceId: nextSession.id,
@@ -1344,47 +1403,57 @@ export function ProjectPage({
         filePath: relative,
         line,
         column,
-      })
+        preview: disposition !== "pinned",
+      });
     },
-    [activeSearchId, editorCheckout, ensureProjectSession, persistEditorCheckout, projectPath],
-  )
+    [
+      activeSearchId,
+      editorCheckout,
+      ensureProjectSession,
+      persistEditorCheckout,
+      projectPath,
+    ],
+  );
 
   useEffect(() => {
     const onOpenProjectSearch = () => {
       if (searchRailOpen && activeSearchId) {
-        void openSearchView(activeSearchId)
-        return
+        void openSearchView(activeSearchId);
+        return;
       }
       if (searchEntries[0]) {
-        void openSearchView(searchEntries[0].id)
-        return
+        void openSearchView(searchEntries[0].id);
+        return;
       }
-      handleNewSearch()
-    }
-    window.addEventListener("yaade:open-project-search", onOpenProjectSearch)
+      handleNewSearch();
+    };
+    window.addEventListener("yaade:open-project-search", onOpenProjectSearch);
     return () => {
-      window.removeEventListener("yaade:open-project-search", onOpenProjectSearch)
-    }
+      window.removeEventListener(
+        "yaade:open-project-search",
+        onOpenProjectSearch,
+      );
+    };
   }, [
     activeSearchId,
     handleNewSearch,
     openSearchView,
     searchEntries,
     searchRailOpen,
-  ])
+  ]);
 
   useEffect(() => {
-    if (!surfaceStateLoaded) return
-    if (view !== "search" && !(view === "editors" && searchRailOpen)) return
-    const routeId = projectRouteFromSearch().searchId
-    if (routeId && getProjectSearch(projectPath, routeId)) return
+    if (!surfaceStateLoaded) return;
+    if (view !== "search" && !(view === "editors" && searchRailOpen)) return;
+    const routeId = projectRouteFromSearch().searchId;
+    if (routeId && getProjectSearch(projectPath, routeId)) return;
     if (routeId && !getProjectSearch(projectPath, routeId)) {
       const entry = createProjectSearch(projectPath, {
         id: routeId,
         checkoutPath: editorCheckout.cwdPath,
         checkoutKey: editorCheckout.checkoutKey,
         query: projectRouteFromSearch().searchQuery ?? "",
-      })
+      });
       replaceProjectRoute(location.pathname, {
         view: "search",
         workspaceId: session?.id ?? null,
@@ -1392,11 +1461,11 @@ export function ProjectPage({
         processId: null,
         searchId: entry.id,
         searchQuery: projectRouteFromSearch().searchQuery,
-      })
-      return
+      });
+      return;
     }
     if (!routeId) {
-      const existing = listProjectSearches(projectPath)[0]
+      const existing = listProjectSearches(projectPath)[0];
       if (existing) {
         replaceProjectRoute(location.pathname, {
           view: "search",
@@ -1404,29 +1473,37 @@ export function ProjectPage({
           checkoutKey: checkoutRouteKey(activeCheckout),
           processId: null,
           searchId: existing.id,
-        })
-        return
+        });
+        return;
       }
       const entry = createProjectSearch(projectPath, {
         checkoutPath: editorCheckout.cwdPath,
         checkoutKey: editorCheckout.checkoutKey,
         query: projectRouteFromSearch().searchQuery ?? "",
-      })
+      });
       replaceProjectRoute(location.pathname, {
         view: "search",
         workspaceId: session?.id ?? null,
         checkoutKey: checkoutRouteKey(activeCheckout),
         processId: null,
         searchId: entry.id,
-      })
+      });
     }
-  }, [activeCheckout, editorCheckout, projectPath, searchRailOpen, session?.id, surfaceStateLoaded, view])
+  }, [
+    activeCheckout,
+    editorCheckout,
+    projectPath,
+    searchRailOpen,
+    session?.id,
+    surfaceStateLoaded,
+    view,
+  ]);
 
   useEffect(() => {
-    if (!surfaceStateLoaded) return
-    if (searchEntries.length === 0 && !searchRailOpen) return
+    if (!surfaceStateLoaded) return;
+    if (searchEntries.length === 0 && !searchRailOpen) return;
     void saveProjectSurfaceState(projectId, "search", {
-      searchTabs: searchEntries.map(entry => ({
+      searchTabs: searchEntries.map((entry) => ({
         id: entry.id,
         query: entry.query,
         options: entry.options,
@@ -1435,22 +1512,27 @@ export function ProjectPage({
       })),
       activeSearchId,
       searchRailOpen,
-    })
-  }, [activeSearchId, projectId, searchEntries, searchRailOpen, surfaceStateLoaded])
+    });
+  }, [
+    activeSearchId,
+    projectId,
+    searchEntries,
+    searchRailOpen,
+    surfaceStateLoaded,
+  ]);
 
   useEffect(() => {
-    if ((view !== "editors" && view !== "search") || !activeSearchId) return
-    const entry = getProjectSearch(projectPath, activeSearchId)
-    const route = projectRouteFromSearch()
-    const query = entry?.query.trim() || null
-    if (route.searchQuery === query) return
+    if ((view !== "editors" && view !== "search") || !activeSearchId) return;
+    const entry = getProjectSearch(projectPath, activeSearchId);
+    const route = projectRouteFromSearch();
+    const query = entry?.query.trim() || null;
+    if (route.searchQuery === query) return;
     replaceProjectRoute(location.pathname, {
       ...route,
       view,
       searchQuery: query,
-    })
-  }, [activeSearchId, projectPath, searchEntries, view])
-
+    });
+  }, [activeSearchId, projectPath, searchEntries, view]);
 
   const gitHistoryWorktrees = useMemo<ProjectWorkspaceSidebarWorktree[]>(
     () => [
@@ -1465,14 +1547,14 @@ export function ProjectPage({
           ),
       },
       ...worktrees
-        .filter(worktree => !sameCheckoutPath(worktree.path, projectPath))
-        .map(worktree => {
-          const branch = worktree.branch?.replace(/^refs\/heads\//, "") ?? null
-          const label = projectWorktreeLabel(worktree)
+        .filter((worktree) => !sameCheckoutPath(worktree.path, projectPath))
+        .map((worktree) => {
+          const branch = worktree.branch?.replace(/^refs\/heads\//, "") ?? null;
+          const label = projectWorktreeLabel(worktree);
           const selected = sameCheckoutPath(
             activeCheckout.cwdPath,
             worktree.path,
-          )
+          );
           return {
             id: worktree.path,
             label,
@@ -1480,12 +1562,7 @@ export function ProjectPage({
             selected,
             onSelect: () =>
               void handleSelectHistoryCheckout(
-                selectionFromPaths(
-                  projectPath,
-                  worktree.path,
-                  label,
-                  branch,
-                ),
+                selectionFromPaths(projectPath, worktree.path, label, branch),
               ),
             onRemove: selected
               ? () =>
@@ -1494,7 +1571,7 @@ export function ProjectPage({
                     branch,
                   })
               : undefined,
-          }
+          };
         }),
     ],
     [
@@ -1504,15 +1581,15 @@ export function ProjectPage({
       projectPath,
       worktrees,
     ],
-  )
+  );
 
   const handleCreateGitWorktree = useCallback(
     async (input: { branch: string; baseRef?: string }) => {
-      const selection = await handleCreateWorktree(input)
-      if (selection) await handleSelectHistoryCheckout(selection)
+      const selection = await handleCreateWorktree(input);
+      if (selection) await handleSelectHistoryCheckout(selection);
     },
     [handleCreateWorktree, handleSelectHistoryCheckout],
-  )
+  );
 
   const createTerminalAtCheckout = useCallback(
     async (checkout: CheckoutSelection) => {
@@ -1521,33 +1598,30 @@ export function ProjectPage({
           checkoutKey: checkout.checkoutKey,
           checkoutPath: checkout.cwdPath,
           workspaceId: session?.id ?? null,
-        })
+        });
         handleProcessSelect(id, {
           checkoutKey: checkout.checkoutKey,
           checkoutPath: checkout.cwdPath,
-        })
+        });
       } catch (error) {
         showYaadeToast(
           error instanceof Error ? error.message : "Could not create terminal",
           { variant: "destructive" },
-        )
+        );
       }
     },
     [handleProcessSelect, processSidebar.createTerminal, session],
-  )
+  );
 
   const launchFromMenu = useCallback(
-    (
-      selection: ProcessLaunchSelection,
-      checkout: CheckoutSelection,
-    ) => {
-      setProcessPickerOpen(false)
+    (selection: ProcessLaunchSelection, checkout: CheckoutSelection) => {
+      setProcessPickerOpen(false);
       if (selection.kind === "terminal") {
-        void createTerminalAtCheckout(checkout)
-        return
+        void createTerminalAtCheckout(checkout);
+        return;
       }
-      launchSequenceRef.current += 1
-      const requestId = `launch-${Date.now()}-${launchSequenceRef.current}`
+      launchSequenceRef.current += 1;
+      const requestId = `launch-${Date.now()}-${launchSequenceRef.current}`;
       void openAgentLaunch({
         requestId,
         driverId: selection.driver.id,
@@ -1555,15 +1629,17 @@ export function ProjectPage({
         checkoutPath: checkout.cwdPath,
         checkoutKey: checkout.checkoutKey,
         checkoutLabel: checkout.title,
-      }).catch(error => {
+      }).catch((error) => {
         showYaadeToast(
-          error instanceof Error ? error.message : "Could not launch the agent.",
+          error instanceof Error
+            ? error.message
+            : "Could not launch the agent.",
           { variant: "destructive" },
-        )
-      })
+        );
+      });
     },
     [createTerminalAtCheckout, openAgentLaunch],
-  )
+  );
 
   const processLauncher = (
     <ProcessLaunchMenu
@@ -1584,13 +1660,13 @@ export function ProjectPage({
         </Button>
       }
     />
-  )
+  );
 
-  const surface = surfaceForView(view)
+  const surface = surfaceForView(view);
   const checkoutRootUri = useMemo(
     () => pathToFileUri(activeCheckout.cwdPath),
     [activeCheckout.cwdPath],
-  )
+  );
 
   return (
     <AppShell>
@@ -1611,9 +1687,9 @@ export function ProjectPage({
           onOpenHq={onOpenHq}
           onOpenSettings={() => {
             if (session) {
-              window.dispatchEvent(new Event("yaade:open-settings"))
+              window.dispatchEvent(new Event("yaade:open-settings"));
             } else {
-              setSettingsOpen(true)
+              setSettingsOpen(true);
             }
           }}
           loading={processSidebar.loading}
@@ -1626,8 +1702,8 @@ export function ProjectPage({
               homeDir={homeDir}
               projects={hq.snapshot?.projects ?? []}
               selectedRootPath={projectPath}
-              onOpenProject={project => onNavigateProject(project.rootPath)}
-              onOpenPath={async rootPath => onNavigateProject(rootPath)}
+              onOpenProject={(project) => onNavigateProject(project.rootPath)}
+              onOpenPath={async (rootPath) => onNavigateProject(rootPath)}
               side="right"
               align="start"
               trigger={
@@ -1639,7 +1715,6 @@ export function ProjectPage({
                   title="Go to project"
                   data-yaade-project-switcher=""
                 >
-
                   <FolderKanban data-icon="inline-start" />
                   <span className="truncate font-semibold">{projectName}</span>
                   <ChevronsUpDown
@@ -1658,58 +1733,82 @@ export function ProjectPage({
             data-yaade-project-id={projectId}
             data-yaade-project-path={projectPath}
           >
-          {/* Keep mux mounted so PTYs survive surface switches. */}
-          <div className="relative min-h-0 flex-1 overflow-hidden">
-            <ProjectSurfaceSlot
-              panel="history"
-              active={view === "history"}
-              mounted={historyMounted}
-              fallback="Loading history…"
-            >
-              <ProjectGitSurface
-                view="history"
-                active={view === "history"}
-                rootUri={checkoutRootUri}
-                theme={activeTheme}
-                activeCheckout={activeCheckout}
-              />
-            </ProjectSurfaceSlot>
-
-            <ProjectSurfaceSlot
-              panel="changes"
-              active={view === "changes"}
-              mounted={view === "changes"}
-              fallback="Loading changes…"
-            >
-              <ProjectGitSurface
-                view="changes"
-                active
-                rootUri={checkoutRootUri}
-                theme={activeTheme}
-                activeCheckout={activeCheckout}
-              />
-            </ProjectSurfaceSlot>
-
-            {view === "search" && activeSearchId ? (
+            {/* Keep mux mounted so PTYs survive surface switches. */}
+            <div className="relative min-h-0 flex-1 overflow-hidden">
               <ProjectSurfaceSlot
-                panel="search"
-                active
-                fallback="Loading search…"
+                panel="history"
+                active={view === "history"}
+                mounted={historyMounted}
+                fallback="Loading history…"
               >
-                <ProjectSearchSurface
-                  projectPath={projectPath}
-                  searchId={activeSearchId}
-                  onSelectResult={handleSearchSelectResult}
+                <ProjectGitSurface
+                  view="history"
+                  active={view === "history"}
+                  rootUri={checkoutRootUri}
+                  theme={activeTheme}
+                  activeCheckout={activeCheckout}
                 />
               </ProjectSurfaceSlot>
-            ) : null}
 
-            {session && (view === "editors" || view === "running") ? (
               <ProjectSurfaceSlot
-                panel={view}
-                active
-                fallback="Opening workspace…"
+                panel="changes"
+                active={view === "changes"}
+                mounted={view === "changes"}
+                fallback="Loading changes…"
               >
+                <ProjectGitSurface
+                  view="changes"
+                  active
+                  rootUri={checkoutRootUri}
+                  theme={activeTheme}
+                  activeCheckout={activeCheckout}
+                />
+              </ProjectSurfaceSlot>
+
+              {activeSearchId ? (
+                <ProjectSurfaceSlot
+                  panel="search"
+                  active={view === "search"}
+                  fallback="Loading search…"
+                  className="[&>div]:h-full"
+                >
+                  <div
+                    className="h-full"
+                    data-yaade-search-results="fullscreen"
+                  >
+                    <ProjectSearchSurface
+                      projectPath={projectPath}
+                      searchId={activeSearchId}
+                      onSelectResult={handleSearchSelectResult}
+                    />
+                  </div>
+                </ProjectSurfaceSlot>
+              ) : null}
+
+              {view === "editors" && searchRailOpen && activeSearchId ? (
+                <div
+                  className="absolute inset-y-0 left-0 z-20 w-[22rem] overflow-hidden border-r border-border bg-background shadow-lg"
+                  data-yaade-search-results="rail"
+                >
+                  <ProjectSearchSurface
+                    projectPath={projectPath}
+                    searchId={activeSearchId}
+                    onSelectResult={handleSearchSelectResult}
+                  />
+                </div>
+              ) : null}
+
+              {session && (view === "editors" || view === "running") ? (
+                <ProjectSurfaceSlot
+                  panel={view}
+                  active
+                  fallback="Opening workspace…"
+                  className={
+                    view === "editors" && searchRailOpen && activeSearchId
+                      ? "left-[22rem] w-[calc(100%-22rem)]"
+                      : undefined
+                  }
+                >
                   <MuxApp
                     key={session.id}
                     session={session}
@@ -1735,36 +1834,38 @@ export function ProjectPage({
                         />
                       ) : undefined
                     }
-                    focusAgentTabId={view === "running" ? focusAgentTabId : null}
+                    focusAgentTabId={
+                      view === "running" ? focusAgentTabId : null
+                    }
                     onBackToProject={onClearSession}
-                    onSelectAgentTab={tabId => {
-                      preferredSurfaceRef.current = "running"
-                      setFocusAgentTabId(tabId)
+                    onSelectAgentTab={(tabId) => {
+                      preferredSurfaceRef.current = "running";
+                      setFocusAgentTabId(tabId);
                       const runId = tabId.startsWith("yaade:terminal:")
                         ? tabId.slice("yaade:terminal:".length)
-                        : tabId
+                        : tabId;
                       pushProjectRoute(location.pathname, {
                         view: "running",
                         workspaceId: session?.id ?? null,
                         checkoutKey: checkoutRouteKey(activeCheckout),
                         processId: runId,
-                      })
+                      });
                     }}
-                    onRequestSurface={next => {
+                    onRequestSurface={(next) => {
                       if (next === "changes") {
-                        setHistoryMounted(true)
-                        setView("history")
+                        setHistoryMounted(true);
+                        setView("history");
                         pushProjectRoute(location.pathname, {
                           view: "history",
                           workspaceId: session?.id ?? null,
                           checkoutKey: checkoutRouteKey(activeCheckout),
                           processId: null,
-                        })
-                        return
+                        });
+                        return;
                       }
                       if (next === "running") {
-                        preferredSurfaceRef.current = "running"
-                        setView("running")
+                        preferredSurfaceRef.current = "running";
+                        setView("running");
                         pushProjectRoute(location.pathname, {
                           view: "running",
                           workspaceId: session.id,
@@ -1773,58 +1874,70 @@ export function ProjectPage({
                             surfaceSelections.running?.processId ??
                             surfaceSelections.running?.runId ??
                             null,
-                        })
-                        return
+                        });
+                        return;
                       }
-                      void ensureCheckoutSession(next).catch(error => {
+                      if (next === "editors") {
+                        // Editor opens can already have a file route (search,
+                        // quick-open, or LSP navigation). Do not replace it
+                        // with a bare surface route while Mux mounts.
+                        preferredSurfaceRef.current = "editors";
+                        setView("editors");
+                        if (session) return;
+                      }
+                      void ensureCheckoutSession(next).catch((error) => {
                         showYaadeToast(
                           error instanceof Error
                             ? error.message
                             : "Workspace unavailable",
                           { variant: "destructive" },
-                        )
-                      })
+                        );
+                      });
                     }}
                     launchRequest={launchRequest}
                     onLaunchRequestHandled={handleLaunchRequestHandled}
                   />
-              </ProjectSurfaceSlot>
-            ) : null}
+                </ProjectSurfaceSlot>
+              ) : null}
 
-            {!session && view === "running" ? (
-              <ProjectSurfaceSlot panel="running" active fallback="Loading processes…">
-                <RunningProjectSurface
-                  projectId={projectId}
-                  projectPath={projectPath}
-                  selectedId={
-                    projectRouteFromSearch().processId ??
-                    surfaceSelections.running?.processId ??
-                    surfaceSelections.running?.runId ??
-                    null
-                  }
-                  theme={activeTheme}
-                  onSelect={id => handleProcessSelect(id)}
-                />
-              </ProjectSurfaceSlot>
-            ) : null}
+              {!session && view === "running" ? (
+                <ProjectSurfaceSlot
+                  panel="running"
+                  active
+                  fallback="Loading processes…"
+                >
+                  <RunningProjectSurface
+                    projectId={projectId}
+                    projectPath={projectPath}
+                    selectedId={
+                      projectRouteFromSearch().processId ??
+                      surfaceSelections.running?.processId ??
+                      surfaceSelections.running?.runId ??
+                      null
+                    }
+                    theme={activeTheme}
+                    onSelect={(id) => handleProcessSelect(id)}
+                  />
+                </ProjectSurfaceSlot>
+              ) : null}
 
-            {view === "editors" && !session ? (
-              <ProjectSurfaceSlot
-                panel="editors"
-                active
-                fallback="Loading workspace…"
-                className="grid place-items-center"
-              >
-                <p className="max-w-sm px-4 text-center text-sm text-muted-foreground">
-                  {routeError ?? (view === "editors"
-                    ? "Open a file from the project…"
-                    : "Launch a terminal in Main or a worktree…")}
-                </p>
-              </ProjectSurfaceSlot>
-            ) : null}
+              {view === "editors" && !session ? (
+                <ProjectSurfaceSlot
+                  panel="editors"
+                  active
+                  fallback="Loading workspace…"
+                  className="grid place-items-center"
+                >
+                  <p className="max-w-sm px-4 text-center text-sm text-muted-foreground">
+                    {routeError ??
+                      (view === "editors"
+                        ? "Open a file from the project…"
+                        : "Launch a terminal in Main or a worktree…")}
+                  </p>
+                </ProjectSurfaceSlot>
+              ) : null}
+            </div>
           </div>
-
-        </div>
         </SidebarInset>
       </SidebarProvider>
 
@@ -1847,15 +1960,18 @@ export function ProjectPage({
         projectPath={projectPath}
         homeDir={homeDir}
         defaultBranch={defaultBranch}
-        onCreate={async input => {
-          await handleCreateGitWorktree(input)
+        onCreate={async (input) => {
+          await handleCreateGitWorktree(input);
         }}
       />
 
       {!session ? <Toaster position="bottom-right" /> : null}
-      {!session || view === "history" || view === "changes" || view === "search" ? (
+      {!session ||
+      view === "history" ||
+      view === "changes" ||
+      view === "search" ? (
         <ConfirmDialogHost />
       ) : null}
     </AppShell>
-  )
+  );
 }

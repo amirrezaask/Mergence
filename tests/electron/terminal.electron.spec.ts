@@ -287,7 +287,7 @@ test.describe("electron terminal", () => {
     }
   })
 
-  test("preserves non-UTF-8 xterm binary input bytes", async () => {
+  test("preserves non-UTF-8 terminal binary input bytes", async () => {
     const { app, page } = await launchJet()
     try {
       const output = await page.evaluate(async () => {
@@ -364,7 +364,7 @@ test.describe("electron terminal", () => {
     }
   })
 
-  test("xterm row height is readable", async () => {
+  test("terminal row height is readable", async () => {
     const { app, page } = await launchJet()
     try {
       await showTerminal(page)
@@ -475,7 +475,7 @@ test.describe("electron terminal", () => {
         }
       })
       // Fitted geometry must reach the host via create and/or the immediate
-      // post-create resize. xterm v6 WebGL fit can land after create returns.
+      // post-create resize. The Ghostty surface fit can land after create returns.
       const fitted = calls.resized ?? calls.initial
       expect(fitted).toEqual(
         expect.objectContaining({ cols: geometry!.cols, rows: geometry!.rows }),
@@ -508,7 +508,7 @@ test.describe("electron terminal", () => {
       await page.evaluate(async id => {
         const terminal = window.yaade?.terminal
         if (!terminal) throw new Error("Terminal API unavailable")
-        // Run printf so CR is on the PTY → xterm display path (not shell line-edit).
+        // Run printf so CR is on the PTY → terminal display path (not shell line-edit).
         await terminal.write(
           id,
           "printf 'CR-TEST-AAAA\\rCR-TEST-BBBB\\n'; echo CR-TEST-DONE\n",
@@ -529,7 +529,7 @@ test.describe("electron terminal", () => {
     }
   })
 
-  test("PTY winsize stays in sync with fitted xterm after layout settles", async () => {
+  test("PTY winsize stays in sync with fitted terminal after layout settles", async () => {
     const { app, page } = await launchJet()
     try {
       await showTerminal(page)
@@ -581,7 +581,7 @@ test.describe("electron terminal", () => {
       expect(sizes).toBeTruthy()
       expect(sizes!.ptyCols).toBeGreaterThan(40)
       expect(sizes!.ptyRows).toBeGreaterThan(10)
-      // Fitted xterm geometry must match PTY winsize.
+      // Fitted terminal geometry must match PTY winsize.
       expect(sizes!.rowCount).toBe(sizes!.ptyRows)
       expect(sizes!.colCount).toBe(sizes!.ptyCols)
     } finally {
@@ -634,7 +634,7 @@ test.describe("electron terminal", () => {
       const visibleHardwareCaret = await page.evaluate(() => {
         const cursors = [
           ...document.querySelectorAll<HTMLElement>(
-            "[data-yaade-terminal-panel] .xterm-cursor",
+            "[data-yaade-terminal-panel] [data-yaade-terminal-cursor]",
           ),
         ]
         return cursors.some(el => {
@@ -705,10 +705,10 @@ test.describe("electron terminal", () => {
     try {
       await showTerminal(page)
 
-      await page.locator("[data-yaade-terminal-panel] \.yaade-terminal-surface").click()
+      await page.locator("[data-yaade-terminal-panel] .yaade-terminal-surface").click()
       await page.evaluate(() => {
         const textarea = document.querySelector(
-          "[data-yaade-terminal-panel] .xterm-helper-textarea",
+          "[data-yaade-terminal-panel] [data-yaade-terminal-input]",
         ) as HTMLTextAreaElement | null
         textarea?.focus()
       })
@@ -731,23 +731,23 @@ test.describe("electron terminal", () => {
       await expectLocatorVisible(exitBar, { timeout: 15_000 })
       await expectLocatorContainsText(exitBar, "Process exited")
       await expectLocatorVisible(exitBar.getByRole("button", { name: "Restart" }))
-      await expectSelectorVisible(page, "[data-yaade-terminal-panel] .xterm")
+      await expectSelectorVisible(page, "[data-yaade-terminal-panel] [data-yaade-terminal-canvas]")
     } finally {
       await app.close()
     }
   })
 
-  test("xterm viewport fills terminal surface below tab bar", async () => {
+  test("terminal viewport fills terminal surface below tab bar", async () => {
     const { app, page } = await launchJet()
     try {
       await showTerminal(page)
 
       const layout = await page.evaluate(() => {
         const surface = document.querySelector(
-          "[data-yaade-terminal-panel] \.yaade-terminal-surface",
+          "[data-yaade-terminal-panel] .yaade-terminal-surface",
         ) as HTMLElement | null
         const viewport = document.querySelector(
-          "[data-yaade-terminal-panel] .xterm-viewport",
+          "[data-yaade-terminal-panel] [data-yaade-terminal-canvas]",
         ) as HTMLElement | null
         if (!surface || !viewport) return null
         const surfaceRect = surface.getBoundingClientRect()
@@ -769,29 +769,20 @@ test.describe("electron terminal", () => {
     }
   })
 
-  test("keeps one native terminal caret", async () => {
+  test("keeps one native terminal input and canvas caret", async () => {
     const { app, page } = await launchJet()
     try {
       await showTerminal(page)
       const panel = page.locator("[data-yaade-terminal-panel]")
       await expectLocatorAttribute(panel, "data-yaade-terminal-status", "running")
-
+      await expectLocatorAttribute(panel, "data-yaade-terminal-renderer", "ghostty")
       await expectLocatorCount(panel.locator("[data-yaade-terminal-cursor-trail]"), 0)
-      // WebGL draws the caret on canvas — no DomRenderer `.xterm-cursor`.
-      // Dom fallback still exposes exactly one DOM caret.
-      const renderer = await panel.getAttribute("data-yaade-terminal-renderer")
-      if (renderer === "dom" || renderer == null) {
-        await expectLocatorCount(panel.locator(".xterm-cursor"), 1)
-      } else {
-        expect(renderer).toBe("webgl")
-        await expectLocatorCount(panel.locator(".xterm-helper-textarea"), 1)
-      }
+      await expectLocatorCount(panel.locator("[data-yaade-terminal-input]"), 1)
+      await expectLocatorCount(panel.locator("[data-yaade-terminal-canvas]"), 1)
 
       await panel.locator(".yaade-terminal-surface").click()
       await page.keyboard.type("cursor")
-      if (renderer === "dom" || renderer == null) {
-        await expectLocatorCount(panel.locator(".xterm-cursor"), 1)
-      }
+      await expectLocatorCount(panel.locator("[data-yaade-terminal-input]"), 1)
       await expectLocatorCount(panel.locator("[data-yaade-terminal-cursor-ghost]"), 0)
       const cursor = await page.evaluate(() => window.__yaadeAgent?.getTerminalCursor?.())
       expect(cursor).toBeTruthy()
@@ -801,7 +792,57 @@ test.describe("electron terminal", () => {
     }
   })
 
-  test.skip("cursor stays inside xterm screen after modal close and reopen", async () => {
+  test("does not let buffer inspection steal a pending Ghostty repaint", async () => {
+    const { app, page } = await launchJet()
+    try {
+      await showTerminal(page)
+      const panel = page.locator("[data-yaade-terminal-panel]")
+      const ptyId = await panel.getAttribute("data-yaade-terminal-pty-id")
+      expect(ptyId).toBeTruthy()
+      await page.evaluate(async id => {
+        const terminal = window.yaade?.terminal
+        if (!terminal) throw new Error("Terminal API unavailable")
+        await terminal.write(id, "\u001b[2J\u001b[12;35Hghostty-paint-race\n")
+      }, ptyId!)
+
+      await waitForTerminalText(page, "ghostty-paint-race")
+      await page.waitForTimeout(100)
+      const paintedPixels = await page.evaluate(() => {
+        const canvas = document.querySelector<HTMLCanvasElement>(
+          "[data-yaade-terminal-canvas]",
+        )
+        const match = window.__yaadeAgent?.findTerminalText?.("ghostty-paint-race")
+        const cell = window.__yaadeAgent?.getTerminalCellSize?.()
+        if (!canvas || !match || !cell) return 0
+        const context = canvas.getContext("2d")
+        if (!context) return 0
+        const ratio = window.devicePixelRatio || 1
+        const x = Math.max(0, Math.floor((4 + match.col * cell.width) * ratio))
+        const y = Math.max(0, Math.floor((4 + match.viewportRow * cell.height) * ratio))
+        const width = Math.min(canvas.width - x, Math.ceil(cell.width * 18 * ratio))
+        const height = Math.min(canvas.height - y, Math.ceil(cell.height * ratio))
+        if (width <= 0 || height <= 0) return 0
+        const pixels = context.getImageData(x, y, width, height).data
+        const background = [pixels[0] ?? 0, pixels[1] ?? 0, pixels[2] ?? 0]
+        let changed = 0
+        for (let index = 0; index < pixels.length; index += 4) {
+          if (
+            pixels[index] !== background[0] ||
+            pixels[index + 1] !== background[1] ||
+            pixels[index + 2] !== background[2]
+          ) {
+            changed += 1
+          }
+        }
+        return changed
+      })
+      expect(paintedPixels).toBeGreaterThan(20)
+    } finally {
+      await app.close()
+    }
+  })
+
+  test.skip("cursor stays inside terminal screen after modal close and reopen", async () => {
     // Targets Mission Control sidebar + yaade.goHome; mux has no modal shell.
     const { app, page } = await launchJet()
     try {
@@ -833,7 +874,7 @@ test.describe("electron terminal", () => {
         const dims = window.__yaadeAgent!.getTerminalDims!()!
         const cursor = window.__yaadeAgent!.getTerminalCursor!()!
         const screen = document.querySelector<HTMLElement>(
-          "[data-yaade-terminal-panel] .xterm-screen",
+          "[data-yaade-terminal-panel] [data-yaade-terminal-canvas]",
         )
         const canvas = document.querySelector<HTMLElement>(
           "[data-yaade-terminal-panel] canvas",
@@ -901,10 +942,10 @@ test.describe("electron terminal", () => {
     try {
       await showTerminal(page)
 
-      await page.locator("[data-yaade-terminal-panel] \.yaade-terminal-surface").click()
+      await page.locator("[data-yaade-terminal-panel] .yaade-terminal-surface").click()
       await page.evaluate(() => {
         const textarea = document.querySelector(
-          "[data-yaade-terminal-panel] .xterm-helper-textarea",
+          "[data-yaade-terminal-panel] [data-yaade-terminal-input]",
         ) as HTMLTextAreaElement | null
         textarea?.focus()
       })
@@ -999,7 +1040,7 @@ test.describe("electron terminal", () => {
     }
   })
 
-  test("uses xterm smooth scrolling for terminal scrollback", async () => {
+  test("uses smooth terminal scrolling for terminal scrollback", async () => {
     const { app, page } = await launchJet()
     try {
       await showTerminal(page)
@@ -1171,13 +1212,14 @@ test.describe("electron terminal", () => {
             const match = window.__yaadeAgent?.findTerminalText?.(needle)
             const cell = window.__yaadeAgent?.getTerminalCellSize?.()
             const screen = document.querySelector<HTMLElement>(
-              "[data-yaade-terminal-panel] .xterm-screen",
+              "[data-yaade-terminal-panel] [data-yaade-terminal-canvas]",
             )
             if (!match || !cell || !screen) return null
             const rect = screen.getBoundingClientRect()
-            const style = getComputedStyle(screen)
-            const padX = Number.parseFloat(style.paddingLeft) || 0
-            const padY = Number.parseFloat(style.paddingTop) || 0
+            // Ghostty paints an internal content inset; canvas CSS padding is zero.
+            const padding = Number(screen.dataset.yaadeTerminalPadding) || 0
+            const padX = padding
+            const padY = padding
             const x = rect.left + padX + (match.col + 0.5) * cell.width
             const y = rect.top + padY + (match.viewportRow + 0.5) * cell.height
             if (![x, y].every(Number.isFinite)) return null
@@ -1187,13 +1229,15 @@ test.describe("electron terminal", () => {
         })
         .toBe(true)
 
-      // Hover → underline + pointer (xterm draws underline on the link render layer).
+      // Hover → underline + pointer (the Canvas renderer draws the link layer).
       await page.mouse.move(hit!.x, hit!.y)
       await expect
         .poll(async () =>
-          page.locator("[data-yaade-terminal-panel] .xterm-screen.xterm-cursor-pointer").count(),
+          page
+            .locator("[data-yaade-terminal-panel] [data-yaade-terminal-canvas]")
+            .getAttribute("style"),
         )
-        .toBeGreaterThan(0)
+        .toContain("cursor: pointer")
 
       // Plain click must not navigate.
       await page.mouse.click(hit!.x, hit!.y)
@@ -1205,6 +1249,9 @@ test.describe("electron terminal", () => {
 
       // Cmd-click opens in a new browsing context.
       await page.keyboard.down("Meta")
+      // Re-hit-test after the modifier changes: the canvas owns the link
+      // activation gesture, while the hidden input owns keyboard focus.
+      await page.mouse.move(hit!.x, hit!.y)
       await page.mouse.click(hit!.x, hit!.y)
       await page.keyboard.up("Meta")
       await expect

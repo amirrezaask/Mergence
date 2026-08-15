@@ -68,7 +68,7 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
       const result = resolveKeydownBinding(e, bindings, ctx, chordState)
       if (result === "chord-started") {
         // stopPropagation matters as much as preventDefault here: without it a
-        // prefix like Ctrl-a still reaches xterm and moves the shell cursor.
+        // prefix like Ctrl-a still reaches the terminal and moves the shell cursor.
         e.preventDefault()
         e.stopPropagation()
         setPendingChordPrefixRef.current(chordState.prefix)
@@ -107,7 +107,9 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
       // Radix portal content owns Escape and menu navigation. Let it receive
       // those keys before the shell-level Escape → Home binding.
       if (target instanceof Element && target.closest('[data-slot="context-menu-content"]')) return
-      const inXterm = target instanceof HTMLElement && target.closest(".xterm") != null
+      const inTerminal =
+        target instanceof HTMLElement &&
+        target.closest("[data-yaade-terminal-input], [data-yaade-terminal-canvas]") != null
       // Monaco find/replace inputs stay focused after the widget hides; still
       // allow shell chords (Mod-Shift-f → editor find, etc.) to run.
       const inMonacoChrome =
@@ -116,7 +118,7 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
       if (
         !inMonacoChrome &&
         (target instanceof HTMLInputElement ||
-          (target instanceof HTMLTextAreaElement && !inXterm))
+          (target instanceof HTMLTextAreaElement && !inTerminal))
       ) {
         const bindings = getBindingsRef.current?.() ?? bindingsRef.current
         const startsShellChord = bindings.some(binding => {
@@ -130,7 +132,7 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
         return
       }
 
-      if (ctx.terminalFocus || inXterm) {
+      if (ctx.terminalFocus || inTerminal) {
         // Hard-wire the palette so it never depends on the registerUser →
         // revision → snapshot pipeline (repeated empty-map races). Everything
         // else reaches the terminal through the prefix key, which the browser
@@ -145,11 +147,11 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
           return
         }
         if (dispatchKeyBinding(e)) return
-        if (ctx.terminalFocus && !inXterm) {
+        if (ctx.terminalFocus && !inTerminal) {
           const panel = getFocusedPanelRef.current()
           const selector = panel
-            ? `[data-yaade-panel-leaf="${panel.id}"] [data-yaade-tab-slot][data-yaade-tab-active] [data-yaade-terminal-panel] .xterm-helper-textarea, [data-yaade-mux-terminal-host][data-focused] [data-yaade-terminal-panel] .xterm-helper-textarea`
-            : "[data-yaade-tab-slot][data-yaade-tab-active] [data-yaade-terminal-panel] .xterm-helper-textarea, [data-yaade-mux-terminal-host][data-focused] [data-yaade-terminal-panel] .xterm-helper-textarea"
+            ? `[data-yaade-panel-leaf="${panel.id}"] [data-yaade-tab-slot][data-yaade-tab-active] [data-yaade-terminal-panel] [data-yaade-terminal-input], [data-yaade-mux-terminal-host][data-focused] [data-yaade-terminal-panel] [data-yaade-terminal-input]`
+            : "[data-yaade-tab-slot][data-yaade-tab-active] [data-yaade-terminal-panel] [data-yaade-terminal-input], [data-yaade-mux-terminal-host][data-focused] [data-yaade-terminal-panel] [data-yaade-terminal-input]"
           const textarea = document.querySelector<HTMLTextAreaElement>(selector)
           if (textarea && document.activeElement !== textarea) textarea.focus()
         }

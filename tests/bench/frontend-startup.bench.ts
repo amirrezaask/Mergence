@@ -96,7 +96,7 @@ test("bench frontend cold startup and first overlay", async () => {
     expect(snapshot.nodeCount, "cold HQ DOM should stay compact").toBeLessThan(2_000)
     expect(
       snapshot.scripts.some(name =>
-        /(?:MuxApp|monaco|xterm|git-entry|agent-picker-entry)/i.test(
+        /(?:MuxApp|monaco|git-entry|agent-picker-entry)/i.test(
           name,
         ),
       ),

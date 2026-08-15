@@ -32,8 +32,12 @@ export type ProviderOption = {
   readonly error: string | null;
 };
 
-export type ToolContextControlsProps = {
-  readonly use: ToolUse;
+export type ToolContextSelection = {
+  readonly project: ProjectTarget;
+  readonly checkout: CheckoutTarget;
+};
+
+type ToolContextControlsBaseProps = {
   readonly projects: readonly ProjectTarget[];
   readonly active?: boolean;
   readonly presentation?: "pane" | "popover";
@@ -43,6 +47,30 @@ export type ToolContextControlsProps = {
   ) => Promise<void>;
   readonly onProviderChange?: (provider: AgentProvider) => Promise<void>;
 };
+
+export type ToolContextControlsProps =
+  | (ToolContextControlsBaseProps & {
+      readonly use: ToolUse;
+      readonly initialContext?: never;
+    })
+  | (ToolContextControlsBaseProps & {
+      readonly use?: undefined;
+      readonly initialContext: ToolContextSelection;
+    });
+
+function contextSelectionForUse(use: ToolUse): ToolContextSelection {
+  return {
+    project: use.context.project,
+    checkout:
+      use.context.checkoutKey === "main"
+        ? MainCheckout.make({ kind: "main" })
+        : ExistingWorktreeCheckout.make({
+            kind: "existing-worktree",
+            path: use.context.checkoutPath,
+            ...(use.context.branch ? { branch: use.context.branch } : {}),
+          }),
+  };
+}
 
 function isAgentProvider(value: string): value is AgentProvider {
   return (
@@ -57,7 +85,23 @@ function isAgentProvider(value: string): value is AgentProvider {
 
 export function ToolContextControls(props: ToolContextControlsProps) {
   const active = props.active !== false;
-  const [project, setProject] = useState(props.use.context.project);
+  const initialContext = useMemo(
+    () => (props.use ? contextSelectionForUse(props.use) : props.initialContext),
+    [
+      props.initialContext,
+      props.use?.context.branch,
+      props.use?.context.checkoutKey,
+      props.use?.context.checkoutPath,
+      props.use?.context.project.projectId,
+      props.use?.context.project.projectName,
+      props.use?.context.project.projectPath,
+      props.use?.id,
+    ],
+  );
+  const [project, setProject] = useState(initialContext.project);
+  const [checkout, setCheckout] = useState<CheckoutTarget>(
+    initialContext.checkout,
+  );
   const [targets, setTargets] = useState<readonly ToolCheckoutTarget[]>([]);
   const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [creatingBranch, setCreatingBranch] = useState(false);
@@ -71,11 +115,11 @@ export function ToolContextControls(props: ToolContextControlsProps) {
     () => props.projects.map((item) => item.projectId),
     [props.projects],
   );
-  const currentWorktreeId =
-    project.projectId === props.use.context.project.projectId &&
-    props.use.context.checkoutKey !== "main"
-      ? `worktree:${props.use.context.checkoutPath}`
-      : null;
+  const selectedWorktreePath =
+    checkout._tag === ExistingWorktreeCheckout._tag ? checkout.path : null;
+  const currentWorktreeId = selectedWorktreePath
+    ? `worktree:${selectedWorktreePath}`
+    : null;
   const checkoutIds = useMemo(() => {
     const ids = [
       "main",
@@ -89,13 +133,13 @@ export function ToolContextControls(props: ToolContextControlsProps) {
   }, [currentWorktreeId, worktrees]);
   const checkoutValue = creatingBranch
     ? "new-branch"
-    : project.projectId === props.use.context.project.projectId
-      ? props.use.context.checkoutKey === "main"
-        ? "main"
-        : `worktree:${props.use.context.checkoutPath}`
-      : "main";
+    : checkout._tag === MainCheckout._tag
+      ? "main"
+      : checkout._tag === ExistingWorktreeCheckout._tag
+        ? `worktree:${checkout.path}`
+        : "new-branch";
   const agentProvider =
-    props.use.input.kind === "agent" &&
+    props.use?.input.kind === "agent" &&
     isAgentProvider(props.use.input.provider)
       ? props.use.input.provider
       : null;
@@ -107,10 +151,11 @@ export function ToolContextControls(props: ToolContextControlsProps) {
   }, [agentProvider, providers]);
 
   useEffect(() => {
-    setProject(props.use.context.project);
+    setProject(initialContext.project);
+    setCheckout(initialContext.checkout);
     setCreatingBranch(false);
     setBranch("");
-  }, [props.use.context.project, props.use.id]);
+  }, [initialContext]);
 
   useEffect(() => {
     let cancelled = false;
@@ -124,38 +169,45 @@ export function ToolContextControls(props: ToolContextControlsProps) {
     return () => {
       cancelled = true;
     };
-  }, [project.projectId, props.use.context.checkoutPath]);
+  }, [project.projectId, selectedWorktreePath]);
 
   useEffect(() => {
-    if (props.use.kind !== "agent") return;
+    if (props.use?.kind !== "agent") return;
     let cancelled = false;
     void window.yaade?.agents
       ?.listProviders?.()
       .then((next) => {
         if (cancelled) return;
         setProviders(
-          next.map((item) => ({
-            provider: item.provider as AgentProvider,
-            available: item.available,
-            error: item.error,
-          })),
+          next.flatMap((item) =>
+            isAgentProvider(item.provider)
+              ? [
+                  {
+                    provider: item.provider,
+                    available: item.available,
+                    error: item.error,
+                  },
+                ]
+              : [],
+          ),
         );
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [props.use.kind]);
+  }, [props.use?.kind]);
 
   const change = async (
     nextProject: ProjectTarget,
-    checkout: CheckoutTarget,
+    nextCheckout: CheckoutTarget,
   ) => {
     setPending(true);
     try {
-      await props.onChange(nextProject, checkout);
+      await props.onChange(nextProject, nextCheckout);
     } catch (error) {
-      setProject(props.use.context.project);
+      setProject(initialContext.project);
+      setCheckout(initialContext.checkout);
       throw error;
     } finally {
       setPending(false);
@@ -165,15 +217,14 @@ export function ToolContextControls(props: ToolContextControlsProps) {
   const submitBranch = () => {
     const next = branch.trim();
     if (!next) return;
+    const nextCheckout = BranchWorktreeCheckout.make({
+      kind: "branch-worktree",
+      branch: next,
+      createBranch: true,
+    });
     setCreatingBranch(false);
-    void change(
-      project,
-      BranchWorktreeCheckout.make({
-        kind: "branch-worktree",
-        branch: next,
-        createBranch: true,
-      }),
-    );
+    setCheckout(nextCheckout);
+    void change(project, nextCheckout);
   };
 
   return (
@@ -192,10 +243,12 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         onValueChange={(value) => {
           const next = props.projects.find((item) => item.projectId === value);
           if (!next) return;
+          const nextCheckout = MainCheckout.make({ kind: "main" });
           setProject(next);
+          setCheckout(nextCheckout);
           setCreatingBranch(false);
           setBranch("");
-          void change(next, MainCheckout.make({ kind: "main" }));
+          void change(next, nextCheckout);
         }}
         itemToStringLabel={(value) => {
           const item = props.projects.find(
@@ -249,33 +302,34 @@ export function ToolContextControls(props: ToolContextControlsProps) {
           setCreatingBranch(false);
           setBranch("");
           if (value === "main") {
-            void change(project, MainCheckout.make({ kind: "main" }));
+            const nextCheckout = MainCheckout.make({ kind: "main" });
+            setCheckout(nextCheckout);
+            void change(project, nextCheckout);
             return;
           }
           const path = String(value).slice("worktree:".length);
           const target = worktrees.find((item) => item.path === path);
           if (target) {
-            void change(
-              project,
-              ExistingWorktreeCheckout.make({
-                kind: "existing-worktree",
-                path: target.path,
-                ...(target.branch ? { branch: target.branch } : {}),
-              }),
-            );
+            const nextCheckout = ExistingWorktreeCheckout.make({
+              kind: "existing-worktree",
+              path: target.path,
+              ...(target.branch ? { branch: target.branch } : {}),
+            });
+            setCheckout(nextCheckout);
+            void change(project, nextCheckout);
             return;
           }
-          if (path === props.use.context.checkoutPath) {
-            void change(
-              project,
-              ExistingWorktreeCheckout.make({
-                kind: "existing-worktree",
-                path,
-                ...(props.use.context.branch
-                  ? { branch: props.use.context.branch }
-                  : {}),
-              }),
-            );
+          if (path === selectedWorktreePath) {
+            const nextCheckout = ExistingWorktreeCheckout.make({
+              kind: "existing-worktree",
+              path,
+              ...(checkout._tag === ExistingWorktreeCheckout._tag &&
+              checkout.branch
+                ? { branch: checkout.branch }
+                : {}),
+            });
+            setCheckout(nextCheckout);
+            void change(project, nextCheckout);
           }
         }}
         itemToStringLabel={(value) => {
@@ -284,8 +338,12 @@ export function ToolContextControls(props: ToolContextControlsProps) {
           const path = String(value).slice("worktree:".length);
           const target = worktrees.find((item) => item.path === path);
           if (target) return `${target.branch ?? "Worktree"} ${target.path}`;
-          if (path === props.use.context.checkoutPath)
-            return props.use.context.checkoutLabel;
+          if (path === selectedWorktreePath) {
+            if (checkout._tag === ExistingWorktreeCheckout._tag) {
+              return checkout.branch ?? "Worktree";
+            }
+            return props.use?.context.checkoutLabel ?? "Worktree";
+          }
           return path;
         }}
       >
@@ -336,10 +394,12 @@ export function ToolContextControls(props: ToolContextControlsProps) {
                   <ComboboxItem key={id} value={id}>
                     <span className="min-w-0">
                       <span className="block truncate">
-                        {props.use.context.checkoutLabel}
+                        {checkout._tag === ExistingWorktreeCheckout._tag
+                          ? checkout.branch ?? "Worktree"
+                          : props.use?.context.checkoutLabel ?? "Worktree"}
                       </span>
                       <span className="block truncate font-mono text-2xs text-muted-foreground">
-                        {props.use.context.checkoutPath}
+                        {selectedWorktreePath}
                       </span>
                     </span>
                   </ComboboxItem>
@@ -385,7 +445,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         </div>
       ) : null}
 
-      {props.use.kind === "agent" && agentProvider && props.onProviderChange ? (
+      {props.use?.kind === "agent" && agentProvider && props.onProviderChange ? (
         <Combobox
           items={providerIds}
           value={agentProvider}

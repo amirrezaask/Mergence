@@ -403,7 +403,7 @@ export async function handleDroppedPaths(
       if (text) await terminal.write(ptyId, text)
       targetEl
         ?.closest("[data-yaade-terminal-panel]")
-        ?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
+        ?.querySelector<HTMLTextAreaElement>("[data-yaade-terminal-input]")
         ?.focus()
       return
     }

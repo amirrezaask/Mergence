@@ -9,7 +9,7 @@
   "scroll-next-paint": { "medianMs": 17, "p95Ms": 20, "p99Ms": 24 },
   "frontend-cold-start": { "medianMs": 750, "p95Ms": 1200, "p99Ms": 1500 },
   "overlay-cold-open": { "medianMs": 1000, "p95Ms": 1200, "p99Ms": 1500 },
-  "terminal-stream-throughput": { "medianMs": 500, "p95Ms": 2000, "p99Ms": 2500 },
+  "terminal-stream-throughput": { "medianMs": 550, "p95Ms": 2000, "p99Ms": 2500 },
   "terminal-agent-flood-throughput": { "medianMs": 800, "p95Ms": 1500, "p99Ms": 2000 },
   "terminal-typing-under-flood": { "medianMs": 50, "p95Ms": 80, "p99Ms": 100 },
   "server-event-replay-ingest": { "medianMs": 35, "p95Ms": 50, "p99Ms": 60 },

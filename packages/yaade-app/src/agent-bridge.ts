@@ -86,15 +86,15 @@ export type YaadeAgentAPI = {
   getTerminalCellHeight(tabId?: string): number
   /** Cell width/height in CSS px from the active terminal renderer (E2E). */
   getTerminalCellSize(tabId?: string): { width: number; height: number } | null
-  /** Fitted xterm cols/rows (E2E). */
+  /** Fitted terminal cols/rows (E2E). */
   getTerminalDims(tabId?: string): { cols: number; rows: number } | null
   /** Buffer cursor cell + hidden flag (WebGL-safe; E2E). */
   getTerminalCursor(tabId?: string): { x: number; y: number; hidden: boolean } | null
-  /** Buffer viewportY scroll line (xterm v6 DomScrollableElement; E2E). */
+  /** Absolute terminal scrollback viewport offset (E2E). */
   getTerminalViewportY(tabId?: string): number | null
   /** Scroll the active terminal by N lines (E2E). */
   scrollTerminalLines(amount: number, tabId?: string): boolean
-  /** Focus the active terminal via xterm.focus() (E2E). */
+  /** Focus the active terminal's hidden IME input (E2E). */
   focusTerminal(tabId?: string): boolean
   /** Visible buffer match for click/hover targeting (E2E). */
   findTerminalText(

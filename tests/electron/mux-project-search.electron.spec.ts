@@ -83,9 +83,9 @@ test.describe("project search", () => {
         needle: "nonGitSearchFixture",
         noResultsText: "No matches.",
       })
-      await page.locator('[data-yaade-project-search-hit="src/index.ts:1"]').click()
+      await page.locator('[data-yaade-project-search-hit="src/index.ts:2"]').click()
       await expectLocatorVisible(page.locator('[data-yaade-search-results="rail"]'))
-      await expectMonacoShowsFile(page, "src/index.ts", "nonGitSearchFixture", 1)
+      await expectMonacoShowsFile(page, "src/index.ts", "nonGitSearchFixture", 2)
       await expectNotContainsText(
         page,
         '[data-yaade-project-surface="editors"]',
@@ -128,7 +128,7 @@ test.describe("project search", () => {
         .poll(() => page.getByRole("status", { name: "Loading" }).count())
         .toBe(0)
       await expectLocatorVisible(
-        page.locator('[data-yaade-project-search-hit="src/index.ts:1"]'),
+        page.locator('[data-yaade-project-search-hit="src/index.ts:2"]'),
       )
       await expectLocatorVisible(page.locator("[data-yaade-project-search-chunk]"))
       await expect
@@ -244,9 +244,9 @@ test.describe("project search", () => {
         noResultsText: "No matches.",
       })
 
-      await page.locator('[data-yaade-project-search-hit="src/index.ts:1"]').click()
+      await page.locator('[data-yaade-project-search-hit="src/index.ts:2"]').click()
       await expectLocatorVisible(page.locator('[data-yaade-search-results="rail"]'))
-      await expectMonacoShowsFile(page, "src/index.ts", "nonGitSearchFixture", 1)
+      await expectMonacoShowsFile(page, "src/index.ts", "nonGitSearchFixture", 2)
       await expectLocatorCount(page.locator('[data-yaade-modal-editor-tab][data-preview]'), 1)
 
       await page.locator('[data-yaade-project-search-hit="src/other.ts:1"]').click()
@@ -299,18 +299,18 @@ test.describe("project search", () => {
       await execCommand(page, "editor.projectSearch")
       await page.locator("[data-yaade-project-search-input]").fill("nonGitSearchFixture")
       await expectLocatorVisible(
-        page.locator('[data-yaade-project-search-hit="src/index.ts:1"]'),
+        page.locator('[data-yaade-project-search-hit="src/index.ts:2"]'),
       )
       await page.evaluate(() => {
         const hit = document.querySelector<HTMLElement>(
-          '[data-yaade-project-search-hit="src/index.ts:1"]',
+          '[data-yaade-project-search-hit="src/index.ts:2"]',
         )
         hit?.dispatchEvent(
           new MouseEvent("click", { bubbles: true, cancelable: true, detail: 2 }),
         )
       })
       await expectLocatorVisible(page.locator('[data-yaade-search-results="rail"]'))
-      await expectMonacoShowsFile(page, "src/index.ts", "nonGitSearchFixture", 1)
+      await expectMonacoShowsFile(page, "src/index.ts", "nonGitSearchFixture", 2)
       await expectLocatorCount(page.locator('[data-yaade-modal-editor-tab][data-preview]'), 0)
       await expectLocatorCount(page.locator("[data-yaade-modal-editor-tab]"), 1)
     } finally {

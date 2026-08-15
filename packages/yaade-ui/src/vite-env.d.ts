@@ -8,7 +8,20 @@ declare module "*.png" {
   export default src
 }
 
-declare module "@xterm/xterm/css/xterm.css" {}
+declare module "*.wasm?url" {
+  const url: string
+  export default url
+}
+
+declare module "*.wasm?url&no-inline" {
+  const url: string
+  export default url
+}
+
+declare module "*.woff2?url" {
+  const url: string
+  export default url
+}
 
 /** Vite `?worker&url` → URL string for `new Worker(url, { type: "module" })`. */
 declare module "@pierre/diffs/worker/worker.js?worker&url" {

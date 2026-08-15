@@ -63,7 +63,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/theme/appearance-defaults.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts src/home/commit-diff.test.ts src/home/pierre-hunk-patch.test.ts src/search/search-chunks.test.ts"
+    "build:ghostty-wasm": "bash scripts/build-ghostty-wasm.sh",
+    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/theme/appearance-defaults.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/ghostty/abi.test.ts src/panels/ghostty/renderer.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts src/home/commit-diff.test.ts src/home/pierre-hunk-patch.test.ts src/search/search-chunks.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -86,9 +87,6 @@
     "@radix-ui/react-tabs": "^1.1.16",
     "@shadcn/react": "^0.3.0",
     "@tanstack/react-virtual": "^3.13.6",
-    "@xterm/addon-fit": "^0.11.0",
-    "@xterm/addon-webgl": "^0.19.0",
-    "@xterm/xterm": "^6.0.0",
     "@yaade/agents": "workspace:*",
     "@yaade/lsp": "workspace:*",
     "@yaade/monaco": "workspace:*",

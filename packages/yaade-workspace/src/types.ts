@@ -247,7 +247,8 @@ export type JetElectronTerminal = {
   resize(id: string, cols: number, rows: number): Promise<void>;
   /**
    * Acknowledge that `charCount` chars from `terminal:data` have been parsed
-   * by xterm. Host uses this for PTY pause/resume flow control.
+   * by the active browser terminal renderer. Host uses this for PTY pause/resume
+   * flow control.
    */
   acknowledgeData(id: string, charCount: number): Promise<void>;
   /**

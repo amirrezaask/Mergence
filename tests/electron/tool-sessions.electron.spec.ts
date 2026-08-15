@@ -39,10 +39,10 @@ async function openToolContext(page: ShellDriver): Promise<void> {
   await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
 }
 
-async function waitForVisibleXterm(page: ShellDriver): Promise<void> {
+async function waitForVisibleTerminalSurface(page: ShellDriver): Promise<void> {
   await page.waitForFunction(
     () => {
-      return [...document.querySelectorAll(".xterm")].some((el) => {
+      return [...document.querySelectorAll("[data-yaade-terminal-canvas]")].some((el) => {
         const root = el.closest(".absolute") as HTMLElement | null;
         if (!root) return true;
         return !root.classList.contains("hidden");
@@ -55,7 +55,7 @@ async function waitForVisibleXterm(page: ShellDriver): Promise<void> {
 
 async function createTerminalToolUse(page: ShellDriver): Promise<void> {
   await page.locator('[data-yaade-new-tool="terminal"]').click();
-  await waitForVisibleXterm(page);
+  await waitForVisibleTerminalSurface(page);
   await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
 }
@@ -160,7 +160,7 @@ async function createTerminalViaApi(
   await page.evaluate(async (toolUseId) => {
     await window.__yaadeAgent!.selectToolUse?.(toolUseId);
   }, id);
-  await waitForVisibleXterm(page);
+  await waitForVisibleTerminalSurface(page);
   return id;
 }
 
@@ -540,7 +540,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
         window.__yaadeAgent?.getState().activeSessionId === sessionId,
       first.sessionId,
     );
-    await waitForVisibleXterm(page);
+    await waitForVisibleTerminalSurface(page);
     await waitForToolTerminalText(page, marker);
   } finally {
     await app.app.close();
@@ -609,7 +609,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       return updated.input.kind === "agent" ? updated.input.provider : null;
     });
     expect(updatedProvider).toBe(provider);
-    await waitForVisibleXterm(page);
+    await waitForVisibleTerminalSurface(page);
   } finally {
     await app.app.close();
   }
@@ -1092,7 +1092,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await page.evaluate(async (id) => {
       await window.__yaadeAgent!.selectToolUse!(id);
     }, firstId);
-    await page.waitForSelector(".xterm", { timeout: 30_000 });
+    await page.waitForSelector("[data-yaade-terminal-canvas]", { timeout: 30_000 });
     await focusTerminal(page);
     const marker = `lru-survive-${Date.now()}`;
     await page.keyboard.type(`echo ${marker}`);
@@ -1130,7 +1130,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     const before = await page.evaluate(
       () => window.__yaadeAgent!.getState().sessions?.length ?? 0,
     );
-    await page.locator(".xterm").first().click();
+    await page.locator("[data-yaade-terminal-canvas]").first().click();
     await page.keyboard.down("Control");
     await page.keyboard.press("a");
     await page.keyboard.up("Control");
@@ -1153,8 +1153,8 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
         () => window.__yaadeAgent!.getState().sessions?.[0]?.id,
       ),
     );
-    await waitForVisibleXterm(page);
-    await page.locator(".absolute.inset-0.flex .xterm, .xterm").first().click();
+    await waitForVisibleTerminalSurface(page);
+    await page.locator(".absolute.inset-0.flex [data-yaade-terminal-canvas], [data-yaade-terminal-canvas]").first().click();
     await page.keyboard.down("Control");
     await page.keyboard.press("a");
     await page.keyboard.up("Control");
@@ -1209,7 +1209,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     expect(
       (toolTabsBox?.y ?? 0) + (toolTabsBox?.height ?? 0),
     ).toBeGreaterThanOrEqual(viewportHeight - 2);
-    await waitForVisibleXterm(page);
+    await waitForVisibleTerminalSurface(page);
   } finally {
     await app.app.close();
   }
@@ -1242,7 +1242,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       "retarget-me",
       "sample-workspace",
     );
-    await waitForVisibleXterm(page);
+    await waitForVisibleTerminalSurface(page);
     const result = await page.evaluate(async (toolUseId) => {
       const tools = window.yaade?.tools;
       if (!tools) throw new Error("tools API missing");
@@ -1272,7 +1272,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     );
     await openToolContext(page);
     await expectSelectorVisible(page, "#tool-project");
-    await waitForVisibleXterm(page);
+    await waitForVisibleTerminalSurface(page);
   } finally {
     await app.app.close();
   }
@@ -1337,8 +1337,18 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     const page = app.page;
     await openToolSessionShell(page);
     await page.waitForFunction(
-      () => (window.__yaadeAgent?.getState().toolUses?.length ?? 0) >= 1,
+      () => Array.isArray(window.__yaadeAgent?.getState().toolUses),
     );
+    const toolUseCount = await page.evaluate(
+      () => window.__yaadeAgent!.getState().toolUses?.length ?? 0,
+    );
+    if (toolUseCount === 0) {
+      await page.locator('[data-yaade-empty-tool="terminal"]').click();
+      await waitForVisibleTerminalSurface(page);
+      await page.waitForFunction(
+        () => (window.__yaadeAgent?.getState().toolUses?.length ?? 0) >= 1,
+      );
+    }
     await page.evaluate(async () => {
       const uses = window.__yaadeAgent!.getState().toolUses ?? [];
       for (const use of uses) {
@@ -1353,8 +1363,71 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await expectSelectorVisible(page, '[data-yaade-empty-tool="git"]');
     await expectContainsText(page, "[data-yaade-session-empty]", "Start a tool");
     await page.locator('[data-yaade-empty-tool="terminal"]').click();
-    await waitForVisibleXterm(page);
+    await waitForVisibleTerminalSurface(page);
   } finally {
     await app.app.close();
   }
 });
+
+/** 22 */ test(
+  "right-clicking a tool shortcut opens a contextual launcher",
+  async () => {
+    const homeDir = fs.mkdtempSync(
+      path.join(path.dirname(REPO_ROOT), "yaade-e2e-home-"),
+    );
+    const app = await launchWeb({ homeDir });
+    try {
+      const page = app.page;
+      await openToolSessionShell(page);
+      await ensureProjectGitRepo(page);
+
+      await page.locator('[data-yaade-new-tool="terminal"]').click({
+        button: "right",
+      });
+      await expectSelectorVisible(
+        page,
+        '[data-yaade-tool-launch-popover="terminal"]',
+      );
+      await expectSelectorVisible(page, "#tool-project");
+      await expectSelectorVisible(page, "#tool-checkout");
+
+      const branch = `yaade-launch-${Date.now()}`;
+      await page.locator("#tool-checkout").click();
+      await page
+        .getByRole("option", { name: "New isolated branch…" })
+        .click();
+      await page.getByLabel("Isolated branch worktree").fill(branch);
+      await page.getByLabel("Isolated branch worktree").press("Enter");
+      await page
+        .locator('[data-yaade-open-tool-with-context="terminal"]')
+        .click();
+
+      await waitForVisibleTerminalSurface(page);
+      await page.waitForFunction(
+        (expectedBranch) => {
+          const state = window.__yaadeAgent?.getState();
+          const active = (state?.toolUses ?? []).find(
+            (use: { id?: string }) => use.id === state?.activeToolUseId,
+          ) as
+            | { context?: { branch?: string; managedWorktree?: boolean } }
+            | undefined;
+          return (
+            active?.context?.branch === expectedBranch &&
+            active.context.managedWorktree === true
+          );
+        },
+        branch,
+        { timeout: 30_000 },
+      );
+
+      await page.locator('[data-yaade-tool-use][data-active="true"]').click({
+        button: "right",
+      });
+      await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
+      await expectSelectorVisible(page, "[data-yaade-open-tool-use]");
+    } finally {
+      await app.app.close();
+      fs.rmSync(homeDir, { recursive: true, force: true });
+    }
+  },
+);

@@ -800,12 +800,11 @@ body {
 }
 
 
-/* xterm must fill the terminal tab slot; fit addon reads container clientHeight */
+/* Ghostty owns the cell grid; its canvas and hidden IME input fill the slot. */
 [data-yaade-terminal-panel] .yaade-terminal-surface,
 [data-yaade-terminal-panel] .jet-terminal-surface,
 [data-yaade-terminal-panel] [data-yaade-terminal-fit],
-[data-yaade-terminal-panel] .xterm,
-[data-yaade-terminal-panel] .xterm-viewport {
+[data-yaade-terminal-panel] [data-yaade-terminal-canvas] {
   height: 100%;
   width: 100%;
 }
@@ -814,6 +813,24 @@ body {
 [data-yaade-terminal-panel] .jet-terminal-surface {
   position: relative;
   background: var(--yaade-bg, var(--background));
+}
+
+[data-yaade-terminal-panel] [data-yaade-terminal-canvas] {
+  position: absolute;
+  inset: 0;
+  display: block;
+  background: transparent;
+}
+
+[data-yaade-terminal-panel] [data-yaade-terminal-input] {
+  caret-color: transparent;
+  color: transparent;
+  outline: none;
+  user-select: none;
+}
+
+[data-yaade-terminal-panel] .yaade-ghostty-scrollbar {
+  background: transparent;
 }
 
 /* Mux shell — terminal/editor panes are islands on a persistent canvas. */
@@ -828,43 +845,7 @@ body {
   background: var(--yaade-bg, var(--card));
 }
 
-/* Compact inset so glyphs clear the pane rim without shrinking the fit target. */
-[data-yaade-mux] [data-yaade-terminal-panel] .xterm-screen {
-  padding: 2px;
-  box-sizing: border-box;
-}
-
-[data-yaade-terminal-panel] .xterm-screen {
-  position: relative;
-}
-
-/*
-  Defense for TUI apps (Cursor Agent): after CSI ?25l, DomRenderer can leave a
-  stale .xterm-cursor-bar at the parked bottom cell. Hide via attribute synced
-  from xterm's isCursorHidden after each paint.
-*/
-[data-yaade-terminal-panel][data-yaade-terminal-cursor-hidden="1"] .xterm-cursor,
-[data-yaade-terminal-panel][data-yaade-terminal-cursor-hidden="1"] .xterm-cursor-bar,
-[data-yaade-terminal-panel][data-yaade-terminal-cursor-hidden="1"] .xterm-cursor-block,
-[data-yaade-terminal-panel][data-yaade-terminal-cursor-hidden="1"] .xterm-cursor-underline,
-[data-yaade-terminal-panel][data-yaade-terminal-cursor-hidden="1"] .xterm-cursor-outline {
-  visibility: hidden !important;
-  box-shadow: none !important;
-  outline: none !important;
-  animation: none !important;
-  background-color: transparent !important;
-  border: none !important;
-  color: inherit !important;
-}
-
-[data-yaade-terminal-panel] .xterm,
-[data-yaade-terminal-panel] .xterm-viewport,
-[data-yaade-terminal-panel] .xterm-screen {
-  background: transparent !important;
-}
-
-/* Font comes only from xterm options (canvas/DOM measure). CSS font-family on
-   .xterm-rows desyncs glyph width from cell metrics → cursor drift. */
+/* The Canvas renderer supplies its own font metrics, cursor and selection. */
 
 /* Chat composer glass (ported from t3 index.css) */
 .chat-composer-horizontal-inset {

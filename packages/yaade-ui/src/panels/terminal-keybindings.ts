@@ -23,6 +23,19 @@ export function terminalKeybindingData(
     return "\n"
   }
 
+  // Ghostty correctly follows Kitty keyboard mode when a shell enables it,
+  // but older readline/fish builds still expect a literal ESC for this key.
+  // Keep the universal Escape gesture compatible with both kinds of shell.
+  if (
+    event.key === "Escape" &&
+    !event.shiftKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    !event.metaKey
+  ) {
+    return "\u001b"
+  }
+
   if (!isMacPlatform(platform) || event.shiftKey || event.ctrlKey) return null
 
   if (event.key === "ArrowLeft") {

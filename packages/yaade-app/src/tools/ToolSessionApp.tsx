@@ -51,7 +51,10 @@ import {
   parseToolSessionRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js";
-import { type AgentProvider } from "./ToolContextControls.js";
+import {
+  type AgentProvider,
+  type ToolContextSelection,
+} from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
@@ -335,6 +338,7 @@ export function ToolSessionApp() {
     async (
       nextKind: ToolKind = "terminal",
       requestedProvider?: AgentProvider,
+      launchContext?: ToolContextSelection,
     ) => {
       if (!activeSession) return;
       setActionError(undefined);
@@ -344,7 +348,7 @@ export function ToolSessionApp() {
           nextProjects = (await window.yaade?.tools?.listProjects?.()) ?? [];
           setProjects(nextProjects);
         }
-        const nextProject = nextProjects[0];
+        const nextProject = launchContext?.project ?? nextProjects[0];
         if (!nextProject) {
           setActionError("No project available.");
           return;
@@ -387,7 +391,8 @@ export function ToolSessionApp() {
           sessionId: activeSession.id,
           kind: nextKind,
           project: nextProject,
-          checkout: MainCheckout.make({ kind: "main" }),
+          checkout:
+            launchContext?.checkout ?? MainCheckout.make({ kind: "main" }),
           input,
         };
         const created = await window.yaade?.tools?.createUse?.(command);
@@ -704,8 +709,10 @@ export function ToolSessionApp() {
       const inEditable = Boolean(
         target?.closest("input, textarea, [contenteditable=true]"),
       );
-      const inXterm = Boolean(target?.closest(".xterm"));
-      if (!prefixPendingRef.current && inEditable && !inXterm) return;
+      const inTerminal = Boolean(
+        target?.closest("[data-yaade-terminal-input], [data-yaade-terminal-canvas]"),
+      );
+      if (!prefixPendingRef.current && inEditable && !inTerminal) return;
 
       if (
         !prefixPendingRef.current &&
@@ -730,7 +737,7 @@ export function ToolSessionApp() {
       if (
         event.ctrlKey &&
         (event.key === "a" || event.code === "KeyA") &&
-        inXterm
+        inTerminal
       ) {
         void window.yaade?.terminal?.write?.(
           selected?.output.kind === "process"
@@ -940,6 +947,9 @@ export function ToolSessionApp() {
                 onProviderChange={updateToolProvider}
                 onAddAgent={(provider) => void createTool("agent", provider)}
                 onAddKind={(kind) => void createTool(kind)}
+                onAddWithContext={(kind, project, checkout) =>
+                  void createTool(kind, undefined, { project, checkout })
+                }
                 onClose={(use) => void runToolAction("archive", use)}
                 onRename={(use, title) => void renameToolUse(use, title)}
                 onReorder={(ids) => void reorderToolUses(ids)}
@@ -1099,6 +1109,9 @@ export function ToolSessionApp() {
                 onProviderChange={updateToolProvider}
                 onAddAgent={(provider) => void createTool("agent", provider)}
                 onAddKind={(kind) => void createTool(kind)}
+                onAddWithContext={(kind, project, checkout) =>
+                  void createTool(kind, undefined, { project, checkout })
+                }
                 onClose={(use) => void runToolAction("archive", use)}
                 onRename={(use, title) => void renameToolUse(use, title)}
                 onReorder={(ids) => void reorderToolUses(ids)}

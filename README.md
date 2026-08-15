@@ -27,6 +27,7 @@ compatibility; the primary product surface is the Session shell.
 - ToolUse tab titles include the project name (for example, `yaade: Git History`) and stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
 - Sessions do not auto-open tools; all ToolUse tabs can be reordered or closed
 - Each ToolUse tab opens a context popover for project, worktree, and kind-specific options (project names are shown; IDs remain internal)
+- Right-click a new-tool shortcut to choose its project and worktree before opening it; the launcher keeps that context on the new ToolUse
 - Changing project or agent provider restarts the underlying process; the change itself does not fail
 - Selecting a ToolUse renders only that ToolUse in the main viewport
 - Closing a Session with live tools offers Keep running / Stop tools / Cancel
@@ -45,6 +46,12 @@ compatibility; the primary product surface is the Session shell.
 Git History is an interactive repository surface backed by the host's existing native Git API; it does not launch a PTY. Agent and Terminal share the existing PTY path (`terminal:data` binary frames,
 attach replay, flow control). Search streams bounded result batches via
 `tools:event` and persists rows for reconnect.
+
+Terminal panes use a pinned `libghostty-vt` WebAssembly parser with a Canvas
+renderer. PTYs start independently of font/WASM setup, hidden panes keep their
+processes and parser state alive without painting, and buffer inspection never
+suppresses a pending repaint. Rebuild the vendored Ghostty assets with
+`pnpm --filter @yaade/ui build:ghostty-wasm`.
 
 ### Checkout isolation
 

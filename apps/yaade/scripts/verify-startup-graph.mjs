@@ -23,7 +23,7 @@ const visitStaticImports = fileName => {
 }
 visitStaticImports(entryMatch[1])
 const mandatorySource = [...mandatoryChunks.values()].join("\n")
-const forbidden = ["shiki-", "diffs-", "xterm-", "agents-entry-", "monaco-"]
+const forbidden = ["shiki-", "diffs-", "agents-entry-", "monaco-"]
 const forbiddenMarkers = [
   "lexical.dev",
   "LegendList",

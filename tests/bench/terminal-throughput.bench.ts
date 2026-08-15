@@ -50,7 +50,7 @@ async function resetTerminalForStreamSample(
     if (!ptyId || !terminal) throw new Error("running terminal unavailable")
 
     // Keep the complete marker out of the echoed command. It must only become
-    // visible after the shell executes printf and xterm parses the RIS reset.
+    // visible after the shell executes printf and Ghostty parses the RIS reset.
     const splitAt = Math.floor(currentMarker.length / 2)
     const markerExpression =
       `'${currentMarker.slice(0, splitAt)}'` +
@@ -287,8 +287,7 @@ test("bench terminal-typing-under-flood", async () => {
       return panel?.dataset.yaadeTerminalRenderer ?? "unknown"
     })
     console.log(`[bench] terminal-under-flood renderer=${renderer}`)
-    // Prefer WebGL; Dom is acceptable in headless CI without WebGL.
-    expect(["webgl", "dom"]).toContain(renderer)
+    expect(renderer).toBe("ghostty")
 
     const samples = await page.evaluate(async () => {
           const panel = document.querySelector<HTMLElement>(
@@ -297,7 +296,7 @@ test("bench terminal-typing-under-flood", async () => {
           const ptyId = panel?.dataset.yaadeTerminalPtyId
           const terminal = window.yaade?.terminal
           const textarea = panel?.querySelector<HTMLTextAreaElement>(
-            ".xterm-helper-textarea",
+            "[data-yaade-terminal-input]",
           )
           if (!ptyId || !terminal || !textarea) {
             throw new Error("running terminal input unavailable")
@@ -337,7 +336,7 @@ test("bench terminal-typing-under-flood", async () => {
                 data: "x",
               }),
             )
-            // Fallback path used by xterm for synthetic tests.
+            // Hidden IME input path used for synthetic browser input events.
             textarea.value = "x"
             textarea.dispatchEvent(
               new InputEvent("input", { bubbles: true, data: "x" }),

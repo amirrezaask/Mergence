@@ -1,30 +1,25 @@
 import { useEffect, useRef, useState } from "react"
 import { RotateCcw, Terminal as TerminalIcon, X } from "lucide-react"
-import { Terminal as XTerm } from "@xterm/xterm"
-import { FitAddon } from "@xterm/addon-fit"
 import type { YaadeTheme } from "@yaade/shared"
-import "@xterm/xterm/css/xterm.css"
 import { subscribeRootStyle } from "./root-style-observer.js"
 import { Button } from "../components/ui/button.js"
 import { Spinner } from "../components/ui/spinner.js"
-import { TerminalScrollMotion } from "./terminal-scroll-motion.js"
-import {
-  createTerminalOscLinkHandler,
-  registerTerminalPathLinks,
-  registerTerminalUrlLinks,
-} from "./terminal-links.js"
+import { GhosttyTerminalSurface } from "./ghostty/surface.js"
+import type { GhosttyColor, GhosttyTheme } from "./ghostty/core.js"
 import { createTerminalInputWriter } from "./terminal-input-writer.js"
 import { createTerminalOutputWriter } from "./terminal-output-writer.js"
-import { attachTerminalGpuRenderer } from "./terminal-gpu-renderer.js"
+import { terminalKeybindingData } from "./terminal-keybindings.js"
 import {
   getRegisteredTerminal,
   registerTerminalInstance,
   unregisterTerminalInstance,
 } from "./terminal-instance-registry.js"
 import {
-  DEFAULT_MONO_FONT_FAMILY,
-  NERD_FONT_FAMILY,
-} from "../theme/appearance-defaults.js"
+  isTerminalLinkModifier,
+  openTerminalUrl,
+  scanTerminalPathLinks,
+} from "./terminal-links.js"
+import { DEFAULT_MONO_FONT_FAMILY } from "../theme/appearance-defaults.js"
 
 export type TerminalPanelProps = {
   cwdRootUri: string
@@ -44,15 +39,9 @@ export type TerminalPanelProps = {
   readOnly?: boolean
   /** Attach to an existing PTY without ever creating, restarting, or disposing it. */
   attachOnly?: boolean
-  /**
-   * Hold off creating/attaching a PTY (e.g. Cursor chat-id mint). Panel stays
-   * in the starting overlay until this clears and the effect remounts.
-   */
+  /** Hold off creating/attaching a PTY until the surrounding session is ready. */
   deferPty?: boolean
-  /**
-   * When false the pane has no on-screen slot (background window / LRU eviction).
-   * Skip expensive full refreshes; PTY still receives data + acks.
-   */
+  /** False when the pane has no on-screen slot; the PTY still stays connected. */
   visible?: boolean
   /** Override for the starting overlay copy. */
   startingMessage?: string
@@ -63,26 +52,19 @@ export type TerminalPanelProps = {
   onRestart?: () => void
   onClose?: () => void
   onFailed?: () => void
-  /** Fired when the attached PTY process exits (not on attach-miss / start failure). */
+  /** Fired when the attached PTY process exits. */
   onExit?: (tabId: string, exitCode: number) => void
   onOpenPath?: (path: string, line?: number, column?: number) => void
 }
 
 type TerminalSession = {
-  term: XTerm
-  fit: FitAddon
+  surface: GhosttyTerminalSurface
   ptyId: string | null
-  scrollMotion: TerminalScrollMotion
-  /** Latest geometry we want the PTY to match (may differ while a resize RPC is in flight). */
   wantedCols: number
   wantedRows: number
   resizeInFlight: boolean
   resizeQueued: boolean
-  /** False before xterm disposal; every delayed measurement checks this. */
   live: boolean
-  /** Last container px used for FitAddon — skip fit when geometry unchanged. */
-  lastFitWidth: number
-  lastFitHeight: number
 }
 
 function readRootFontSize(): number {
@@ -90,47 +72,11 @@ function readRootFontSize(): number {
   return Number.isFinite(px) && px > 0 ? px : 13
 }
 
-/** xterm measures via canvas — CSS var() in fontFamily breaks cell metrics. */
 function readTerminalFontFamily(): string {
-  const fromTheme = getComputedStyle(document.documentElement).getPropertyValue("--font-mono").trim()
+  const fromTheme = getComputedStyle(document.documentElement)
+    .getPropertyValue("--font-mono")
+    .trim()
   return fromTheme || DEFAULT_MONO_FONT_FAMILY
-}
-
-function cellMetricsValid(term: XTerm): boolean {
-  const dims = (term as XTerm & { _core?: { _renderService?: { dimensions?: { css?: { cell?: { width?: number; height?: number } } } } } })
-    ._core?._renderService?.dimensions?.css?.cell
-  if (!dims) return term.cols > 0 && term.rows > 0
-  return (dims.width ?? 0) >= 4 && (dims.height ?? 0) >= 4
-}
-
-function themeOptions(theme: YaadeTheme): NonNullable<XTerm["options"]["theme"]> {
-  const c = theme.colors
-  const terminal = theme.terminal
-  const ansi = theme.terminalAnsi
-  return {
-    // Real bg so OSC 11 reports a luminance TUIs (Cursor Agent) can theme against.
-    // CSS still paints the surface; cell default matches the shell.
-    background: terminal?.background ?? c.bg,
-    foreground: terminal?.foreground ?? c.text,
-    cursor: terminal?.cursor ?? c.accent,
-    selectionBackground: terminal?.selectionBackground ?? c.selection,
-    black: ansi?.black,
-    red: ansi?.red,
-    green: ansi?.green,
-    yellow: ansi?.yellow,
-    blue: ansi?.blue,
-    magenta: ansi?.magenta,
-    cyan: ansi?.cyan,
-    white: ansi?.white,
-    brightBlack: ansi?.brightBlack,
-    brightRed: ansi?.brightRed,
-    brightGreen: ansi?.brightGreen,
-    brightYellow: ansi?.brightYellow,
-    brightBlue: ansi?.brightBlue,
-    brightMagenta: ansi?.brightMagenta,
-    brightCyan: ansi?.brightCyan,
-    brightWhite: ansi?.brightWhite,
-  }
 }
 
 function readCssVar(name: string): string | null {
@@ -138,203 +84,130 @@ function readCssVar(name: string): string | null {
   return value.length > 0 ? value : null
 }
 
-function liveThemeOptions(theme: YaadeTheme): NonNullable<XTerm["options"]["theme"]> {
-  const options = themeOptions(theme)
-  const readAnsi = (
-    key: keyof NonNullable<typeof options>,
-    cssKey: string,
-  ): string | undefined =>
-    readCssVar(`--yaade-terminal-ansi-${cssKey}`) ??
-    (options[key] as string | undefined)
-
-  return {
-    ...options,
-    background: readCssVar("--yaade-terminal-background") ?? options.background,
-    foreground: readCssVar("--yaade-terminal-foreground") ?? options.foreground,
-    cursor: readCssVar("--yaade-terminal-cursor") ?? options.cursor,
-    selectionBackground:
-      readCssVar("--yaade-terminal-selection") ?? options.selectionBackground,
-    black: readAnsi("black", "black"),
-    red: readAnsi("red", "red"),
-    green: readAnsi("green", "green"),
-    yellow: readAnsi("yellow", "yellow"),
-    blue: readAnsi("blue", "blue"),
-    magenta: readAnsi("magenta", "magenta"),
-    cyan: readAnsi("cyan", "cyan"),
-    white: readAnsi("white", "white"),
-    brightBlack: readAnsi("brightBlack", "bright-black"),
-    brightRed: readAnsi("brightRed", "bright-red"),
-    brightGreen: readAnsi("brightGreen", "bright-green"),
-    brightYellow: readAnsi("brightYellow", "bright-yellow"),
-    brightBlue: readAnsi("brightBlue", "bright-blue"),
-    brightMagenta: readAnsi("brightMagenta", "bright-magenta"),
-    brightCyan: readAnsi("brightCyan", "bright-cyan"),
-    brightWhite: readAnsi("brightWhite", "bright-white"),
-  }
-}
-
-function readTerminalLineHeight(): number {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue("--yaade-terminal-line-height")
-    .trim()
-  const n = parseFloat(raw)
-  // xterm DomRenderer cursor/cell math is unreliable above 1 — keep default at 1.
-  return Number.isFinite(n) && n >= 1 ? Math.min(n, 1.5) : 1
-}
-
-function readTerminalCursorBlink(): boolean {
-  const raw = getComputedStyle(document.documentElement)
-    .getPropertyValue("--yaade-terminal-cursor-blink")
-    .trim()
-  return raw !== "0"
-}
-
-type ScrollSnapshot = {
-  atBottom: boolean
-  line: number
-}
-
-function captureScrollSnapshot(term: XTerm): ScrollSnapshot {
-  const buf = term.buffer.active
-  const line = buf.baseY + buf.viewportY
-  const maxLine = Math.max(0, buf.length - term.rows)
-  return {
-    atBottom: maxLine <= 0 || line >= maxLine - 1,
-    line,
-  }
-}
-
-function restoreScrollSnapshot(term: XTerm, snapshot: ScrollSnapshot): void {
-  // xterm v6 scroll lives in DomScrollableElement — use public buffer APIs only.
-  if (snapshot.atBottom) term.scrollToBottom()
-  else term.scrollToLine(Math.max(0, snapshot.line))
-}
-
-/** Fit xterm to container. Returns true when cols/rows changed (PTY resize needed). */
-function fitWhenReady(
-  session: TerminalSession,
-  container: HTMLElement,
-  opts?: { force?: boolean },
-): boolean {
-  if (!session.live || !container.isConnected) return false
-  const core = (session.term as XTerm & { _core?: { _isDisposed?: boolean } })._core
-  if (!core || core._isDisposed) return false
-  const width = container.clientWidth
-  const height = container.clientHeight
-  if (width < 8 || height < 8) return false
-  if (
-    !opts?.force &&
-    session.lastFitWidth === width &&
-    session.lastFitHeight === height
-  ) {
-    return false
-  }
-  const prevCols = session.term.cols
-  const prevRows = session.term.rows
-  const snapshot = captureScrollSnapshot(session.term)
-  session.fit.fit()
-  session.lastFitWidth = width
-  session.lastFitHeight = height
-  if (!cellMetricsValid(session.term)) return false
-  if (session.term.cols <= 0 || session.term.rows <= 0) return false
-  const changed = session.term.cols !== prevCols || session.term.rows !== prevRows
-  if (changed) restoreScrollSnapshot(session.term, snapshot)
-  return changed
-}
-
-/**
- * Push xterm cols/rows to the PTY. Resize RPCs are async and can complete out of
- * order during modal animation — serialize so the host always ends on the latest
- * geometry (stale smaller/larger sizes make progress bars wrap instead of \\r-update).
- */
-function resizePty(session: TerminalSession): void {
-  if (!session.live || !session.ptyId) return
-  session.wantedCols = session.term.cols
-  session.wantedRows = session.term.rows
-  if (session.resizeInFlight) {
-    session.resizeQueued = true
-    return
-  }
-  const run = (): void => {
-    const id = session.ptyId
-    if (!id) {
-      session.resizeInFlight = false
-      session.resizeQueued = false
-      return
+function parseColor(value: string | undefined, fallback: GhosttyColor): GhosttyColor {
+  if (!value) return fallback
+  const hex = value.trim().replace(/^#/, "")
+  if (/^[\da-f]{6}$/i.test(hex)) {
+    return {
+      r: Number.parseInt(hex.slice(0, 2), 16),
+      g: Number.parseInt(hex.slice(2, 4), 16),
+      b: Number.parseInt(hex.slice(4, 6), 16),
     }
-    const cols = session.wantedCols
-    const rows = session.wantedRows
-    session.resizeInFlight = true
-    session.resizeQueued = false
-    const api = window.yaade?.terminal
-    if (!api) {
-      session.resizeInFlight = false
-      return
-    }
-    void Promise.resolve(api.resize(id, cols, rows)).finally(() => {
-      if (!session.live) return
-      session.resizeInFlight = false
-      if (
-        session.resizeQueued ||
-        session.wantedCols !== cols ||
-        session.wantedRows !== rows
-      ) {
-        run()
-      }
-    })
   }
-  run()
-}
-
-function isTerminalCursorHidden(term: XTerm): boolean {
-  const core = (
-    term as XTerm & {
-      _core?: { _coreService?: { isCursorHidden?: boolean }; coreService?: { isCursorHidden?: boolean } }
+  if (/^[\da-f]{3}$/i.test(hex)) {
+    return {
+      r: Number.parseInt(`${hex[0]}${hex[0]}`, 16),
+      g: Number.parseInt(`${hex[1]}${hex[1]}`, 16),
+      b: Number.parseInt(`${hex[2]}${hex[2]}`, 16),
     }
-  )._core
-  return (
-    core?._coreService?.isCursorHidden === true ||
-    core?.coreService?.isCursorHidden === true
-  )
+  }
+  if (typeof document === "undefined") return fallback
+  try {
+    const context = document.createElement("canvas").getContext("2d")
+    if (!context) return fallback
+    context.fillStyle = "#000000"
+    context.fillStyle = value
+    const normalized = context.fillStyle
+    const match = normalized.match(
+      /^rgba?\(\s*([\d.]+)[, ]+\s*([\d.]+)[, ]+\s*([\d.]+)/i,
+    )
+    if (!match) return fallback
+    return {
+      r: Math.max(0, Math.min(255, Math.round(Number(match[1])))),
+      g: Math.max(0, Math.min(255, Math.round(Number(match[2])))),
+      b: Math.max(0, Math.min(255, Math.round(Number(match[3])))),
+    }
+  } catch {
+    return fallback
+  }
 }
 
-/**
- * Write PTY bytes into xterm. Cursor hide/show is handled via
- * `data-yaade-terminal-cursor-hidden` + CSS — never full-viewport
- * `term.refresh` on DECCTCEM (Cursor Agent toggles it constantly; that
- * refresh was the main typing jank source).
- */
-function writeTerminalOutput(term: XTerm, data: string, onPainted?: () => void): void {
-  term.write(data, () => {
-    onPainted?.()
+const TERMINAL_ANSI_KEYS = [
+  "black",
+  "red",
+  "green",
+  "yellow",
+  "blue",
+  "magenta",
+  "cyan",
+  "white",
+  "brightBlack",
+  "brightRed",
+  "brightGreen",
+  "brightYellow",
+  "brightBlue",
+  "brightMagenta",
+  "brightCyan",
+  "brightWhite",
+] as const
+
+function terminalPalette(theme: YaadeTheme): readonly GhosttyColor[] | undefined {
+  const ansi = theme.terminalAnsi
+  if (!ansi) return undefined
+  const ansiColors = TERMINAL_ANSI_KEYS.map(key => {
+    const cssKey = key.replace(/[A-Z]/g, letter => `-${letter.toLowerCase()}`)
+    return parseColor(
+      readCssVar(`--yaade-terminal-ansi-${cssKey}`) ?? ansi[key],
+      { r: 0, g: 0, b: 0 },
+    )
   })
+  const palette = Array.from({ length: 256 }, (_, index) => {
+    if (index < 16) return ansiColors[index]!
+    if (index < 232) {
+      const cube = index - 16
+      const channel = (value: number) => (value === 0 ? 0 : 55 + value * 40)
+      return {
+        r: channel(Math.floor(cube / 36)),
+        g: channel(Math.floor((cube % 36) / 6)),
+        b: channel(cube % 6),
+      }
+    }
+    const gray = 8 + (index - 232) * 10
+    return { r: gray, g: gray, b: gray }
+  })
+  return palette
+}
+
+function terminalTheme(theme: YaadeTheme): GhosttyTheme {
+  const colors = theme.colors
+  const configured = theme.terminal
+  const background =
+    readCssVar("--yaade-terminal-background") ?? configured?.background ?? colors.bg
+  const foreground =
+    readCssVar("--yaade-terminal-foreground") ?? configured?.foreground ?? colors.text
+  const cursor =
+    readCssVar("--yaade-terminal-cursor") ?? configured?.cursor ?? colors.accent
+  const selectionBackground =
+    readCssVar("--yaade-terminal-selection") ?? configured?.selectionBackground ?? colors.selection
+
+  return {
+    background: parseColor(background, { r: 0, g: 0, b: 0 }),
+    foreground: parseColor(foreground, { r: 229, g: 231, b: 235 }),
+    cursor: parseColor(cursor, parseColor(foreground, { r: 229, g: 231, b: 235 })),
+    palette: terminalPalette(theme),
+    selectionBackground,
+  }
 }
 
 function focusTerminalInput(tabId: string): void {
-  const term = getRegisteredTerminal(tabId)
-  if (term) {
-    term.focus()
+  const terminal = getRegisteredTerminal(tabId)
+  if (terminal) {
+    terminal.focus()
     return
   }
   const docked = document.querySelector<HTMLElement>(
-    `[data-yaade-tab-slot="${tabId}"] [data-yaade-terminal-panel]`,
+    `[data-yaade-tab-slot="${CSS.escape(tabId)}"] [data-yaade-terminal-panel]`,
   )
-  const sessionTerminal = [
-    ...document.querySelectorAll<HTMLElement>(
-      "[data-yaade-terminal-panel][data-yaade-terminal-tab-id]",
-    ),
-  ].find(panel => panel.dataset.yaadeTerminalTabId === tabId)
-  const textarea = (
-    docked ?? sessionTerminal
-  )?.querySelector<HTMLTextAreaElement>(".xterm-helper-textarea")
-  textarea?.focus()
+  const sessionTerminal = [...document.querySelectorAll<HTMLElement>(
+    "[data-yaade-terminal-panel][data-yaade-terminal-tab-id]",
+  )].find(panel => panel.dataset.yaadeTerminalTabId === tabId)
+  ;(docked ?? sessionTerminal)
+    ?.querySelector<HTMLTextAreaElement>("[data-yaade-terminal-input]")
+    ?.focus({ preventScroll: true })
 }
 
 function applyAttachReplay(
-  attached: {
-    output?: string
-    outputChunks?: string[]
-  },
+  attached: { output?: string; outputChunks?: string[] },
   tabId: string,
   onOutput: ((tabId: string, data?: string) => void) | undefined,
   outputWriter: ReturnType<typeof createTerminalOutputWriter>,
@@ -346,8 +219,7 @@ function applyAttachReplay(
         ? [attached.output]
         : []
   if (chunks.length === 0) return
-  // Mark meaningful output once without joining the full replay.
-  onOutput?.(tabId, chunks.find(c => c.length > 0))
+  onOutput?.(tabId, chunks.find(chunk => chunk.length > 0))
   for (const chunk of chunks) {
     if (chunk) outputWriter.enqueue(chunk)
   }
@@ -385,16 +257,13 @@ export function TerminalPanel({
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const sessionRef = useRef<TerminalSession | null>(null)
-  const gpuRendererRef = useRef<ReturnType<typeof attachTerminalGpuRenderer> | null>(
-    null,
-  )
+  const surfaceRef = useRef<GhosttyTerminalSurface | null>(null)
   const [displayStatus, setDisplayStatus] = useState(status)
   const [displayExitCode, setDisplayExitCode] = useState(exitCode)
   const [connectedPtyId, setConnectedPtyId] = useState<string | null>(existingPtyId ?? null)
+  const [terminalError, setTerminalError] = useState<string | null>(null)
   const themeRef = useRef(theme)
   themeRef.current = theme
-  const visibleRef = useRef(visible)
-  visibleRef.current = visible
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
   const onPtyIdRef = useRef(onPtyId)
@@ -409,8 +278,6 @@ export function TerminalPanel({
   onExitRef.current = onExit
   const onOpenPathRef = useRef(onOpenPath)
   onOpenPathRef.current = onOpenPath
-  // Launch command/args are create/restart-time only. Capturing a CLI session id
-  // updates launchArgs for the next resume — must not remount the live PTY.
   const launchCommandRef = useRef(launchCommand)
   launchCommandRef.current = launchCommand
   const launchArgsRef = useRef(launchArgs)
@@ -422,310 +289,223 @@ export function TerminalPanel({
     const terminalApi = window.yaade?.terminal
     if (!terminalApi || !cwdRootUri || !containerRef.current) return
     let cancelled = false
+    let session: TerminalSession | null = null
+    let surface: GhosttyTerminalSurface | null = null
+    let unsub: (() => void) | null = null
+    let dataDispose: (() => void) | null = null
+    let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
+    const pendingTerminalInput: string[] = []
+    let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
+    let ackPendingChars = 0
+
+    const enqueueTerminalInput = (data: string) => {
+      if (data.length === 0) return
+      if (inputWriter) inputWriter.enqueue(data)
+      else pendingTerminalInput.push(data)
+    }
+    let ackInFlight = false
+
     const container = containerRef.current
     const launchCommandAtStart = launchCommandRef.current
     const launchArgsAtStart = launchArgsRef.current
     const launchEnvAtStart = launchEnvRef.current
-
-    const term = new XTerm({
-      // Opaque theme bg — transparency forces expensive alpha blends in WebGL.
-      allowTransparency: false,
-      theme: themeOptions(theme),
-      fontSize: readRootFontSize(),
-      fontFamily: readTerminalFontFamily(),
-      lineHeight: readTerminalLineHeight(),
-      letterSpacing: 0,
-      cursorBlink: readTerminalCursorBlink(),
-      cursorStyle: "bar",
-      // TUIs (Cursor Agent) park the hardware caret off-prompt; never draw an
-      // inactive outline/bar while the pane is blurred.
-      cursorInactiveStyle: "none",
-      scrollback: 5_000,
-      // xterm v6 DomScrollableElement — match --yaade-motion-scroll (160ms).
-      smoothScrollDuration: 160,
-      // Never convert LF→CRLF; progress bars and TUI apps rely on raw \\r.
-      convertEol: false,
-      // OSC 8 hyperlinks — Cmd/Ctrl-click opens (same as scanned http(s) URLs).
-      linkHandler: createTerminalOscLinkHandler(),
+    const launchForSize = (cols: number, rows: number) => ({
+      ...(launchCommandAtStart
+        ? {
+            command: launchCommandAtStart,
+            args: launchArgsAtStart,
+            env: launchEnvAtStart,
+          }
+        : {}),
+      cols,
+      rows,
     })
-    const fit = new FitAddon()
-    term.loadAddon(fit)
-    term.open(container)
-    // WebGL (Dom fallback) — DomRenderer cannot keep up with agent TUI floods.
-    // Keep WebGL for the lifetime of a mounted panel; visibility only trims scrollback.
-    const gpuRenderer = attachTerminalGpuRenderer(term)
-    gpuRenderer.setHighPerformance(true)
-    gpuRendererRef.current = gpuRenderer
-    registerTerminalInstance(tabId, term)
-    const panelEl = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
-    if (panelEl) panelEl.dataset.yaadeTerminalRenderer = gpuRenderer.kind
+    const shouldPrecreatePty =
+      !deferPty &&
+      !existingPtyId &&
+      !initialOutput &&
+      !readOnly &&
+      !attachOnly &&
+      !((status === "failed" || status === "exited") && !launchCommandAtStart)
+    const precreatedPty = shouldPrecreatePty
+      ? Promise.resolve().then(() => terminalApi.create(cwdRootUri, launchForSize(80, 24)))
+      : null
+    // The renderer can take longer than PTY startup. Attach the rejection now
+    // so a failed speculative create never becomes an unhandled promise.
+    void precreatedPty?.catch(() => {})
+    let precreatedPtyConsumed = false
 
-    // URL provider first so http(s) wins over path false-positives on the same span.
-    const urlLinks = registerTerminalUrlLinks(term)
-    const pathLinks =
-      onOpenPathRef.current != null
-        ? registerTerminalPathLinks(term, (path, line, column) => {
-            onOpenPathRef.current?.(path, line, column)
-          })
-        : null
-
-    const session: TerminalSession = {
-      term,
-      fit,
-      ptyId: null,
-      scrollMotion: new TerminalScrollMotion(term),
-      wantedCols: term.cols,
-      wantedRows: term.rows,
-      resizeInFlight: false,
-      resizeQueued: false,
-      live: true,
-      lastFitWidth: 0,
-      lastFitHeight: 0,
-    }
-    sessionRef.current = session
-
-    const titleDispose = term.onTitleChange(raw => {
-      const title = raw.trim()
-      if (!title) return
-      onTitleChangeRef.current?.(
-        tabId,
-        title.length > 80 ? `${title.slice(0, 77)}…` : title,
-      )
-    })
-
-    let unsub: (() => void) | null = null
-    let dataDispose: { dispose: () => void } | null = null
-    let binaryDispose: { dispose: () => void } | null = null
-    let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
-    let ptyStarted = false
-    const exitUnsubscribe = terminalApi.onExit((id, code) => {
-      if (session.ptyId !== id) return
-      setDisplayStatus("exited")
-      setDisplayExitCode(code)
-      onExitRef.current?.(tabId, code)
-    })
-
-    const syncFit = () => {
-      if (cancelled) return false
-      const changed = fitWhenReady(session, container)
-      if (changed) resizePty(session)
-      return changed
+    const disposePrecreatedPty = () => {
+      if (!precreatedPty || precreatedPtyConsumed) return
+      precreatedPtyConsumed = true
+      void precreatedPty.then(({ id }) => terminalApi.dispose(id)).catch(() => {})
     }
 
-    const syncTypography = () => {
-      if (!session.live) return
-      const px = readRootFontSize()
-      const family = readTerminalFontFamily()
-      const lineHeight = readTerminalLineHeight()
-      const cursorBlink = readTerminalCursorBlink()
-      let changed = false
-      if (term.options.fontSize !== px) {
-        term.options.fontSize = px
-        changed = true
-      }
-      if (term.options.fontFamily !== family) {
-        term.options.fontFamily = family
-        changed = true
-      }
-      if (term.options.lineHeight !== lineHeight) {
-        term.options.lineHeight = lineHeight
-        changed = true
-      }
-      if (term.options.cursorBlink !== cursorBlink) {
-        term.options.cursorBlink = cursorBlink
-        changed = true
-      }
-      if (changed) {
-        session.lastFitWidth = 0
-        session.lastFitHeight = 0
-        if (syncFit()) term.refresh(0, term.rows - 1)
-      }
-    }
-
-    const syncTheme = () => {
-      if (!session.live) return
-      term.options.theme = liveThemeOptions(themeRef.current)
-      // Skip full refresh when the pane is off-screen — options still apply
-      // on the next paint / visibility refit.
-      if (!visibleRef.current) return
-      term.refresh(0, Math.max(0, term.rows - 1))
-    }
-
-    let lastCursorHiddenAttr = ""
-    const syncCursorHiddenAttr = () => {
-      // Keep the data attr in sync for E2E + Dom CSS. WebGL already
-      // honors DECCTCEM on its canvas; Dom uses the CSS rule on `.xterm-cursor`.
-      // Skip writes when unchanged — attr churn forces style recalc.
-      const panel = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
-      if (!panel) return
-      const next = isTerminalCursorHidden(term) ? "1" : "0"
-      if (next === lastCursorHiddenAttr) return
-      lastCursorHiddenAttr = next
-      panel.dataset.yaadeTerminalCursorHidden = next
-    }
-
-    // One rAF-batched write path. Feed full coalesced chunks to xterm — its
-    // WriteBuffer time-slices parse. Ack parsed chars so the host can pause
-    // the PTY when we fall behind (VS Code flow control).
-    let ackPendingChars = 0
-    let ackInFlight = false
-    const ACK_BATCH = 5_000
     const flushAck = (ptyId: string | null) => {
       if (!ptyId || ackPendingChars <= 0 || ackInFlight) return
-      const ack = terminalApi.acknowledgeData
-      if (!ack) {
+      const acknowledge = terminalApi.acknowledgeData
+      if (!acknowledge) {
         ackPendingChars = 0
         return
       }
       const chars = ackPendingChars
       ackPendingChars = 0
       ackInFlight = true
-      void Promise.resolve(ack.call(terminalApi, ptyId, chars)).finally(() => {
+      void Promise.resolve(acknowledge.call(terminalApi, ptyId, chars)).finally(() => {
         ackInFlight = false
-        if (ackPendingChars > 0) flushAck(sessionRef.current?.ptyId ?? ptyId)
+        if (ackPendingChars > 0) flushAck(session?.ptyId ?? ptyId)
       })
     }
-    const outputWriter = createTerminalOutputWriter({
-      write: (data, onPainted) => writeTerminalOutput(term, data, onPainted),
-      onPainted: syncCursorHiddenAttr,
-      onParsed: charCount => {
-        ackPendingChars += charCount
-        if (ackPendingChars >= ACK_BATCH) {
-          flushAck(sessionRef.current?.ptyId ?? null)
+
+    const resizePty = (next: TerminalSession | null) => {
+      if (!next?.live || !next.ptyId) return
+      if (next.resizeInFlight) {
+        next.resizeQueued = true
+        return
+      }
+      const id = next.ptyId
+      const cols = next.wantedCols
+      const rows = next.wantedRows
+      next.resizeInFlight = true
+      next.resizeQueued = false
+      void Promise.resolve(terminalApi.resize(id, cols, rows)).finally(() => {
+        if (!next.live) return
+        next.resizeInFlight = false
+        if (next.resizeQueued || next.wantedCols !== cols || next.wantedRows !== rows) {
+          resizePty(next)
         }
-      },
-    })
+      })
+    }
+
+    const handleLink = (text: string, event: MouseEvent) => {
+      if (!isTerminalLinkModifier(event)) return
+      if (/^https?:\/\//i.test(text)) {
+        openTerminalUrl(text)
+        return
+      }
+      const path = scanTerminalPathLinks(text)[0]
+      if (path) onOpenPathRef.current?.(path.path, path.line, path.column)
+    }
 
     const connectPty = (id: string) => {
+      if (!session || !surface || cancelled) return
       session.ptyId = id
       setConnectedPtyId(id)
       setDisplayStatus("running")
       setDisplayExitCode(undefined)
       unsub = terminalApi.onData(id, data => {
         onOutputRef.current?.(tabId, data)
-        outputWriter.enqueue(data)
+        outputWriter?.enqueue(data)
       })
       if (!readOnly) {
         inputWriter = createTerminalInputWriter(
           data => terminalApi.write(id, data),
           error => {
             const message = error instanceof Error ? error.message : String(error)
-            term.writeln(`\r\n\x1b[31mTerminal input failed:\x1b[0m ${message}`)
+            surface?.write(`\r\n\x1b[31mTerminal input failed:\x1b[0m ${message}`)
           },
-          data => terminalApi.writeBinary(id, btoa(data)),
         )
-        dataDispose = term.onData(data => {
-          onInputRef.current?.(tabId)
-          inputWriter?.enqueue(data)
-        })
-        binaryDispose = term.onBinary(data => {
-          onInputRef.current?.(tabId)
-          inputWriter?.enqueueBinary(data)
-        })
+        for (const queued of pendingTerminalInput.splice(0)) inputWriter.enqueue(queued)
+        dataDispose = () => inputWriter?.dispose()
       }
-      syncFit()
-      // xterm was fitted before the PTY existed, so a no-op fit here still
-      // needs one authoritative resize to replace the host's 80×24 default.
+      session.wantedCols = surface.cols
+      session.wantedRows = surface.rows
       resizePty(session)
       if (focused && isActive) focusTerminalInput(tabId)
     }
 
-    const createFreshPty = () => {
-      void terminalApi
-        .create(cwdRootUri, {
-          ...(launchCommandAtStart
-            ? {
-                command: launchCommandAtStart,
-                args: launchArgsAtStart,
-                env: launchEnvAtStart,
-              }
-            : {}),
-          cols: term.cols,
-          rows: term.rows,
-        })
-        .then(({ id, title }) => {
+    const createFreshPty = (prepared: typeof precreatedPty = null): void => {
+      if (!surface || cancelled) return
+      if (prepared !== null) precreatedPtyConsumed = true
+      const created =
+        prepared ?? terminalApi.create(cwdRootUri, launchForSize(surface.cols, surface.rows))
+      void created
+        .then(async ({ id, title }) => {
           if (cancelled) {
             void terminalApi.dispose(id)
             return
           }
           onPtyIdRef.current?.(tabId, id)
           if (title) onTitleChangeRef.current?.(tabId, title)
+          if (prepared === null) {
+            connectPty(id)
+            return
+          }
+
+          // The PTY may have produced output while WASM/fonts were loading.
+          // Attach before subscribing so the host client's replay floor orders
+          // replayed bytes before any live chunks that arrived in the meantime.
+          const attached = await terminalApi.attach(id)
+          if (cancelled) {
+            void terminalApi.dispose(id)
+            return
+          }
+          if (!attached) throw new Error("precreated terminal disappeared before attach")
+          if (outputWriter) {
+            applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
+          }
+          if (attached.status === "exited") {
+            setDisplayStatus("exited")
+            setDisplayExitCode(attached.exitCode)
+            return
+          }
           connectPty(id)
         })
-        .catch(err => {
-          const message = err instanceof Error ? err.message : String(err)
-          term.writeln(`\r\n\x1b[31mTerminal failed to start:\x1b[0m ${message}`)
+        .catch(error => {
+          if (cancelled) return
+          const message = error instanceof Error ? error.message : String(error)
+          surface?.write(`\r\n\x1b[31mTerminal failed to start:\x1b[0m ${message}`)
           setDisplayStatus("failed")
           onFailedRef.current?.()
         })
     }
 
-    const startPty = () => {
-      if (ptyStarted || cancelled) return
-      // PTY creation must not depend on a paint or measurable foreground tab.
-      // Start at xterm's default geometry and resize when layout becomes ready.
-      syncFit()
-      if (deferPty) {
-        // Keep starting overlay; effect remounts when deferPty clears.
-        return
-      }
-      ptyStarted = true
-      if (initialOutput) {
-        term.write(initialOutput, () => {
-          syncFit()
-        })
-      }
+    const startPty = (prepared: typeof precreatedPty = null) => {
+      if (cancelled || !surface) return
+      if (deferPty) return
+      if (initialOutput && !existingPtyId) surface.resetAndWrite(initialOutput)
       if (existingPtyId) {
         void terminalApi
           .attach(existingPtyId)
           .then(attached => {
             if (cancelled) return
-          if (!attached) {
-            // Stale id after host restart (or reclaim) — spawn fresh.
-            if (!readOnly && !attachOnly) {
-              createFreshPty()
+            if (!attached) {
+              if (!readOnly && !attachOnly) {
+                createFreshPty()
+                return
+              }
+              surface?.write("\r\n\x1b[31mTerminal session is no longer available.\x1b[0m")
+              setDisplayStatus("failed")
+              onFailedRef.current?.()
               return
             }
-            term.writeln("\r\n\x1b[31mTerminal session is no longer available.\x1b[0m")
-            setDisplayStatus("failed")
-            onFailedRef.current?.()
-            return
-          }
-          if (attached.status === "exited") {
-            // Stale PTY from a previous host life — respawn (resume argv already
-            // on launchArgs when agentCliSessionId was synced).
-            if (!readOnly && !attachOnly && launchCommandAtStart) {
-              void terminalApi.dispose(existingPtyId).catch(() => {})
-              createFreshPty()
+            if (attached.status === "exited") {
+              if (!readOnly && !attachOnly && launchCommandAtStart) {
+                void terminalApi.dispose(existingPtyId).catch(() => {})
+                createFreshPty()
+                return
+              }
+              if (outputWriter) {
+                applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
+              }
+              setDisplayStatus("exited")
+              setDisplayExitCode(attached.exitCode)
               return
             }
-            applyAttachReplay(
-              attached,
-              tabId,
-              onOutputRef.current,
-              outputWriter,
-            )
-            setDisplayStatus("exited")
-            setDisplayExitCode(attached.exitCode)
-            return
-          }
-          applyAttachReplay(
-            attached,
-            tabId,
-            onOutputRef.current,
-            outputWriter,
-          )
-          if (attached.title) onTitleChangeRef.current?.(tabId, attached.title)
-          if (!readOnly) connectPty(existingPtyId)
-          if (readOnly) {
-            setDisplayStatus("exited")
-            setDisplayExitCode(attached.exitCode)
-          }
+            if (outputWriter) {
+              applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
+            }
+            if (attached.title) onTitleChangeRef.current?.(tabId, attached.title)
+            if (!readOnly) connectPty(existingPtyId)
+            else {
+              setDisplayStatus("exited")
+              setDisplayExitCode(attached.exitCode)
+            }
           })
           .catch(error => {
             if (cancelled) return
             const message = error instanceof Error ? error.message : String(error)
-            term.writeln(`\r\n\x1b[31mTerminal attach failed:\x1b[0m ${message}`)
+            surface?.write(`\r\n\x1b[31mTerminal attach failed:\x1b[0m ${message}`)
             setDisplayStatus("failed")
             onFailedRef.current?.()
           })
@@ -733,126 +513,131 @@ export function TerminalPanel({
       }
       if (
         attachOnly ||
-        readOnly ||
         ((status === "failed" || status === "exited") && !launchCommandAtStart)
       ) {
         setDisplayStatus(status === "failed" ? "failed" : "exited")
         setDisplayExitCode(exitCode)
         return
       }
-      createFreshPty()
+      createFreshPty(prepared)
     }
 
-    syncTheme()
-    syncTypography()
-    syncFit()
-
-    // Measure after webfonts settle — wrong cell width → wrong cols → PTY/xterm
-    // mismatch → wrapped progress lines that \\r cannot rewrite in place.
-    const refitAfterFonts = (clearAtlas: boolean) => {
-      if (cancelled || !session.live) return
-      syncTypography()
-      if (clearAtlas) {
-        // Glyphs rasterized before the Nerd Font loaded stay as tofu in the atlas.
-        term.clearTextureAtlas()
-      }
-      session.lastFitWidth = 0
-      session.lastFitHeight = 0
-      syncFit()
-      if (clearAtlas) term.refresh(0, Math.max(0, term.rows - 1))
-    }
-    const fontsReady =
-      typeof document !== "undefined" && document.fonts
-        ? Promise.all([
-            document.fonts.ready,
-            document.fonts.load(`16px "${NERD_FONT_FAMILY}"`, "\uE725"),
-          ])
-            .then(() => refitAfterFonts(true))
-            .catch(() => {})
-        : Promise.resolve()
-    const onFontsLoadingDone = () => refitAfterFonts(false)
-    document.fonts?.addEventListener?.("loadingdone", onFontsLoadingDone)
-
-    let startTimer = 0
-    void Promise.race([
-      fontsReady,
-      new Promise<void>(resolve => {
-        startTimer = window.setTimeout(resolve, 300)
-      }),
-    ]).finally(() => {
-      if (cancelled) return
-      startPty()
+    const exitUnsubscribe = terminalApi.onExit((id, code) => {
+      if (session?.ptyId !== id) return
+      setDisplayStatus("exited")
+      setDisplayExitCode(code)
+      onExitRef.current?.(tabId, code)
     })
 
-    let resizeRaf = 0
-    const resizeObserver = new ResizeObserver(() => {
-      if (resizeRaf) cancelAnimationFrame(resizeRaf)
-      resizeRaf = requestAnimationFrame(() => {
-        resizeRaf = 0
+    const setup = async () => {
+      try {
+        surface = await GhosttyTerminalSurface.create(container, {
+          theme: terminalTheme(themeRef.current),
+          font: { family: readTerminalFontFamily(), size: readRootFontSize() },
+          visible,
+          onData: data => {
+            onInputRef.current?.(tabId)
+            enqueueTerminalInput(data)
+          },
+          onResize: (cols, rows) => {
+            if (!session?.live) return
+            session.wantedCols = cols
+            session.wantedRows = rows
+            resizePty(session)
+          },
+          onSelectionChange: () => undefined,
+          beforeKey: event => {
+            const data = terminalKeybindingData(event, navigator.platform)
+            if (data === null) return true
+            event.preventDefault()
+            event.stopPropagation()
+            onInputRef.current?.(tabId)
+            enqueueTerminalInput(data)
+            return false
+          },
+          onLinkActivate: handleLink,
+          onTitleChange: title => {
+            onTitleChangeRef.current?.(
+              tabId,
+              title.length > 80 ? `${title.slice(0, 77)}…` : title,
+            )
+          },
+        })
+        if (cancelled) {
+          surface.dispose()
+          return
+        }
+        surfaceRef.current = surface
+        const panel = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
+        if (panel) panel.dataset.yaadeTerminalRenderer = "ghostty"
+        session = {
+          surface,
+          ptyId: null,
+          wantedCols: surface.cols,
+          wantedRows: surface.rows,
+          resizeInFlight: false,
+          resizeQueued: false,
+          live: true,
+        }
+        sessionRef.current = session
+        registerTerminalInstance(tabId, surface)
+
+        outputWriter = createTerminalOutputWriter({
+          // Ghostty parses synchronously on the UI thread. Keep each frame's
+          // parser slice bounded; the Canvas adapter has no internal async
+          // write queue to yield for us.
+          maxCharsPerFlush: 32 * 1024,
+          write: (data, onPainted) => {
+            surface?.write(data)
+            onPainted?.()
+          },
+          onParsed: charCount => {
+            ackPendingChars += charCount
+            if (ackPendingChars >= 5_000) flushAck(session?.ptyId ?? null)
+          },
+        })
+
+        startPty(precreatedPty)
+      } catch (error) {
+        disposePrecreatedPty()
         if (cancelled) return
-        syncFit()
-      })
-    })
-    resizeObserver.observe(container)
+        const message = error instanceof Error ? error.message : String(error)
+        setTerminalError(message)
+        setDisplayStatus("failed")
+        onFailedRef.current?.()
+      }
+    }
 
+    void setup()
     const unsubscribeRootStyleObserver = subscribeRootStyle(() => {
-      syncTheme()
-      syncTypography()
+      const next = sessionRef.current?.surface
+      if (!next) return
+      next.setTheme(terminalTheme(themeRef.current))
+      void next.setFont({ family: readTerminalFontFamily(), size: readRootFontSize() })
     })
-
-    let wasVisible = false
-    let visibilityRaf = 0
-    const visibilityObserver = new IntersectionObserver(entries => {
-      const visible = entries.some(e => e.isIntersecting)
-      if (!visible) {
-        wasVisible = false
-        return
-      }
-      if (wasVisible) return
-      wasVisible = true
-      visibilityRaf = requestAnimationFrame(() => {
-        visibilityRaf = 0
-        if (cancelled) return
-        syncTypography()
-        syncFit()
-        if (focused && isActive) focusTerminalInput(tabId)
-      })
-    })
-    visibilityObserver.observe(container)
 
     return () => {
       cancelled = true
-      session.live = false
-      if (resizeRaf) cancelAnimationFrame(resizeRaf)
-      if (visibilityRaf) cancelAnimationFrame(visibilityRaf)
-      if (startTimer) window.clearTimeout(startTimer)
-      document.fonts?.removeEventListener?.("loadingdone", onFontsLoadingDone)
-      resizeObserver.disconnect()
+      disposePrecreatedPty()
+      if (session) session.live = false
+      if (sessionRef.current === session) sessionRef.current = null
+      if (surfaceRef.current === surface) surfaceRef.current = null
       unsubscribeRootStyleObserver()
-      visibilityObserver.disconnect()
-      titleDispose.dispose()
       exitUnsubscribe()
-      dataDispose?.dispose()
-      binaryDispose?.dispose()
-      inputWriter?.dispose()
-      outputWriter.dispose()
-      // Drain any remaining parse acks so a paused PTY is not left stuck.
-      flushAck(session.ptyId)
+      dataDispose?.()
+      inputWriter = null
+      pendingTerminalInput.length = 0
+      outputWriter?.dispose()
+      flushAck(session?.ptyId ?? null)
       unsub?.()
-      urlLinks.dispose()
-      pathLinks?.dispose()
-      session.scrollMotion.dispose()
-      gpuRenderer.dispose()
-      gpuRendererRef.current = null
-      unregisterTerminalInstance(tabId, term)
-      term.dispose()
-      sessionRef.current = null
+      if (surface) {
+        unregisterTerminalInstance(tabId, surface)
+        surface.dispose()
+      }
     }
   }, [
     cwdRootUri,
     tabId,
-    // onPtyId is read via ref — never remount xterm because the parent
-    // passed a fresh inline callback (mux slot-box updates used to thrash).
     sessionGeneration,
     readOnly,
     attachOnly,
@@ -865,29 +650,24 @@ export function TerminalPanel({
     setDisplayExitCode(exitCode)
   }, [status, exitCode, sessionGeneration])
 
-  // Keep WebGL for all mounted terminals — tearing WebGL↔Dom on visibility
-  // (LRU / slot hide) caused flash and input hitch. Only trim scrollback off-slot.
   useEffect(() => {
-    gpuRendererRef.current?.setHighPerformance(true)
-    const term = sessionRef.current?.term
-    if (term) term.options.scrollback = visible ? 5_000 : 1_000
+    const surface = surfaceRef.current
+    if (!surface) return
+    surface.setTheme(terminalTheme(theme))
+  }, [theme.id])
+
+  useEffect(() => {
+    surfaceRef.current?.setVisible(visible)
   }, [visible])
 
   useEffect(() => {
-    const session = sessionRef.current
-    const container = containerRef.current
-    if (!session || !container) return
-
-    session.term.options.theme = liveThemeOptions(themeRef.current)
-
-    if (!focused || !isActive) return
+    const surface = surfaceRef.current
+    if (!surface || !focused || !isActive) return
     const focusRaf = requestAnimationFrame(() => {
-      if (sessionRef.current === session && container.isConnected) {
-        focusTerminalInput(tabId)
-      }
+      if (surfaceRef.current === surface) focusTerminalInput(tabId)
     })
     return () => cancelAnimationFrame(focusRaf)
-  }, [focused, isActive, theme.id, tabId])
+  }, [focused, isActive, tabId, theme.id])
 
   if (!window.yaade?.terminal) {
     return (
@@ -914,20 +694,14 @@ export function TerminalPanel({
       data-yaade-terminal-tab-id={tabId}
       data-yaade-terminal-pty-id={connectedPtyId ?? ""}
       data-yaade-terminal-status={displayStatus}
-      onMouseDown={() => {
-        focusTerminalInput(tabId)
-      }}
+      onMouseDown={() => focusTerminalInput(tabId)}
     >
       <div className="yaade-terminal-surface jet-terminal-surface relative min-h-0 flex-1 overflow-hidden">
-        {/*
-          FitAddon measures this element's parent box and does NOT subtract parent
-          padding. Keep padding on the chrome wrapper; fit target stays unpadded so
-          cols/rows match the real glyph grid (avoids wrap-on-\\r progress bars).
-        */}
         <div
           ref={containerRef}
-          className="h-full min-h-0 w-full overflow-hidden"
+          className="relative h-full min-h-0 w-full overflow-hidden"
           data-yaade-terminal-fit=""
+          data-yaade-terminal-surface=""
         />
       </div>
       {displayStatus === "starting" || deferPty ? (
@@ -941,10 +715,16 @@ export function TerminalPanel({
           <Spinner className="size-4 text-muted-foreground" />
           <span>
             {startingMessage ??
-              (deferPty
-                ? "Preparing chat…"
-                : `Starting ${launchCommand ?? "terminal"}…`)}
+              (deferPty ? "Preparing chat…" : `Starting ${launchCommand ?? "terminal"}…`)}
           </span>
+        </div>
+      ) : null}
+      {terminalError ? (
+        <div
+          role="alert"
+          className="pointer-events-none absolute inset-x-0 bottom-7 border-t border-destructive/30 bg-background/90 px-3 py-2 text-xs text-destructive"
+        >
+          Ghostty terminal failed to load: {terminalError}
         </div>
       ) : null}
       {readOnly ? (
@@ -973,7 +753,13 @@ export function TerminalPanel({
               Restart
             </Button>
           ) : null}
-          <Button type="button" size="icon-xs" variant="ghost" aria-label="Close terminal" onClick={onClose}>
+          <Button
+            type="button"
+            size="icon-xs"
+            variant="ghost"
+            aria-label="Close terminal"
+            onClick={onClose}
+          >
             <X className="size-3" />
           </Button>
         </div>
