@@ -8,11 +8,14 @@
  *   Tool Session (`/`)           canonical — edit TOOL_SESSION_* tables
  *   Legacy mux (`/_project`)     compat only — do not extend MUX_* tables
  *
- * Browser-reserved chords stay unbound. Shell actions live behind Ctrl-a
- * (send-prefix inside a terminal with Ctrl-a Ctrl-a).
+ * Browser-reserved chords stay unbound. Shell actions live behind Mod-k
+ * (⌘K on macOS, Ctrl+K elsewhere). Press the prefix twice in a terminal to
+ * send ^K (kill-line). Mod-k is risky (Chrome omnibox) on purpose: Chromium
+ * delivers it and preventDefault wins; it is the only free-enough multiplexer
+ * chord that matches editor muscle memory.
  *
  * Removed Tool Session aliases (do not reintroduce):
- *   Ctrl-a p, Mod-k, Mod-Shift-p
+ *   prefix p, Mod-k as a direct chord, Mod-Shift-p
  *
  * Not command bindings (stay local, listed so this file is the inventory):
  *   Widget nav     arrows / Home / End / Enter / Space / Escape in listers,
@@ -28,7 +31,7 @@
 
 import { keyEventMatchesBinding } from "@yaade/workspace"
 
-export const SHELL_PREFIX = "Ctrl-a"
+export const SHELL_PREFIX = "Mod-k"
 export const TOOL_SESSION_PREFIX = SHELL_PREFIX
 export const MUX_PREFIX = SHELL_PREFIX
 
@@ -84,7 +87,6 @@ export const TOOL_SESSION_PREFIX_GROUPS: readonly {
 
 export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
   [
-    { key: "a", command: "tool.newAgent", desc: "New Agent", group: "open" },
     { key: "t", command: "tool.newTerminal", desc: "New Terminal", group: "open" },
     { key: "s", command: "tool.newSearch", desc: "New Search", group: "open" },
     { key: "e", command: "tool.newEditor", desc: "New Editor", group: "open" },
@@ -259,18 +261,19 @@ export function matchToolSessionContextBinding(
   )
 }
 
-/** Full binding key for a prefix entry, e.g. `Ctrl-a z`. */
+/** Full binding key for a prefix entry, e.g. `Mod-k z`. */
 export function muxPrefixBindingKey(key: string, prefix = MUX_PREFIX): string {
   return `${prefix} ${key}`
 }
 
 /**
- * Control byte a `Ctrl-<letter>` prefix would have sent to the PTY, so pressing
- * the prefix twice passes it through to the shell (tmux's send-prefix).
- * Returns `null` for prefixes with no control-code equivalent.
+ * Control byte a `Ctrl-<letter>` / `Mod-<letter>` prefix would have sent to
+ * the PTY, so pressing the prefix twice passes it through (tmux send-prefix).
+ * `Mod-k` sends `^K` (kill-line) on every platform. Returns `null` when the
+ * prefix has no control-code equivalent.
  */
 export function prefixLiteralByte(prefix = SHELL_PREFIX): string | null {
-  const match = /^Ctrl-([a-z])$/i.exec(prefix.trim())
+  const match = /^(?:Ctrl|Mod)-([a-z])$/i.exec(prefix.trim())
   if (!match) return null
   const letter = match[1]!.toLowerCase()
   const code = letter.charCodeAt(0) - 96

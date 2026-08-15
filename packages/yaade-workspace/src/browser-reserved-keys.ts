@@ -10,7 +10,7 @@
  *
  * `Mod` normalizes to ⌘ on Apple and Ctrl elsewhere, so a `Mod-` entry covers
  * both platforms. Entries are compared against the *first* part of a chord —
- * `Ctrl-a t` is fine even though `Mod-t` is reserved, because the browser never
+ * `Mod-k t` is fine even though `Mod-t` is reserved, because the browser never
  * sees a bare `Mod-t`.
  */
 

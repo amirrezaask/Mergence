@@ -20,7 +20,12 @@ import {
   expectRowSpacing,
   expectRowTextVisible,
 } from "../helpers/list.js";
-import { REPO_ROOT, focusTerminal, pressMuxPrefix } from "./_launch.js";
+import {
+  REPO_ROOT,
+  focusTerminal,
+  pressMuxPrefix,
+  pressShellPrefix,
+} from "./_launch.js";
 
 async function openToolSessionShell(page: ShellDriver): Promise<void> {
   await page.evaluate(() => {
@@ -45,9 +50,22 @@ async function waitForVisibleTerminalSurface(page: ShellDriver): Promise<void> {
   await page.waitForFunction(
     () => {
       return [...document.querySelectorAll("[data-yaade-terminal-canvas]")].some((el) => {
-        const root = el.closest(".absolute");
-        if (!(root instanceof HTMLElement)) return true;
-        return !root.classList.contains("hidden");
+        if (!(el instanceof HTMLElement)) return false;
+        if (el.clientWidth < 32 || el.clientHeight < 32) return false;
+        const host = el.closest("[data-yaade-mux-terminal-host]");
+        if (host instanceof HTMLElement) {
+          if (host.classList.contains("opacity-0") || host.clientWidth < 32) {
+            return false;
+          }
+        }
+        const panel = el.closest("[data-yaade-terminal-panel]");
+        if (
+          panel instanceof HTMLElement &&
+          panel.dataset.yaadeTerminalStatus === "exited"
+        ) {
+          return false;
+        }
+        return true;
       });
     },
     null,
@@ -1143,7 +1161,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   }
 });
 
-/** 15 */ test("prefix Ctrl-a c creates a Session; double prefix does not", async () => {
+/** 15 */ test("prefix Mod-k c creates a Session; double prefix does not", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
@@ -1153,11 +1171,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       () => window.__yaadeAgent!.getState().sessions?.length ?? 0,
     );
     await page.locator("[data-yaade-terminal-canvas]").first().click();
-    await page.keyboard.down("Control");
-    await page.keyboard.press("a");
-    await page.keyboard.up("Control");
-    await page.waitForTimeout(50);
-    await page.keyboard.press("c");
+    await pressMuxPrefix(page, "KeyC");
     await page.waitForFunction(
       (count) =>
         (window.__yaadeAgent?.getState().sessions?.length ?? 0) > count,
@@ -1177,13 +1191,9 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     );
     await waitForVisibleTerminalSurface(page);
     await page.locator(".absolute.inset-0.flex [data-yaade-terminal-canvas], [data-yaade-terminal-canvas]").first().click();
-    await page.keyboard.down("Control");
-    await page.keyboard.press("a");
-    await page.keyboard.up("Control");
+    await pressShellPrefix(page);
     await page.waitForTimeout(50);
-    await page.keyboard.down("Control");
-    await page.keyboard.press("a");
-    await page.keyboard.up("Control");
+    await pressShellPrefix(page);
     await page.waitForTimeout(100);
     const after = await page.evaluate(
       () => window.__yaadeAgent!.getState().sessions?.length ?? 0,
@@ -1332,17 +1342,20 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
   }
 });
 
-/** 20 */ test("prefix Ctrl-a shows the tool HUD; s opens Search", async () => {
+/** 20 */ test("prefix Mod-k shows the tool HUD; s opens Search", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
+    const agentLaunchButton = page.locator('[data-yaade-new-tool="agent"]').first();
+    await agentLaunchButton.hover();
+    const agentTooltip = page.getByRole("tooltip");
+    await expectLocatorVisible(agentTooltip);
+    expect((await agentTooltip.textContent())?.trim()).toBe("New Agent");
     await page.locator("[data-yaade-session-tabs]").click();
-    await page.keyboard.down("Control");
-    await page.keyboard.press("a");
-    await page.keyboard.up("Control");
+    await pressShellPrefix(page);
     await expectSelectorVisible(page, "[data-yaade-which-key]");
-    await expectContainsText(page, "[data-yaade-which-key]", "New Agent");
+    await expectNotContainsText(page, "[data-yaade-which-key]", "New Agent");
     await expectContainsText(page, "[data-yaade-which-key]", "New Search");
     await expectContainsText(page, "[data-yaade-which-key]", "Open");
     await expectLocatorCount(
@@ -1390,9 +1403,26 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await expectSelectorVisible(page, '[data-yaade-empty-tool="search"]');
     await expectSelectorVisible(page, '[data-yaade-empty-tool="editor"]');
     await expectSelectorVisible(page, '[data-yaade-empty-tool="git"]');
-    await expectContainsText(page, "[data-yaade-session-empty]", "Start a tool");
+    await expectLocatorCount(
+      page.locator('[data-yaade-session-empty] [data-slot="empty-title"]'),
+      0,
+    );
+    await expectLocatorCount(
+      page.locator('[data-yaade-session-empty] [data-slot="empty-description"]'),
+      0,
+    );
+    await expectNotContainsText(page, "[data-yaade-session-empty]", "Start a tool");
     await page.locator('[data-yaade-empty-tool="terminal"]').click();
     await waitForVisibleTerminalSurface(page);
+    const canvas = page.locator("[data-yaade-terminal-canvas]").first();
+    const box = await canvas.boundingBox();
+    expect(box?.width ?? 0).toBeGreaterThan(32);
+    expect(box?.height ?? 0).toBeGreaterThan(32);
+    await expect
+      .poll(async () =>
+        page.evaluate(() => window.__yaadeAgent?.getTerminalText?.() ?? ""),
+      )
+      .not.toBe("");
   } finally {
     await app.app.close();
   }

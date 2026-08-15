@@ -43,6 +43,18 @@ function slotSelector(ptyTabId: string): string {
   return `[data-yaade-mux-terminal-slot="${escaped}"]`
 }
 
+const MAX_SLOT_MEASURE_RETRIES = 45
+
+function slotNeedsMeasure(
+  container: HTMLElement,
+  ptyTabId: string,
+): boolean {
+  const slot = container.querySelector<HTMLElement>(slotSelector(ptyTabId))
+  if (!slot) return true
+  const rect = slot.getBoundingClientRect()
+  return rect.width < 1 || rect.height < 1
+}
+
 function paneSelector(tabId: string): string {
   const escaped =
     typeof CSS !== "undefined" && typeof CSS.escape === "function"
@@ -205,10 +217,27 @@ export function useMuxTerminalSlotBoxes(
     ro.observe(container)
     const dock = dockRef.current
     if (dock) ro.observe(dock)
-    for (const id of ptyTabIds) {
-      const slot = container.querySelector<HTMLElement>(slotSelector(id))
-      if (slot) ro.observe(slot)
+    const observeSlots = () => {
+      for (const id of ptyTabIds) {
+        const slot = container.querySelector<HTMLElement>(slotSelector(id))
+        if (slot) ro.observe(slot)
+      }
     }
+    observeSlots()
+    let measureRetries = 0
+    const retryIncompleteSlots = () => {
+      if (ptyTabIds.some(id => slotNeedsMeasure(container, id))) {
+        observeSlots()
+        if (measureRetries >= MAX_SLOT_MEASURE_RETRIES) return
+        measureRetries += 1
+        raf = requestAnimationFrame(() => {
+          raf = 0
+          syncNow()
+          retryIncompleteSlots()
+        })
+      }
+    }
+    retryIncompleteSlots()
 
     // childList only — attribute/characterData churn from panel chrome is ignored.
     let mo: MutationObserver | null = null

@@ -40,6 +40,8 @@ const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
+/** First-open flex/grid parents often report 0 until a later frame. */
+const MAX_FIT_RETRIES = 60;
 const TERMINAL_FONT_LOAD_VARIANTS = [
   "normal 400",
   "normal 700",
@@ -576,6 +578,8 @@ export class GhosttyTerminalSurface {
   private resizeNotified = false;
   private measuredSize = false;
   private canvasConfigured = false;
+  private fitRetryFrame = 0;
+  private fitRetries = 0;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
   private pasteShortcutToken = 0;
@@ -615,12 +619,13 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
-    this.resizeObserver = new ResizeObserver(() => this.fit());
+    this.resizeObserver = new ResizeObserver(() => this.ensureFitted());
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
     this.resizeObserver.observe(mount);
+    if (mount.parentElement) this.resizeObserver.observe(mount.parentElement);
   }
 
   static async create(
@@ -703,7 +708,7 @@ export class GhosttyTerminalSurface {
       fontFamily,
       options,
     );
-    surface.fit();
+    surface.ensureFitted();
     surface.requestRender();
     return surface;
   }
@@ -729,7 +734,7 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.cursorOn = true;
-    this.fit();
+    this.ensureFitted();
     this.requestRender();
   }
 
@@ -879,7 +884,29 @@ export class GhosttyTerminalSurface {
     // layout change: ResizeObserver fires before paint, so the browser never
     // composites the old backing store stretched into the new element box.
     if (shouldRender) this.renderFrame();
+    this.fitRetries = 0;
     return true;
+  }
+
+  /**
+   * Flex/grid parents often report 0 on the first open. Keep fitting across
+   * subsequent frames until the mount has a real box — otherwise the canvas
+   * stays blank until an unrelated layout (split, sidebar) happens to resize it.
+   */
+  ensureFitted(): boolean {
+    if (this.fit()) return true;
+    this.scheduleFitRetry();
+    return false;
+  }
+
+  private scheduleFitRetry(): void {
+    if (this.disposed || this.measuredSize || this.fitRetryFrame !== 0) return;
+    if (this.fitRetries >= MAX_FIT_RETRIES) return;
+    this.fitRetries += 1;
+    this.fitRetryFrame = window.requestAnimationFrame(() => {
+      this.fitRetryFrame = 0;
+      this.ensureFitted();
+    });
   }
 
   /**
@@ -1014,6 +1041,7 @@ export class GhosttyTerminalSurface {
       this.options.onResize(this.cols, this.rows);
     }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
+    if (this.fitRetryFrame !== 0) window.cancelAnimationFrame(this.fitRetryFrame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);

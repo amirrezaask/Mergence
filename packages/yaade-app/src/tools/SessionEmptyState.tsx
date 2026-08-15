@@ -11,9 +11,6 @@ import {
   Button,
   Empty,
   EmptyContent,
-  EmptyDescription,
-  EmptyHeader,
-  EmptyTitle,
   Skeleton,
 } from "@yaade/ui/primitives"
 import { toolSessionShortcutFor } from "./tool-session-keymap.js"
@@ -85,16 +82,8 @@ export function SessionEmptyState(props: {
       className="h-full min-h-0 w-full justify-center rounded-none border-0 p-4 sm:p-6"
       data-yaade-session-empty=""
       role="region"
-      aria-label="Start a tool"
+      aria-label="Available tools"
     >
-      <EmptyHeader className="max-w-md">
-        <EmptyTitle className="text-base">Start a tool</EmptyTitle>
-        <EmptyDescription className="text-xs">
-          Each tool picks its own project and worktree. Press{" "}
-          <KeyBindingKbd binding="Ctrl-a" /> then a letter, or pick one below.
-        </EmptyDescription>
-      </EmptyHeader>
-
       <EmptyContent className="max-w-3xl gap-6">
         <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
           {TOOL_TILES.map(tile => {

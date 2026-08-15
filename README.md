@@ -21,7 +21,7 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 
-- The sidebar has two sections: Sessions, then Agents from every Session. `Ctrl-a b` collapses or restores it; hover the workspace edge to reveal the same toggle. Older tab-bar and two-sidebar preferences migrate automatically to this layout.
+- The sidebar has two sections: Sessions, then Agents from every Session. `Mod-k b` (`⌘K` / `Ctrl+K`, then `b`) collapses or restores it; hover the workspace edge to reveal the same toggle. Older tab-bar and two-sidebar preferences migrate automatically to this layout.
 - The Sessions section creates and switches Sessions; the Agents section creates agents and lists agents across every Session. Terminal ToolUses running a recognized agent CLI are detected from foreground-process/Ghostty identity and appear there too.
 - The center workspace is a tiled pane tree, and each pane is a tab group of ToolUses. Dropping on a pane center groups a ToolUse as a tab; dropping on an edge creates a split, up to six panes.
 - Each pane titlebar has a `+` menu for Terminal, Git, Editor, and Search. Agents are created from the Agents section, not the tool menu.
@@ -29,7 +29,7 @@ compatibility; the primary product surface is the Session shell.
 - Right-click a pane tab to open its project, worktree, and kind-specific context popover. Changing project or agent provider persists the change and restarts the underlying process.
 - ToolUse tab titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its Ghostty terminal title.
 - Closing a Session with live tools offers Keep running / Stop tools / Cancel
-- Archived Sessions restore from the Session switcher (`Ctrl-a w` / palette)
+- Archived Sessions restore from the Session switcher (`Mod-k w` / palette)
 
 ### Tools (v1)
 
@@ -72,24 +72,24 @@ projects and worktrees. Branches never switch Main as a side effect.
 
 ## Keyboard
 
-Prefix: **`Ctrl-a`** (press twice to send literal `^A` into a terminal).
+Prefix: **`Mod-k`** (`⌘K` on macOS, `Ctrl+K` on Windows/Linux). Press twice
+to send literal `^K` (kill-line) into a terminal.
 
 | Chord            | Action                                      |
 | ---------------- | ------------------------------------------- |
-| `Ctrl-a a`       | New Agent                                   |
-| `Ctrl-a t`       | New Terminal                                |
-| `Ctrl-a s`       | New Search                                  |
-| `Ctrl-a e`       | New Editor                                  |
-| `Ctrl-a g`       | New Git History                             |
-| `Ctrl-a b`       | Collapse or restore the navigation sidebar |
-| `Ctrl-a j` / `k` | Next / previous ToolUse                     |
-| `Ctrl-a u`       | Switch ToolUse                              |
-| `Ctrl-a w`       | Switch Session                              |
-| `Ctrl-a 1`–`9`   | Jump to ToolUse by index                    |
-| `Ctrl-a c`       | New Session                                 |
-| `Ctrl-a x`       | Close ToolUse                               |
-| `Ctrl-a Shift-X` | Close Session                               |
-| `Ctrl-a ,`       | Settings                                    |
+| `Mod-k t`        | New Terminal                                |
+| `Mod-k s`        | New Search                                  |
+| `Mod-k e`        | New Editor                                  |
+| `Mod-k g`        | New Git History                             |
+| `Mod-k b`        | Collapse or restore the navigation sidebar |
+| `Mod-k j` / `k`  | Next / previous ToolUse                     |
+| `Mod-k u`        | Switch ToolUse                              |
+| `Mod-k w`        | Switch Session                              |
+| `Mod-k 1`–`9`    | Jump to ToolUse by index                    |
+| `Mod-k c`        | New Session                                 |
+| `Mod-k x`        | Close ToolUse                               |
+| `Mod-k Shift-X`  | Close Session                               |
+| `Mod-k ,`        | Settings                                    |
 
 Direct and context-local:
 

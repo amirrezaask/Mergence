@@ -86,11 +86,11 @@ describe("tool session keymap", () => {
     assert.equal(directKeys.has("Mod-Shift-p"), false)
   })
 
-  it("opens each tool kind with a mnemonic letter", () => {
+  it("opens non-agent tool kinds with mnemonic letters", () => {
     const byCommand = new Map(
       TOOL_SESSION_PREFIX_BINDINGS.map((binding) => [binding.command, binding]),
     )
-    assert.equal(byCommand.get("tool.newAgent")?.key, "a")
+    assert.equal(byCommand.get("tool.newAgent"), undefined)
     assert.equal(byCommand.get("tool.newTerminal")?.key, "t")
     assert.equal(byCommand.get("tool.newSearch")?.key, "s")
     assert.equal(byCommand.get("tool.newEditor")?.key, "e")
@@ -106,10 +106,7 @@ describe("tool session keymap", () => {
   })
 
   it("formats prefix and direct shortcuts from the binding tables", () => {
-    assert.equal(
-      toolSessionShortcutFor("tool.newAgent"),
-      `${TOOL_SESSION_PREFIX} a`,
-    )
+    assert.equal(toolSessionShortcutFor("tool.newAgent"), undefined)
     assert.equal(
       toolSessionShortcutFor("session.switch"),
       `${TOOL_SESSION_PREFIX} w`,

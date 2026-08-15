@@ -243,14 +243,16 @@ action behind the prefix.
 ### The prefix key
 
 Because nearly every chord a multiplexer wants is reserved, shell actions live
-behind a tmux-style prefix. Press **`Ctrl-a`** twice inside xterm to send a
-literal `^A` (tmux `send-prefix`).
+behind a tmux-style prefix. The prefix is **`Mod-k`** (`⌘K` on macOS, `Ctrl+K`
+on Windows/Linux). Press it twice inside xterm to send a literal `^K`
+(kill-line; tmux `send-prefix`). `Mod-k` is risky (Chrome omnibox) on
+purpose: Chromium delivers it and `preventDefault()` wins.
 
 **Canonical grammar** is the Tool Session shell. Source of truth:
 `packages/yaade-app/src/keybindings.ts`. One command → one
 prefix key. Do not add aliases.
 
-| `Ctrl-a` + | Action | | `Ctrl-a` + | Action |
+| `Mod-k` + | Action | | `Mod-k` + | Action |
 | --- | --- | --- | --- | --- |
 | `a` | New Agent | | `j` / `k` | Next / previous tool |
 | `t` | New Terminal | | `u` | Switch tool (list) |
@@ -263,11 +265,12 @@ prefix key. Do not add aliases.
 | | | | `,` | Settings |
 
 Direct chords: **`Mod-,` only** (settings — OS convention). Settings is the
-sole dual-path (`Ctrl-a ,` stays on the HUD). Context-local: `Mod-p` opens
+sole dual-path (`Mod-k ,` stays on the HUD). Context-local: `Mod-p` opens
 Quick Open while Editor or Search is focused (VS Code muscle memory).
 
-Do **not** bind `Mod-k` or `Mod-Shift-p` in the Tool Session shell. Both are
-risky, and both were aliases of prefix commands (`u` / `w`).
+Do **not** bind `Mod-k` as a direct chord, or `Mod-Shift-p`, in the Tool
+Session shell. The prefix already owns `Mod-k`; `Mod-Shift-p` was an alias
+of `session.switch`.
 
 `TOOL_SESSION_PREFIX_BINDINGS` feeds the WhichKey HUD, so on-screen hints
 cannot drift from what is bound.
@@ -297,8 +300,8 @@ Chord resolution lives in `context-keys.ts` (`resolveKeydownBinding`,
 **Invariants:**
 
 - A matched binding calls `preventDefault()` **and** `stopPropagation()`. Without
-  the latter, a capture-phase match still reaches xterm — that is how `Ctrl-a`
-  would leak through as readline `beginning-of-line`.
+  the latter, a capture-phase match still reaches xterm — that is how `Mod-k`
+  would leak through as readline `kill-line`.
 - **Never bind bare `Escape` globally.** vim, less and fzf all need it. A global
   Escape binding (mux unzoom) previously swallowed it for every pane; the
   surviving binding is gated on *a pane being zoomed* **and** focus being outside
@@ -382,6 +385,28 @@ prerequisite before shipping remote.**
   in `localStorage` via `useAppearanceSettings.ts`.
 - Design-system rules (tokens, typography scale, motion, shadcn primitives) live
   in `packages/yaade-ui/AGENTS.md`. Read it before adding UI.
+
+### Animation contract (MANDATORY)
+
+Animation is a product requirement, not optional polish. Every new user-visible
+feature and every meaningful state change must have an intentional motion
+treatment: entering, leaving, expanding, collapsing, reordering, resizing,
+switching, or feedback. A feature is not complete if its UI snaps between
+states, except when reduced motion is enabled or an explicitly documented
+instant interaction is required for a high-frequency action.
+
+- Use Motion (`motion`) for React animation. Prefer `LazyMotion` with the
+  minimal `motion/react-m` element exports so animation does not break the
+  startup bundle budget.
+- Use `yaadeMotion` / `--yaade-motion-*` tokens; never hardcode durations.
+- Use `AnimatePresence` for additions/removals and layout-aware Motion
+  components for pane, tile, tab, and list movement. Animations must remain
+  interruptible and must never block input or data operations.
+- Respect `prefers-reduced-motion` through the existing Motion and global CSS
+  configuration. Replace spatial movement with a brief opacity/state treatment,
+  not with a broken or missing interaction.
+- Verify visible motion changes with Playwright before reporting the feature
+  complete; assert the resulting state as well as the interaction that caused it.
 
 ---
 

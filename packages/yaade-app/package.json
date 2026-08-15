@@ -27,6 +27,7 @@
     "effect": "3.22.1",
     "lucide-react": "^0.511.0",
     "monaco-editor": "^0.52.2",
+    "motion": "^13.1.0",
     "react": "^19.1.0",
     "react-dom": "^19.1.0"
   },

@@ -101,7 +101,11 @@ function eventKeyMatches(expected: string, e: KeyboardEvent): boolean {
   return false
 }
 
-export function keyEventMatchesBindingPart(e: KeyboardEvent, part: string): boolean {
+export function keyEventMatchesBindingPart(
+  e: KeyboardEvent,
+  part: string,
+  opts?: { ignoreHeldMod?: boolean },
+): boolean {
   const { modifiers, key } = parseKeyPart(part)
   const needsShift = modifiers.has("Shift")
   const needsAlt = modifiers.has("Alt")
@@ -112,8 +116,12 @@ export function keyEventMatchesBindingPart(e: KeyboardEvent, part: string): bool
   if (needsShift !== e.shiftKey) return false
   if (needsAlt !== e.altKey) return false
 
-  const hasMeta = e.metaKey
-  const hasCtrl = e.ctrlKey
+  // After a Mod- prefix, users (and Playwright) often still hold ⌘/Ctrl.
+  // Ignore leftover Mod unless this part itself asks for it.
+  const ignoreHeldMod =
+    opts?.ignoreHeldMod === true && !needsMod && !needsCmd && !needsCtrl
+  const hasMeta = ignoreHeldMod ? false : e.metaKey
+  const hasCtrl = ignoreHeldMod ? false : e.ctrlKey
   const mac = isMacPlatform()
 
   // Mod = platform primary (⌘ mac / Ctrl elsewhere). Cmd always means meta.
@@ -146,7 +154,7 @@ export function keyEventMatchesBinding(e: KeyboardEvent, key: string): boolean {
 export function keyEventMatchesChordSecond(e: KeyboardEvent, key: string, prefix: string): boolean {
   const parts = parseBindingKey(key)
   if (parts.length < 2 || parts[0] !== prefix) return false
-  return keyEventMatchesBindingPart(e, parts[1]!)
+  return keyEventMatchesBindingPart(e, parts[1]!, { ignoreHeldMod: true })
 }
 
 export function jetKeyToCodeMirrorKey(key: string): string | null {

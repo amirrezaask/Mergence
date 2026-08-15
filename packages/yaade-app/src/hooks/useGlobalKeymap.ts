@@ -68,7 +68,7 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
       const result = resolveKeydownBinding(e, bindings, ctx, chordState)
       if (result === "chord-started") {
         // stopPropagation matters as much as preventDefault here: without it a
-        // prefix like Ctrl-a still reaches the terminal and moves the shell cursor.
+        // prefix like Mod-k still reaches the terminal and kills the rest of the line.
         e.preventDefault()
         e.stopPropagation()
         setPendingChordPrefixRef.current(chordState.prefix)

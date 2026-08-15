@@ -6,6 +6,8 @@ import {
   useState,
   type KeyboardEvent,
 } from "react";
+import { AnimatePresence } from "motion/react";
+import { div as MotionDiv } from "motion/react-m";
 import {
   ArrowRight,
   Bot,
@@ -26,7 +28,12 @@ import type {
   ToolUseId,
 } from "@yaade/rpc";
 import { ExistingWorktreeCheckout, MainCheckout } from "@yaade/rpc";
-import { AgentProviderIcon, SidebarShell, cn } from "@yaade/ui";
+import {
+  AgentProviderIcon,
+  SidebarShell,
+  cn,
+  yaadeMotion,
+} from "@yaade/ui";
 import {
   Button,
   DropdownMenu,
@@ -310,8 +317,22 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     const jump = index < 9 ? String(index + 1) : undefined;
 
     return (
-      <Popover
+      <MotionDiv
         key={id}
+        layout
+        initial={{ opacity: 0, scale: 0.97, y: 4 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: -4 }}
+        transition={{
+          layout: yaadeMotion.layoutTransition,
+          default: yaadeMotion.layoutTransition,
+        }}
+        className={cn(
+          "min-w-0 shrink-0",
+          isSidebar ? "w-full max-md:w-44" : "h-full",
+        )}
+      >
+      <Popover
         open={!props.collapsed && contextPopoverId === id}
         onOpenChange={(open) => setContextPopoverId(open ? id : null)}
       >
@@ -539,6 +560,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           </div>
         </PopoverContent>
       </Popover>
+      </MotionDiv>
     );
   };
 
@@ -786,9 +808,25 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   );
 
   const toolItems = props.useIds.map(renderToolUse);
+  const animatedToolItems = (
+    <AnimatePresence initial={false} mode="popLayout">
+      {toolItems}
+    </AnimatePresence>
+  );
 
   if (isTwoSidebar) {
     return (
+      <MotionDiv
+        initial={false}
+        animate={{ opacity: props.collapsed ? 0 : 1, x: props.collapsed ? 12 : 0 }}
+        transition={yaadeMotion.sidebarTransition}
+        className={cn(
+          "h-full min-w-0 overflow-hidden",
+          props.collapsed && "pointer-events-none max-md:hidden",
+        )}
+        aria-hidden={props.collapsed || undefined}
+        inert={props.collapsed || undefined}
+      >
       <SidebarShell
         aria-label={props.sectionLabel ?? "Tool uses"}
         contentAs="nav"
@@ -804,7 +842,6 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           "w-full border-r-0 border-l border-sidebar-border bg-sidebar text-sidebar-foreground",
           !props.collapsed &&
             "max-md:h-12 max-md:w-full max-md:flex-row max-md:border-l-0 max-md:border-t",
-          props.collapsed && "hidden",
         )}
         dataAttributes={{
           "data-yaade-tool-sidebar": "",
@@ -817,13 +854,14 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         footer={newToolActions}
       >
         {toolItems.length > 0 ? (
-          toolItems
+          animatedToolItems
         ) : (
           <p className="px-2 py-3 text-xs text-sidebar-foreground/50">
             {props.emptyLabel ?? "No tools yet"}
           </p>
         )}
       </SidebarShell>
+      </MotionDiv>
     );
   }
 
@@ -856,7 +894,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           onKeyDown={handleToolTabKeyDown}
         >
           {toolItems.length > 0 ? (
-            toolItems
+            animatedToolItems
           ) : (
             <p className="px-2 py-3 text-xs text-sidebar-foreground/50">
               {props.emptyLabel ?? "No tools yet"}
@@ -878,7 +916,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         role="tablist"
         onKeyDown={handleToolTabKeyDown}
       >
-        {toolItems}
+        {animatedToolItems}
       </nav>
       <Separator orientation="vertical" className="h-7" />
       {newToolActions}

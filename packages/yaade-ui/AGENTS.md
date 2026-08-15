@@ -15,13 +15,17 @@ Unified UI primitives + shells for every YAADE surface. Shadcn-derived, semantic
 The required `YaadeTheme.tokens: YaadeSemanticTokens` object is the authored color source. `applySemanticTokens()` publishes it to CSS before React mounts; `globals.css` maps those properties through Tailwind's `@theme inline`. `JetColors` is an sRGB compatibility view derived for canvas/editor consumers and must not be authored independently.
 
 ### Color
+
 Semantic: shadcn roles plus `success`, `warning`, `info`, `backdrop`, Git added/modified/deleted/conflict foreground pairs, and `sidebar-*`. Never hardcode palette colors outside token/theme files. Exact provider-brand and language-file-icon colors are the documented exceptions.
 
 ### Radius
+
 `--radius: 0.5rem` (8px at default zoom). Use `rounded-md` for controls and compact surfaces; reserve full pills for badges.
 
 ### Typography
+
 Scale (rem, ~px):
+
 - `text-4xs` — 0.69rem (~9px at the 13px default; badge-only)
 - `text-3xs` — 0.77rem (~10px)
 - `text-2xs` — 0.82rem (~11px)
@@ -36,13 +40,24 @@ Never write `text-[Npx]`. If a size is missing from the scale, add a token — d
 Fonts: `--font-sans` Geist, `--font-mono` Geist Mono.
 
 ### Motion
+
 `yaadeMotion` (from `@yaade/ui`) is the single source of animation timings: 100ms interaction, 160ms menus, and 200ms panels. CSS vars: `--yaade-motion-fast/hot/menu/overlay/panel/slow-menu/scroll/entity`; easing vars: `--yaade-ease-out/in-out/drawer`. Never hardcode durations; reference the token. Press feedback is the restrained global `0.98` scale.
 
 High-frequency palette surfaces use `<DialogContent motion="instant" placement="quick-input" size="picker" />`. Standard prompts and dialogs use the menu/panel motion tokens. Dialog sizes are semantic: `prompt` (24rem), `picker` (32rem), `wide` (42rem), and `default`; PaletteShell applies VS Code-like quick-input minimums (`picker` 44rem, `wide` 52rem) with viewport caps.
 
 Reduced motion is handled globally by `data-yaade-reduced-motion` and `prefers-reduced-motion` in `globals.css`.
 
+**Mandatory feature rule:** every new user-visible feature or meaningful state
+change must animate its visible transition. Use Motion's `AnimatePresence` for
+enter/exit and layout-aware components for movement, resizing, reordering, and
+pane/tile changes. Keep high-frequency interactions fast and interruptible;
+never delay the underlying action. Motion components must use `LazyMotion` and
+minimal `motion/react-m` element exports where possible so the startup bundle
+budget remains protected. The only intentional exception is reduced-motion
+mode, which uses a short opacity/state treatment instead of spatial movement.
+
 ### Icons
+
 Only `lucide-react`. Default size class: `size-4`. Do not import other icon libraries.
 
 ## Shells
@@ -56,6 +71,7 @@ PaletteShell uses shared VS Code-like quick-input chrome: top-docked placement, 
 List engine: **`Lister`** (`src/lister/`) — flat/tree virt list, fuzzy filter, search input. `showInput` = initial visibility only; typing always reveals the field while query non-empty. PaletteShell = Dialog chrome + Lister (`showInput`, `flatVariant="palette"`). Explorer / LocationList use same Lister (`showInput={false}` until type).
 
 All "Dialog + list + input + result" palettes MUST use PaletteShell. Adapters:
+
 - `CommandPalette`
 - `BufferListOverlay`
 - `OutlineOverlay`

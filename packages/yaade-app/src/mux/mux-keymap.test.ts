@@ -113,7 +113,11 @@ describe("mux keymap", () => {
     const chord = createChordState()
 
     const prefix = resolveKeydownBinding(
-      keyEvent({ key: "a", ctrlKey: true }),
+      keyEvent(
+        process.platform === "darwin"
+          ? { key: "k", metaKey: true }
+          : { key: "k", ctrlKey: true },
+      ),
       bindings,
       terminalContext,
       chord,
@@ -128,6 +132,31 @@ describe("mux keymap", () => {
     )
     assert.ok(action !== null && action !== "chord-started")
     assert.equal(action.key, muxPrefixBindingKey("z"))
+  })
+
+  it("resolves the action while the prefix modifier is still held", () => {
+    const bindings = muxBindings()
+    const chord = createChordState()
+    const mac = process.platform === "darwin"
+
+    assert.equal(
+      resolveKeydownBinding(
+        keyEvent(mac ? { key: "k", metaKey: true } : { key: "k", ctrlKey: true }),
+        bindings,
+        terminalContext,
+        chord,
+      ),
+      "chord-started",
+    )
+
+    const action = resolveKeydownBinding(
+      keyEvent(mac ? { key: "d", metaKey: true } : { key: "d", ctrlKey: true }),
+      bindings,
+      terminalContext,
+      chord,
+    )
+    assert.ok(action !== null && action !== "chord-started")
+    assert.equal(action.key, muxPrefixBindingKey("d"))
   })
 
   it("routes a bare action key to the terminal when no prefix is pending", () => {
@@ -162,6 +191,7 @@ describe("mux keymap", () => {
   it("sends the prefix through on a double tap", () => {
     assert.equal(prefixLiteralByte("Ctrl-a"), "\x01")
     assert.equal(prefixLiteralByte("Ctrl-b"), "\x02")
+    assert.equal(prefixLiteralByte("Mod-k"), "\x0b")
     assert.equal(prefixLiteralByte("Mod-Shift-p"), null)
   })
 

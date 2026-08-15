@@ -363,6 +363,18 @@ body {
     var(--background);
 }
 
+.yaade-tool-session-grid {
+  transition: grid-template-columns var(--yaade-motion-menu) var(--yaade-ease-drawer);
+  will-change: grid-template-columns;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .yaade-tool-session-grid {
+    transition: none;
+    will-change: auto;
+  }
+}
+
 [data-yaade-session-tabs],
 [data-yaade-tool-tabs],
 [data-yaade-tool-context] {

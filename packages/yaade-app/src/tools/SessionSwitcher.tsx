@@ -35,7 +35,7 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
       open={props.open}
       onOpenChange={props.onOpenChange}
       title="Switch session"
-      description={`Jump to a visible session or restore an archived one (${formatKeyBinding(toolSessionShortcutFor("session.switch") ?? "Ctrl-a w")}).`}
+      description={`Jump to a visible session or restore an archived one (${formatKeyBinding(toolSessionShortcutFor("session.switch") ?? "Mod-k w")}).`}
       placeholder="Filter sessions…"
       size="picker"
       items={items}

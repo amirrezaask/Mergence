@@ -1,4 +1,6 @@
 import { Fragment, memo, useEffect, useMemo, useState, type ReactNode } from "react"
+import { LayoutGroup, LazyMotion, MotionConfig } from "motion/react"
+import { div as MotionDiv } from "motion/react-m"
 import type { PanelEvent, PanelNode } from "@yaade/panels"
 import type { PanelTree } from "@yaade/panels"
 import type { PanelId } from "@yaade/shared"
@@ -9,9 +11,12 @@ import {
   ResizablePanelGroup,
 } from "@/components/ui/resizable.js"
 import { cn } from "@/lib/utils.js"
+import { yaadeMotion } from "@/motion/tokens.js"
 import { usePanelDrag } from "./PanelDragContext.js"
 import { PanelDropOverlay } from "./PanelDropOverlay.js"
 import { TabDndRoot, type TabDndHandlers } from "./TabDndRoot.js"
+
+const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax)
 
 export type PanelSlotMeta = {
   focused: boolean
@@ -74,7 +79,15 @@ function PanelLeaf<TView>({
   }, [tabDrag])
 
   return (
-    <div
+    <MotionDiv
+      layout
+      initial={{ opacity: 0, scale: 0.985 }}
+      animate={{ opacity: 1, scale: 1 }}
+      transition={{
+        layout: yaadeMotion.layoutTransition,
+        opacity: yaadeMotion.quickFade,
+        scale: yaadeMotion.layoutTransition,
+      }}
       className={cn(
         "relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden",
         "rounded-lg border border-border bg-card",
@@ -97,7 +110,7 @@ function PanelLeaf<TView>({
         {renderContent(view, panelId, meta)}
         <PanelDropOverlay panelId={panelId} />
       </div>
-    </div>
+    </MotionDiv>
   )
 }
 
@@ -203,9 +216,15 @@ function PanelTreeNode<TView>({
 
 function PanelDockInner<TView>(props: PanelDockProps<TView>) {
   const dock = (
-    <div className="flex h-full min-h-0 w-full flex-col overflow-hidden" data-yaade-panel-dock>
-      <PanelTreeNode node={props.tree.root} path={[]} props={props} />
-    </div>
+    <LazyMotion features={loadMotionFeatures}>
+      <MotionConfig reducedMotion="user">
+        <LayoutGroup id="yaade-panel-dock">
+          <div className="flex h-full min-h-0 w-full flex-col overflow-hidden" data-yaade-panel-dock>
+            <PanelTreeNode node={props.tree.root} path={[]} props={props} />
+          </div>
+        </LayoutGroup>
+      </MotionConfig>
+    </LazyMotion>
   )
   if (props.wrapTabDnd === false) return dock
   return <TabDndRoot handlers={props.tabDnd}>{dock}</TabDndRoot>

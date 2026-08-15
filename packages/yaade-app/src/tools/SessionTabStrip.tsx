@@ -1,7 +1,9 @@
 import { useRef, useState, type KeyboardEvent } from "react";
+import { AnimatePresence } from "motion/react";
+import { div as MotionDiv } from "motion/react-m";
 import { Plus, Settings, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
-import { SidebarShell, cn } from "@yaade/ui";
+import { SidebarShell, cn, yaadeMotion } from "@yaade/ui";
 import { Button, Input } from "@yaade/ui/primitives";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import {
@@ -127,8 +129,16 @@ export function SessionTabStrip(props: SessionTabStripProps) {
     const toolCount = props.toolCounts?.get(session.id) ?? 0;
     const editing = editingId === session.id;
     return (
-      <div
+      <MotionDiv
         key={session.id}
+        layout
+        initial={{ opacity: 0, scale: 0.97, y: 4 }}
+        animate={{ opacity: 1, scale: 1, y: 0 }}
+        exit={{ opacity: 0, scale: 0.97, y: -4 }}
+        transition={{
+          layout: yaadeMotion.layoutTransition,
+          default: yaadeMotion.layoutTransition,
+        }}
         role="tab"
         tabIndex={active ? 0 : -1}
         aria-selected={active}
@@ -205,12 +215,29 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         >
           <X />
         </Button>
-      </div>
+      </MotionDiv>
     );
   });
 
+  const animatedSessionItems = (
+    <AnimatePresence initial={false} mode="popLayout">
+      {sessionItems}
+    </AnimatePresence>
+  );
+
   if (layout === "two-sidebars") {
     return (
+      <MotionDiv
+        initial={false}
+        animate={{ opacity: props.collapsed ? 0 : 1, x: props.collapsed ? -12 : 0 }}
+        transition={yaadeMotion.sidebarTransition}
+        className={cn(
+          "h-full min-w-0 overflow-hidden",
+          props.collapsed && "pointer-events-none max-md:hidden",
+        )}
+        aria-hidden={props.collapsed || undefined}
+        inert={props.collapsed || undefined}
+      >
       <SidebarShell
         aria-label="Sessions"
         contentAs="nav"
@@ -226,7 +253,6 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           "w-full border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
           !props.collapsed &&
             "max-md:h-10 max-md:w-full max-md:flex-row max-md:border-r-0 max-md:border-b",
-          props.collapsed && "hidden",
         )}
         dataAttributes={{
           "data-yaade-session-sidebar": "",
@@ -238,8 +264,9 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         }}
         footer={sidebarActions}
       >
-        {sessionItems}
+        {animatedSessionItems}
       </SidebarShell>
+      </MotionDiv>
     );
   }
 
@@ -269,7 +296,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           role="tablist"
           onKeyDown={handleSessionTabKeyDown}
         >
-          {sessionItems}
+          {animatedSessionItems}
         </nav>
       </section>
     );

@@ -33,10 +33,11 @@ describe("isBrowserReservedChord", () => {
   })
 
   it("allows reserved keys as the tail of a prefix chord", () => {
-    // The browser never sees a bare `t` after `Ctrl-a` opened the namespace.
+    // The browser never sees a bare `t` after `Mod-k` opened the namespace.
+    assert.equal(isBrowserReservedChord("Mod-k t"), false)
+    assert.equal(isBrowserReservedChord("Mod-k w"), false)
+    assert.equal(isBrowserReservedChord("Mod-k -"), false)
     assert.equal(isBrowserReservedChord("Ctrl-a t"), false)
-    assert.equal(isBrowserReservedChord("Ctrl-a w"), false)
-    assert.equal(isBrowserReservedChord("Ctrl-a -"), false)
   })
 
   it("still flags a chord whose prefix is itself reserved", () => {

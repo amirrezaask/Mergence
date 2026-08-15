@@ -22,6 +22,7 @@ import {
 import { CSS } from "@dnd-kit/utilities"
 import { arrayMove } from "@dnd-kit/sortable"
 import type { DropAction, PanelId } from "@yaade/shared"
+import { yaadeMotion } from "@/motion/tokens.js"
 import { YaadeTabDragGhost } from "@/motion/YaadeOverlayMotion.js"
 import type { DropSiteKind } from "./panel-drop-zones.js"
 import {
@@ -119,7 +120,7 @@ function createTabDropAnimation(
   dropAnimTargetRef: RefObject<DropAnimTarget | null>,
 ): DropAnimation {
   return {
-    duration: 200,
+    duration: Math.round(yaadeMotion.layoutTransition.duration * 1000),
     easing: "ease-out",
     keyframes({ transform, dragOverlay }) {
       const target = dropAnimTargetRef.current

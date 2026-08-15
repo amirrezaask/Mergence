@@ -9,6 +9,7 @@ import {
   launchJet,
   pressMod,
   pressMuxPrefix,
+  pressShellPrefix,
   waitForMux,
   waitForTerminalText,
 } from "./_launch.js"
@@ -167,8 +168,8 @@ test.describe("mux keyboard", () => {
         .poll(async () => page.locator("[data-yaade-mux-pane]").count())
         .toBe(1)
 
-      await page.keyboard.press("Control+KeyA")
-      const whichKey = page.getByText("waiting for key")
+      await pressShellPrefix(page)
+      const whichKey = page.locator("[data-yaade-which-key]")
       await expectLocatorVisible(whichKey)
 
       await page.keyboard.press("KeyD")
@@ -178,7 +179,7 @@ test.describe("mux keyboard", () => {
         })
         .toBeGreaterThanOrEqual(2)
       await expect
-        .poll(async () => page.getByText("waiting for key").count())
+        .poll(async () => page.locator("[data-yaade-which-key]").count())
         .toBe(0)
     } finally {
       await app.close()
@@ -191,24 +192,24 @@ test.describe("mux keyboard", () => {
       await waitForMux(page)
       await page.locator("[data-yaade-terminal-panel]").first().click()
 
-      // Ctrl-a is readline beginning-of-line. If the prefix leaked through, the
-      // suffix would land before `echo` and the command would not run.
-      await page.keyboard.type("echo yaade-prefix")
-      await page.keyboard.press("Control+KeyA")
-      // The which-key hint appears while the prefix is pending; poll for it to
-      // disappear (the chord lapsing) instead of sleeping a fixed interval.
+      // Mod-k / Ctrl-k is readline kill-to-end. Park the cursor before a
+      // suffix; a leaked prefix would delete it.
+      await page.keyboard.type("echo prefix-keep leftover")
+      for (let i = 0; i < " leftover".length; i++) {
+        await page.keyboard.press("ArrowLeft")
+      }
+      await pressShellPrefix(page)
       await expect
-        .poll(async () => page.getByText("waiting for key").count())
+        .poll(async () => page.locator("[data-yaade-which-key]").count())
         .toBeGreaterThan(0)
       await expect
-        .poll(async () => page.getByText("waiting for key").count(), {
+        .poll(async () => page.locator("[data-yaade-which-key]").count(), {
           timeout: 15_000,
         })
         .toBe(0)
-      await page.keyboard.type("-tail")
       await page.keyboard.press("Enter")
 
-      await waitForTerminalText(page, "yaade-prefix-tail")
+      await waitForTerminalText(page, "prefix-keep leftover")
     } finally {
       await app.close()
     }
@@ -220,23 +221,23 @@ test.describe("mux keyboard", () => {
       await waitForMux(page)
       await page.locator("[data-yaade-terminal-panel]").first().click()
 
-      await page.keyboard.type("yaade-tail echo")
-      // Ctrl-a Ctrl-a → literal ^A → readline jumps to the start of the line.
-      await page.keyboard.press("Control+KeyA")
+      await page.keyboard.type("echo yaade-head leftover")
+      for (let i = 0; i < " leftover".length; i++) {
+        await page.keyboard.press("ArrowLeft")
+      }
+      // Mod-k Mod-k → literal ^K → readline kills from the cursor to EOL.
+      await pressShellPrefix(page)
       await expect
-        .poll(async () => page.getByText("waiting for key").count())
+        .poll(async () => page.locator("[data-yaade-which-key]").count())
         .toBeGreaterThan(0)
-      await page.keyboard.press("Control+KeyA")
-      // The second prefix clears the chord synchronously, while the footer
-      // leaves on React's next commit. Wait for that commit before typing so
-      // CDP cannot race the next `e` into the still-visible prefix namespace.
+      await pressShellPrefix(page)
       await expect
-        .poll(async () => page.getByText("waiting for key").count())
+        .poll(async () => page.locator("[data-yaade-which-key]").count())
         .toBe(0)
-      await page.keyboard.type("echo yaade-head ")
+      await page.keyboard.type("-ok")
       await page.keyboard.press("Enter")
 
-      await waitForTerminalText(page, "yaade-head")
+      await waitForTerminalText(page, "yaade-head-ok")
     } finally {
       await app.close()
     }

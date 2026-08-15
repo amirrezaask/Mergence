@@ -4,6 +4,8 @@ import {
   type KeyboardEvent,
   type ReactNode,
 } from "react";
+import { AnimatePresence } from "motion/react";
+import { div as MotionDiv, span as MotionSpan } from "motion/react-m";
 import {
   FileCode2,
   GitBranch,
@@ -31,7 +33,7 @@ import {
   type PanelSlotMeta,
   type TabDndHandlers,
 } from "@yaade/ui";
-import { cn } from "@yaade/ui";
+import { cn, yaadeMotion } from "@yaade/ui";
 import {
   Button,
   Popover,
@@ -262,9 +264,11 @@ function ToolPaneTab(props: {
           }}
         >
           {props.active && props.focused ? (
-            <span
+            <MotionSpan
+              layoutId={`yaade-pane-tab-indicator-${props.panelId.id}`}
               data-yaade-pane-tab-indicator=""
               className="pointer-events-none absolute inset-x-1.5 top-0 h-px bg-primary"
+              transition={yaadeMotion.layoutTransition}
               aria-hidden
             />
           ) : null}
@@ -380,32 +384,46 @@ function ToolPaneTabBar(props: {
       ariaLabel="Pane tools"
       onKeyDown={handleTabKeyDown}
     >
-      {props.view.toolUseIds.map((toolUseId) => {
-        const use = props.usesById.get(toolUseId);
-        if (!use) return null;
-        return (
-          <ToolPaneTab
-            key={toolUseId}
-            panelId={props.panelId}
-            use={use}
-            title={toolUseWorkTitle(
-              use,
-              props.runtimeTitles.get(toolUseId),
-            )}
-            active={props.view.activeToolUseId === toolUseId}
-            focused={props.focused}
-            projects={props.projects}
-            onActivate={() => props.onActivate(toolUseId, use)}
-            onClose={() => props.onClose(toolUseId)}
-            onContextChange={(project, checkout) =>
-              props.onContextChange(use, project, checkout)
-            }
-            onProviderChange={(provider) =>
-              props.onProviderChange(use, provider)
-            }
-          />
-        );
-      })}
+      <AnimatePresence initial={false} mode="popLayout">
+        {props.view.toolUseIds.map((toolUseId) => {
+          const use = props.usesById.get(toolUseId);
+          if (!use) return null;
+          return (
+            <MotionDiv
+              key={toolUseId}
+              layout
+              initial={{ opacity: 0, scale: 0.96, x: 8 }}
+              animate={{ opacity: 1, scale: 1, x: 0 }}
+              exit={{ opacity: 0, scale: 0.96, x: -8 }}
+              transition={{
+                layout: yaadeMotion.layoutTransition,
+                default: yaadeMotion.layoutTransition,
+              }}
+              className="flex h-full min-w-0 shrink-0"
+            >
+              <ToolPaneTab
+                panelId={props.panelId}
+                use={use}
+                title={toolUseWorkTitle(
+                  use,
+                  props.runtimeTitles.get(toolUseId),
+                )}
+                active={props.view.activeToolUseId === toolUseId}
+                focused={props.focused}
+                projects={props.projects}
+                onActivate={() => props.onActivate(toolUseId, use)}
+                onClose={() => props.onClose(toolUseId)}
+                onContextChange={(project, checkout) =>
+                  props.onContextChange(use, project, checkout)
+                }
+                onProviderChange={(provider) =>
+                  props.onProviderChange(use, provider)
+                }
+              />
+            </MotionDiv>
+          );
+        })}
+      </AnimatePresence>
     </DockTabBarDropTarget>
   );
 }
@@ -484,14 +502,23 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
         );
       }
       return (
-        <div
-          key={use.id}
-          className="flex h-full min-h-0 min-w-0 flex-col"
-          data-yaade-tool-tile={use.id}
-          data-focused={meta.focused ? "" : undefined}
-        >
-          {props.renderTool(use, meta.focused)}
-        </div>
+        <AnimatePresence initial={false} mode="popLayout">
+          <MotionDiv
+            key={use.id}
+            initial={{ opacity: 0, scale: 0.985, y: 6 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.99, y: -4 }}
+            transition={{
+              opacity: yaadeMotion.quickFade,
+              default: yaadeMotion.layoutTransition,
+            }}
+            className="flex h-full min-h-0 min-w-0 flex-col"
+            data-yaade-tool-tile={use.id}
+            data-focused={meta.focused ? "" : undefined}
+          >
+            {props.renderTool(use, meta.focused)}
+          </MotionDiv>
+        </AnimatePresence>
       );
     },
     [openToolIds.length, props],

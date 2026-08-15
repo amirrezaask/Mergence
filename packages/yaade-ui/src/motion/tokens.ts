@@ -43,6 +43,8 @@ export const yaadeMotion = {
   overlayTransition: { duration: 0.18 /* overlay */, ease: "easeOut" as const },
   quickFade: { duration: 0.12, ease: "easeOut" as const },
   tabGhostTransition: { duration: 0.18 /* overlay */, ease: "easeOut" as const },
+  layoutTransition: { duration: 0.16, ease: "easeOut" as const },
+  sidebarTransition: { duration: 0.16, ease: "easeOut" as const },
 }
 
 export const yaadePressClass = "yaade-press"

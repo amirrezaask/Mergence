@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {
   keyEventMatchesBinding,
   keyEventMatchesBindingPart,
+  keyEventMatchesChordSecond,
   isChordBinding,
   parseBindingKey,
   jetKeyToCodeMirrorKey,
@@ -117,6 +118,25 @@ describe("keyEventMatchesBindingPart", () => {
         "Mod-Shift-\\",
       ),
       true,
+    )
+  })
+
+  it("ignores leftover Mod on a chord's second key", () => {
+    const mac = process.platform === "darwin"
+    assert.equal(
+      keyEventMatchesChordSecond(
+        keyEvent({ key: "d", metaKey: true, ctrlKey: !mac }),
+        "Mod-k d",
+        "Mod-k",
+      ),
+      true,
+    )
+    assert.equal(
+      keyEventMatchesBindingPart(
+        keyEvent({ key: "d", metaKey: true, ctrlKey: !mac }),
+        "d",
+      ),
+      false,
     )
   })
 

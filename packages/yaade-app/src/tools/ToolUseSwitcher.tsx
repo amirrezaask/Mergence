@@ -45,7 +45,7 @@ export function ToolUseSwitcher(props: {
       open={props.open}
       onOpenChange={props.onOpenChange}
       title="Switch tool"
-      description={`Jump to a current tool across all sessions (${formatKeyBinding(toolSessionShortcutFor("tool.switch") ?? "Ctrl-a u")}).`}
+      description={`Jump to a current tool across all sessions (${formatKeyBinding(toolSessionShortcutFor("tool.switch") ?? "Mod-k u")}).`}
       placeholder="Search tools, sessions, or projects…"
       size="picker"
       items={items}

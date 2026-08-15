@@ -43,31 +43,43 @@ export function ProcessToolView({
     use.output.processState === "disconnected"
       ? "failed"
       : use.output.processState;
+  const waitingForPty = !use.output.ptyId && status === "starting";
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
+    <div className="flex h-full min-h-0 flex-1 flex-col">
       {toolbar}
-      <Suspense
-        fallback={
-          <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
-            <LoaderCircle className="mr-2 size-4 animate-spin" />
-            Opening terminal…
-          </div>
-        }
-      >
-        <TerminalPanel
-          cwdRootUri={pathToFileUri(use.context.checkoutPath)}
-          theme={theme}
-          tabId={use.id}
-          focused={focused}
-          isActive={visible}
-          existingPtyId={use.output.ptyId}
-          sessionGeneration={use.output.generation}
-          status={status}
-          attachOnly
-          visible={visible}
-          onTitleChange={(_id, title) => onTitleChange?.(title)}
-        />
-      </Suspense>
+      {waitingForPty ? (
+        <div
+          className="grid flex-1 place-items-center text-sm text-muted-foreground"
+          data-yaade-terminal-starting=""
+          role="status"
+        >
+          <LoaderCircle className="mr-2 size-4 animate-spin" />
+          Starting {use.kind === "agent" ? "agent" : "terminal"}…
+        </div>
+      ) : (
+        <Suspense
+          fallback={
+            <div className="grid flex-1 place-items-center text-sm text-muted-foreground">
+              <LoaderCircle className="mr-2 size-4 animate-spin" />
+              Opening terminal…
+            </div>
+          }
+        >
+          <TerminalPanel
+            cwdRootUri={pathToFileUri(use.context.checkoutPath)}
+            theme={theme}
+            tabId={use.id}
+            focused={focused}
+            isActive={visible}
+            existingPtyId={use.output.ptyId}
+            sessionGeneration={use.output.generation}
+            status={status}
+            attachOnly
+            visible={visible}
+            onTitleChange={(_id, title) => onTitleChange?.(title)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

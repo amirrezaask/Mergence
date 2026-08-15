@@ -34,7 +34,7 @@ async function submitExplorerPrompt(page: Page, value: string): Promise<void> {
 }
 
 test.describe("persistent tiled Explorer", () => {
-  test("opens from Ctrl-a e, focuses, zooms, drags, and restores its layout", async () => {
+  test("opens from Mod-k e, focuses, zooms, drags, and restores its layout", async () => {
     const { app, page } = await launchJet()
     try {
       await pressMuxPrefix(page, "KeyE")

@@ -9,6 +9,8 @@ import {
   lazy,
   type ComponentType,
 } from "react";
+import { LayoutGroup, LazyMotion, MotionConfig } from "motion/react";
+import { aside as MotionAside } from "motion/react-m";
 import type {
   CheckoutTarget,
   CreateToolUse,
@@ -42,7 +44,13 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
-import { WhichKeyPanel, cn, useIsMobile, type TabDndHandlers } from "@yaade/ui";
+import {
+  WhichKeyPanel,
+  cn,
+  useIsMobile,
+  yaadeMotion,
+  type TabDndHandlers,
+} from "@yaade/ui";
 import { CHORD_TIMEOUT_MS, keyEventMatchesBinding } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
@@ -99,6 +107,7 @@ import {
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
 const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
 const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
+const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
 
@@ -1154,7 +1163,10 @@ export function ToolSessionApp() {
     ) : null;
 
   return (
-    <TooltipProvider delayDuration={400} skipDelayDuration={200}>
+    <MotionConfig reducedMotion="user">
+      <LazyMotion features={loadMotionFeatures}>
+      <TooltipProvider delayDuration={400} skipDelayDuration={200}>
+        <LayoutGroup id="yaade-tool-session">
       <div
         className="flex h-full min-h-0 flex-col bg-background text-foreground"
         data-yaade-shell="tool-session"
@@ -1181,7 +1193,7 @@ export function ToolSessionApp() {
               className={cn(
                 "relative min-h-0 flex-1",
                 (twoSidebarLayout || singleSidebarLayout) &&
-                  "grid max-md:flex max-md:flex-col",
+                  "grid max-md:flex max-md:flex-col yaade-tool-session-grid",
                 !sidebarLayout && "flex flex-col",
               )}
               style={
@@ -1216,13 +1228,22 @@ export function ToolSessionApp() {
                   onReorder={(ids) => void reorderSessions(ids)}
                 />
               ) : singleSidebarLayout ? (
-                <aside
+                <MotionAside
+                  initial={false}
+                  animate={{
+                    opacity: sidebarsCollapsed ? 0 : 1,
+                    x: sidebarsCollapsed ? -12 : 0,
+                  }}
+                  transition={yaadeMotion.sidebarTransition}
                   className={cn(
-                    "flex h-full min-h-0 w-full min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
-                    sidebarsCollapsed && "hidden",
+                    "flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+                    sidebarsCollapsed &&
+                      "pointer-events-none max-md:hidden",
                     "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
                   )}
                   aria-label="Navigation"
+                  aria-hidden={sidebarsCollapsed || undefined}
+                  inert={sidebarsCollapsed || undefined}
                   data-yaade-single-sidebar=""
                   data-yaade-sidebar-state={
                     sidebarsCollapsed ? "collapsed" : "expanded"
@@ -1274,7 +1295,7 @@ export function ToolSessionApp() {
                     onReorder={() => undefined}
                     onToggleSidebar={toggleSidebars}
                   />
-                </aside>
+                </MotionAside>
               ) : null}
               {twoSidebarLayout && !sidebarsCollapsed ? (
                 <SidebarResizeHandle
@@ -1547,7 +1568,10 @@ export function ToolSessionApp() {
           }
         />
       </div>
-    </TooltipProvider>
+        </LayoutGroup>
+      </TooltipProvider>
+      </LazyMotion>
+    </MotionConfig>
   );
 }
 

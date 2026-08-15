@@ -424,16 +424,27 @@ export async function pressMod(
 }
 
 /**
- * Mux actions live behind a tmux-style prefix because the browser owns nearly
- * every `Mod-` chord a multiplexer wants. Playwright's CDP input bypasses
- * browser chrome, so a spec pressing `Meta+KeyT` would pass while the same key
- * does nothing for a real user — always drive mux actions through the prefix.
+ * Mux / Tool Session actions live behind Mod-k (⌘K / Ctrl+K). Playwright's
+ * CDP input bypasses browser chrome, so a spec pressing `Meta+KeyT` would
+ * pass while the same key does nothing for a real user — always drive shell
+ * actions through the prefix.
  */
+export async function pressShellPrefix(page: ShellDriver): Promise<void> {
+  const mod = modChord()
+  await page.keyboard.down(mod)
+  await page.keyboard.press("KeyK")
+  await page.keyboard.up(mod)
+  // Mux second-keys reject leftover Meta/Ctrl. Playwright can latch them
+  // after a Mod- chord, so force both modifiers up.
+  await page.keyboard.up("Meta")
+  await page.keyboard.up("Control")
+}
+
 export async function pressMuxPrefix(
   page: ShellDriver,
   key: string,
 ): Promise<void> {
-  await page.keyboard.press("Control+KeyA")
+  await pressShellPrefix(page)
   await page.keyboard.press(key)
 }
 

@@ -57,7 +57,7 @@ export type MuxPaneChromeProps = {
   onZoom: () => void
   onClose: () => void
   /**
-   * Resolve a display shortcut for a command id (e.g. `mux.openGit` → `Ctrl-a g`).
+   * Resolve a display shortcut for a command id (e.g. `mux.openGit` → `Mod-k g`).
    * App layer owns the binding table; UI must not import mux-keymap.
    */
   shortcutFor?: (commandId: string) => string | undefined
