@@ -207,10 +207,16 @@ function focusTerminalInput(tabId: string): void {
 }
 
 function applyAttachReplay(
-  attached: { output?: string; outputChunks?: string[] },
+  attached: {
+    output?: string;
+    outputChunks?: string[];
+    replayTruncated?: boolean;
+    replayNeedsQueryResponses?: boolean;
+  },
   tabId: string,
   onOutput: ((tabId: string, data?: string) => void) | undefined,
   outputWriter: ReturnType<typeof createTerminalOutputWriter>,
+  respondToQueries = false,
 ): void {
   const chunks =
     attached.outputChunks && attached.outputChunks.length > 0
@@ -220,8 +226,16 @@ function applyAttachReplay(
         : []
   if (chunks.length === 0) return
   onOutput?.(tabId, chunks.find(chunk => chunk.length > 0))
+  if (attached.replayTruncated) {
+    // The ring may begin inside an escape sequence. Start the best-effort
+    // transcript from a clean parser state instead of inheriting corruption.
+    // Keep the reset detached even when the replay itself must answer queries.
+    outputWriter.enqueueReplay("\x1bc")
+  }
   for (const chunk of chunks) {
-    if (chunk) outputWriter.enqueue(chunk)
+    if (!chunk) continue
+    if (respondToQueries) outputWriter.enqueue(chunk)
+    else outputWriter.enqueueReplay(chunk)
   }
   outputWriter.flush()
 }
@@ -297,6 +311,7 @@ export function TerminalPanel({
     const pendingTerminalInput: string[] = []
     let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
     let ackPendingChars = 0
+    let ackRetryTimer: ReturnType<typeof setTimeout> | null = null
 
     const enqueueTerminalInput = (data: string) => {
       if (data.length === 0) return
@@ -351,14 +366,29 @@ export function TerminalPanel({
       const chars = ackPendingChars
       ackPendingChars = 0
       ackInFlight = true
-      void Promise.resolve(acknowledge.call(terminalApi, ptyId, chars)).finally(() => {
-        ackInFlight = false
-        if (ackPendingChars > 0) flushAck(session?.ptyId ?? ptyId)
-      })
+      void Promise.resolve()
+        .then(() => acknowledge.call(terminalApi, ptyId, chars))
+        .then(
+          () => {
+            ackInFlight = false
+            if (ackPendingChars > 0) flushAck(session?.ptyId ?? ptyId)
+          },
+          () => {
+            // Do not lose the debt when a fire-and-forget WS/HTTP ack fails.
+            // A later retry or reconnect can then release the host watermark.
+            ackPendingChars += chars
+            ackInFlight = false
+            if (cancelled || ackRetryTimer !== null) return
+            ackRetryTimer = setTimeout(() => {
+              ackRetryTimer = null
+              flushAck(session?.ptyId ?? ptyId)
+            }, 250)
+          },
+        )
     }
 
     const resizePty = (next: TerminalSession | null) => {
-      if (!next?.live || !next.ptyId) return
+      if (!next?.live || !next.ptyId || !next.surface.hasMeasuredSize()) return
       if (next.resizeInFlight) {
         next.resizeQueued = true
         return
@@ -368,13 +398,16 @@ export function TerminalPanel({
       const rows = next.wantedRows
       next.resizeInFlight = true
       next.resizeQueued = false
-      void Promise.resolve(terminalApi.resize(id, cols, rows)).finally(() => {
+      const settle = () => {
         if (!next.live) return
         next.resizeInFlight = false
         if (next.resizeQueued || next.wantedCols !== cols || next.wantedRows !== rows) {
           resizePty(next)
         }
-      })
+      }
+      void Promise.resolve()
+        .then(() => terminalApi.resize(id, cols, rows))
+        .then(settle, settle)
     }
 
     const handleLink = (text: string, event: MouseEvent) => {
@@ -387,16 +420,46 @@ export function TerminalPanel({
       if (path) onOpenPathRef.current?.(path.path, path.line, path.column)
     }
 
-    const connectPty = (id: string) => {
+    const connectPty = (id: string, replayMayNeedQueryResponses = false) => {
       if (!session || !surface || cancelled) return
       session.ptyId = id
       setConnectedPtyId(id)
       setDisplayStatus("running")
       setDisplayExitCode(undefined)
-      unsub = terminalApi.onData(id, data => {
-        onOutputRef.current?.(tabId, data)
-        outputWriter?.enqueue(data)
-      })
+      unsub = terminalApi.onData(
+        id,
+        (
+          data,
+          replay = false,
+          replayNeedsQueryResponses = false,
+          replayTruncated = false,
+        ) => {
+          onOutputRef.current?.(tabId, data)
+          if (replay && replayTruncated) {
+            // A reconnect gap means the ring starts after the current parser
+            // state. Reset before applying the best-effort replacement stream.
+            outputWriter?.flush()
+            surface?.resetAndWrite("")
+          }
+          if (
+            replay &&
+            !replayMayNeedQueryResponses &&
+            !replayNeedsQueryResponses
+          ) {
+            outputWriter?.enqueueReplay(data)
+            outputWriter?.flush()
+          } else {
+            outputWriter?.enqueue(data)
+            if (replay && replayNeedsQueryResponses) {
+              outputWriter?.flush()
+              // Query replies are queued on a microtask by the input writer;
+              // flush them before the host is told this replay is complete.
+              void inputWriter?.flush()
+              void terminalApi.markReplayReady(id).catch(() => {})
+            }
+          }
+        },
+      )
       if (!readOnly) {
         inputWriter = createTerminalInputWriter(
           data => terminalApi.write(id, data),
@@ -406,6 +469,13 @@ export function TerminalPanel({
           },
         )
         for (const queued of pendingTerminalInput.splice(0)) inputWriter.enqueue(queued)
+        // Flush replies generated while parsing the attach snapshot before
+        // declaring the first live replay ready. This makes a rapid reload
+        // retry query responses instead of turning a startup race into a
+        // permanently waiting shell.
+        outputWriter?.flush()
+        void inputWriter.flush()
+        void terminalApi.markReplayReady(id).catch(() => {})
         dataDispose = () => inputWriter?.dispose()
       }
       session.wantedCols = surface.cols
@@ -442,14 +512,20 @@ export function TerminalPanel({
           }
           if (!attached) throw new Error("precreated terminal disappeared before attach")
           if (outputWriter) {
-            applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
+            applyAttachReplay(
+              attached,
+              tabId,
+              onOutputRef.current,
+              outputWriter,
+              true,
+            )
           }
           if (attached.status === "exited") {
             setDisplayStatus("exited")
             setDisplayExitCode(attached.exitCode)
             return
           }
-          connectPty(id)
+          connectPty(id, true)
         })
         .catch(error => {
           if (cancelled) return
@@ -492,11 +568,19 @@ export function TerminalPanel({
               setDisplayExitCode(attached.exitCode)
               return
             }
+            const respondToQueries =
+              !readOnly && attached.replayNeedsQueryResponses === true
             if (outputWriter) {
-              applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
+              applyAttachReplay(
+                attached,
+                tabId,
+                onOutputRef.current,
+                outputWriter,
+                respondToQueries,
+              )
             }
             if (attached.title) onTitleChangeRef.current?.(tabId, attached.title)
-            if (!readOnly) connectPty(existingPtyId)
+            if (!readOnly) connectPty(existingPtyId, respondToQueries)
             else {
               setDisplayStatus("exited")
               setDisplayExitCode(attached.exitCode)
@@ -591,6 +675,10 @@ export function TerminalPanel({
             surface?.write(data)
             onPainted?.()
           },
+          writeReplay: (chunks, onPainted) => {
+            surface?.writeReplay(chunks)
+            onPainted?.()
+          },
           onParsed: charCount => {
             ackPendingChars += charCount
             if (ackPendingChars >= 5_000) flushAck(session?.ptyId ?? null)
@@ -624,10 +712,21 @@ export function TerminalPanel({
       if (surfaceRef.current === surface) surfaceRef.current = null
       unsubscribeRootStyleObserver()
       exitUnsubscribe()
+      // Flush parser output before disposing the input writer: Ghostty may have
+      // queued a DSR/DA response while the page is being replaced. Dropping
+      // that microtask leaves a live shell waiting for a query response, and
+      // the next attach correctly suppresses archived replay side effects.
+      outputWriter?.flush()
+      void inputWriter?.flush()
+      if (session?.ptyId) void terminalApi.markReplayReady(session.ptyId).catch(() => {})
       dataDispose?.()
       inputWriter = null
       pendingTerminalInput.length = 0
       outputWriter?.dispose()
+      if (ackRetryTimer !== null) {
+        clearTimeout(ackRetryTimer)
+        ackRetryTimer = null
+      }
       flushAck(session?.ptyId ?? null)
       unsub?.()
       if (surface) {

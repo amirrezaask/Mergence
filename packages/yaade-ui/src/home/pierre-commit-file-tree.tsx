@@ -8,6 +8,14 @@ import { pierreTreeTokenStyle } from "@/lib/pierre-tree-theme.js"
 import { forwardPierreTreeWheel } from "@/lib/pierre-tree-scroll.js"
 import { cn } from "@/lib/utils.js"
 
+const commitTreeStyle = {
+  ...pierreTreeTokenStyle,
+  // Commit review is a reading surface, not dense editor chrome. Keep paths
+  // legible and scale them with the app's appearance setting.
+  "--trees-font-family-override": "var(--font-sans)",
+  "--trees-font-size-override": "var(--yaade-fs-base)",
+}
+
 export type PierreCommitFileTreeProps = {
   files: readonly GitCommitFile[]
   /** Working-tree staging metadata when the dialog is showing uncommitted changes. */
@@ -162,10 +170,11 @@ export function PierreCommitFileTree(props: PierreCommitFileTreeProps) {
   return (
     <FileTree
       model={model}
+      aria-label="Changed files"
       data-yaade-pierre-file-tree=""
       onWheel={forwardPierreTreeWheel}
       className={cn("h-full min-h-0 w-full min-w-0 bg-transparent", className)}
-      style={pierreTreeTokenStyle}
+      style={commitTreeStyle}
       renderContextMenu={
         workingTree && onToggleStage
           ? (item, context) => {

@@ -712,6 +712,16 @@ export function ToolSessionApp() {
       const inTerminal = Boolean(
         target?.closest("[data-yaade-terminal-input], [data-yaade-terminal-canvas]"),
       );
+      const inPrefixButton = Boolean(
+        target?.closest("[data-yaade-which-key-item]"),
+      );
+      if (
+        prefixPendingRef.current &&
+        (event.key === "Tab" ||
+          (inPrefixButton && (event.key === "Enter" || event.key === " ")))
+      ) {
+        return;
+      }
       if (!prefixPendingRef.current && inEditable && !inTerminal) return;
 
       if (
@@ -1081,7 +1091,6 @@ export function ToolSessionApp() {
             ) : (
               <SessionEmptyState
                 onAddKind={(kind) => void createTool(kind)}
-                onAddAgent={(provider) => void createTool("agent", provider)}
               />
             )}
             {sidebarLayout ? renderPrefixHud("main") : null}
@@ -1342,14 +1351,14 @@ function CloseSessionDialog(props: {
           </Button>
           <Button
             variant="outline"
-            className="min-w-0 max-w-full whitespace-normal text-center"
+            className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-center leading-normal"
             onClick={() => props.onClose("keep-running")}
           >
             Keep running and archive
           </Button>
           <Button
             variant="destructive"
-            className="min-w-0 max-w-full whitespace-normal text-center"
+            className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-center leading-normal"
             onClick={() => props.onClose("stop-tools")}
           >
             Stop tools and archive

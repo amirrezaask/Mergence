@@ -12,6 +12,8 @@
 
 export type TerminalOutputWriter = {
   enqueue: (data: string) => void
+  /** Queue attach/reconnect replay without applying the live-output cap. */
+  enqueueReplay: (data: string) => void
   /** Drain pending bytes immediately (attach replay / dispose). */
   flush: () => void
   dispose: () => void
@@ -19,6 +21,11 @@ export type TerminalOutputWriter = {
 
 export type TerminalOutputWriterOptions = {
   write: (data: string, onPainted?: () => void) => void
+  /**
+   * Write replay chunks while the terminal parser's PTY callback is detached.
+   * The callback is invoked once after the whole replay has been parsed.
+   */
+  writeReplay?: (data: readonly string[], onPainted?: () => void) => void
   /** Called after a coalesced write paints (once per flush). */
   onPainted?: () => void
   /**
@@ -34,13 +41,14 @@ export type TerminalOutputWriterOptions = {
   schedule?: (cb: () => void) => number
   cancel?: (id: number) => void
   /**
-   * Safety parachute only — with host PTY pause/resume, pending should stay
-   * near one frame. Oldest chunks shed if something else is broken.
+   * Safety parachute for live output only — with host PTY pause/resume, pending
+   * should stay near one frame. Oldest live chunks shed if something else is
+   * broken. Replay is never shed because it is the state reconstruction input.
    */
   maxPendingChars?: number
   /**
-   * Optional test/debug cap. Production leaves this unset so the terminal's
-   * parser owns throughput slicing.
+   * Optional parser slice. It affects flood flushes only; interactive chunks
+   * still use the microtask path.
    */
   maxCharsPerFlush?: number
   /**
@@ -77,6 +85,10 @@ export function createTerminalOutputWriter(
 
   const pendingParts: string[] = []
   let pendingChars = 0
+  // Replay is kept separate so the live safety cap can never discard it. The
+  // attach path supplies PTY-sized chunks and flushes this queue synchronously.
+  const replayParts: string[] = []
+  let replayChars = 0
   let needsRefresh = false
   let raf = 0
   let microScheduled = false
@@ -138,7 +150,41 @@ export function createTerminalOutputWriter(
     return out.length === 1 ? out[0]! : out.join("")
   }
 
+  const markRefresh = (data: string): void => {
+    // Only scan for DECCTCEM when a refresh hook is wired (legacy fallback).
+    if (
+      options.refreshAfterPaint != null &&
+      (data.includes("\x1b[?25l") || data.includes("\x1b[?25h"))
+    ) {
+      needsRefresh = true
+    }
+  }
+
+  const flushReplayNow = (): void => {
+    if (disposed || replayParts.length === 0) return
+    const parts = replayParts.splice(0)
+    replayChars = 0
+    const doRefresh = needsRefresh && pendingChars === 0
+    if (doRefresh) needsRefresh = false
+    const onPainted = () => {
+      if (disposed) return
+      if (doRefresh) options.refreshAfterPaint?.()
+      options.onPainted?.()
+    }
+    if (options.writeReplay) {
+      options.writeReplay(parts, onPainted)
+      return
+    }
+    // Keep the writer usable for simple renderers that do not need a special
+    // replay hook. Production Ghostty supplies writeReplay so its callback is
+    // detached for the complete batch.
+    for (const part of parts) options.write(part)
+    onPainted()
+  }
+
   const flushNow = (unlimited = false) => {
+    if (replayChars > 0) flushReplayNow()
+    if (replayChars > 0) return
     raf = 0
     microScheduled = false
     if (disposed || (pendingChars === 0 && !needsRefresh)) {
@@ -187,11 +233,7 @@ export function createTerminalOutputWriter(
   }
 
   const scheduleNext = () => {
-    if (
-      floodMode ||
-      pendingChars > interactiveMax ||
-      Number.isFinite(maxPerFlush)
-    ) {
+    if (floodMode || pendingChars > interactiveMax) {
       floodMode = true
       scheduleRaf()
     } else {
@@ -199,22 +241,20 @@ export function createTerminalOutputWriter(
     }
   }
 
-  const trackCursorRefresh = options.refreshAfterPaint != null
-
   return {
     enqueue(data) {
       if (disposed || data.length === 0) return
       pendingParts.push(data)
       pendingChars += data.length
       shedOldest()
-      // Only scan for DECCTCEM when a refresh hook is wired (legacy fallback).
-      if (
-        trackCursorRefresh &&
-        (data.includes("\x1b[?25l") || data.includes("\x1b[?25h"))
-      ) {
-        needsRefresh = true
-      }
+      markRefresh(data)
       scheduleNext()
+    },
+    enqueueReplay(data) {
+      if (disposed || data.length === 0) return
+      replayParts.push(data)
+      replayChars += data.length
+      markRefresh(data)
     },
     flush() {
       if (raf) {
@@ -222,8 +262,11 @@ export function createTerminalOutputWriter(
         raf = 0
       }
       microScheduled = false
-      // Attach replay must land fully before connect — ignore per-frame cap.
-      flushNow(true)
+      // Replay must land fully before connect. It bypasses the live queue cap,
+      // the per-frame slice, and flow-control acknowledgements.
+      flushReplayNow()
+      // Drain any normal bytes that arrived around the attach handshake too.
+      while (pendingChars > 0 || needsRefresh) flushNow(true)
     },
     dispose() {
       disposed = true
@@ -234,6 +277,8 @@ export function createTerminalOutputWriter(
       microScheduled = false
       pendingParts.length = 0
       pendingChars = 0
+      replayParts.length = 0
+      replayChars = 0
       needsRefresh = false
       floodMode = false
     },

@@ -256,3 +256,45 @@ export function ghosttyUnshiftedCodepoint(
   }
   return event.key.codePointAt(0) ?? 0;
 }
+
+const GHOSTTY_MOD_SHIFT = 1;
+const GHOSTTY_MOD_CTRL = 1 << 1;
+const GHOSTTY_MOD_ALT = 1 << 2;
+
+function isMacPlatform(platform: string): boolean {
+  return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+/**
+ * Browser KeyboardEvents already contain layout-generated text. Tell Ghostty
+ * which modifiers produced that text so Kitty/CSI-u does not encode a second,
+ * synthetic modifier on top of it.
+ */
+export function ghosttyConsumedModifierBits(
+  event: Pick<KeyboardEvent, "altKey" | "code" | "getModifierState" | "key" | "shiftKey">,
+  layoutMap?: GhosttyKeyboardLayoutMap,
+  platform = typeof navigator === "undefined" ? "" : navigator.platform,
+): number {
+  if ([...event.key].length !== 1) return 0;
+
+  const textCodepoint = event.key.codePointAt(0) ?? 0;
+  const unshiftedCodepoint = ghosttyUnshiftedCodepoint(event, layoutMap);
+  const layoutGeneratedText =
+    unshiftedCodepoint !== 0 && unshiftedCodepoint !== textCodepoint;
+  let consumed = 0;
+
+  // Shift+A and shifted punctuation are already represented by event.key.
+  if (event.shiftKey && layoutGeneratedText) consumed |= GHOSTTY_MOD_SHIFT;
+
+  // AltGraph is exposed as Ctrl+Alt by browsers on many layouts. Both bits
+  // were consumed to produce the printable event.key and must be removed.
+  if (event.getModifierState("AltGraph")) {
+    consumed |= GHOSTTY_MOD_CTRL | GHOSTTY_MOD_ALT;
+  } else if (event.altKey && isMacPlatform(platform) && layoutGeneratedText) {
+    // macOS Option is a text-producing layout modifier unless the user has
+    // explicitly configured a terminal-level Option-as-Alt policy.
+    consumed |= GHOSTTY_MOD_ALT;
+  }
+
+  return consumed;
+}

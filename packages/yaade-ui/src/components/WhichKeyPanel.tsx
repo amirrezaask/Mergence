@@ -90,10 +90,17 @@ export function WhichKeyPanel({
                     key={entry.key}
                     type="button"
                     data-yaade-which-key-item={entry.key}
-                    className="flex w-full items-center gap-2 rounded-md px-1.5 py-1 text-left outline-none hover:bg-accent hover:text-accent-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+                    aria-label={`${entry.desc} (${entry.key})`}
+                    className="group/which-key yaade-press flex min-h-9 w-full items-center gap-2 rounded-md border border-border/70 bg-secondary/25 px-2 py-1.5 text-left text-foreground outline-none transition-[background-color,border-color,color,box-shadow] duration-[var(--yaade-motion-hot)] hover:border-primary/45 hover:bg-accent hover:text-accent-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50"
                     onClick={() => onSelect(entry.key)}
                   >
-                    {row}
+                    <KeyBindingKbd
+                      binding={entry.key}
+                      className="min-w-6 justify-center border border-border/80 bg-background/80 text-foreground shadow-xs transition-colors duration-[var(--yaade-motion-hot)] group-hover/which-key:border-primary/35 group-hover/which-key:bg-primary/10 group-hover/which-key:text-primary"
+                    />
+                    <span className="min-w-0 truncate text-sm text-muted-foreground transition-colors duration-[var(--yaade-motion-hot)] group-hover/which-key:text-accent-foreground">
+                      {entry.desc}
+                    </span>
                   </button>
                 )
               })}

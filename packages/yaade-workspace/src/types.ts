@@ -237,6 +237,10 @@ export type JetElectronTerminal = {
     outputChunks?: string[];
     /** Legacy joined form; may be empty when outputChunks is set. */
     output: string;
+    /** True when this raw transcript is not a complete terminal-state snapshot. */
+    replayTruncated?: boolean;
+    /** True when a live renderer may need to answer queries while applying replay. */
+    replayNeedsQueryResponses?: boolean;
     lastSequence: number;
     status: "running" | "exited";
     exitCode?: number;
@@ -251,6 +255,8 @@ export type JetElectronTerminal = {
    * flow control.
    */
   acknowledgeData(id: string, charCount: number): Promise<void>;
+  /** Mark the initial live replay as parsed so later reconnects suppress query responses. */
+  markReplayReady(id: string): Promise<void>;
   /**
    * Live working directory of the PTY process as a `file://` URI.
    * Prefers OS introspection of the foreground process, then OSC 7, then spawn cwd.
@@ -258,7 +264,20 @@ export type JetElectronTerminal = {
   getCwd(id: string): Promise<string | null>;
   /** Basename of the foreground process under this PTY (e.g. `nvim`, `fish`). */
   getForegroundProcess(id: string): Promise<string | null>;
-  onData(id: string, callback: (data: string) => void): () => void;
+  /**
+   * `replay` is true for reconnect transcript bytes; do not count them as
+   * live flow-control debt. The other flags describe query-capable or
+   * truncated replacement replays.
+   */
+  onData(
+    id: string,
+    callback: (
+      data: string,
+      replay?: boolean,
+      replayNeedsQueryResponses?: boolean,
+      replayTruncated?: boolean,
+    ) => void,
+  ): () => void;
   onExit(
     cb: (id: string, exitCode: number, signal?: number) => void,
   ): () => void;

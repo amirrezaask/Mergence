@@ -176,6 +176,15 @@ async function createTerminalViaApi(
       0,
     );
     await expectLocatorCount(page.locator('[data-yaade-editor-tool]'), 0);
+    await expectLocatorCount(
+      page.locator('[data-yaade-session-empty] [data-yaade-empty-agent]'),
+      0,
+    );
+    await expectNotContainsText(
+      page,
+      '[data-yaade-session-empty]',
+      "Or pick a CLI",
+    );
     await page.waitForFunction(
       () => {
         const state = window.__yaadeAgent?.getState();
@@ -288,7 +297,10 @@ test("Editor references render and the compact Explorer toggles", async () => {
     await expectLocatorCount(page.getByText("LSP on", { exact: true }), 0);
     await expectLocatorCount(page.getByText("⌘P quick open", { exact: true }), 0);
 
-    const explorerToggle = page.locator("[data-yaade-editor-explorer-toggle]");
+    const explorerToggle = page.locator(
+      "[data-yaade-editor-explorer-header] [data-yaade-editor-explorer-toggle]",
+    );
+    await expectLocatorCount(explorerToggle, 1);
     expect(await explorerToggle.getAttribute("aria-label")).toBe("Hide Explorer");
     await explorerToggle.click();
     await page
@@ -1321,7 +1333,13 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await expectContainsText(page, "[data-yaade-which-key]", "New Agent");
     await expectContainsText(page, "[data-yaade-which-key]", "New Search");
     await expectContainsText(page, "[data-yaade-which-key]", "Open");
-    await page.locator('[data-yaade-which-key-item="s"]').click();
+    await expectLocatorCount(
+      page.getByRole("button", { name: "New Search (s)" }),
+      1,
+    );
+    const searchShortcut = page.locator('[data-yaade-which-key-item="s"]');
+    await searchShortcut.focus();
+    await searchShortcut.press("Enter");
     await page.waitForSelector('[data-yaade-list-panel="project-search"]', {
       timeout: 30_000,
     });

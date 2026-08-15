@@ -1,5 +1,6 @@
 import {
   type GhosttyKeyboardLayoutMap,
+  ghosttyConsumedModifierBits,
   ghosttyKeyForCode,
   ghosttyUnshiftedCodepoint,
   loadGhosttyKeyboardLayoutMap,
@@ -299,6 +300,28 @@ export class GhosttyTerminalCore {
     this.runtime.free(pointer, bytes.length);
   }
 
+  /**
+   * Feed archived/replayed PTY output without allowing terminal queries such
+   * as DSR, DA, or DECRQM to answer through the live PTY callback. The callback
+   * is detached once for the complete stream so large replays stay cheap too.
+   */
+  writeReplay(chunks: readonly (string | Uint8Array)[]): void {
+    this.ensureActive();
+    if (chunks.length === 0) return;
+    const writer = this.ptyWriter;
+    if (this.ptyWriterId !== 0) {
+      this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
+      this.ptyWriterId = 0;
+    }
+    try {
+      for (const chunk of chunks) this.write(chunk);
+    } finally {
+      if (writer !== null && !this.disposed) {
+        this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
+      }
+    }
+  }
+
   resetAndWrite(data: string): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
@@ -307,18 +330,7 @@ export class GhosttyTerminalCore {
     this.applyDefaultCursorBlink();
     this.rows = [];
     if (data.length === 0) return;
-    const writer = this.ptyWriter;
-    if (this.ptyWriterId !== 0) {
-      this.runtime.detachPtyWriter(this.terminal, this.ptyWriterId);
-      this.ptyWriterId = 0;
-    }
-    try {
-      this.write(data);
-    } finally {
-      if (writer !== null && !this.disposed) {
-        this.ptyWriterId = this.runtime.attachPtyWriter(this.terminal, writer);
-      }
-    }
+    this.writeReplay([data]);
   }
 
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void {
@@ -472,7 +484,11 @@ export class GhosttyTerminalCore {
       (event.getModifierState("CapsLock") ? 1 << 4 : 0) |
       (event.getModifierState("NumLock") ? 1 << 5 : 0);
     this.runtime.call("ghostty_key_event_set_mods", this.keyEvent, mods);
-    this.runtime.call("ghostty_key_event_set_consumed_mods", this.keyEvent, 0);
+    this.runtime.call(
+      "ghostty_key_event_set_consumed_mods",
+      this.keyEvent,
+      ghosttyConsumedModifierBits(event, this.keyboardLayoutMap),
+    );
     this.runtime.call("ghostty_key_event_set_composing", this.keyEvent, event.isComposing ? 1 : 0);
     this.runtime.call(
       "ghostty_key_event_set_unshifted_codepoint",

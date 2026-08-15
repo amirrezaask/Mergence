@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { terminalKeybindingData } from "./terminal-keybindings.js"
+import {
+  shouldSuppressMacMetaKey,
+  terminalKeybindingData,
+} from "./terminal-keybindings.js"
 
 function key(
   value: string,
@@ -38,4 +41,23 @@ test("leaves composition and non-macOS shortcuts to xterm", () => {
     null,
   )
   assert.equal(terminalKeybindingData(key("ArrowLeft", { altKey: true }), "Linux"), null)
+})
+
+test("suppresses unhandled Apple Command keys in the browser adapter", () => {
+  assert.equal(
+    shouldSuppressMacMetaKey(key("c", { metaKey: true }), "MacIntel"),
+    true,
+  )
+  assert.equal(
+    shouldSuppressMacMetaKey(key("ArrowLeft", { metaKey: true }), "MacIntel"),
+    true,
+  )
+  assert.equal(
+    shouldSuppressMacMetaKey(key("c", { metaKey: true }), "Linux"),
+    false,
+  )
+  assert.equal(
+    shouldSuppressMacMetaKey(key("Meta", { metaKey: true }), "MacIntel"),
+    false,
+  )
 })

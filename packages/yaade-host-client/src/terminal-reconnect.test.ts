@@ -8,6 +8,8 @@ type AttachResult = {
   outputChunks: string[]
   output: string
   lastSequence: number
+  replayNeedsQueryResponses?: boolean
+  replayTruncated?: boolean
   status: "running"
 }
 
@@ -56,7 +58,18 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
   await terminal.attach("pty-1")
 
   const output: string[] = []
-  terminal.onData("pty-1", data => output.push(data))
+  const replayFlags: boolean[] = []
+  const replayQueryFlags: boolean[] = []
+  const replayTruncatedFlags: boolean[] = []
+  terminal.onData(
+    "pty-1",
+    (data, replay, replayNeedsQueryResponses, replayTruncated) => {
+      output.push(data)
+      replayFlags.push(replay === true)
+      replayQueryFlags.push(replayNeedsQueryResponses === true)
+      replayTruncatedFlags.push(replayTruncated === true)
+    },
+  )
   transport.emit("terminal:data", "pty-1", "live-3", 3)
   transport.emit("connection:status", "disconnected")
 
@@ -65,6 +78,8 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
     outputChunks: ["replay-4"],
     output: "",
     lastSequence: 4,
+    replayNeedsQueryResponses: true,
+    replayTruncated: true,
     status: "running",
   })
   transport.emit("connection:status", "connected")
@@ -72,6 +87,9 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
   await new Promise<void>(resolve => setImmediate(resolve))
 
   assert.deepEqual(output, ["live-3", "replay-4", "live-5"])
+  assert.deepEqual(replayFlags, [false, true, false])
+  assert.deepEqual(replayQueryFlags, [false, true, false])
+  assert.deepEqual(replayTruncatedFlags, [false, true, false])
   assert.deepEqual(transport.calls.at(-1), {
     channel: "terminal:attach",
     args: ["pty-1", 3],

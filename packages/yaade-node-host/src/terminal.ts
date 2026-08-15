@@ -9,6 +9,11 @@ import {
   parseOsc7Cwd,
 } from "./terminal-osc7.js"
 
+/**
+ * This is a bounded transcript, not a serialized terminal state. Once the
+ * transcript is trimmed, a browser reload cannot faithfully restore Ghostty's
+ * parser/mode state; the attach response marks that case explicitly.
+ */
 const MAX_TERMINAL_REPLAY = 2 * 1024 * 1024
 /** Shrink ring after exit so disposed-but-reattachable PTYs do not keep 2 MB. */
 const EXITED_TERMINAL_REPLAY = 256 * 1024
@@ -69,6 +74,10 @@ export type TerminalAttachSnapshot = {
    * empty when chunks are provided to avoid a peak allocation.
    */
   output: string
+  /** True when the returned transcript cannot represent the full parser state. */
+  replayTruncated: boolean
+  /** True when a live renderer may need to answer queries while applying replay. */
+  replayNeedsQueryResponses: boolean
   lastSequence: number
   status: "running" | "exited"
   exitCode: number | null
@@ -108,6 +117,10 @@ type TerminalEntry = {
   output: string[]
   outputHead: number
   outputBytes: number
+  /** The raw replay ring has dropped bytes for this PTY's lifetime. */
+  replayTruncated: boolean
+  /** The current live renderer has completed a query-capable replay attach. */
+  hasAttached: boolean
   pendingOutput: string[]
   pendingOutputBytes: number
   pendingOutputTimer: ReturnType<typeof setTimeout> | null
@@ -216,6 +229,7 @@ function shellFallbacks(): string[] {
 }
 
 function trimReplay(entry: TerminalEntry, maxBytes = MAX_TERMINAL_REPLAY): void {
+  let truncated = false
   while (
     entry.outputBytes > maxBytes &&
     entry.output.length - entry.outputHead > 1
@@ -223,6 +237,7 @@ function trimReplay(entry: TerminalEntry, maxBytes = MAX_TERMINAL_REPLAY): void 
     const dropped = entry.output[entry.outputHead]!
     entry.output[entry.outputHead] = ""
     entry.outputHead += 1
+    truncated = true
     entry.outputBytes -= Buffer.byteLength(dropped, "utf8")
   }
   if (
@@ -231,6 +246,7 @@ function trimReplay(entry: TerminalEntry, maxBytes = MAX_TERMINAL_REPLAY): void 
   ) {
     const bytes = Buffer.from(entry.output[entry.outputHead]!, "utf8")
     let start = bytes.length - maxBytes
+    truncated = true
     while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1
     entry.output[entry.outputHead] = bytes.subarray(start).toString("utf8")
     entry.outputBytes = Buffer.byteLength(entry.output[entry.outputHead], "utf8")
@@ -239,6 +255,7 @@ function trimReplay(entry: TerminalEntry, maxBytes = MAX_TERMINAL_REPLAY): void 
     entry.output = entry.output.slice(entry.outputHead)
     entry.outputHead = 0
   }
+  if (truncated) entry.replayTruncated = true
 }
 
 export function normalizeTerminalSize(
@@ -375,6 +392,8 @@ export class TerminalHost {
       output: [],
       outputHead: 0,
       outputBytes: 0,
+      replayTruncated: false,
+      hasAttached: false,
       pendingOutput: [],
       pendingOutputBytes: 0,
       pendingOutputTimer: null,
@@ -580,6 +599,10 @@ export class TerminalHost {
     if (clientId.length > 256) return
     for (const entry of this.entries.values()) {
       if (entry.clientId !== clientId) continue
+      // The renderer may have been torn down before parsing the final live
+      // chunks. Make the next attach query-capable so a reconnect cannot leave
+      // the shell waiting on a response that only Ghostty can generate.
+      entry.hasAttached = false
       entry.unacknowledgedChars = 0
       resumePtyForFlowControl(entry)
     }
@@ -594,6 +617,11 @@ export class TerminalHost {
     if (!entry) return null
     // Client re-attached — cancel auto-dispose so replay stays available.
     this.clearDisposeTimer(entry)
+    const replayNeedsQueryResponses =
+      !entry.hasAttached || entry.clientId !== clientId
+    // The renderer marks the replay ready after Ghostty has parsed it. Keeping
+    // this false across an interrupted first attach lets a reload retry query
+    // responses instead of leaving the live shell waiting forever.
     // Establish a clean sequence boundary. Otherwise a batch containing both
     // pre- and post-attach bytes could be accepted in full and duplicate replay.
     flushPendingOutput(entry, this.emit)
@@ -608,10 +636,14 @@ export class TerminalHost {
     }
     const outputChunks = entry.output.slice(entry.outputHead)
     const replayFloor = entry.sequence - outputChunks.length + 1
-    const requestedSequence =
+    const hasRequestedSequence =
       typeof afterSequence === "number" && Number.isFinite(afterSequence)
-        ? Math.max(0, Math.trunc(afterSequence))
-        : replayFloor - 1
+    const requestedSequence = hasRequestedSequence
+      ? Math.max(0, Math.trunc(afterSequence!))
+      : replayFloor - 1
+    const replayTruncated =
+      entry.replayTruncated &&
+      (!hasRequestedSequence || requestedSequence < replayFloor - 1)
     const replayOffset = Math.min(
       outputChunks.length,
       Math.max(0, requestedSequence + 1 - replayFloor),
@@ -622,11 +654,22 @@ export class TerminalHost {
       // Slice the ring segments — do not join into one 2 MB string here.
       outputChunks: outputChunks.slice(replayOffset),
       output: "",
+      replayTruncated,
+      replayNeedsQueryResponses,
       lastSequence: entry.sequence,
       status: entry.status,
       exitCode: entry.exitCode,
       signal: entry.signal,
     }
+  }
+
+  /** Mark a live replay as parsed by the owning renderer. */
+  markReplayReady(id: string, clientId: string): null {
+    if (id.length > 256 || clientId.length > 256) return null
+    const entry = this.entries.get(id)
+    if (!entry || entry.disposed || entry.clientId !== clientId) return null
+    entry.hasAttached = true
+    return null
   }
 
   /** Bounded replay snapshot for an agent-owned PTY; does not attach or change ownership. */

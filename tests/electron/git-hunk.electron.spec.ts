@@ -77,6 +77,20 @@ test.describe("git hunk staging", () => {
       await dialog.waitFor({ state: "visible", timeout: 15_000 })
       const tree = dialog.locator("[data-yaade-pierre-file-tree]")
       await tree.waitFor({ state: "visible", timeout: 15_000 })
+      await expect
+        .poll(() => dialog.getByText("Changed files", { exact: true }).count())
+        .toBe(1)
+      const treeFontSize = await tree.evaluate(element => {
+        const row = element.shadowRoot?.querySelector<HTMLElement>("[role=treeitem]")
+        return row ? Number.parseFloat(getComputedStyle(row).fontSize) : 0
+      })
+      expect(treeFontSize).toBeGreaterThanOrEqual(13.5)
+      const diffContainer = dialog.locator("[data-yaade-pierre-diff] diffs-container")
+      await expect.poll(() => diffContainer.count(), { timeout: 15_000 }).toBeGreaterThan(0)
+      const diffFontSize = await diffContainer.first().evaluate(element =>
+        Number.parseFloat(getComputedStyle(element).fontSize),
+      )
+      expect(diffFontSize).toBeGreaterThanOrEqual(16)
       const scrollMetrics = await tree.evaluate(element => {
         const scroll = element.shadowRoot?.querySelector<HTMLElement>(
           '[data-file-tree-virtualized-scroll="true"]',

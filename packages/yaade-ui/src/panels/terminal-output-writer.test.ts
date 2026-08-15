@@ -171,6 +171,27 @@ test("flush drains pending bytes without waiting for schedule", () => {
   assert.deepEqual(writes, ["attach-replay"])
 })
 
+test("replay bypasses the live cap and is not acknowledged", () => {
+  const replayWrites: string[][] = []
+  const parsed: number[] = []
+  const writer = createTerminalOutputWriter({
+    write: () => assert.fail("replay must use the replay writer"),
+    writeReplay: (chunks, onPainted) => {
+      replayWrites.push([...chunks])
+      onPainted?.()
+    },
+    onParsed: chars => parsed.push(chars),
+    maxPendingChars: 8,
+  })
+
+  writer.enqueueReplay("A".repeat(512 * 1024))
+  writer.enqueueReplay("B".repeat(512 * 1024))
+  writer.flush()
+
+  assert.deepEqual(replayWrites, [["A".repeat(512 * 1024), "B".repeat(512 * 1024)]])
+  assert.deepEqual(parsed, [])
+})
+
 test("sheds oldest pending when over maxPendingChars", () => {
   const writes: string[] = []
   const scheduled: Array<() => void> = []
@@ -231,6 +252,7 @@ test("interactive echoes flush on microtask without rAF", async () => {
       return rafCalls
     },
     cancel: () => {},
+    maxCharsPerFlush: 32 * 1024,
   })
 
   writer.enqueue("x")

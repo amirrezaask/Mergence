@@ -1388,6 +1388,8 @@ async function handleTerminal(
         str(args[0], "id"),
         typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0),
       );
+    case "terminal:ready":
+      return runtime.terminal.markReplayReady(str(args[0], "id"), clientId);
     case "terminal:attach":
       return runtime.terminal.attach(
         str(args[0], "id"),

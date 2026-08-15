@@ -81,6 +81,7 @@ export const HOST_CHANNELS = new Set([
   "terminal:writeBinary",
   "terminal:resize",
   "terminal:ack",
+  "terminal:ready",
   "terminal:attach",
   "terminal:getCwd",
   "terminal:getForegroundProcess",

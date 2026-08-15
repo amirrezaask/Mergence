@@ -10,8 +10,6 @@ import {
 import {
   ChevronRight,
   FileCode2,
-  PanelLeftClose,
-  PanelLeftOpen,
   RefreshCcw,
   Save,
   X,
@@ -485,13 +483,16 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
           className={
             explorerOpen
               ? "w-56 shrink-0 border-r border-sidebar-border sm:w-64"
-              : "hidden"
+              : "w-9 shrink-0 border-r border-sidebar-border"
           }
         >
           <PierreWorkspaceFileTree
             paths={filePaths}
             selectedPath={selectedPath}
             loading={fileTreeLoading}
+            collapsed={!explorerOpen}
+            explorerId={`editor-explorer-${props.use.id}`}
+            onToggleExplorer={() => setExplorerOpen(open => !open)}
             onSelectPath={openFile}
           />
         </aside>
@@ -545,18 +546,6 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
               className="flex h-full shrink-0 items-center gap-0.5 border-l border-border px-1"
               data-yaade-editor-lsp-status={lspStatus}
             >
-              <Button
-                type="button"
-                size="icon-xs"
-                variant="ghost"
-                aria-label={explorerOpen ? "Hide Explorer" : "Show Explorer"}
-                aria-controls={`editor-explorer-${props.use.id}`}
-                aria-pressed={explorerOpen}
-                data-yaade-editor-explorer-toggle=""
-                onClick={() => setExplorerOpen(open => !open)}
-              >
-                {explorerOpen ? <PanelLeftClose /> : <PanelLeftOpen />}
-              </Button>
               {activeUri ? (
                 <Button
                   type="button"

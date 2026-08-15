@@ -9,6 +9,7 @@ import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
+  terminalMouseCoordinate,
   type GhosttyCellRange,
   type GhosttyCellMetrics,
 } from "./renderer.js";
@@ -18,6 +19,7 @@ import {
   DEFAULT_MONO_FONT_FAMILY,
   NERD_FONT_FAMILY,
 } from "../../theme/appearance-defaults.js";
+import { shouldSuppressMacMetaKey } from "../terminal-keybindings.js";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -36,6 +38,8 @@ const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
+const DEFAULT_TERMINAL_COLS = 80;
+const DEFAULT_TERMINAL_ROWS = 24;
 const TERMINAL_FONT_LOAD_VARIANTS = [
   "normal 400",
   "normal 700",
@@ -229,6 +233,22 @@ export function terminalScrollbarOffsetAtPointer(
   if (travel === 0) return 0;
   const thumbTop = Math.max(0, Math.min(pointerY - pointerOffset, travel));
   return Math.round((thumbTop / travel) * geometry.maxOffset);
+}
+
+function terminalMeasuredGrid(
+  width: number,
+  height: number,
+  metrics: GhosttyCellMetrics,
+): { cols: number; rows: number } | null {
+  if (
+    !Number.isFinite(width) ||
+    !Number.isFinite(height) ||
+    width <= CONTENT_PADDING * 2 + metrics.width ||
+    height <= CONTENT_PADDING * 2 + metrics.height
+  ) {
+    return null;
+  }
+  return terminalGridSize(width, height, metrics, CONTENT_PADDING);
 }
 
 export function terminalGridCellAt(options: {
@@ -497,8 +517,8 @@ export class GhosttyTerminalSurface {
   readonly canvas: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   readonly scrollbar: HTMLDivElement;
-  cols = 1;
-  rows = 1;
+  cols = DEFAULT_TERMINAL_COLS;
+  rows = DEFAULT_TERMINAL_ROWS;
 
   private readonly mount: HTMLElement;
   private readonly context: CanvasRenderingContext2D;
@@ -554,6 +574,7 @@ export class GhosttyTerminalSurface {
   private composing = false;
   private focused = false;
   private resizeNotified = false;
+  private measuredSize = false;
   private canvasConfigured = false;
   private theme: GhosttyTheme;
   private readonly suppressedKeyCodes = new Set<string>();
@@ -653,7 +674,15 @@ export class GhosttyTerminalSurface {
     }
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
-    const grid = terminalGridSize(mount.clientWidth, mount.clientHeight, metrics, CONTENT_PADDING);
+    const measuredGrid = terminalMeasuredGrid(
+      mount.clientWidth,
+      mount.clientHeight,
+      metrics,
+    );
+    const grid = measuredGrid ?? {
+      cols: DEFAULT_TERMINAL_COLS,
+      rows: DEFAULT_TERMINAL_ROWS,
+    };
     const core = await GhosttyTerminalCore.create(
       grid.cols,
       grid.rows,
@@ -710,6 +739,16 @@ export class GhosttyTerminalSurface {
     this.syncTitle();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
+    this.cursorOn = true;
+    this.scrollbarDirty = true;
+    this.requestRender();
+  }
+
+  /** Feed attach/reconnect output with Ghostty's PTY callback detached. */
+  writeReplay(chunks: readonly string[]): void {
+    if (this.disposed || chunks.length === 0) return;
+    this.core.writeReplay(chunks);
+    this.syncTitle();
     this.cursorOn = true;
     this.scrollbarDirty = true;
     this.requestRender();
@@ -801,7 +840,8 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return false;
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
-    if (width <= 0 || height <= 0) return false;
+    const grid = terminalMeasuredGrid(width, height, this.metrics);
+    if (grid === null) return false;
     const ratio = window.devicePixelRatio || 1;
     const pixelWidth = Math.max(1, Math.round(width * ratio));
     const pixelHeight = Math.max(1, Math.round(height * ratio));
@@ -822,7 +862,7 @@ export class GhosttyTerminalSurface {
       this.scrollbarDirty = true;
       shouldRender = true;
     }
-    const grid = terminalGridSize(width, height, this.metrics, CONTENT_PADDING);
+    this.measuredSize = true;
     this.mountHeight = height;
     // onResize is the only PTY resize channel, so the first successful fit must
     // notify even when the measured grid equals the 1x1 construction sentinel.
@@ -935,6 +975,11 @@ export class GhosttyTerminalSurface {
 
   getCellSize(): { width: number; height: number } {
     return { width: this.metrics.width, height: this.metrics.height };
+  }
+
+  /** False while a hidden mount only has the safe 80×24 fallback geometry. */
+  hasMeasuredSize(): boolean {
+    return !this.disposed && this.measuredSize;
   }
 
   getViewportY(): number {
@@ -1072,6 +1117,12 @@ export class GhosttyTerminalSurface {
           },
         );
       }
+      return;
+    }
+    if (shouldSuppressMacMetaKey(event, navigator.platform)) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.suppressedKeyCodes.add(event.code);
       return;
     }
     // keyCode 229 is Safari's only signal that this keydown opens an IME
@@ -1818,6 +1869,21 @@ export class GhosttyTerminalSurface {
     event: MouseEvent,
   ): void {
     const bounds = this.canvas.getBoundingClientRect();
+    const cellWidth = Math.max(1, Math.round(this.metrics.width));
+    const cellHeight = Math.max(1, Math.round(this.metrics.height));
+    // Ghostty's C ABI takes integer geometry while Canvas lays out fractional
+    // cells. Scale the pointer and every size/padding field into that same
+    // integer coordinate space; otherwise the error grows with each column.
+    const xScale = cellWidth / this.metrics.width;
+    const yScale = cellHeight / this.metrics.height;
+    const screenWidth = Math.max(1, Math.round(bounds.width * xScale));
+    const screenHeight = Math.max(1, Math.round(bounds.height * yScale));
+    const localX = Math.max(0, event.clientX - bounds.left);
+    const localY = Math.max(0, event.clientY - bounds.top);
+    const paddingBottom = Math.max(
+      0,
+      bounds.height - this.originY - this.rows * this.metrics.height,
+    );
     const data = this.core.encodeMouse({
       action,
       button,
@@ -1826,16 +1892,16 @@ export class GhosttyTerminalSurface {
         (event.ctrlKey ? 1 << 1 : 0) |
         (event.altKey ? 1 << 2 : 0) |
         (event.metaKey ? 1 << 3 : 0),
-      x: Math.max(0, event.clientX - bounds.left),
-      y: Math.max(0, event.clientY - bounds.top),
-      screenWidth: bounds.width,
-      screenHeight: bounds.height,
-      cellWidth: this.metrics.width,
-      cellHeight: this.metrics.height,
-      paddingLeft: CONTENT_PADDING,
-      paddingRight: CONTENT_PADDING,
-      paddingTop: this.originY,
-      paddingBottom: Math.max(0, bounds.height - this.originY - this.rows * this.metrics.height),
+      x: terminalMouseCoordinate(localX, bounds.width, screenWidth),
+      y: terminalMouseCoordinate(localY, bounds.height, screenHeight),
+      screenWidth,
+      screenHeight,
+      cellWidth,
+      cellHeight,
+      paddingLeft: Math.max(0, Math.round(CONTENT_PADDING * xScale)),
+      paddingRight: Math.max(0, Math.round(CONTENT_PADDING * xScale)),
+      paddingTop: Math.max(0, Math.round(this.originY * yScale)),
+      paddingBottom: Math.max(0, Math.round(paddingBottom * yScale)),
       anyButtonPressed: event.buttons !== 0,
     });
     if (data.length > 0) this.options.onData(data);

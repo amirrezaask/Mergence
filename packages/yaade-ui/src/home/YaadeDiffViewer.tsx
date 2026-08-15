@@ -71,11 +71,18 @@ function contentCacheKey(side: "old" | "new", path: string, contents: string): s
 
 export { PierreDiffPool } from "./pierre-diff-pool.js"
 
+function pierreLineHeight(fontSize: number): number {
+  // Pierre's default line height is 20 at 13px.
+  return Math.max(1, Math.ceil(fontSize * (20 / 13)))
+}
+
 function pierreUnsafeCss(fontSize: number): string {
+  const lineHeight = pierreLineHeight(fontSize)
   return [
     // Custom element host defaults to inline — block + bounded width so
-    // Pierre's overflow-x:scroll on [data-code] can engage.
-    `:host { display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; background: transparent; color: var(--foreground); }`,
+    // Pierre's overflow-x:scroll on [data-code] can engage. Set Pierre's own
+    // type variables as well as pre/code so gutters and code stay in sync.
+    `:host { --diffs-font-size: ${fontSize}px; --diffs-line-height: ${lineHeight}px; --diffs-font-family: var(--font-mono, 'Geist Mono Variable', ui-monospace, monospace); display: block; width: 100%; max-width: 100%; min-width: 0; overflow-x: hidden; background: transparent; color: var(--foreground); }`,
     // Sit the diff on the workbench canvas — no raised panel fill behind hunks.
     `[data-diff], [data-file], [data-code] { background: transparent !important; }`,
     // Default `1fr` tracks are minmax(auto, 1fr) and grow with long lines,
@@ -192,8 +199,7 @@ export function YaadeDiffViewer(props: YaadeDiffViewerProps) {
   const metrics = useMemo(
     () => ({
       hunkLineCount: 50,
-      // Pierre default lineHeight is 20 at 13px; scale with our font size.
-      lineHeight: Math.max(1, Math.ceil(fontSize * (20 / 13))),
+      lineHeight: pierreLineHeight(fontSize),
       // Header disabled — keep region estimate at 0 via defaults + disableFileHeader.
       diffHeaderHeight: 0,
       spacing: 8,

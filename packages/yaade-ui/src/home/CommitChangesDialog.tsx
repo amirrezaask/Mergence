@@ -32,6 +32,11 @@ import {
 } from "@/components/ui/resizable.js"
 import { Spinner } from "@/components/ui/spinner.js"
 import {
+  ToggleGroup,
+  ToggleGroupItem,
+} from "@/components/ui/toggle-group.js"
+import { cn } from "@/lib/utils.js"
+import {
   loadCommitDiffContents,
   loadWorkingTreeDiffContents,
   loadWorkingTreeSnapshot,
@@ -69,6 +74,18 @@ type DiffContents = {
 }
 type DiffStyle = "unified" | "split"
 const BULK_ACTION = "__bulk__"
+
+function fileStatusLabel(status: GitCommitFile["status"]): string {
+  if (status === "untracked") return "Untracked"
+  return status.charAt(0).toUpperCase() + status.slice(1)
+}
+
+function fileStatusColor(status: GitCommitFile["status"]): string {
+  if (status === "conflict") return "text-git-conflict"
+  if (status === "deleted") return "text-git-deleted"
+  if (status === "added" || status === "untracked") return "text-git-added"
+  return "text-git-modified"
+}
 
 function storedDiffStyle(): DiffStyle {
   try {
@@ -312,6 +329,9 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const author = commit?.author
   const authoredAt = commit?.authoredAt
   const effectiveDiffStyle = compactLayout ? "unified" : diffStyle
+  // The commit modal is a dedicated review surface; keep code at a readable
+  // minimum even when compact editor chrome uses a smaller global font.
+  const reviewFontSize = Math.max(fontSize, 16)
   const stagedCount = workingTreeEntries.filter(entry => entry.staged).length
   const unstagedCount = workingTreeEntries.filter(entry => entry.unstaged).length
 
@@ -331,13 +351,16 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const fileList = detail ? (
     <aside
       data-yaade-list-panel="commit-changes-files"
-      className="flex h-full min-h-0 flex-col bg-transparent"
+      className="flex h-full min-h-0 flex-col bg-sidebar text-sidebar-foreground"
     >
-      <div className="shrink-0 px-3 py-2 font-mono text-3xs tracking-wide text-muted-foreground uppercase">
-        {detail.files.length} {detail.files.length === 1 ? "file" : "files"}
+      <div className="flex h-9 shrink-0 items-center justify-between gap-2 border-b border-sidebar-border px-3">
+        <span className="text-sm font-medium">Changed files</span>
+        <span className="font-mono text-2xs text-muted-foreground">
+          {detail.files.length}
+        </span>
       </div>
       {detail.body ? (
-        <pre className="mx-3 mb-2 max-h-24 shrink-0 overflow-auto rounded-md bg-muted/40 p-2 font-mono text-3xs whitespace-pre-wrap text-foreground/90">
+        <pre className="mx-3 my-2 max-h-24 shrink-0 overflow-auto rounded-md border border-sidebar-border bg-background/55 p-2 font-mono text-xs leading-relaxed whitespace-pre-wrap text-foreground/90">
           {detail.body}
         </pre>
       ) : null}
@@ -360,14 +383,19 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       {selectedFile ? (
         <>
           <div
-            className="flex h-7 shrink-0 items-center gap-2 border-b border-border/60 bg-background px-3"
+            className="flex h-9 shrink-0 items-center gap-2 border-b border-border/70 bg-muted/25 px-3"
           >
-            <FileDiffIcon className="size-3.5 text-muted-foreground" aria-hidden />
-            <span className="min-w-0 flex-1 truncate font-mono text-2xs">
+            <FileDiffIcon className="size-4 text-muted-foreground" aria-hidden />
+            <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
               {selectedFile.path}
             </span>
-            <span className="shrink-0 font-mono text-3xs text-muted-foreground">
-              {selectedFile.status}
+            <span
+              className={cn(
+                "shrink-0 text-xs font-medium",
+                fileStatusColor(selectedFile.status),
+              )}
+            >
+              {fileStatusLabel(selectedFile.status)}
             </span>
           </div>
           <div className="min-h-0 flex-1 overflow-hidden">
@@ -388,7 +416,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
                 modified={diffContents.modified}
                 mode={effectiveDiffStyle}
                 theme={theme}
-                fontSize={fontSize}
+                fontSize={reviewFontSize}
                 conflict={selectedFile.status === "conflict"}
                 onConflictResolved={
                   selectedFile.status === "conflict"
@@ -438,45 +466,42 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       <DialogContent
         size="wide"
         data-yaade-commit-changes-dialog=""
-        className="flex h-[94dvh] max-h-[94dvh] w-[96vw] max-w-[96vw] flex-col gap-0 overflow-hidden p-0 sm:max-w-[96vw]"
+        className="flex h-[94dvh] max-h-[94dvh] w-[96vw] max-w-[96vw] flex-col gap-0 overflow-hidden bg-background p-0 sm:max-w-[96vw]"
       >
-        <DialogHeader className="shrink-0 gap-2 border-b border-border px-4 py-3 pr-12 text-left sm:flex-row sm:items-start sm:justify-between">
+        <DialogHeader className="shrink-0 gap-3 border-b border-border bg-card px-4 py-3 pr-12 text-left sm:flex-row sm:items-center sm:justify-between">
           <div className="min-w-0">
-            <DialogTitle className="truncate text-base">{subject}</DialogTitle>
-            <DialogDescription className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 font-mono text-2xs text-muted-foreground">
-              <span>{shortHash}</span>
+            <DialogTitle className="truncate text-lg leading-tight">{subject}</DialogTitle>
+            <DialogDescription className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-xs text-muted-foreground">
+              <span className="font-mono font-medium text-foreground/80">{shortHash}</span>
               {author ? <span>· {author}</span> : null}
               {authoredAt != null ? (
                 <span>· {dateFormatter.format(new Date(authoredAt))}</span>
               ) : null}
             </DialogDescription>
           </div>
-          <div
-            className="flex w-fit shrink-0 items-center rounded-md border border-border bg-muted/30 p-0.5"
-            role="group"
+          <ToggleGroup
+            type="single"
+            value={effectiveDiffStyle}
+            variant="outline"
+            size="sm"
+            className="shrink-0 bg-background"
             aria-label="Diff layout"
+            onValueChange={value => {
+              if (value === "unified" || value === "split") changeDiffStyle(value)
+            }}
           >
-            <Button
-              type="button"
-              size="xs"
-              variant={effectiveDiffStyle === "unified" ? "secondary" : "ghost"}
-              aria-pressed={effectiveDiffStyle === "unified"}
-              onClick={() => changeDiffStyle("unified")}
-            >
+            <ToggleGroupItem value="unified" aria-label="Unified diff">
               Unified
-            </Button>
-            <Button
-              type="button"
-              size="xs"
-              variant={effectiveDiffStyle === "split" ? "secondary" : "ghost"}
-              aria-pressed={effectiveDiffStyle === "split"}
+            </ToggleGroupItem>
+            <ToggleGroupItem
+              value="split"
+              aria-label="Split diff"
               disabled={compactLayout}
               title={compactLayout ? "Split view needs a wider window" : undefined}
-              onClick={() => changeDiffStyle("split")}
             >
               Split
-            </Button>
-          </div>
+            </ToggleGroupItem>
+          </ToggleGroup>
         </DialogHeader>
 
         <PierreDiffPool>
@@ -524,10 +549,10 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
         </PierreDiffPool>
         {workingTree ? (
           <DialogFooter
-            className="shrink-0 border-t border-border/60 bg-background/80 px-4 py-2 sm:flex-row sm:items-center sm:justify-between"
+            className="shrink-0 border-t border-border/60 bg-card px-4 py-2 sm:flex-row sm:items-center sm:justify-between"
             data-yaade-working-tree-actions=""
           >
-            <span className="font-mono text-2xs text-muted-foreground">
+            <span className="font-mono text-xs text-muted-foreground">
               {stagedCount} staged · {unstagedCount} unstaged
             </span>
             <div className="flex flex-wrap items-center justify-end gap-2">

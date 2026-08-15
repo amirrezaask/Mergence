@@ -166,6 +166,39 @@ test("resumes a paused PTY when its websocket client reconnects", async () => {
   }
 })
 
+test("marks capped attach transcripts as best-effort replay", async () => {
+  const terminal = new TerminalHost()
+  let exited = false
+  terminal.setEmit((channel, args) => {
+    if (channel === "terminal:data") {
+      const id = String(args[0] ?? "")
+      terminal.acknowledgeData(id, String(args[1] ?? "").length)
+    }
+    if (channel === "terminal:exit") exited = true
+  })
+
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('z'.repeat(300 * 1024))"],
+      },
+      "terminal-replay-truncated-test",
+    )
+    const deadline = Date.now() + 5_000
+    while (!exited && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20))
+    }
+    assert.equal(exited, true)
+    const attached = terminal.attach(created.id, "terminal-replay-truncated-test")
+    assert.ok(attached)
+    assert.equal(attached.replayTruncated, true)
+  } finally {
+    terminal.stopAll()
+  }
+})
+
 test("reattach returns only terminal output newer than the client sequence", async () => {
   const terminal = new TerminalHost()
   let resolveFirst: (() => void) | null = null
@@ -198,7 +231,9 @@ test("reattach returns only terminal output newer than the client sequence", asy
     await firstOutput
     const initial = terminal.attach(created.id, "terminal-delta-replay-test")
     assert.ok(initial)
+    assert.equal(initial.replayNeedsQueryResponses, true)
     assert.match(initial.outputChunks.join(""), /first/)
+    terminal.markReplayReady(created.id, "terminal-delta-replay-test")
 
     await secondOutput
     const resumed = terminal.attach(
@@ -207,8 +242,14 @@ test("reattach returns only terminal output newer than the client sequence", asy
       initial.lastSequence,
     )
     assert.ok(resumed)
+    assert.equal(resumed.replayNeedsQueryResponses, false)
     assert.doesNotMatch(resumed.outputChunks.join(""), /first/)
     assert.match(resumed.outputChunks.join(""), /second/)
+
+    terminal.resumeForClient("terminal-delta-replay-test")
+    const reconnect = terminal.attach(created.id, "terminal-delta-replay-test")
+    assert.ok(reconnect)
+    assert.equal(reconnect.replayNeedsQueryResponses, true)
   } finally {
     terminal.stopAll()
   }

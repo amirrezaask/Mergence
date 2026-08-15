@@ -29,5 +29,9 @@ test("encodes and decodes terminal WS control commands", () => {
     op: "terminal:write",
     args: ["id", "x"],
   })
+  assert.deepEqual(
+    tryDecodeTerminalWsCommand({ op: "terminal:ready", args: ["id"] }),
+    { op: "terminal:ready", args: ["id"] },
+  )
   assert.equal(tryDecodeTerminalWsCommand({ op: "fs:readFile", args: [] }), null)
 })

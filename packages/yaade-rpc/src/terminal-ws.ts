@@ -3,7 +3,7 @@
  *
  * Outbound `terminal:data` uses a compact binary frame so flood paths avoid
  * JSON.stringify of multi-KiB PTY payloads. Client→host control (write/ack/
- * resize) stays JSON — payloads are tiny (keystrokes).
+ * resize/ready) stays JSON — payloads are tiny.
  */
 
 /** Host → client: binary `terminal:data` frame type byte. */
@@ -90,6 +90,7 @@ export const TERMINAL_WS_HOT_OPS = [
   "terminal:writeBinary",
   "terminal:ack",
   "terminal:resize",
+  "terminal:ready",
 ] as const
 
 export type TerminalWsHotOp = (typeof TERMINAL_WS_HOT_OPS)[number]
@@ -104,7 +105,8 @@ export function isTerminalWsHotOp(value: unknown): value is TerminalWsHotOp {
     value === "terminal:write" ||
     value === "terminal:writeBinary" ||
     value === "terminal:ack" ||
-    value === "terminal:resize"
+    value === "terminal:resize" ||
+    value === "terminal:ready"
   )
 }
 

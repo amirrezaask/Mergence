@@ -112,6 +112,21 @@ export function measureGhosttyCell(
   };
 }
 
+/** Convert CSS coordinates to the integer geometry Ghostty's mouse encoder uses. */
+export function terminalMouseCoordinate(
+  cssCoordinate: number,
+  cssExtent: number,
+  ghosttyExtent: number,
+): number {
+  if (!Number.isFinite(cssCoordinate) || !Number.isFinite(cssExtent) || cssExtent <= 0) {
+    return 0;
+  }
+  return Math.max(
+    0,
+    Math.min(ghosttyExtent, Math.round((cssCoordinate * ghosttyExtent) / cssExtent)),
+  );
+}
+
 export function terminalGridSize(
   width: number,
   height: number,

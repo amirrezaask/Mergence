@@ -7,6 +7,7 @@ import {
   measureGhosttyCell,
   renderGhosttySnapshot,
   terminalGridSize,
+  terminalMouseCoordinate,
 } from "./renderer.js"
 
 const color = { r: 255, g: 255, b: 255 }
@@ -82,6 +83,12 @@ test("terminalGridSize keeps a valid one-cell fallback", () => {
     cols: 1,
     rows: 1,
   })
+})
+
+test("scales mouse coordinates into Ghostty's integer geometry", () => {
+  assert.equal(terminalMouseCoordinate(84, 840, 800), 80)
+  assert.equal(terminalMouseCoordinate(840, 840, 800), 800)
+  assert.equal(terminalMouseCoordinate(Number.NaN, 840, 800), 0)
 })
 
 test("measureGhosttyCell uses descender-aware metrics", () => {

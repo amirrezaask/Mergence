@@ -16,6 +16,8 @@ type TerminalAttachResult = {
   title?: string;
   outputChunks?: string[];
   output: string;
+  replayTruncated?: boolean;
+  replayNeedsQueryResponses?: boolean;
   lastSequence: number;
   status: "running" | "exited";
   exitCode?: number;
@@ -68,8 +70,20 @@ function clientAbortError(signal: AbortSignal): Error {
 }
 
 export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
-  const terminalDataListeners = new Map<string, Set<(data: string) => void>>();
-  type BufferedTerminalData = { data: string; sequence: number };
+  type TerminalDataListener = (
+    data: string,
+    replay?: boolean,
+    replayNeedsQueryResponses?: boolean,
+    replayTruncated?: boolean,
+  ) => void;
+  const terminalDataListeners = new Map<string, Set<TerminalDataListener>>();
+  type BufferedTerminalData = {
+    data: string;
+    sequence: number;
+    replay?: boolean;
+    replayNeedsQueryResponses?: boolean;
+    replayTruncated?: boolean;
+  };
   const terminalDataBuffers = new Map<string, BufferedTerminalData[]>();
   const terminalDataBufferSizes = new Map<string, number>();
   const terminalReplayFloors = new Map<string, number>();
@@ -78,9 +92,24 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
   let reconnectGeneration = 0;
   let hadRealtimeDisconnect = false;
 
-  const bufferTerminalData = (id: string, data: string, sequence: number) => {
+  const bufferTerminalData = (
+    id: string,
+    data: string,
+    sequence: number,
+    replay = false,
+    replayNeedsQueryResponses = false,
+    replayTruncated = false,
+  ) => {
     const pending = terminalDataBuffers.get(id) ?? [];
-    pending.push({ data, sequence });
+    pending.push({
+      data,
+      sequence,
+      ...(replay ? { replay: true } : {}),
+      ...(replayNeedsQueryResponses
+        ? { replayNeedsQueryResponses: true }
+        : {}),
+      ...(replayTruncated ? { replayTruncated: true } : {}),
+    });
     let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length;
     while (size > MAX_BUFFERED_TERMINAL_CHARS && pending.length > 1) {
       size -= pending.shift()!.data.length;
@@ -89,10 +118,18 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     terminalDataBufferSizes.set(id, size);
   };
 
-  const deliverTerminalData = (id: string, data: string) => {
+  const deliverTerminalData = (
+    id: string,
+    data: string,
+    replay = false,
+    replayNeedsQueryResponses = false,
+    replayTruncated = false,
+  ) => {
     const listeners = terminalDataListeners.get(id);
     if (!listeners || listeners.size === 0) return false;
-    listeners.forEach((cb) => cb(data));
+    listeners.forEach((cb) =>
+      cb(data, replay, replayNeedsQueryResponses, replayTruncated),
+    );
     return true;
   };
 
@@ -126,17 +163,53 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       terminalDataBufferSizes.delete(id);
       terminalReplayFloors.set(id, result.lastSequence);
       terminalResyncing.delete(id);
+      let firstReplayChunk = true;
       for (const chunk of chunks) {
-        if (chunk && !deliverTerminalData(id, chunk)) {
-          bufferTerminalData(id, chunk, 0);
+        const replayTruncated =
+          firstReplayChunk && result.replayTruncated === true;
+        if (chunk) {
+          if (
+            !deliverTerminalData(
+              id,
+              chunk,
+              true,
+              result.replayNeedsQueryResponses === true,
+              replayTruncated,
+            )
+          ) {
+            bufferTerminalData(
+              id,
+              chunk,
+              0,
+              true,
+              result.replayNeedsQueryResponses === true,
+              replayTruncated,
+            );
+          }
+          firstReplayChunk = false;
         }
       }
       for (const chunk of pending ?? []) {
         if (chunk.sequence > 0 && chunk.sequence <= result.lastSequence)
           continue;
         if (chunk.sequence > 0) terminalReplayFloors.set(id, chunk.sequence);
-        if (!deliverTerminalData(id, chunk.data)) {
-          bufferTerminalData(id, chunk.data, chunk.sequence);
+        if (
+          !deliverTerminalData(
+            id,
+            chunk.data,
+            chunk.replay === true,
+            chunk.replayNeedsQueryResponses === true,
+            chunk.replayTruncated === true,
+          )
+        ) {
+          bufferTerminalData(
+            id,
+            chunk.data,
+            chunk.sequence,
+            chunk.replay === true,
+            chunk.replayNeedsQueryResponses === true,
+            chunk.replayTruncated === true,
+          );
         }
       }
     } catch {
@@ -214,7 +287,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     if (sequence > 0) terminalReplayFloors.set(id, sequence);
     const listeners = terminalDataListeners.get(id);
     if (listeners && listeners.size > 0) {
-      listeners.forEach((cb) => cb(data));
+      listeners.forEach((cb) => cb(data, false, false, false));
       return;
     }
     bufferTerminalData(id, data, sequence);
@@ -567,6 +640,8 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         invokeTerminalHot(transport, "terminal:resize", id, cols, rows),
       acknowledgeData: (id, charCount) =>
         invokeTerminalHot(transport, "terminal:ack", id, charCount),
+      markReplayReady: (id) =>
+        invokeTerminalHot(transport, "terminal:ready", id),
       getCwd: (id) => transport.invoke<string | null>("terminal:getCwd", id),
       getForegroundProcess: (id) =>
         transport.invoke<string | null>("terminal:getForegroundProcess", id),
@@ -580,7 +655,14 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         if (!realtimeConnected) terminalResyncing.add(id);
         const pending = terminalDataBuffers.get(id);
         if (pending) {
-          for (const chunk of pending) callback(chunk.data);
+          for (const chunk of pending) {
+            callback(
+              chunk.data,
+              chunk.replay === true,
+              chunk.replayNeedsQueryResponses === true,
+              chunk.replayTruncated === true,
+            );
+          }
           terminalDataBuffers.delete(id);
           terminalDataBufferSizes.delete(id);
         }

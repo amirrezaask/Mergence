@@ -52,3 +52,21 @@ export function terminalKeybindingData(
   }
   return null
 }
+
+/**
+ * The freestanding WASM build cannot compile Ghostty's native macOS policy.
+ * Apple reserves Command for app actions, so an unhandled Command key must
+ * not fall through to the terminal encoder as literal text.
+ */
+export function shouldSuppressMacMetaKey(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey">,
+  platform: string,
+): boolean {
+  return (
+    isMacPlatform(platform) &&
+    event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    event.key !== "Meta"
+  )
+}

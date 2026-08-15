@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef } from "react"
 import { FileTree, useFileTree } from "@pierre/trees/react"
-import { FolderTree } from "lucide-react"
+import { FolderTree, PanelLeftClose, PanelLeftOpen } from "lucide-react"
+import { Button } from "@/components/ui/button.js"
 import { pierreTreeTokenStyle } from "@/lib/pierre-tree-theme.js"
 import { forwardPierreTreeWheel } from "@/lib/pierre-tree-scroll.js"
 import { cn } from "@/lib/utils.js"
@@ -16,6 +17,9 @@ export type PierreWorkspaceFileTreeProps = {
   onSelectPath: (path: string) => void
   loading?: boolean
   className?: string
+  collapsed?: boolean
+  explorerId?: string
+  onToggleExplorer?: () => void
 }
 
 function parentDirectories(path: string): string[] {
@@ -29,7 +33,16 @@ function parentDirectories(path: string): string[] {
 
 /** A compact Pierre project navigator for editor sidebars. */
 export function PierreWorkspaceFileTree(props: PierreWorkspaceFileTreeProps) {
-  const { paths, selectedPath, onSelectPath, loading = false, className } = props
+  const {
+    paths,
+    selectedPath,
+    onSelectPath,
+    loading = false,
+    className,
+    collapsed = false,
+    explorerId,
+    onToggleExplorer,
+  } = props
   const pathsKey = paths.join("\0")
   const files = useMemo(() => new Set(paths), [paths])
   const filesRef = useRef(files)
@@ -100,28 +113,65 @@ export function PierreWorkspaceFileTree(props: PierreWorkspaceFileTreeProps) {
   return (
     <div
       className={cn("flex h-full min-h-0 flex-col bg-sidebar", className)}
-      data-yaade-editor-file-tree=""
+      data-yaade-editor-sidebar=""
     >
-      <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 text-sm font-medium text-sidebar-foreground">
-        <FolderTree className="size-4 text-sidebar-primary" aria-hidden />
-        <span className="min-w-0 flex-1 truncate">Explorer</span>
-        <span className="font-mono text-3xs text-muted-foreground">
-          {loading ? "…" : paths.length}
-        </span>
-      </div>
-      {paths.length === 0 ? (
-        <div className="px-3 py-4 text-xs text-muted-foreground">
-          {loading ? "Indexing project files…" : "No project files found."}
-        </div>
-      ) : (
-        <FileTree
-          model={model}
-          aria-label="Project files"
-          onWheel={forwardPierreTreeWheel}
-          className="h-full min-h-0 w-full min-w-0 bg-transparent"
-          style={explorerTreeStyle}
+      <div
+        className={cn(
+          "flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 text-sm font-medium text-sidebar-foreground",
+          collapsed && "justify-center px-1",
+        )}
+        data-yaade-editor-explorer-header=""
+      >
+        <FolderTree
+          className={cn(
+            "size-4 shrink-0 text-sidebar-primary",
+            collapsed && "hidden",
+          )}
+          aria-hidden
         />
-      )}
+        {!collapsed ? (
+          <>
+            <span className="min-w-0 flex-1 truncate">Explorer</span>
+            <span className="font-mono text-3xs text-muted-foreground">
+              {loading ? "…" : paths.length}
+            </span>
+          </>
+        ) : null}
+        {onToggleExplorer ? (
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-xs"
+            className="shrink-0"
+            aria-label={collapsed ? "Show Explorer" : "Hide Explorer"}
+            aria-controls={explorerId}
+            aria-expanded={!collapsed}
+            aria-pressed={!collapsed}
+            data-yaade-editor-explorer-toggle=""
+            onClick={onToggleExplorer}
+          >
+            {collapsed ? <PanelLeftOpen /> : <PanelLeftClose />}
+          </Button>
+        ) : null}
+      </div>
+      <div
+        className={cn("flex min-h-0 flex-1 flex-col", collapsed && "hidden")}
+        data-yaade-editor-file-tree=""
+      >
+        {paths.length === 0 ? (
+          <div className="px-3 py-4 text-xs text-muted-foreground">
+            {loading ? "Indexing project files…" : "No project files found."}
+          </div>
+        ) : (
+          <FileTree
+            model={model}
+            aria-label="Project files"
+            onWheel={forwardPierreTreeWheel}
+            className="h-full min-h-0 w-full min-w-0 bg-transparent"
+            style={explorerTreeStyle}
+          />
+        )}
+      </div>
     </div>
   )
 }
