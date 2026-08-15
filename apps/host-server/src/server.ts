@@ -1664,7 +1664,7 @@ function validateRpcPathsOrThrow(config: HostConfig, channel: string, args: unkn
     if (!input || typeof input !== "object") return
     for (const field of ["fileUri", "workspaceRootUri", "projectRootUri"]) {
       if (!(field in input)) continue
-      const candidate = Reflect.get(input, field)
+      const candidate = Object.entries(input).find(([name]) => name === field)?.[1]
       if (
         typeof candidate !== "string" ||
         !pathAllowed(uriOrPath(candidate), config.allowedRoots)

@@ -219,7 +219,7 @@ export class AppSession extends Schema.Class<AppSession>("AppSession")({
   archivedAt: Schema.optional(Schema.String),
 }) {}
 
-const ToolUseShape = Schema.Struct({
+const ToolUseRecord = Schema.Struct({
   id: ToolUseId,
   sessionId: SessionId,
   kind: ToolKind,
@@ -240,7 +240,7 @@ const ToolUseShape = Schema.Struct({
 });
 
 /** A persisted invocation. The filter enforces the input/output kind pairing. */
-export const ToolUse = ToolUseShape.pipe(
+export const ToolUse = ToolUseRecord.pipe(
   Schema.filter(
     (value) =>
       (value.kind === "search" &&
@@ -260,7 +260,7 @@ export const ToolUse = ToolUseShape.pipe(
     { message: () => "ToolUse kind does not match its input and output" },
   ),
 );
-export type ToolUse = Schema.Schema.Type<typeof ToolUseShape>;
+export type ToolUse = Schema.Schema.Type<typeof ToolUseRecord>;
 
 export const SearchMatchRange = Schema.Struct({
   startLine: Schema.Number,
@@ -531,9 +531,11 @@ export class ToolUseNotFound extends Data.TaggedError("ToolUseNotFound")<{
 }> {
   readonly code = "NOT_FOUND" as const;
 }
+export type InvalidToolInputDetails = object;
+
 export class InvalidToolInput extends Data.TaggedError("InvalidToolInput")<{
   readonly message: string;
-  readonly details?: Record<string, unknown>;
+  readonly details?: InvalidToolInputDetails;
 }> {
   readonly code = "OPERATION_FAILED" as const;
 }

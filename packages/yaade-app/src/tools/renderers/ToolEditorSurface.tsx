@@ -48,7 +48,7 @@ import {
 } from "../../editor/editor-buffer-service.js"
 import { ensureMonacoWorkersConfigured } from "../../editor/monaco-workers.js"
 import { MuxLspHost, type MuxLspController } from "../../mux/MuxLspHost.js"
-import type { YaadeTheme } from "@yaade/shared"
+import type { FileSearchOptions, YaadeTheme } from "@yaade/shared"
 
 export type ToolEditorSurfaceProps = {
   readonly use: ToolUse
@@ -91,20 +91,30 @@ function editorStateKey(useId: string, checkoutPath: string): string {
   return `yaade:editor-tool:${useId}:${checkoutPath}`
 }
 
+function isStringValue<T>(value: T): value is Extract<T, string> {
+  return value === String(value)
+}
+
 function loadEditorTabs(key: string): PersistedEditorTabs {
   try {
-    const parsed: unknown = JSON.parse(localStorage.getItem(key) ?? "null")
-    if (!parsed || typeof parsed !== "object") return { tabs: [], activeUri: null }
-    const rawTabs = Reflect.get(parsed, "tabs")
-    const rawActive = Reflect.get(parsed, "activeUri")
+    const parsed = JSON.parse(localStorage.getItem(key) ?? "null")
+    if (
+      parsed == null ||
+      Array.isArray(parsed) ||
+      Object.prototype.toString.call(parsed) !== "[object Object]"
+    ) {
+      return { tabs: [], activeUri: null }
+    }
+    const rawTabs = parsed.tabs
+    const rawActive = parsed.activeUri
     const tabs = Array.isArray(rawTabs)
       ? rawTabs.filter(
           (value): value is string =>
-            typeof value === "string" && value.startsWith("file://"),
+            isStringValue(value) && value.startsWith("file://"),
         )
       : []
     const activeUri =
-      typeof rawActive === "string" && tabs.includes(rawActive)
+      isStringValue(rawActive) && tabs.includes(rawActive)
         ? rawActive
         : (tabs.at(-1) ?? null)
     return { tabs, activeUri }
@@ -128,13 +138,14 @@ function saveEditorTabs(
 function platformFileSystem(): FileSystemProvider {
   const fs = window.yaade?.fs
   if (!fs) throw new Error("Host filesystem is unavailable")
-  return {
+  const provider: FileSystemProvider = {
     readFile: uri => fs.readFile(uri),
     writeFile: (uri, content) => fs.writeFile(uri, content),
     readDir: uri => fs.readDir(uri),
     stat: uri => fs.stat(uri),
-    ...(fs.exists ? { exists: (uri: string) => fs.exists!(uri) } : {}),
   }
+  if (fs.exists) provider.exists = fs.exists
+  return provider
 }
 
 /**
@@ -422,12 +433,14 @@ export function ToolEditorSurface(props: ToolEditorSurfaceProps) {
 
   const quickOpenSearch = useCallback(
     async (query: string, _workspaceId: string | null, signal: AbortSignal) => {
-      const page = await window.yaade?.search?.fileSearch(rootUri, query, {
-        pageSize: 100,
-        ...(activeUri
-          ? { currentFile: relativePath(props.checkoutPath, fileUriToPath(activeUri)) }
-          : {}),
-      })
+      const options: FileSearchOptions = { pageSize: 100 }
+      if (activeUri) {
+        options.currentFile = relativePath(
+          props.checkoutPath,
+          fileUriToPath(activeUri),
+        )
+      }
+      const page = await window.yaade?.search?.fileSearch(rootUri, query, options)
       return signal.aborted ? [] : (page?.items ?? [])
     },
     [activeUri, props.checkoutPath, rootUri],

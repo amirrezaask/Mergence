@@ -15,7 +15,11 @@ import { fileUriToPath } from "@yaade/shared"
 import type { HostRuntime } from "./host-runtime.js"
 import { pathAllowed } from "./sandbox.js"
 
-const AGENT_COMMANDS: Record<string, AgentProvider> = {
+interface AgentCommandMap {
+  [command: string]: AgentProvider
+}
+
+const AGENT_COMMANDS: AgentCommandMap = {
   claude: "claude",
   codex: "codex",
   "cursor-agent": "cursor",

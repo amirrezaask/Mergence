@@ -10,8 +10,9 @@
  * Usage: tsx apps/host-server/mocks/mock-line-rpc.ts
  */
 
-type JsonValue = unknown
-type JsonObject = Record<string, JsonValue>
+type JsonPrimitive = string | number | boolean | null | undefined
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[]
+type JsonObject = { [key: string]: JsonValue }
 
 type PendingKind = "permission" | "wait"
 type PendingTurn = { threadId: string; turnId: string; kind: PendingKind }

@@ -14,7 +14,7 @@ function sectionValue(settings: unknown, section: string | undefined): unknown {
   let current = settings
   for (const segment of section.split(".")) {
     if (!current || typeof current !== "object" || !(segment in current)) return {}
-    current = Reflect.get(current, segment)
+    current = Object.entries(current).find(([name]) => name === segment)?.[1]
   }
   return current ?? {}
 }

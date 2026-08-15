@@ -15,9 +15,7 @@
  */
 
 export function isAppleWebKitEngine(userAgent?: string): boolean {
-  const ua =
-    userAgent ??
-    (typeof navigator !== "undefined" ? navigator.userAgent : "")
+  const ua = userAgent ?? globalThis.navigator?.userAgent ?? ""
   return /AppleWebKit/i.test(ua) && !/Chrome|Chromium|Edg\//i.test(ua)
 }
 

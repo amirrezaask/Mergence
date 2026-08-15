@@ -298,9 +298,12 @@ function handleTabKeyDown(event: KeyboardEvent<HTMLDivElement>): void {
     ),
   ];
   if (tabs.length === 0) return;
+  const activeElement = document.activeElement;
   const current = Math.max(
     0,
-    tabs.indexOf(document.activeElement as HTMLButtonElement),
+    activeElement instanceof HTMLButtonElement
+      ? tabs.indexOf(activeElement)
+      : -1,
   );
   const next =
     event.key === "Home"

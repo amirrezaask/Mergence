@@ -193,8 +193,9 @@ function parseArgs(argv: string[]): Args {
 // JSON-RPC plumbing
 // ---------------------------------------------------------------------------
 
-type JsonValue = unknown
-type JsonObject = Record<string, JsonValue>
+type JsonPrimitive = string | number | boolean | null | undefined
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[]
+type JsonObject = { [key: string]: JsonValue }
 type RpcId = number | string
 
 const INTERNAL_ERROR = -32603

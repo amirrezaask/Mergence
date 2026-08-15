@@ -56,9 +56,9 @@ export function registrationDocumentSelector(
     if (!filter || typeof filter !== "object") continue
     if ("notebook" in filter) continue
 
-    const language = Reflect.get(filter, "language")
-    const scheme = Reflect.get(filter, "scheme")
-    const pattern = Reflect.get(filter, "pattern")
+    const language = filter.language
+    const scheme = filter.scheme
+    const pattern = filter.pattern
     if (pattern != null && typeof pattern !== "string") continue
     if (language != null && typeof language !== "string") continue
     if (scheme != null && typeof scheme !== "string") continue

@@ -16,6 +16,15 @@ import {
 } from "@yaade/ui/appearance"
 
 type ColorScheme = "dark" | "light"
+type PersistedAppearanceValue = string | number | boolean | null | undefined
+type StoredThemeSelection = {
+  readonly themeId: string
+  readonly colorSchemeMode: ColorSchemeMode
+}
+
+function isStringValue(value: PersistedAppearanceValue): value is string {
+  return value === String(value)
+}
 
 const THEME_ID_STORAGE_KEY = "jet-theme-id"
 const COLOR_SCHEME_KEY = "jet-color-scheme"
@@ -40,23 +49,32 @@ export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
 }
 
 export function normalizePreferredEditor(
-  value: unknown,
+  value: PersistedAppearanceValue,
   fallback: JetAppearanceSettings["preferredEditor"] = "monaco",
 ): JetAppearanceSettings["preferredEditor"] {
   return value === "monaco" || value === "neovim" ? value : fallback
 }
 
-function clampNumber(value: unknown, fallback: number, min: number, max: number): number {
-  const n = typeof value === "number" ? value : parseFloat(String(value ?? ""))
+function clampNumber(
+  value: PersistedAppearanceValue,
+  fallback: number,
+  min: number,
+  max: number,
+): number {
+  const text = String(value ?? "")
+  const n =
+    value != null && text.trim() !== "" && Number.isFinite(Number(value))
+      ? Number(value)
+      : parseFloat(text)
   if (!Number.isFinite(n)) return fallback
   return Math.max(min, Math.min(max, n))
 }
 
 export function normalizeThemeId(
-  value: unknown,
+  value: PersistedAppearanceValue,
   fallbackScheme: ColorScheme = "dark",
 ): string {
-  if (typeof value === "string") {
+  if (isStringValue(value)) {
     const resolved = getThemeById(value)
     if (resolved.id === value) return resolved.id
   }
@@ -64,7 +82,7 @@ export function normalizeThemeId(
 }
 
 export function normalizeColorSchemeMode(
-  value: unknown,
+  value: PersistedAppearanceValue,
   fallback: ColorSchemeMode = "system",
 ): ColorSchemeMode {
   return value === "system" || value === "light" || value === "dark"
@@ -81,15 +99,15 @@ export function themeIdForColorSchemeMode(
   return siblingThemeForScheme(themeId, scheme).id
 }
 
-export function normalizeSessionLayout(_value: unknown): SessionLayout {
+export function normalizeSessionLayout(_value: PersistedAppearanceValue): SessionLayout {
   // The tiled Tool Session shell has one navigation model. Older persisted
   // tab-bar and two-sidebar values migrate to the combined sidebar.
   return "single-sidebar"
 }
 
-function normalizeProjectFilterPath(value: unknown): string | null {
+function normalizeProjectFilterPath(value: PersistedAppearanceValue): string | null {
   if (value == null || value === "" || value === "all") return null
-  if (typeof value !== "string") return null
+  if (!isStringValue(value)) return null
   const trimmed = value.trim()
   if (!trimmed) return null
   // Older builds briefly persisted root URIs — accept those too.
@@ -122,10 +140,7 @@ function preferredColorScheme(): ColorScheme {
     : "light"
 }
 
-function loadStoredTheme(): {
-  themeId: string
-  colorSchemeMode: ColorSchemeMode
-} {
+function loadStoredTheme(): StoredThemeSelection {
   try {
     const rawTheme = localStorage.getItem(THEME_ID_STORAGE_KEY)
     const rawScheme = localStorage.getItem(COLOR_SCHEME_KEY)
@@ -163,8 +178,8 @@ function loadStoredTheme(): {
   }
 }
 
-function normalizeMonoFontFamily(value: unknown): string {
-  if (typeof value !== "string") return DEFAULT_MONO_FONT_NAME
+function normalizeMonoFontFamily(value: PersistedAppearanceValue): string {
+  if (!isStringValue(value)) return DEFAULT_MONO_FONT_NAME
   const trimmed = value.trim()
   if (!trimmed) return DEFAULT_MONO_FONT_NAME
   // Legacy builds may have persisted a full CSS stack.
@@ -195,7 +210,14 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         ),
       }
     }
-    const parsed = JSON.parse(raw) as Partial<JetAppearanceSettings>
+    const parsed = JSON.parse(raw)
+    if (
+      parsed == null ||
+      Array.isArray(parsed) ||
+      Object.prototype.toString.call(parsed) !== "[object Object]"
+    ) {
+      return base
+    }
     const themeId = normalizeThemeId(
       parsed.themeId ?? base.themeId,
       getThemeById(base.themeId).scheme ?? "dark",
@@ -217,8 +239,7 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
       colorSchemeMode,
       fontSize: clampNumber(parsed.fontSize, base.fontSize, 10, 24),
       monoFontFamily: normalizeMonoFontFamily(
-        (parsed as { monoFontFamily?: unknown }).monoFontFamily ??
-          base.monoFontFamily,
+        parsed.monoFontFamily ?? base.monoFontFamily,
       ),
       sessionLayout: normalizeSessionLayout(parsed.sessionLayout),
       sidebarCollapsed: parsed.sidebarCollapsed === true,
@@ -229,13 +250,12 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         MAX_SIDEBAR_WIDTH,
       ),
       sidebarProjectFilterPath: normalizeProjectFilterPath(
-        (parsed as { sidebarProjectFilterPath?: unknown }).sidebarProjectFilterPath ??
-          (parsed as { sidebarProjectFilterRootUri?: unknown })
-            .sidebarProjectFilterRootUri ??
-          (parsed as { sidebarProjectFilterId?: unknown }).sidebarProjectFilterId,
+        parsed.sidebarProjectFilterPath ??
+          parsed.sidebarProjectFilterRootUri ??
+          parsed.sidebarProjectFilterId,
       ),
       preferredEditor: normalizePreferredEditor(
-        (parsed as { preferredEditor?: unknown }).preferredEditor,
+        parsed.preferredEditor,
         base.preferredEditor,
       ),
     }

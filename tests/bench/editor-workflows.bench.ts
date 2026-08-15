@@ -34,6 +34,22 @@ type EditorResource = {
   duration: number
 }
 
+type EditorPaintState = {
+  paintCount: number
+  lastPaintAt: number
+  keydownCount: number
+  lastKey: string
+  lastKeydownAt: number
+  observer: MutationObserver | null
+}
+
+declare global {
+  interface Window {
+    __yaadeBenchEditorPaints?: EditorPaintState
+    __yaadeBenchFsReads?: BrowserFsReadStats
+  }
+}
+
 function result(name: string, samples: number[]): BenchResult {
   return {
     name,
@@ -85,9 +101,7 @@ async function finishTimer(page: ShellDriver, name: string): Promise<number> {
 
 async function installEditorPaintCounter(page: ShellDriver): Promise<void> {
   await page.evaluate(() => {
-    const previous = Reflect.get(window, "__yaadeBenchEditorPaints") as
-      | { observer?: MutationObserver | null }
-      | undefined
+    const previous = window.__yaadeBenchEditorPaints
     previous?.observer?.disconnect()
     const target = document.querySelector("[data-yaade-monaco-editor] .view-lines")
     if (!target) throw new Error("Monaco view lines unavailable")
@@ -124,7 +138,7 @@ async function installEditorPaintCounter(page: ShellDriver): Promise<void> {
       },
       true,
     )
-    Reflect.set(window, "__yaadeBenchEditorPaints", state)
+    window.__yaadeBenchEditorPaints = state
   })
 }
 
@@ -137,7 +151,7 @@ async function editorInputSnapshot(
   page: ShellDriver,
 ): Promise<EditorInputSnapshot> {
   return page.evaluate(() => {
-    const state = Reflect.get(window, "__yaadeBenchEditorPaints")
+    const state = window.__yaadeBenchEditorPaints
     if (
       !state ||
       typeof state.paintCount !== "number" ||
@@ -162,7 +176,7 @@ async function finishInputAtEditorPaint(
       new Promise<number>((resolve, reject) => {
         const deadline = performance.now() + 5_000
         const poll = () => {
-          const state = Reflect.get(window, "__yaadeBenchEditorPaints")
+          const state = window.__yaadeBenchEditorPaints
           if (
             state &&
             state.keydownCount > before.keydownCount &&
@@ -198,15 +212,15 @@ async function installFsReadCounter(page: ShellDriver): Promise<void> {
       stats.byUri[uri] = (stats.byUri[uri] ?? 0) + 1
       return content
     }
-    Reflect.set(window, "__yaadeBenchFsReads", stats)
+    window.__yaadeBenchFsReads = stats
     Reflect.set(fs, "readFile", countedRead)
   })
 }
 
 async function fsReadStats(page: ShellDriver): Promise<BrowserFsReadStats> {
   return page.evaluate(() => {
-    const value = Reflect.get(window, "__yaadeBenchFsReads")
-    if (!value || typeof value !== "object") {
+    const value = window.__yaadeBenchFsReads
+    if (!value) {
       throw new Error("benchmark fs read counter was not installed")
     }
     return structuredClone(value) as BrowserFsReadStats

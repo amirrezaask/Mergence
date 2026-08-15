@@ -121,10 +121,14 @@ function isLive(use: ToolUse): boolean {
   );
 }
 
-function errorMessage(error: unknown): string {
+function errorMessage<T>(error: T): string {
   return error instanceof Error
     ? error.message
     : "The host could not complete that action.";
+}
+
+function isStringValue<T>(value: T): value is Extract<T, string> {
+  return value === String(value);
 }
 
 function markPerformance(name: string): void {
@@ -392,7 +396,7 @@ export function ToolSessionApp() {
     return agents.onEvent((payload) => {
       const event = payload.event;
       const prompt = event?.metadata?.prompt;
-      if (event?.kind !== "prompt.submitted" || typeof prompt !== "string")
+      if (event?.kind !== "prompt.submitted" || !isStringValue(prompt))
         return;
       const use = [...toolUsesRef.current.values()].find(
         (candidate) =>
@@ -843,7 +847,7 @@ export function ToolSessionApp() {
         }
       }
 
-      const target = event.target as HTMLElement | null;
+      const target = event.target instanceof HTMLElement ? event.target : null;
       const inEditable = Boolean(
         target?.closest("input, textarea, [contenteditable=true]"),
       );
@@ -954,12 +958,18 @@ export function ToolSessionApp() {
           _tag: "UpdateToolUseInput",
           toolUseId: latest.id,
           inputRevision: latest.inputRevision,
-          input: {
-            _tag: "AgentToolInput",
-            kind: "agent",
-            provider,
-            ...(latest.input.args ? { args: latest.input.args } : {}),
-          },
+          input: latest.input.args
+            ? {
+                _tag: "AgentToolInput",
+                kind: "agent",
+                provider,
+                args: latest.input.args,
+              }
+            : {
+                _tag: "AgentToolInput",
+                kind: "agent",
+                provider,
+              },
         });
         if (updated) client.store.replaceToolUse(updated);
         setActionError(undefined);

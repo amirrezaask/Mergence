@@ -7,14 +7,14 @@ import { opencodeDriver } from "./opencode.js"
 import { grokDriver } from "./grok.js"
 import { piDriver } from "./pi.js"
 
-const DRIVERS: Record<AgentProvider, CliAgentDriver> = {
+const DRIVERS = {
   claude: claudeDriver,
   codex: codexDriver,
   cursor: cursorDriver,
   opencode: opencodeDriver,
   grok: grokDriver,
   pi: piDriver,
-}
+} satisfies Record<AgentProvider, CliAgentDriver>
 
 export function getCliAgentDriver(provider: AgentProvider): CliAgentDriver {
   return DRIVERS[provider]

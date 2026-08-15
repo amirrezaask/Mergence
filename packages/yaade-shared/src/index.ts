@@ -36,7 +36,11 @@ export function extname(uriOrPath: string): string {
   return dot >= 0 ? name.slice(dot) : ""
 }
 
-const LANGUAGE_BY_EXT: Record<string, string> = {
+interface LanguageMap {
+  [extension: string]: string
+}
+
+const LANGUAGE_BY_EXT: LanguageMap = {
   ".ts": "typescript",
   ".tsx": "tsx",
   ".mts": "mts",
@@ -99,7 +103,7 @@ const LANGUAGE_BY_EXT: Record<string, string> = {
 }
 
 /** Basename → language when extension alone is ambiguous or missing. */
-const LANGUAGE_BY_BASENAME: Record<string, string> = {
+const LANGUAGE_BY_BASENAME: LanguageMap = {
   dockerfile: "dockerfile",
   makefile: "shell",
   gemfile: "ruby",

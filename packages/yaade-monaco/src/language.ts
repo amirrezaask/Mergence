@@ -1,4 +1,8 @@
-const LANGUAGE_ALIASES: Record<string, string> = {
+interface LanguageAliasMap {
+  [language: string]: string
+}
+
+const LANGUAGE_ALIASES: LanguageAliasMap = {
   tsx: "typescript",
   jsx: "javascript",
   mts: "typescript",

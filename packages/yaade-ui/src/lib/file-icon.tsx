@@ -29,7 +29,11 @@ interface IconSpec {
 const DEFAULT: IconSpec = { Icon: File, className: "text-muted-foreground" }
 const FOLDER: IconSpec = { Icon: Folder, className: "text-sky-500" }
 
-const BY_NAME: Record<string, IconSpec> = {
+interface FileIconMap {
+  [name: string]: IconSpec
+}
+
+const BY_NAME: FileIconMap = {
   "package.json": { Icon: Package, className: "text-red-500" },
   "package-lock.json": { Icon: FileLock2, className: "text-red-400" },
   "pnpm-lock.yaml": { Icon: FileLock2, className: "text-amber-500" },
@@ -52,7 +56,7 @@ const BY_NAME: Record<string, IconSpec> = {
   "turbo.json": { Icon: Settings, className: "text-red-400" },
 }
 
-const BY_EXT: Record<string, IconSpec> = {
+const BY_EXT: FileIconMap = {
   ts: { Icon: FileCode, className: "text-blue-500" },
   tsx: { Icon: FileCode, className: "text-blue-400" },
   js: { Icon: FileCode, className: "text-yellow-400" },
@@ -146,8 +150,7 @@ export function getFileIconSpec(pathOrName: string, isDirectory = false): IconSp
   const byName = BY_NAME[name]
   if (byName) return byName
   const ext = extOf(name)
-  if (ext && BY_EXT[ext]) return BY_EXT[ext]!
-  return DEFAULT
+  return BY_EXT[ext] ?? DEFAULT
 }
 
 export interface FileIconProps {

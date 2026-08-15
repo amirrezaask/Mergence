@@ -19,12 +19,12 @@ export type PanelFloatingPopoverProps = {
   children: ReactNode
 }
 
-const DEFAULT_INSET: Record<PanelFloatCorner, { top: number; right: number; bottom: number; left: number }> = {
+const DEFAULT_INSET = {
   "top-right": { top: 4, right: 8, bottom: 4, left: 8 },
   "top-left": { top: 4, right: 8, bottom: 4, left: 8 },
   "bottom-right": { top: 4, right: 8, bottom: 4, left: 8 },
   "bottom-left": { top: 4, right: 8, bottom: 4, left: 8 },
-}
+} satisfies Record<PanelFloatCorner, { top: number; right: number; bottom: number; left: number }>
 
 function anchorStyle(
   corner: PanelFloatCorner,

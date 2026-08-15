@@ -7,13 +7,13 @@ export type NotificationTimeGroup =
   | "this-week"
   | "older"
 
-export const NOTIFICATION_TIME_GROUP_LABELS: Record<NotificationTimeGroup, string> = {
+export const NOTIFICATION_TIME_GROUP_LABELS = {
   now: "Now",
   "earlier-today": "Earlier today",
   yesterday: "Yesterday",
   "this-week": "This week",
   older: "Older",
-}
+} satisfies Record<NotificationTimeGroup, string>
 
 const GROUP_ORDER: NotificationTimeGroup[] = [
   "now",

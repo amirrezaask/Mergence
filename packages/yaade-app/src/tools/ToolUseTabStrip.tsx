@@ -67,31 +67,37 @@ function toolStatusClass(status: ToolUse["status"]): string {
   }
 }
 
-const toolIcon: Record<ToolKind, typeof Bot> = {
+const toolIcon = {
   agent: Bot,
   editor: FileCode2,
   terminal: TerminalIcon,
   search: Search,
   git: GitBranch,
-};
+} satisfies Record<ToolKind, typeof Bot>;
 
-const providerLabels: Record<AgentProvider, string> = {
+const providerLabels = {
   claude: "Claude",
   codex: "Codex",
   cursor: "Cursor",
   opencode: "OpenCode",
   grok: "Grok",
   pi: "Pi",
-};
+} satisfies Record<AgentProvider, string>;
 
 function checkoutTargetForUse(use: ToolUse): CheckoutTarget {
   if (use.context.checkoutKey === "main") {
     return MainCheckout.make({ kind: "main" });
   }
+  if (use.context.branch) {
+    return ExistingWorktreeCheckout.make({
+      kind: "existing-worktree",
+      path: use.context.checkoutPath,
+      branch: use.context.branch,
+    });
+  }
   return ExistingWorktreeCheckout.make({
     kind: "existing-worktree",
     path: use.context.checkoutPath,
-    ...(use.context.branch ? { branch: use.context.branch } : {}),
   });
 }
 

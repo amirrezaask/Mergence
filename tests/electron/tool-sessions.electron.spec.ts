@@ -45,8 +45,8 @@ async function waitForVisibleTerminalSurface(page: ShellDriver): Promise<void> {
   await page.waitForFunction(
     () => {
       return [...document.querySelectorAll("[data-yaade-terminal-canvas]")].some((el) => {
-        const root = el.closest(".absolute") as HTMLElement | null;
-        if (!root) return true;
+        const root = el.closest(".absolute");
+        if (!(root instanceof HTMLElement)) return true;
         return !root.classList.contains("hidden");
       });
     },
@@ -142,15 +142,24 @@ async function createTerminalViaApi(
           projects[0])
         : projects[0];
       if (!project) throw new Error("no project");
-      const created = await tools.createUse({
-        _tag: "CreateToolUse",
-        sessionId,
-        ...(nextTitle ? { title: nextTitle } : {}),
-        kind: "terminal",
-        project,
-        checkout: { _tag: "MainCheckout", kind: "main" },
-        input: { _tag: "TerminalToolInput", kind: "terminal" },
-      });
+      const created = nextTitle
+        ? await tools.createUse({
+            _tag: "CreateToolUse",
+            sessionId,
+            title: nextTitle,
+            kind: "terminal",
+            project,
+            checkout: { _tag: "MainCheckout", kind: "main" },
+            input: { _tag: "TerminalToolInput", kind: "terminal" },
+          })
+        : await tools.createUse({
+            _tag: "CreateToolUse",
+            sessionId,
+            kind: "terminal",
+            project,
+            checkout: { _tag: "MainCheckout", kind: "main" },
+            input: { _tag: "TerminalToolInput", kind: "terminal" },
+          });
       return created.id;
     },
     { nextTitle: title, needle: projectPathNeedle },
@@ -619,12 +628,18 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
         _tag: "UpdateToolUseInput",
         toolUseId: agent.id,
         inputRevision: agent.inputRevision,
-        input: {
-          _tag: "AgentToolInput",
-          kind: "agent",
-          provider: agent.input.provider,
-          ...(agent.input.args ? { args: agent.input.args } : {}),
-        },
+        input: agent.input.args
+          ? {
+              _tag: "AgentToolInput",
+              kind: "agent",
+              provider: agent.input.provider,
+              args: agent.input.args,
+            }
+          : {
+              _tag: "AgentToolInput",
+              kind: "agent",
+              provider: agent.input.provider,
+            },
       });
       return updated.input.kind === "agent" ? updated.input.provider : null;
     });
@@ -952,6 +967,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     await page.waitForFunction(
       () => {
         const state = window.__yaadeAgent?.getState();
+        // SAFETY: the browser test harness exposes toolUses with these optional fields.
         const uses = (state?.toolUses ?? []) as readonly {
           id?: string;
           context?: { managedWorktree?: boolean };
@@ -964,6 +980,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     );
     const checkout = await page.evaluate(() => {
       const state = window.__yaadeAgent!.getState();
+      // SAFETY: the browser test harness exposes toolUses with these optional fields.
       const uses = (state.toolUses ?? []) as readonly {
         id?: string;
         context?: {
@@ -1252,6 +1269,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     const result = await page.evaluate(async (toolUseId) => {
       const tools = window.yaade?.tools;
       if (!tools) throw new Error("tools API missing");
+      // SAFETY: the preceding find predicate establishes the tool-use identifier.
       const use = (window.__yaadeAgent!.getState().toolUses ?? []).find(
         (item: { id: string }) => item.id === toolUseId,
       ) as { id: string } | undefined;
@@ -1414,6 +1432,7 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
       await page.waitForFunction(
         (expectedBranch) => {
           const state = window.__yaadeAgent?.getState();
+          // SAFETY: the find predicate selects the active tool-use context from the test state.
           const active = (state?.toolUses ?? []).find(
             (use: { id?: string }) => use.id === state?.activeToolUseId,
           ) as
@@ -1436,6 +1455,80 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     }
   },
 );
+
+test("pane separators fill the gap and resize horizontal and vertical splits", async () => {
+  const app = await launchWeb({})
+  try {
+    const page = app.page
+    await openToolSessionShell(page)
+    await createEditorToolUse(page)
+
+    const firstPane = page.locator("[data-yaade-panel-leaf]").first()
+    await firstPane.getByRole("button", { name: "Split right" }).click()
+    await expect
+      .poll(async () => page.locator("[data-yaade-panel-leaf]").count())
+      .toBe(2)
+
+    const horizontal = page.locator(
+      '[data-yaade-pane-separator][data-orientation="horizontal"]',
+    )
+    const horizontalBox = await horizontal.boundingBox()
+    expect(horizontalBox).toBeTruthy()
+    expect(horizontalBox?.width).toBeGreaterThanOrEqual(4)
+    expect(horizontalBox?.height).toBeGreaterThan(200)
+    await expect
+      .poll(async () => horizontal.evaluate(element => getComputedStyle(element).cursor))
+      .toBe("col-resize")
+
+    const widthBefore = (await firstPane.boundingBox())?.width
+    if (widthBefore == null || horizontalBox == null) {
+      throw new Error("horizontal pane geometry missing")
+    }
+    const horizontalStartX = horizontalBox.x + horizontalBox.width / 2
+    const horizontalStartY = horizontalBox.y + horizontalBox.height / 2
+    await page.mouse.move(horizontalStartX, horizontalStartY)
+    await page.mouse.down()
+    await page.mouse.move(horizontalStartX + 100, horizontalStartY, { steps: 10 })
+    await page.mouse.up()
+    await expect
+      .poll(async () => Math.abs(((await firstPane.boundingBox())?.width ?? widthBefore) - widthBefore))
+      .toBeGreaterThan(40)
+
+    await firstPane.getByRole("button", { name: "Split down" }).click()
+    await expect
+      .poll(async () =>
+        page.locator('[data-yaade-pane-separator][data-orientation="vertical"]').count(),
+      )
+      .toBe(1)
+
+    const vertical = page.locator(
+      '[data-yaade-pane-separator][data-orientation="vertical"]',
+    )
+    const verticalBox = await vertical.boundingBox()
+    expect(verticalBox).toBeTruthy()
+    expect(verticalBox?.height).toBeGreaterThanOrEqual(4)
+    expect(verticalBox?.width).toBeGreaterThan(200)
+    await expect
+      .poll(async () => vertical.evaluate(element => getComputedStyle(element).cursor))
+      .toBe("row-resize")
+
+    const heightBefore = (await firstPane.boundingBox())?.height
+    if (heightBefore == null || verticalBox == null) {
+      throw new Error("vertical pane geometry missing")
+    }
+    const verticalStartX = verticalBox.x + verticalBox.width / 2
+    const verticalStartY = verticalBox.y + verticalBox.height / 2
+    await page.mouse.move(verticalStartX, verticalStartY)
+    await page.mouse.down()
+    await page.mouse.move(verticalStartX, verticalStartY + 80, { steps: 10 })
+    await page.mouse.up()
+    await expect
+      .poll(async () => Math.abs(((await firstPane.boundingBox())?.height ?? heightBefore) - heightBefore))
+      .toBeGreaterThan(30)
+  } finally {
+    await app.app.close()
+  }
+})
 
 test("pane tiles contain ToolUse tabs and the sidebar lists sessions and agents", async () => {
   const app = await launchWeb({});
@@ -1500,6 +1593,7 @@ test("pane tiles contain ToolUse tabs and the sidebar lists sessions and agents"
     await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
 
     const thirdPtyId = await page.evaluate((id) => {
+      // SAFETY: the browser test harness exposes the optional process output fields.
       const use = (window.__yaadeAgent?.getState().toolUses ?? []).find(
         (candidate: { id: string }) => candidate.id === id,
       ) as { output?: { ptyId?: string } } | undefined;

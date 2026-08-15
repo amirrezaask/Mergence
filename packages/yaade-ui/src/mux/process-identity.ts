@@ -25,7 +25,11 @@ const SHELLS = new Set([
   "cmd.exe",
 ])
 
-const IDENTITY: Record<string, ProcessIdentity> = {
+interface ProcessIdentityMap {
+  [processName: string]: ProcessIdentity
+}
+
+const IDENTITY: ProcessIdentityMap = {
   nvim: { glyph: "Nv", hue: 145, label: "Neovim" },
   neovim: { glyph: "Nv", hue: 145, label: "Neovim" },
   vim: { glyph: "Vi", hue: 145, label: "Vim" },
@@ -55,10 +59,12 @@ export function processIdentity(processName: string | null | undefined): Process
   return IDENTITY[base] ?? { ...DEFAULT_UNKNOWN, label: base }
 }
 
-export function deckTileStyle(identity: ProcessIdentity): {
+export type DeckTileStyle = {
   backgroundColor: string
   color: string
-} {
+}
+
+export function deckTileStyle(identity: ProcessIdentity): DeckTileStyle {
   return {
     backgroundColor: `oklch(0.64 0.15 ${identity.hue})`,
     color: "oklch(0.98 0.01 255)",

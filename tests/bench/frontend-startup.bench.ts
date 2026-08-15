@@ -15,6 +15,12 @@ type StartupSnapshot = {
   scripts: string[]
 }
 
+declare global {
+  interface Performance {
+    memory?: { usedJSHeapSize?: number }
+  }
+}
+
 function result(name: string, samples: number[]): BenchResult {
   return {
     name,
@@ -38,7 +44,7 @@ test("bench frontend cold startup and first overlay", async () => {
     })
     try {
       const snapshot = await page.evaluate(() => {
-        const memory = Reflect.get(performance, "memory")
+        const memory = performance.memory
         const usedHeapBytes =
           typeof memory === "object" &&
           memory !== null &&

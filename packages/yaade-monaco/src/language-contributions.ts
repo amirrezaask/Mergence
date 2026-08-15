@@ -1,12 +1,15 @@
 import { monacoLanguageId } from "./language.js"
 
-type ContributionLoader = () => Promise<unknown>
+type ContributionLoader = () => Promise<object>
+interface ContributionLoaderMap {
+  [language: string]: ContributionLoader
+}
 
 const loadCss = () => import("monaco-editor/esm/vs/language/css/monaco.contribution.js")
 const loadHtml = () => import("monaco-editor/esm/vs/language/html/monaco.contribution.js")
 
 /** Static dynamic-import map keeps every supported tokenizer in its own Vite chunk. */
-const loaders: Readonly<Record<string, ContributionLoader>> = {
+const loaders: ContributionLoaderMap = {
   typescript: () => import("monaco-editor/esm/vs/basic-languages/typescript/typescript.contribution.js"),
   javascript: () => import("monaco-editor/esm/vs/basic-languages/javascript/javascript.contribution.js"),
   rust: () => import("monaco-editor/esm/vs/basic-languages/rust/rust.contribution.js"),

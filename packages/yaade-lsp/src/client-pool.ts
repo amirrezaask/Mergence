@@ -1842,15 +1842,16 @@ export class LspClientPool {
         return this.registerDynamicSaveSynchronization(conn.id, registration, documentSelector, {
           willSaveWaitUntil: true,
         })
-      case "textDocument/didSave":
+      case "textDocument/didSave": {
+        // SAFETY: didSave registration options are defined by the LSP capability contract.
+        const options = registration.registerOptions as
+          | { includeText?: boolean }
+          | undefined
         return this.registerDynamicSaveSynchronization(conn.id, registration, documentSelector, {
           didSave: true,
-          includeText: Boolean(
-            registration.registerOptions
-            && typeof registration.registerOptions === "object"
-            && Reflect.get(registration.registerOptions, "includeText") === true,
-          ),
+          includeText: options?.includeText === true,
         })
+      }
       case "workspace/didChangeWatchedFiles": {
         const options = registration.registerOptions as
           | DidChangeWatchedFilesRegistrationOptions

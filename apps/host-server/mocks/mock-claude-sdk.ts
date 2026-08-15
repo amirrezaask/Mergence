@@ -9,8 +9,9 @@
  * Usage: tsx apps/host-server/mocks/mock-claude-sdk.ts
  */
 
-type JsonValue = unknown
-type JsonObject = Record<string, JsonValue>
+type JsonPrimitive = string | number | boolean | null | undefined
+type JsonValue = JsonPrimitive | JsonObject | JsonValue[]
+type JsonObject = { [key: string]: JsonValue }
 
 function send(value: JsonObject): void {
   process.stdout.write(`${JSON.stringify(value)}\n`)

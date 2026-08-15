@@ -16,13 +16,13 @@ export { defaultDark, defaultLight } from "./shadcn.js"
 
 export const defaultThemeId = defaultDark.id
 
-export const bundledThemes: Record<string, YaadeTheme> = {
+export const bundledThemes = {
   ...shadcnThemes,
   ...catppuccinThemes,
   ...tokyoNightThemes,
   ...rosePineThemes,
   ...ayuThemes,
-}
+} satisfies Record<string, YaadeTheme>
 
 export const bundledThemeList: YaadeTheme[] = [
   ...shadcnThemeList,

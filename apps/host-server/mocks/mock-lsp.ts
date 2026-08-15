@@ -53,7 +53,7 @@ const activeProgressTokens = new Set<string | number>();
 
 function field(value: unknown, key: string): unknown {
   if (value === null || typeof value !== "object") return undefined;
-  return Reflect.get(value, key);
+  return Object.entries(value).find(([name]) => name === key)?.[1];
 }
 
 function stringField(value: unknown, key: string): string | undefined {

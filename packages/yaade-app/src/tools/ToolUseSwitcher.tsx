@@ -4,13 +4,13 @@ import { formatKeyBinding, PaletteShell, type PaletteShellItem } from "@yaade/ui
 import { toolUseContextCaption, toolUseWorkTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 
-const toolIcons: Record<ToolKind, typeof Bot> = {
+const toolIcons = {
   agent: Bot,
   editor: FileCode2,
   terminal: Terminal,
   search: Search,
   git: GitBranch,
-};
+} satisfies Record<ToolKind, typeof Bot>;
 
 type ToolUseSwitcherEntry = {
   readonly use: ToolUse;

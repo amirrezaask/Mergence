@@ -2,26 +2,28 @@
 export function structuredOutputData(method: string, data: unknown): unknown {
   if (!data || typeof data !== "object") return data
   if (method === "textDocument/didSave") {
-    const text = Reflect.get(data, "text")
+    const text = Object.entries(data).find(([name]) => name === "text")?.[1]
     return {
-      textDocument: Reflect.get(data, "textDocument"),
+      textDocument: Object.entries(data).find(([name]) => name === "textDocument")?.[1],
       includeText: typeof text === "string",
       ...(typeof text === "string" ? { textLength: text.length } : {}),
     }
   }
   if (method === "textDocument/publishDiagnostics") {
-    const diagnostics = Reflect.get(data, "diagnostics")
+    const diagnostics = Object.entries(data).find(([name]) => name === "diagnostics")?.[1]
     return {
-      uri: Reflect.get(data, "uri"),
-      version: Reflect.get(data, "version"),
+      uri: Object.entries(data).find(([name]) => name === "uri")?.[1],
+      version: Object.entries(data).find(([name]) => name === "version")?.[1],
       diagnosticCount: Array.isArray(diagnostics) ? diagnostics.length : 0,
     }
   }
   if (method === "workspace/applyEdit") {
-    const edit = Reflect.get(data, "edit")
-    const changes = edit && typeof edit === "object" ? Reflect.get(edit, "changes") : undefined
+    const edit = Object.entries(data).find(([name]) => name === "edit")?.[1]
+    const changes = edit && typeof edit === "object"
+      ? Object.entries(edit).find(([name]) => name === "changes")?.[1]
+      : undefined
     const documentChanges = edit && typeof edit === "object"
-      ? Reflect.get(edit, "documentChanges")
+      ? Object.entries(edit).find(([name]) => name === "documentChanges")?.[1]
       : undefined
     return {
       changedDocumentCount: changes && typeof changes === "object"

@@ -16,7 +16,11 @@ const loadedLangs = new Set<string>([
   "text",
 ])
 
-const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
+interface LanguageLoaderMap {
+  [language: string]: () => Promise<object>
+}
+
+const LANG_LOADERS: LanguageLoaderMap = {
   typescript: () => import("@shikijs/langs/typescript"),
   javascript: () => import("@shikijs/langs/javascript"),
   tsx: () => import("@shikijs/langs/tsx"),
@@ -40,8 +44,7 @@ const LANG_LOADERS: Record<string, () => Promise<unknown>> = {
 }
 
 function preferDarkTheme(): boolean {
-  if (typeof document === "undefined") return true
-  return document.documentElement.classList.contains("dark")
+  return globalThis.document?.documentElement.classList.contains("dark") ?? true
 }
 
 async function getHighlighter(): Promise<HighlighterCore> {
@@ -97,6 +100,7 @@ export async function tokenizeSearchLines(
     const loader = LANG_LOADERS[lang]
     if (loader) {
       try {
+        // SAFETY: every loader is a Shiki language module accepted by loadLanguage.
         await highlighter.loadLanguage(loader as () => Promise<never>)
         loadedLangs.add(lang)
       } catch {
@@ -109,6 +113,7 @@ export async function tokenizeSearchLines(
   const theme: ThemeName = preferDarkTheme() ? "github-dark" : "github-light"
   const code = lines.join("\n")
   try {
+    // SAFETY: shikiLang returns a supported language id or the text fallback.
     const result = highlighter.codeToTokens(code, {
       lang: lang as "text",
       theme,

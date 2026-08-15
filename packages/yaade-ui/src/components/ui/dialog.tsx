@@ -9,14 +9,14 @@ import { yaadeOverlayContentClass, type YaadeOverlayMotion } from "@/motion/toke
 export type JetDialogSize = "default" | "prompt" | "picker" | "wide" | "stage"
 export type JetDialogPlacement = "center" | "quick-input"
 
-const dialogSizeClass: Record<JetDialogSize, string> = {
+const dialogSizeClass = {
   default: "sm:max-w-lg",
   prompt: "sm:max-w-sm",
   picker: "sm:max-w-[32rem]",
   wide: "sm:max-w-[42rem]",
   stage:
     "h-dvh w-screen max-h-none max-w-none gap-0 overflow-hidden p-0 rounded-none sm:max-w-none sm:rounded-none",
-}
+} satisfies Record<JetDialogSize, string>
 
 function Dialog({
   ...props

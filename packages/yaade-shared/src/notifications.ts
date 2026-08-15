@@ -210,7 +210,7 @@ export interface BindNotificationSessionRequest {
 }
 
 /** Source strength for dedupe enrichment (higher wins). */
-export const NOTIFICATION_SOURCE_RANK: Record<NotificationSource, number> = {
+export const NOTIFICATION_SOURCE_RANK = {
   "interactive-runtime": 60,
   "provider-hook": 50,
   "provider-plugin": 40,
@@ -218,7 +218,7 @@ export const NOTIFICATION_SOURCE_RANK: Record<NotificationSource, number> = {
   process: 20,
   system: 15,
   "aggregated-pty": 10,
-}
+} satisfies Record<NotificationSource, number>
 
 export function severityForNotificationType(
   type: NotificationType,
