@@ -20,7 +20,8 @@ import type {
   ToolUseInput,
 } from "@yaade/rpc";
 import { MainCheckout } from "@yaade/rpc";
-import type { ProjectSearchOptions, YaadeTheme } from "@yaade/shared";
+import type { PanelId, ProjectSearchOptions, YaadeTheme } from "@yaade/shared";
+import type { PanelEvent } from "@yaade/panels";
 import {
   Alert,
   AlertDescription,
@@ -35,7 +36,13 @@ import {
   Spinner,
   TooltipProvider,
 } from "@yaade/ui/primitives";
-import { WhichKeyPanel, cn, useIsMobile } from "@yaade/ui";
+import {
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
+} from "lucide-react";
+import { WhichKeyPanel, cn, useIsMobile, type TabDndHandlers } from "@yaade/ui";
 import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
@@ -63,6 +70,18 @@ import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
+  closeToolPanel,
+  createToolWorkspace,
+  dockToolView,
+  focusToolPanel,
+  openToolView,
+  removeMissingToolViews,
+  resizeToolSplit,
+  splitToolPanel,
+  toolIdsInWorkspace,
+  type ToolWorkspace,
+} from "./tool-tiling.js";
+import {
   TOOL_SESSION_PREFIX,
   TOOL_SESSION_PREFIX_GROUPS,
   isToolSessionJumpKey,
@@ -74,6 +93,8 @@ import {
 } from "./tool-session-keymap.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
+const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
+const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
 
@@ -147,7 +168,9 @@ export function ToolSessionApp() {
   const [archivedSessions, setArchivedSessions] = useState<
     readonly import("@yaade/rpc").AppSession[]
   >([]);
-  const [viewportIds, setViewportIds] = useState<readonly ToolUseId[]>([]);
+  const [toolWorkspaces, setToolWorkspaces] = useState<
+    ReadonlyMap<SessionId, ToolWorkspace>
+  >(() => new Map());
   const [prefixPending, setPrefixPending] = useState(false);
   const [runtimeTitles, setRuntimeTitles] = useState<
     ReadonlyMap<ToolUseId, RuntimeToolTitle>
@@ -228,13 +251,6 @@ export function ToolSessionApp() {
   const selected = snapshot.activeToolUseId
     ? snapshot.usesById.get(snapshot.activeToolUseId)
     : undefined;
-  const processUses = useMemo(
-    () =>
-      [...snapshot.usesById.values()].filter(
-        (use) => !use.archivedAt && use.output.kind === "process",
-      ),
-    [snapshot.usesById],
-  );
   const twoSidebarLayout = appearanceSettings.sessionLayout === "two-sidebars";
   const singleSidebarLayout =
     appearanceSettings.sessionLayout === "single-sidebar";
@@ -299,17 +315,29 @@ export function ToolSessionApp() {
     });
   }, [updateRuntimeTitle]);
 
-  useEffect(() => {
-    if (!selected || selected.output.kind !== "process") return;
-    setViewportIds((previous) => {
-      const next = [
-        ...previous.filter((id) => id !== selected.id),
-        selected.id,
-      ];
-      const liveIds = new Set(processUses.map((use) => use.id));
-      return next.filter((id) => liveIds.has(id)).slice(-6);
-    });
-  }, [processUses, selected]);
+  const updateToolWorkspace = useCallback(
+    (
+      sessionId: SessionId,
+      update: (workspace: ToolWorkspace) => ToolWorkspace,
+    ) => {
+      setToolWorkspaces((previous) => {
+        const current = previous.get(sessionId) ?? createToolWorkspace();
+        const next = update(current);
+        if (next === current && previous.has(sessionId)) return previous;
+        return new Map(previous).set(sessionId, next);
+      });
+    },
+    [],
+  );
+
+  const openToolInWorkspace = useCallback(
+    (use: ToolUse) => {
+      updateToolWorkspace(use.sessionId, (workspace) =>
+        openToolView(workspace, use.id),
+      );
+    },
+    [updateToolWorkspace],
+  );
 
   const selectSession = useCallback(
     (id: SessionId) => {
@@ -328,11 +356,32 @@ export function ToolSessionApp() {
   const selectTool = useCallback(
     (use: ToolUse) => {
       markPerformance("yaade:tool-switch");
+      openToolInWorkspace(use);
+      const current = client.store.getSnapshot().activeToolUseId;
       client.store.selectToolUse(use.id);
-      history.pushState(null, "", toolSessionUrl(use.sessionId, use.id));
+      if (current !== use.id) {
+        history.pushState(null, "", toolSessionUrl(use.sessionId, use.id));
+      }
     },
-    [client],
+    [client, openToolInWorkspace],
   );
+
+  const lastAutoOpenedToolRef = useRef<string | undefined>(undefined);
+  useEffect(() => {
+    if (!selected) return;
+    const key = `${selected.sessionId}:${selected.id}`;
+    if (lastAutoOpenedToolRef.current === key) return;
+    lastAutoOpenedToolRef.current = key;
+    openToolInWorkspace(selected);
+  }, [openToolInWorkspace, selected]);
+
+  useEffect(() => {
+    if (!activeSession) return;
+    const liveIds = new Set(useIds);
+    updateToolWorkspace(activeSession.id, (workspace) =>
+      removeMissingToolViews(workspace, liveIds),
+    );
+  }, [activeSession, updateToolWorkspace, useIds]);
 
   const createTool = useCallback(
     async (
@@ -710,7 +759,9 @@ export function ToolSessionApp() {
         target?.closest("input, textarea, [contenteditable=true]"),
       );
       const inTerminal = Boolean(
-        target?.closest("[data-yaade-terminal-input], [data-yaade-terminal-canvas]"),
+        target?.closest(
+          "[data-yaade-terminal-input], [data-yaade-terminal-canvas]",
+        ),
       );
       const inPrefixButton = Boolean(
         target?.closest("[data-yaade-which-key-item]"),
@@ -832,6 +883,96 @@ export function ToolSessionApp() {
     [client],
   );
 
+  const activeToolWorkspace = useMemo(() => {
+    if (!activeSession) return createToolWorkspace();
+    return toolWorkspaces.get(activeSession.id) ?? createToolWorkspace();
+  }, [activeSession, toolWorkspaces]);
+
+  const openToolUseIds = useMemo(
+    () => new Set(toolIdsInWorkspace(activeToolWorkspace)),
+    [activeToolWorkspace],
+  );
+
+  const toolUseIdForDrag = useCallback(
+    (tabId: string): ToolUseId | undefined => useIds.find((id) => id === tabId),
+    [useIds],
+  );
+
+  const activateDockedTool = useCallback(
+    (use: ToolUse) => {
+      if (client.store.getSnapshot().activeToolUseId === use.id) return;
+      client.store.selectToolUse(use.id);
+      history.replaceState(null, "", toolSessionUrl(use.sessionId, use.id));
+    },
+    [client],
+  );
+
+  const toolTabDnd = useMemo((): TabDndHandlers => {
+    return {
+      onTabReorder: () => undefined,
+      tabIdsForPanel: (panelId) => {
+        const view = activeToolWorkspace.tree.getView(panelId);
+        return view?.kind === "tool" ? [view.toolUseId] : [];
+      },
+      onTabDrop: (_source, sourceTabId, target, action) => {
+        if (!activeSession) return;
+        const toolUseId = toolUseIdForDrag(sourceTabId);
+        if (!toolUseId) return;
+        const use = snapshot.usesById.get(toolUseId);
+        updateToolWorkspace(activeSession.id, (workspace) =>
+          dockToolView(workspace, toolUseId, target, action),
+        );
+        if (use) activateDockedTool(use);
+      },
+      onSessionDrop: (sourceTabId, target, action) => {
+        if (!activeSession) return;
+        const toolUseId = toolUseIdForDrag(sourceTabId);
+        if (!toolUseId) return;
+        const use = snapshot.usesById.get(toolUseId);
+        updateToolWorkspace(activeSession.id, (workspace) =>
+          dockToolView(workspace, toolUseId, target, action),
+        );
+        if (use) activateDockedTool(use);
+      },
+    };
+  }, [
+    activeSession,
+    activeToolWorkspace,
+    activateDockedTool,
+    snapshot.usesById,
+    toolUseIdForDrag,
+    updateToolWorkspace,
+  ]);
+
+  const handleToolPanelEvent = useCallback(
+    (event: PanelEvent) => {
+      if (!activeSession) return;
+      if (event.type === "splitRatiosChanged") {
+        updateToolWorkspace(activeSession.id, (workspace) =>
+          resizeToolSplit(workspace, event.path, event.ratios),
+        );
+        return;
+      }
+      if (event.type === "panelClose") {
+        updateToolWorkspace(activeSession.id, (workspace) =>
+          closeToolPanel(workspace, event.panelId),
+        );
+      }
+    },
+    [activeSession, updateToolWorkspace],
+  );
+
+  const focusWorkspacePanel = useCallback(
+    (panelId: PanelId, use?: ToolUse) => {
+      if (!activeSession) return;
+      updateToolWorkspace(activeSession.id, (workspace) =>
+        focusToolPanel(workspace, panelId),
+      );
+      if (use) activateDockedTool(use);
+    },
+    [activeSession, activateDockedTool, updateToolWorkspace],
+  );
+
   const renderPrefixHud = (placement: "main" | "dock") =>
     prefixPending ? (
       <div
@@ -878,99 +1019,14 @@ export function ToolSessionApp() {
         data-yaade-session-layout={appearanceSettings.sessionLayout}
         data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
       >
-        {!sidebarLayout ? (
-          <SessionTabStrip
-            sessions={visibleSessions}
-            activeSessionId={snapshot.activeSessionId}
-            toolCounts={toolCounts}
-            layout="tabs"
-            onSelect={selectSession}
-            onClose={requestCloseSession}
-            onOpenSettings={() => setSettingsOpen(true)}
-            onCreate={() => void createSession()}
-            onRename={(id, title) => void renameSession(id, title)}
-            onReorder={(ids) => void reorderSessions(ids)}
-          />
-        ) : null}
-        <div
-          className={cn(
-            "relative min-h-0 flex-1",
-            (twoSidebarLayout || singleSidebarLayout) &&
-              "grid max-md:flex max-md:flex-col",
-            !sidebarLayout && "flex flex-col",
-          )}
-          style={
-            twoSidebarLayout
-              ? {
-                  gridTemplateColumns: sidebarsCollapsed
-                    ? "0rem minmax(0, 1fr) 0rem"
-                    : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr) ${appearanceSettings.sidebarWidth}px`,
-                }
-              : singleSidebarLayout
-                ? {
-                    gridTemplateColumns: sidebarsCollapsed
-                      ? "0rem minmax(0, 1fr)"
-                      : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr)`,
-                  }
-                : undefined
-          }
-        >
-          {twoSidebarLayout ? (
-            <SessionTabStrip
-              sessions={visibleSessions}
-              activeSessionId={snapshot.activeSessionId}
-              toolCounts={toolCounts}
-              layout="two-sidebars"
-              collapsed={sidebarsCollapsed}
-              sidebarOrientation={sidebarOrientation}
-              onSelect={selectSession}
-              onClose={requestCloseSession}
-              onOpenSettings={() => setSettingsOpen(true)}
-              onCreate={() => void createSession()}
-              onRename={(id, title) => void renameSession(id, title)}
-              onReorder={(ids) => void reorderSessions(ids)}
-            />
-          ) : singleSidebarLayout ? (
-            <aside
-              className={cn(
-                "flex h-full min-h-0 w-full min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
-                sidebarsCollapsed && "hidden",
-                "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
-              )}
-              aria-label="Navigation"
-              data-yaade-single-sidebar=""
-              data-yaade-sidebar-state={
-                sidebarsCollapsed ? "collapsed" : "expanded"
-              }
-            >
-              <ToolUseTabStrip
-                useIds={useIds}
-                usesById={snapshot.usesById}
-                activeToolUseId={snapshot.activeToolUseId}
-                runtimeTitles={runtimeTitles}
-                projects={projects}
-                layout="single-sidebar"
-                collapsed={sidebarsCollapsed}
-                sidebarOrientation={sidebarOrientation}
-                onSelect={selectTool}
-                onContextChange={updateToolContext}
-                onProviderChange={updateToolProvider}
-                onAddAgent={(provider) => void createTool("agent", provider)}
-                onAddKind={(kind) => void createTool(kind)}
-                onAddWithContext={(kind, project, checkout) =>
-                  void createTool(kind, undefined, { project, checkout })
-                }
-                onClose={(use) => void runToolAction("archive", use)}
-                onRename={(use, title) => void renameToolUse(use, title)}
-                onReorder={(ids) => void reorderToolUses(ids)}
-              />
+        <Suspense fallback={<SessionBootState />}>
+          <ToolDndRoot handlers={toolTabDnd}>
+            {!sidebarLayout ? (
               <SessionTabStrip
                 sessions={visibleSessions}
                 activeSessionId={snapshot.activeSessionId}
                 toolCounts={toolCounts}
-                layout="single-sidebar"
-                collapsed={sidebarsCollapsed}
-                sidebarOrientation={sidebarOrientation}
+                layout="tabs"
                 onSelect={selectSession}
                 onClose={requestCloseSession}
                 onOpenSettings={() => setSettingsOpen(true)}
@@ -978,166 +1034,311 @@ export function ToolSessionApp() {
                 onRename={(id, title) => void renameSession(id, title)}
                 onReorder={(ids) => void reorderSessions(ids)}
               />
-            </aside>
-          ) : null}
-          {twoSidebarLayout && !sidebarsCollapsed ? (
-            <SidebarResizeHandle
-              value={appearanceSettings.sidebarWidth}
-              min={MIN_SIDEBAR_WIDTH}
-              max={MAX_SIDEBAR_WIDTH}
-              side="left"
-              label="Resize session sidebar"
-              onChange={resizeSidebar}
-            />
-          ) : null}
-          {singleSidebarLayout && !sidebarsCollapsed ? (
-            <SidebarResizeHandle
-              value={appearanceSettings.sidebarWidth}
-              min={MIN_SIDEBAR_WIDTH}
-              max={MAX_SIDEBAR_WIDTH}
-              side="left"
-              label="Resize sidebar"
-              onChange={resizeSidebar}
-            />
-          ) : null}
-          <main
-            className={cn(
-              "relative flex min-w-0 min-h-0 flex-1 flex-col",
-              sidebarLayout && "col-start-2",
-            )}
-          >
-            {snapshot.connection === "reconciling" ||
-            snapshot.connection === "offline" ? (
-              <Alert className="m-4">
-                <AlertTitle>
-                  {snapshot.connection === "offline"
-                    ? "Host offline"
-                    : "Reconnecting"}
-                </AlertTitle>
-                <AlertDescription>
-                  {snapshot.connection === "offline"
-                    ? "Tool state will refresh when the host returns."
-                    : "Reconciling session state without clearing current results."}
-                </AlertDescription>
-              </Alert>
             ) : null}
-            {actionError ? (
-              <Alert variant="destructive" className="m-4">
-                <AlertTitle>Action failed</AlertTitle>
-                <AlertDescription>{actionError}</AlertDescription>
-              </Alert>
-            ) : null}
-            {snapshot.connection === "connecting" &&
-            visibleSessions.length === 0 ? (
-              <SessionBootState />
-            ) : selected ? (
-              <ToolUseViewport
-                selected={selected}
-                processUses={processUses.filter((use) =>
-                  viewportIds.includes(use.id),
-                )}
-                theme={activeTheme}
-                fontSize={fontSize}
-                projects={projects}
-                results={snapshot.searchResultsByUseId.get(selected.id) ?? []}
-                onContextChange={updateToolContext}
-                onProviderChange={updateToolProvider}
-                onAction={(action, use) => void runToolAction(action, use)}
-                onTitleChange={(use, title) =>
-                  updateRuntimeTitle(use, title, "terminal")
-                }
-                onSearchChange={async (use, next, options) => {
-                  const latest =
-                    client.store.getSnapshot().usesById.get(use.id) ?? use;
-                  if (latest.input.kind !== "search") return;
-                  try {
-                    const updated = await window.yaade?.tools?.updateUseInput?.(
-                      {
-                        _tag: "UpdateToolUseInput",
-                        toolUseId: latest.id,
-                        inputRevision: latest.inputRevision,
-                        input: {
-                          _tag: "SearchToolInput",
-                          kind: "search",
-                          query: next,
-                          options,
-                        },
-                      },
-                    );
-                    if (updated) {
-                      client.store.replaceToolUse(updated);
-                      await client.reconcile();
-                    }
-                  } catch (error) {
-                    setActionError(errorMessage(error));
-                  }
-                }}
-                onLoadMore={async (use) => {
-                  if (use.output.kind !== "search" || !use.output.nextCursor)
-                    return;
-                  try {
-                    await window.yaade?.tools?.loadMore?.(
-                      use.id,
-                      use.output.resultRevision,
-                      Number(use.output.nextCursor),
-                      100,
-                    );
-                    await client.reconcile();
-                  } catch (error) {
-                    setActionError(errorMessage(error));
-                  }
-                }}
-              />
-            ) : (
-              <SessionEmptyState
-                onAddKind={(kind) => void createTool(kind)}
-              />
-            )}
-            {sidebarLayout ? renderPrefixHud("main") : null}
-          </main>
-          {twoSidebarLayout || !sidebarLayout ? (
             <div
-              className={
+              className={cn(
+                "relative min-h-0 flex-1",
+                (twoSidebarLayout || singleSidebarLayout) &&
+                  "grid max-md:flex max-md:flex-col",
+                !sidebarLayout && "flex flex-col",
+              )}
+              style={
                 twoSidebarLayout
-                  ? "relative col-start-3 min-h-0 min-w-0"
-                  : "relative shrink-0"
+                  ? {
+                      gridTemplateColumns: sidebarsCollapsed
+                        ? "0rem minmax(0, 1fr) 0rem"
+                        : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr) ${appearanceSettings.sidebarWidth}px`,
+                    }
+                  : singleSidebarLayout
+                    ? {
+                        gridTemplateColumns: sidebarsCollapsed
+                          ? "0rem minmax(0, 1fr)"
+                          : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr)`,
+                      }
+                    : undefined
               }
             >
-              {!sidebarLayout ? renderPrefixHud("dock") : null}
-              <ToolUseTabStrip
-                useIds={useIds}
-                usesById={snapshot.usesById}
-                activeToolUseId={snapshot.activeToolUseId}
-                runtimeTitles={runtimeTitles}
-                projects={projects}
-                layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
-                collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
-                sidebarOrientation={sidebarOrientation}
-                onSelect={selectTool}
-                onContextChange={updateToolContext}
-                onProviderChange={updateToolProvider}
-                onAddAgent={(provider) => void createTool("agent", provider)}
-                onAddKind={(kind) => void createTool(kind)}
-                onAddWithContext={(kind, project, checkout) =>
-                  void createTool(kind, undefined, { project, checkout })
-                }
-                onClose={(use) => void runToolAction("archive", use)}
-                onRename={(use, title) => void renameToolUse(use, title)}
-                onReorder={(ids) => void reorderToolUses(ids)}
-              />
+              {twoSidebarLayout ? (
+                <SessionTabStrip
+                  sessions={visibleSessions}
+                  activeSessionId={snapshot.activeSessionId}
+                  toolCounts={toolCounts}
+                  layout="two-sidebars"
+                  collapsed={sidebarsCollapsed}
+                  sidebarOrientation={sidebarOrientation}
+                  onSelect={selectSession}
+                  onClose={requestCloseSession}
+                  onOpenSettings={() => setSettingsOpen(true)}
+                  onCreate={() => void createSession()}
+                  onRename={(id, title) => void renameSession(id, title)}
+                  onReorder={(ids) => void reorderSessions(ids)}
+                />
+              ) : singleSidebarLayout ? (
+                <aside
+                  className={cn(
+                    "flex h-full min-h-0 w-full min-w-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+                    sidebarsCollapsed && "hidden",
+                    "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
+                  )}
+                  aria-label="Navigation"
+                  data-yaade-single-sidebar=""
+                  data-yaade-sidebar-state={
+                    sidebarsCollapsed ? "collapsed" : "expanded"
+                  }
+                >
+                  <ToolUseTabStrip
+                    useIds={useIds}
+                    usesById={snapshot.usesById}
+                    activeToolUseId={snapshot.activeToolUseId}
+                    openToolUseIds={openToolUseIds}
+                    runtimeTitles={runtimeTitles}
+                    projects={projects}
+                    layout="single-sidebar"
+                    collapsed={sidebarsCollapsed}
+                    sidebarOrientation={sidebarOrientation}
+                    dockable
+                    onSelect={selectTool}
+                    onContextChange={updateToolContext}
+                    onProviderChange={updateToolProvider}
+                    onAddAgent={(provider) =>
+                      void createTool("agent", provider)
+                    }
+                    onAddKind={(kind) => void createTool(kind)}
+                    onAddWithContext={(kind, project, checkout) =>
+                      void createTool(kind, undefined, { project, checkout })
+                    }
+                    onClose={(use) => void runToolAction("archive", use)}
+                    onRename={(use, title) => void renameToolUse(use, title)}
+                    onReorder={(ids) => void reorderToolUses(ids)}
+                  />
+                  <SessionTabStrip
+                    sessions={visibleSessions}
+                    activeSessionId={snapshot.activeSessionId}
+                    toolCounts={toolCounts}
+                    layout="single-sidebar"
+                    collapsed={sidebarsCollapsed}
+                    sidebarOrientation={sidebarOrientation}
+                    onSelect={selectSession}
+                    onClose={requestCloseSession}
+                    onOpenSettings={() => setSettingsOpen(true)}
+                    onCreate={() => void createSession()}
+                    onRename={(id, title) => void renameSession(id, title)}
+                    onReorder={(ids) => void reorderSessions(ids)}
+                  />
+                </aside>
+              ) : null}
+              {twoSidebarLayout && !sidebarsCollapsed ? (
+                <SidebarResizeHandle
+                  value={appearanceSettings.sidebarWidth}
+                  min={MIN_SIDEBAR_WIDTH}
+                  max={MAX_SIDEBAR_WIDTH}
+                  side="left"
+                  label="Resize session sidebar"
+                  onChange={resizeSidebar}
+                />
+              ) : null}
+              {singleSidebarLayout && !sidebarsCollapsed ? (
+                <SidebarResizeHandle
+                  value={appearanceSettings.sidebarWidth}
+                  min={MIN_SIDEBAR_WIDTH}
+                  max={MAX_SIDEBAR_WIDTH}
+                  side="left"
+                  label="Resize sidebar"
+                  onChange={resizeSidebar}
+                />
+              ) : null}
+              <main
+                className={cn(
+                  "relative flex min-w-0 min-h-0 flex-1 flex-col",
+                  sidebarLayout && "col-start-2",
+                )}
+              >
+                {snapshot.connection === "reconciling" ||
+                snapshot.connection === "offline" ? (
+                  <Alert className="m-4">
+                    <AlertTitle>
+                      {snapshot.connection === "offline"
+                        ? "Host offline"
+                        : "Reconnecting"}
+                    </AlertTitle>
+                    <AlertDescription>
+                      {snapshot.connection === "offline"
+                        ? "Tool state will refresh when the host returns."
+                        : "Reconciling session state without clearing current results."}
+                    </AlertDescription>
+                  </Alert>
+                ) : null}
+                {actionError ? (
+                  <Alert variant="destructive" className="m-4">
+                    <AlertTitle>Action failed</AlertTitle>
+                    <AlertDescription>{actionError}</AlertDescription>
+                  </Alert>
+                ) : null}
+                {sidebarLayout ? (
+                  <SidebarHoverToggle
+                    side="left"
+                    collapsed={sidebarsCollapsed}
+                    onToggle={toggleSidebars}
+                  />
+                ) : null}
+                {twoSidebarLayout ? (
+                  <SidebarHoverToggle
+                    side="right"
+                    collapsed={sidebarsCollapsed}
+                    onToggle={toggleSidebars}
+                  />
+                ) : null}
+                {snapshot.connection === "connecting" &&
+                visibleSessions.length === 0 ? (
+                  <SessionBootState />
+                ) : activeSession ? (
+                  <ToolTilingWorkspace
+                    workspace={activeToolWorkspace}
+                    usesById={snapshot.usesById}
+                    runtimeTitles={runtimeTitles}
+                    tabDnd={toolTabDnd}
+                    onPanelEvent={handleToolPanelEvent}
+                    onFocusPanel={focusWorkspacePanel}
+                    onSplit={(panelId, edge) =>
+                      updateToolWorkspace(activeSession.id, (workspace) =>
+                        splitToolPanel(workspace, panelId, edge),
+                      )
+                    }
+                    onCloseView={(panelId) =>
+                      updateToolWorkspace(activeSession.id, (workspace) =>
+                        closeToolPanel(workspace, panelId),
+                      )
+                    }
+                    empty={
+                      <SessionEmptyState
+                        onAddKind={(kind) => void createTool(kind)}
+                      />
+                    }
+                    renderTool={(use, focused) => (
+                      <SelectedToolUse
+                        key={use.id}
+                        use={use}
+                        theme={activeTheme}
+                        fontSize={fontSize}
+                        projects={projects}
+                        results={
+                          snapshot.searchResultsByUseId.get(use.id) ?? []
+                        }
+                        onContextChange={(project, checkout) =>
+                          updateToolContext(use, project, checkout)
+                        }
+                        onProviderChange={(provider) =>
+                          updateToolProvider(use, provider)
+                        }
+                        visible
+                        focused={focused}
+                        onAction={(action) => void runToolAction(action, use)}
+                        onSearchChange={async (next, options) => {
+                          const latest =
+                            client.store.getSnapshot().usesById.get(use.id) ??
+                            use;
+                          if (latest.input.kind !== "search") return;
+                          try {
+                            const updated =
+                              await window.yaade?.tools?.updateUseInput?.({
+                                _tag: "UpdateToolUseInput",
+                                toolUseId: latest.id,
+                                inputRevision: latest.inputRevision,
+                                input: {
+                                  _tag: "SearchToolInput",
+                                  kind: "search",
+                                  query: next,
+                                  options,
+                                },
+                              });
+                            if (updated) {
+                              client.store.replaceToolUse(updated);
+                              await client.reconcile();
+                            }
+                          } catch (error) {
+                            setActionError(errorMessage(error));
+                          }
+                        }}
+                        onLoadMore={async () => {
+                          if (
+                            use.output.kind !== "search" ||
+                            !use.output.nextCursor
+                          )
+                            return;
+                          try {
+                            await window.yaade?.tools?.loadMore?.(
+                              use.id,
+                              use.output.resultRevision,
+                              Number(use.output.nextCursor),
+                              100,
+                            );
+                            await client.reconcile();
+                          } catch (error) {
+                            setActionError(errorMessage(error));
+                          }
+                        }}
+                        onTitleChange={(title) =>
+                          updateRuntimeTitle(use, title, "terminal")
+                        }
+                      />
+                    )}
+                  />
+                ) : (
+                  <SessionEmptyState
+                    onAddKind={(kind) => void createTool(kind)}
+                  />
+                )}
+                {sidebarLayout ? renderPrefixHud("main") : null}
+              </main>
+              {twoSidebarLayout || !sidebarLayout ? (
+                <div
+                  className={
+                    twoSidebarLayout
+                      ? "relative col-start-3 min-h-0 min-w-0"
+                      : "relative shrink-0"
+                  }
+                >
+                  {!sidebarLayout ? renderPrefixHud("dock") : null}
+                  <ToolUseTabStrip
+                    useIds={useIds}
+                    usesById={snapshot.usesById}
+                    activeToolUseId={snapshot.activeToolUseId}
+                    openToolUseIds={openToolUseIds}
+                    runtimeTitles={runtimeTitles}
+                    projects={projects}
+                    layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
+                    collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
+                    sidebarOrientation={sidebarOrientation}
+                    dockable
+                    onSelect={selectTool}
+                    onContextChange={updateToolContext}
+                    onProviderChange={updateToolProvider}
+                    onAddAgent={(provider) =>
+                      void createTool("agent", provider)
+                    }
+                    onAddKind={(kind) => void createTool(kind)}
+                    onAddWithContext={(kind, project, checkout) =>
+                      void createTool(kind, undefined, { project, checkout })
+                    }
+                    onClose={(use) => void runToolAction("archive", use)}
+                    onRename={(use, title) => void renameToolUse(use, title)}
+                    onReorder={(ids) => void reorderToolUses(ids)}
+                  />
+                </div>
+              ) : null}
+              {twoSidebarLayout && !sidebarsCollapsed ? (
+                <SidebarResizeHandle
+                  value={appearanceSettings.sidebarWidth}
+                  min={MIN_SIDEBAR_WIDTH}
+                  max={MAX_SIDEBAR_WIDTH}
+                  side="right"
+                  label="Resize tool sidebar"
+                  onChange={resizeSidebar}
+                />
+              ) : null}
             </div>
-          ) : null}
-          {twoSidebarLayout && !sidebarsCollapsed ? (
-            <SidebarResizeHandle
-              value={appearanceSettings.sidebarWidth}
-              min={MIN_SIDEBAR_WIDTH}
-              max={MAX_SIDEBAR_WIDTH}
-              side="right"
-              label="Resize tool sidebar"
-              onChange={resizeSidebar}
-            />
-          ) : null}
-        </div>
+          </ToolDndRoot>
+        </Suspense>
         <ToolUseSwitcher
           open={toolUseSwitcherOpen}
           onOpenChange={setToolUseSwitcherOpen}
@@ -1183,80 +1384,42 @@ export function ToolSessionApp() {
   );
 }
 
-function ToolUseViewport(props: {
-  readonly selected: ToolUse;
-  readonly processUses: readonly ToolUse[];
-  readonly theme: YaadeTheme;
-  readonly fontSize: number;
-  readonly projects: readonly ProjectTarget[];
-  readonly results: readonly import("@yaade/rpc").ProjectSearchResult[];
-  readonly onAction: (
-    action: "cancel" | "restart" | "archive",
-    use: ToolUse,
-  ) => void;
-  readonly onContextChange: (
-    use: ToolUse,
-    project: ProjectTarget,
-    checkout: CheckoutTarget,
-  ) => Promise<void>;
-  readonly onProviderChange: (use: ToolUse, provider: string) => Promise<void>;
-  readonly onSearchChange: (
-    use: ToolUse,
-    query: string,
-    options: ProjectSearchOptions,
-  ) => Promise<void>;
-  readonly onLoadMore: (use: ToolUse) => Promise<void>;
-  readonly onTitleChange: (use: ToolUse, title: string) => void;
+function SidebarHoverToggle(props: {
+  readonly side: "left" | "right";
+  readonly collapsed: boolean;
+  readonly onToggle: () => void;
 }) {
-  const processIds = new Set(props.processUses.map((use) => use.id));
-  const render = (use: ToolUse, visible: boolean) => (
-    <SelectedToolUse
-      key={use.id}
-      use={use}
-      theme={props.theme}
-      fontSize={props.fontSize}
-      projects={props.projects}
-      results={use.id === props.selected.id ? props.results : []}
-      onContextChange={(project, checkout) =>
-        props.onContextChange(use, project, checkout)
-      }
-      onProviderChange={(provider) => props.onProviderChange(use, provider)}
-      visible={visible}
-      onAction={(action) => props.onAction(action, use)}
-      onSearchChange={(query, options) =>
-        props.onSearchChange(use, query, options)
-      }
-      onLoadMore={() => props.onLoadMore(use)}
-      onTitleChange={(title) => props.onTitleChange(use, title)}
-    />
-  );
-  if (
-    props.selected.output.kind === "process" &&
-    processIds.has(props.selected.id)
-  ) {
-    return (
-      <div
-        className="relative flex min-h-0 flex-1"
-        data-yaade-viewport-cache="process"
-        data-yaade-viewport-count={props.processUses.length}
+  const left = props.side === "left";
+  const Icon = left
+    ? props.collapsed
+      ? PanelLeftOpen
+      : PanelLeftClose
+    : props.collapsed
+      ? PanelRightOpen
+      : PanelRightClose;
+  const label = `${props.collapsed ? "Show" : "Hide"} sidebars`;
+  return (
+    <div
+      className={cn(
+        "group/sidebar-toggle absolute top-2 z-30 flex h-10 w-9 items-start",
+        left ? "left-0 justify-start pl-1" : "right-0 justify-end pr-1",
+      )}
+      data-yaade-sidebar-hover-zone={props.side}
+    >
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="secondary"
+        aria-label={label}
+        title={label}
+        data-yaade-sidebar-hover-toggle={props.side}
+        className="opacity-0 shadow-sm transition-opacity duration-[var(--yaade-motion-fast)] group-hover/sidebar-toggle:opacity-100 focus-visible:opacity-100"
+        onClick={props.onToggle}
       >
-        {props.processUses.map((use) => (
-          <div
-            key={use.id}
-            data-yaade-tool-viewport={use.id}
-            className={
-              use.id === props.selected.id
-                ? "absolute inset-0 flex"
-                : "absolute inset-0 hidden"
-            }
-          >
-            {render(use, use.id === props.selected.id)}
-          </div>
-        ))}
-      </div>
-    );
-  }
-  return render(props.selected, true);
+        <Icon />
+      </Button>
+    </div>
+  );
 }
 
 const lazyRenderers = new Map<
@@ -1283,6 +1446,7 @@ function SelectedToolUse(props: {
   projects: readonly ProjectTarget[];
   results: readonly import("@yaade/rpc").ProjectSearchResult[];
   visible?: boolean;
+  focused?: boolean;
   onAction: (action: "cancel" | "restart" | "archive") => void;
   onContextChange: (
     project: ProjectTarget,
@@ -1321,6 +1485,7 @@ function SelectedToolUse(props: {
         onLoadMore={props.onLoadMore}
         onTitleChange={props.onTitleChange}
         visible={props.visible}
+        focused={props.focused}
       />
     </Suspense>
   );

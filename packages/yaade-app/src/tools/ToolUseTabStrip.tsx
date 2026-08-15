@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { Suspense, lazy, useEffect, useRef, useState } from "react";
 import {
   ArrowRight,
   Bot,
@@ -44,6 +44,8 @@ import {
 } from "./tool-title.js";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
+
+const DockSourceHandle = lazy(() => import("./ToolDockSourceHandle.js"));
 
 function toolStatusClass(status: ToolUse["status"]): string {
   switch (status) {
@@ -114,6 +116,7 @@ export type ToolUseTabStripProps = {
   readonly useIds: readonly ToolUseId[];
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>;
   readonly activeToolUseId?: ToolUseId;
+  readonly openToolUseIds?: ReadonlySet<ToolUseId>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
   readonly projects: readonly ProjectTarget[];
   readonly onSelect: (use: ToolUse) => void;
@@ -136,6 +139,7 @@ export type ToolUseTabStripProps = {
   readonly onClose: (use: ToolUse) => void;
   readonly onRename: (use: ToolUse, title: string) => void;
   readonly onReorder: (ids: readonly ToolUseId[]) => void;
+  readonly dockable?: boolean;
   readonly layout?: ToolUseNavigationLayout;
   readonly collapsed?: boolean;
   readonly sidebarOrientation?: "horizontal" | "vertical";
@@ -231,6 +235,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     if (!use) return null;
     const Icon = toolIcon[use.kind];
     const active = id === props.activeToolUseId;
+    const openInWorkspace = props.openToolUseIds?.has(id) ?? active;
     const workTitle = toolUseWorkTitle(use, props.runtimeTitles.get(id));
     const contextCaption = toolUseContextCaption(use);
     const jump = index < 9 ? String(index + 1) : undefined;
@@ -249,11 +254,12 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             aria-haspopup="dialog"
             aria-expanded={contextPopoverId === id}
             data-active={active ? "true" : undefined}
+            data-open-in-workspace={openInWorkspace ? "true" : undefined}
             data-yaade-tool-use={id}
             data-yaade-tool-index={jump}
-            draggable={editingId !== id}
+            draggable={!props.dockable && editingId !== id}
             onDragStart={() => {
-              dragId.current = id;
+              if (!props.dockable) dragId.current = id;
             }}
             onDragOver={(event) => event.preventDefault()}
             onDrop={() => {
@@ -270,7 +276,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             onClick={() => {
               setLaunchPopoverKind(null);
               setLaunchContext(null);
-              if (!active) {
+              if (!active || !openInWorkspace) {
                 props.onSelect(use);
                 setContextPopoverId(null);
                 return;
@@ -348,7 +354,11 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             ) : (
               <button
                 type="button"
+                draggable={props.dockable && editingId !== id}
                 className="min-w-0 flex-1 truncate text-left outline-none"
+                onDragStart={() => {
+                  if (props.dockable) dragId.current = id;
+                }}
                 onDoubleClick={() => {
                   setDraftTitle(use.title);
                   setEditingId(id);
@@ -375,6 +385,15 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                 </span>
               </button>
             )}
+            {props.dockable ? (
+              <Suspense fallback={null}>
+                <DockSourceHandle
+                  tabId={id}
+                  label={workTitle}
+                  className={cn(isSidebar && "max-md:opacity-70")}
+                />
+              </Suspense>
+            ) : null}
             <Button
               size="icon-xs"
               variant="ghost"

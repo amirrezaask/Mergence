@@ -29,6 +29,7 @@ export type ToolRendererProps = {
   readonly onLoadMore: () => Promise<void>;
   readonly onTitleChange?: (title: string) => void;
   readonly visible?: boolean;
+  readonly focused?: boolean;
 };
 
 type RegistryEntry = {

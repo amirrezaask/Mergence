@@ -8,7 +8,7 @@ belong to each ToolUse, never to the Session. Layout and PTYs live on the host,
 so closing a browser tab does not kill shells.
 
 ```
-http://localhost:5174/              → Session shell (Session navigation + ToolUse viewport)
+http://localhost:5174/              → Session shell (Session navigation + tiled ToolUse workspace)
 http://localhost:5174/?s=ses-…&u=use-… → deep-link a Session + ToolUse
 ```
 
@@ -21,15 +21,16 @@ compatibility; the primary product surface is the Session shell.
 
 ### Sessions
 
-- Sessions and ToolUses support three navigation layouts: **Tab bar** keeps Sessions at the top and ToolUses in a bottom taskbar; **Two sidebars** puts Sessions on the left and ToolUses on the right; **Single sidebar** combines both into one left rail with ToolUses above Sessions. Switch layouts from Settings → Appearance → Navigation layout. In either sidebar layout, `Ctrl-a b` collapses or restores the navigation.
+- Sessions and ToolUses support three navigation layouts: **Tab bar** keeps Sessions at the top and ToolUses in a bottom taskbar; **Two sidebars** puts Sessions on the left and ToolUses on the right; **Single sidebar** combines both into one left rail with ToolUses above Sessions. Switch layouts from Settings → Appearance → Navigation layout. In either sidebar layout, `Ctrl-a b` collapses or restores the navigation; hover the workspace edge to reveal the same toggle.
 - In any layout, `+` creates an empty Session; add tools from the Session shell. Settings stays beside the Session navigation.
-- The sidebar layouts keep the active ToolUse in the center viewport; each tool pane retains its project and checkout context
+- ToolUses remain resident in navigation while the center workspace tiles only the tools you open or drag into it. Tiles split right/down, resize at their dividers, and rearrange by dragging their headers.
+- Closing a workspace tile closes only that view. The ToolUse and its host process remain open until you close it from navigation.
 - ToolUse tab titles include the project name (for example, `yaade: Git History`) and stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title
 - Sessions do not auto-open tools; all ToolUse tabs can be reordered or closed
 - Each ToolUse tab opens a context popover for project, worktree, and kind-specific options (project names are shown; IDs remain internal)
 - Right-click a new-tool shortcut to choose its project and worktree before opening it; the launcher keeps that context on the new ToolUse
 - Changing project or agent provider restarts the underlying process; the change itself does not fail
-- Selecting a ToolUse renders only that ToolUse in the main viewport
+- Selecting a ToolUse focuses its existing tile or opens it beside the focused tile (up to six mounted tiles)
 - Closing a Session with live tools offers Keep running / Stop tools / Cancel
 - Archived Sessions restore from the Session switcher (`Ctrl-a w` / palette)
 

@@ -20,6 +20,7 @@ export type ProcessToolViewProps = {
   ) => Promise<void>;
   readonly onProviderChange?: (provider: string) => Promise<void>;
   readonly visible?: boolean;
+  readonly focused?: boolean;
   readonly results?: unknown;
   readonly onSearchChange?: (
     query: string,
@@ -35,6 +36,7 @@ export function ProcessToolView({
   toolbar,
   onTitleChange,
   visible = true,
+  focused = visible,
 }: ProcessToolViewProps) {
   if (use.output.kind !== "process") return null;
   const status =
@@ -56,7 +58,7 @@ export function ProcessToolView({
           cwdRootUri={pathToFileUri(use.context.checkoutPath)}
           theme={theme}
           tabId={use.id}
-          focused={visible}
+          focused={focused}
           isActive={visible}
           existingPtyId={use.output.ptyId}
           sessionGeneration={use.output.generation}

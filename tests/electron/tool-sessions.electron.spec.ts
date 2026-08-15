@@ -1449,3 +1449,95 @@ test("Mod-P opens Editor Quick Open before and after a file is open", async () =
     }
   },
 );
+
+test("tools tile independently while sidebar residents stay open", async () => {
+  const app = await launchWeb({});
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    const firstId = await createTerminalViaApi(page, "tile-one");
+    const secondId = await createTerminalViaApi(page, "tile-two");
+
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
+    await expectLocatorCount(
+      page.locator('[data-yaade-tool-tabs] [data-yaade-tool-use]'),
+      2,
+    );
+
+    const firstTile = page.locator(`[data-yaade-tool-tile="${firstId}"]`);
+    await firstTile
+      .locator("xpath=ancestor::*[@data-yaade-panel-leaf][1]")
+      .getByRole("button", { name: "Close pane" })
+      .click();
+
+    await expectLocatorCount(
+      page.locator(`[data-yaade-tool-tile="${firstId}"]`),
+      0,
+    );
+    await expectLocatorCount(
+      page.locator(`[data-yaade-tool-use="${firstId}"]`),
+      1,
+    );
+    await page.waitForFunction(
+      (id) =>
+        (window.__yaadeAgent?.getState().toolUses ?? []).some(
+          (use: { id: string }) => use.id === id,
+        ),
+      firstId,
+    );
+
+    const secondTile = page.locator(`[data-yaade-tool-tile="${secondId}"]`);
+    const dockSource = page.locator(`[data-yaade-dock-source="${firstId}"]`);
+    await page.waitForSelector(`[data-yaade-dock-source="${firstId}"]`);
+    const sourceBox = await dockSource.boundingBox();
+    const targetBox = await secondTile.boundingBox();
+    if (!sourceBox || !targetBox) throw new Error("tool drag target missing");
+    await page.mouse.move(
+      sourceBox.x + sourceBox.width / 2,
+      sourceBox.y + sourceBox.height / 2,
+    );
+    await page.mouse.down();
+    await page.mouse.move(sourceBox.x + sourceBox.width / 2 + 12, sourceBox.y, {
+      steps: 4,
+    });
+    await page.waitForTimeout(50);
+    await page.mouse.move(
+      targetBox.x + targetBox.width / 2,
+      targetBox.y + targetBox.height / 2,
+      { steps: 20 },
+    );
+    await page.waitForTimeout(30);
+    await page.mouse.up();
+    await expectSelectorVisible(page, `[data-yaade-tool-tile="${firstId}"]`);
+    await expectLocatorCount(
+      page.locator(`[data-yaade-tool-tile="${secondId}"]`),
+      0,
+    );
+
+    await page.locator(`[data-yaade-tool-use="${secondId}"]`).click();
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
+    await expectSelectorVisible(page, `[data-yaade-tool-tile="${secondId}"]`);
+
+    const leftHoverZone = page.locator(
+      '[data-yaade-sidebar-hover-zone="left"]',
+    );
+    await leftHoverZone.hover();
+    await leftHoverZone.getByRole("button", { name: "Hide sidebars" }).click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-yaade-shell="tool-session"]')
+          ?.getAttribute("data-yaade-sidebars-state") === "collapsed",
+    );
+    await leftHoverZone.hover();
+    await leftHoverZone.getByRole("button", { name: "Show sidebars" }).click();
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-yaade-shell="tool-session"]')
+          ?.getAttribute("data-yaade-sidebars-state") === "expanded",
+    );
+  } finally {
+    await app.app.close();
+  }
+});
