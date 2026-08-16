@@ -83,6 +83,7 @@ import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { agentProviderFromTerminal } from "./agent-process.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
+  MAX_TOOL_TILES,
   closeToolPanel,
   createToolWorkspace,
   dockToolView,
@@ -91,9 +92,12 @@ import {
   removeMissingToolViews,
   reorderToolTabs,
   resizeToolSplit,
+  restoreToolWorkspace,
+  serializeToolWorkspace,
   splitToolPanel,
   toggleToolPanelZoom,
   toolIdsInWorkspace,
+  toolPaneCount,
   type ToolWorkspace,
 } from "./tool-tiling.js";
 import {
@@ -155,13 +159,15 @@ function markPerformance(name: string): void {
     performance.clearMarks(end);
     performance.clearMeasures(name);
     performance.mark(start);
-    queueMicrotask(() => {
-      performance.mark(end);
-      try {
-        performance.measure(name, start, end);
-      } catch {
-        /* ignore */
-      }
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        performance.mark(end);
+        try {
+          performance.measure(name, start, end);
+        } catch {
+          /* ignore */
+        }
+      });
     });
   } catch {
     /* ignore unsupported environments */
@@ -188,6 +194,7 @@ export function ToolSessionApp() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [routeRevision, setRouteRevision] = useState(0);
   const [toolWorkspaces, setToolWorkspaces] = useState<
     ReadonlyMap<SessionTabId, ToolWorkspace>
   >(() => new Map());
@@ -200,7 +207,16 @@ export function ToolSessionApp() {
   >(() => new Map());
   const prefixPendingRef = useRef(false);
   const toolUsesRef = useRef(snapshot.usesById);
+  const visibleToolIdsRef = useRef<readonly ToolUseId[]>([]);
   toolUsesRef.current = snapshot.usesById;
+  const visibleWorkspace = snapshot.activeTabId
+    ? toolWorkspaces.get(snapshot.activeTabId)
+    : undefined;
+  visibleToolIdsRef.current = visibleWorkspace
+    ? toolIdsInWorkspace(visibleWorkspace)
+    : snapshot.activeToolUseId
+      ? [snapshot.activeToolUseId]
+      : EMPTY_TOOL_USE_IDS;
 
   useEffect(() => {
     prefixPendingRef.current = prefixPending;
@@ -228,9 +244,10 @@ export function ToolSessionApp() {
 
     const tick = async () => {
       const candidates = new Map<ToolUseId, string>();
-      for (const use of toolUsesRef.current.values()) {
+      for (const toolUseId of visibleToolIdsRef.current) {
+        const use = toolUsesRef.current.get(toolUseId);
         if (
-          use.kind === "terminal" &&
+          use?.kind === "terminal" &&
           !use.archivedAt &&
           isLive(use) &&
           use.output.kind === "process" &&
@@ -275,7 +292,7 @@ export function ToolSessionApp() {
       window.clearInterval(handle);
       window.removeEventListener("yaade:host-reconnected", tick);
     };
-  }, [snapshot.usesById]);
+  }, []);
 
   useEffect(() => {
     void window.yaade?.tools
@@ -284,6 +301,12 @@ export function ToolSessionApp() {
         setProjects(next);
       })
       .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const onPopState = () => setRouteRevision(revision => revision + 1);
+    window.addEventListener("popstate", onPopState);
+    return () => window.removeEventListener("popstate", onPopState);
   }, []);
 
   useEffect(() => {
@@ -318,6 +341,7 @@ export function ToolSessionApp() {
     snapshot.tabsById,
     snapshot.visibleTabIdsBySession,
     snapshot.useIdsByTab,
+    routeRevision,
   ]);
 
   const visibleSessions = snapshot.visibleSessionIds
@@ -439,6 +463,22 @@ export function ToolSessionApp() {
       if (use) updateRuntimeTitle(use, prompt, "prompt");
     });
   }, [updateRuntimeTitle]);
+
+  useEffect(() => {
+    setToolWorkspaces(previous => {
+      const next = new Map(previous);
+      let changed = false;
+      for (const tabId of tabIds) {
+        if (next.has(tabId)) continue;
+        const tab = snapshot.tabsById.get(tabId);
+        if (!tab) continue;
+        const ids = snapshot.useIdsByTab.get(tab.id) ?? EMPTY_TOOL_USE_IDS;
+        next.set(tab.id, restoreToolWorkspace(tab.layoutJson, ids));
+        changed = true;
+      }
+      return changed ? next : previous;
+    });
+  }, [snapshot.tabsById, snapshot.useIdsByTab, tabIds]);
 
   const updateToolWorkspace = useCallback(
     (
@@ -570,25 +610,68 @@ export function ToolSessionApp() {
               : nextKind === "git"
                 ? { _tag: "GitToolInput", kind: "git" }
                 : { _tag: "TerminalToolInput", kind: "terminal" };
+        const currentWorkspace =
+          toolWorkspaces.get(activeTab.id) ??
+          restoreToolWorkspace(activeTab.layoutJson, useIds);
+        let hasEmptyPane = false;
+        currentWorkspace.tree.visitLeaves(leaf => {
+          if (leaf.view.kind === "empty") hasEmptyPane = true;
+        });
+        let destinationTab = activeTab;
+        let rollbackTab: SessionTab | undefined;
+        if (
+          toolPaneCount(currentWorkspace) >= MAX_TOOL_TILES &&
+          !hasEmptyPane
+        ) {
+          const createdTab = await window.yaade?.tools?.createTab?.({
+            _tag: "CreateSessionTab",
+            sessionId: activeSession.id,
+            title: `Window ${visibleTabs.length + 1}`,
+          });
+          if (!createdTab) throw new Error("Could not create another Window.");
+          destinationTab = createdTab;
+          rollbackTab = createdTab;
+        }
         const command: CreateToolUse = {
           _tag: "CreateToolUse",
           sessionId: activeSession.id,
-          tabId: activeTab.id,
+          tabId: destinationTab.id,
           kind: nextKind,
           project: nextProject,
           checkout:
             launchContext?.checkout ?? MainCheckout.make({ kind: "main" }),
           input,
         };
-        const created = await window.yaade?.tools?.createUse?.(command);
-        if (created) client.store.replaceToolUse(created);
-        await client.reconcile();
-        if (created) selectTool(created);
+        try {
+          const created = await window.yaade?.tools?.createUse?.(command);
+          if (created) client.store.replaceToolUse(created);
+          await client.reconcileSession(activeSession.id);
+          if (created) selectTool(created);
+        } catch (error) {
+          if (rollbackTab) {
+            const rollback = window.yaade?.tools?.archiveTab?.({
+              _tag: "ArchiveSessionTab",
+              tabId: rollbackTab.id,
+              mode: "stop-tools",
+            });
+            if (rollback) await rollback.catch(() => undefined);
+          }
+          throw error;
+        }
       } catch (error) {
         setActionError(errorMessage(error));
       }
     },
-    [activeSession, activeTab, client, projects, selectTool],
+    [
+      activeSession,
+      activeTab,
+      client,
+      projects,
+      selectTool,
+      toolWorkspaces,
+      useIds,
+      visibleTabs.length,
+    ],
   );
 
   const selectTab = useCallback(
@@ -617,7 +700,7 @@ export function ToolSessionApp() {
         title: "New tab",
       });
       if (!tab) return;
-      await client.reconcile();
+      await client.reconcileSession(activeSession.id);
       selectTab(tab);
     } catch (error) {
       setActionError(errorMessage(error));
@@ -626,8 +709,8 @@ export function ToolSessionApp() {
 
   const renameTab = useCallback(async (id: SessionTabId, title: string) => {
     try {
-      await window.yaade?.tools?.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
-      await client.reconcile();
+      const tab = await window.yaade?.tools?.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
+      if (tab) client.store.replaceTab(tab);
     } catch (error) {
       setActionError(errorMessage(error));
     }
@@ -641,7 +724,7 @@ export function ToolSessionApp() {
         sessionId: activeSession.id,
         tabIds: ids,
       });
-      await client.reconcile();
+      await client.reconcileSession(activeSession.id);
     } catch (error) {
       setActionError(errorMessage(error));
     }
@@ -649,12 +732,22 @@ export function ToolSessionApp() {
 
   const closeTab = useCallback(async (tab: SessionTab) => {
     try {
+      const searchIds = (client.store.getSnapshot().useIdsByTab.get(tab.id) ?? [])
+        .filter(id => client.store.getSnapshot().usesById.get(id)?.kind === "search");
+      if (searchIds.length > 0) {
+        const { disposeSearchNvimSessions } = await import(
+          "./renderers/search-neovim-sessions.js"
+        );
+        await Promise.all(
+          searchIds.map(id => disposeSearchNvimSessions(id)),
+        );
+      }
       await window.yaade?.tools?.archiveTab?.({
         _tag: "ArchiveSessionTab",
         tabId: tab.id,
         mode: "stop-tools",
       });
-      await client.reconcile();
+      await client.reconcileSession(tab.sessionId);
     } catch (error) {
       setActionError(errorMessage(error));
     }
@@ -675,6 +768,12 @@ export function ToolSessionApp() {
     async (action: "cancel" | "restart" | "archive", use: ToolUse) => {
       setActionError(undefined);
       try {
+        if (action === "archive" && use.kind === "search") {
+          const { disposeSearchNvimSessions } = await import(
+            "./renderers/search-neovim-sessions.js"
+          );
+          await disposeSearchNvimSessions(use.id);
+        }
         const api = window.yaade?.tools;
         const result =
           action === "cancel"
@@ -686,10 +785,10 @@ export function ToolSessionApp() {
                   toolUseId: use.id,
                 });
         if (result) client.store.replaceToolUse(result);
-        await client.reconcile();
+        await client.reconcileSession(use.sessionId);
       } catch (error) {
         setActionError(errorMessage(error));
-        await client.reconcile().catch(() => undefined);
+        await client.reconcileSession(use.sessionId).catch(() => undefined);
       }
     },
     [client],
@@ -698,6 +797,16 @@ export function ToolSessionApp() {
   const closeSession = useCallback(
     async (sessionId: SessionId, mode: "keep-running" | "stop-tools") => {
       try {
+        const searchIds = (client.store.getSnapshot().useIdsBySession.get(sessionId) ?? [])
+          .filter(id => client.store.getSnapshot().usesById.get(id)?.kind === "search");
+        if (searchIds.length > 0) {
+          const { disposeSearchNvimSessions } = await import(
+            "./renderers/search-neovim-sessions.js"
+          );
+          await Promise.all(
+            searchIds.map(id => disposeSearchNvimSessions(id)),
+          );
+        }
         const archived = await window.yaade?.tools?.archiveSession?.({
           _tag: "ArchiveSession",
           sessionId,
@@ -707,7 +816,7 @@ export function ToolSessionApp() {
           client.store.apply({
             _tag: "SessionArchived",
             eventId: `local:${archived.id}`,
-            revision: 1,
+            revision: archived.revision ?? 1,
             occurredAt: archived.updatedAt,
             session: archived,
           });
@@ -771,7 +880,7 @@ export function ToolSessionApp() {
         tabId: activeTab.id,
         toolUseIds: ids,
       });
-      await client.reconcile();
+      await client.reconcileSession(activeSession.id);
     },
     [activeSession, activeTab, client],
   );
@@ -1075,6 +1184,12 @@ export function ToolSessionApp() {
     ) => {
       const latest = client.store.getSnapshot().usesById.get(use.id) ?? use;
       try {
+        if (latest.kind === "search") {
+          const { disposeSearchNvimSessions } = await import(
+            "./renderers/search-neovim-sessions.js"
+          );
+          await disposeSearchNvimSessions(latest.id);
+        }
         const updated = await window.yaade?.tools?.updateUseContext?.({
           _tag: "UpdateToolUseContext",
           toolUseId: latest.id,
@@ -1084,10 +1199,10 @@ export function ToolSessionApp() {
         });
         if (updated) client.store.replaceToolUse(updated);
         setActionError(undefined);
-        await client.reconcile();
+        await client.reconcileSession(latest.sessionId);
       } catch (error) {
         setActionError(errorMessage(error));
-        await client.reconcile().catch(() => undefined);
+        await client.reconcileSession(latest.sessionId).catch(() => undefined);
       }
     },
     [client],
@@ -1118,10 +1233,10 @@ export function ToolSessionApp() {
         });
         if (updated) client.store.replaceToolUse(updated);
         setActionError(undefined);
-        await client.reconcile();
+        await client.reconcileSession(latest.sessionId);
       } catch (error) {
         setActionError(errorMessage(error));
-        await client.reconcile().catch(() => undefined);
+        await client.reconcileSession(latest.sessionId).catch(() => undefined);
       }
     },
     [client],
@@ -1129,8 +1244,29 @@ export function ToolSessionApp() {
 
   const activeToolWorkspace = useMemo(() => {
     if (!activeTab) return createToolWorkspace();
-    return toolWorkspaces.get(activeTab.id) ?? createToolWorkspace();
-  }, [activeTab, toolWorkspaces]);
+    return toolWorkspaces.get(activeTab.id) ??
+      restoreToolWorkspace(activeTab.layoutJson, useIds);
+  }, [activeTab, toolWorkspaces, useIds]);
+
+  useEffect(() => {
+    if (!activeTab) return;
+    const workspace = toolWorkspaces.get(activeTab.id);
+    if (!workspace) return;
+    const layoutJson = serializeToolWorkspace(workspace);
+    if (layoutJson === activeTab.layoutJson) return;
+    const handle = window.setTimeout(() => {
+      const request = window.yaade?.tools?.saveTabLayout?.({
+        _tag: "SaveSessionTabLayout",
+        tabId: activeTab.id,
+        layoutJson,
+      });
+      if (!request) return;
+      void request
+        .then(tab => client.store.replaceTab(tab))
+        .catch(error => setActionError(errorMessage(error)));
+    }, 350);
+    return () => window.clearTimeout(handle);
+  }, [activeTab, client, toolWorkspaces]);
 
   const openToolUseIds = useMemo(
     () => new Set(toolIdsInWorkspace(activeToolWorkspace)),
@@ -1164,7 +1300,7 @@ export function ToolSessionApp() {
       },
       tabIdsForPanel: panelId => {
         const view = activeToolWorkspace.tree.getView(panelId);
-        return view?.kind === "tabs" ? [...view.toolUseIds] : [];
+        return view?.kind === "tool" ? [view.toolUseId] : [];
       },
       onTabDrop: (_source, sourceTabId, target, action) => {
         if (!activeTab) return;
@@ -1200,11 +1336,9 @@ export function ToolSessionApp() {
     (panelId: PanelId) => {
       if (!activeTab) return;
       const view = activeToolWorkspace.tree.getView(panelId);
-      if (view?.kind === "tabs") {
-        for (const toolUseId of view.toolUseIds) {
-          const use = snapshot.usesById.get(toolUseId);
-          if (use) void runToolAction("archive", use);
-        }
+      if (view?.kind === "tool") {
+        const use = snapshot.usesById.get(view.toolUseId);
+        if (use) void runToolAction("archive", use);
         return;
       }
       updateToolWorkspace(activeTab.id, workspace => closeToolPanel(workspace, panelId));
@@ -1559,7 +1693,7 @@ export function ToolSessionApp() {
                               });
                             if (updated) {
                               client.store.replaceToolUse(updated);
-                              await client.reconcile();
+                              await client.reconcileSession(use.sessionId);
                             }
                           } catch (error) {
                             setActionError(errorMessage(error));
@@ -1578,7 +1712,7 @@ export function ToolSessionApp() {
                               Number(use.output.nextCursor),
                               100,
                             );
-                            await client.reconcile();
+                            await client.reconcileSession(use.sessionId);
                           } catch (error) {
                             setActionError(errorMessage(error));
                           }

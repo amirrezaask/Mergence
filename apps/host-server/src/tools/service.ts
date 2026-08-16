@@ -422,7 +422,7 @@ export class ToolService {
     this.runtime.events.emit("tools:event", [
       SessionTabArchived.make({
         eventId: eventId("tab-archived", archived.id),
-        revision: 1,
+        revision: archived.revision ?? 1,
         occurredAt: archived.updatedAt,
         tab: archived,
       }),
@@ -435,7 +435,7 @@ export class ToolService {
       this.runtime.events.emit("tools:event", [
         SessionUpdated.make({
           eventId: eventId("session-tab-archived", session.id),
-          revision: 1,
+          revision: session.revision ?? 1,
           occurredAt: session.updatedAt,
           session,
         }),
@@ -468,7 +468,7 @@ export class ToolService {
     this.runtime.events.emit("tools:event", [
       SessionArchived.make({
         eventId: eventId("session-archived", session.id),
-        revision: 1,
+        revision: session.revision ?? 1,
         occurredAt: session.updatedAt,
         session,
       }),

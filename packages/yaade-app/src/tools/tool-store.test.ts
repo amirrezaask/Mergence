@@ -122,6 +122,30 @@ describe("ToolSessionStore browser state", () => {
     assert.equal(store.getSnapshot().usesById.get(useId)?.title, "Shell")
   })
 
+  it("keeps membership indexes stable for output-only ToolUse updates", () => {
+    const store = new ToolSessionStore()
+    store.replace([session()], [use()])
+    const before = store.getSnapshot()
+
+    store.apply({
+      _tag: "ToolUseUpdated",
+      eventId: "event-output-only",
+      toolUseId: useId,
+      toolUse: {
+        ...use(),
+        status: "running",
+        revision: 2,
+        updatedAt: "2026-01-02",
+      },
+      revision: 2,
+      occurredAt: "2026-01-02",
+    })
+
+    const after = store.getSnapshot()
+    assert.equal(after.useIdsBySession, before.useIdsBySession)
+    assert.equal(after.useIdsByTab, before.useIdsByTab)
+  })
+
   it("notifies only the affected tool use subscription", () => {
     const store = new ToolSessionStore()
     store.replace([session()], [use()])

@@ -35,6 +35,7 @@ import {
   CreateSession,
   CreateSessionTab,
   RenameSessionTab,
+  SaveSessionTabLayout,
   ReorderSessionTabs,
   ArchiveSessionTab,
   SelectSessionTab,
@@ -287,14 +288,14 @@ async function handleTools(
       runtime.events.emit("tools:event", [
         SessionCreated.make({
           eventId: `evt-${Date.now()}`,
-          revision: 1,
+          revision: session.revision ?? 1,
           occurredAt: session.updatedAt,
           session,
         }),
         ...tabs.map((tab) =>
           SessionTabCreated.make({
             eventId: `evt-tab-${Date.now()}-${tab.id}`,
-            revision: 1,
+            revision: tab.revision ?? 1,
             occurredAt: tab.updatedAt,
             tab,
           }),
@@ -316,7 +317,7 @@ async function handleTools(
       runtime.events.emit("tools:event", [
         SessionTabCreated.make({
           eventId: `evt-tab-${Date.now()}-${tab.id}`,
-          revision: 1,
+          revision: tab.revision ?? 1,
           occurredAt: tab.updatedAt,
           tab,
         }),
@@ -329,7 +330,24 @@ async function handleTools(
       runtime.events.emit("tools:event", [
         SessionTabUpdated.make({
           eventId: `evt-tab-${Date.now()}-${tab.id}`,
-          revision: 1,
+          revision: tab.revision ?? 1,
+          occurredAt: tab.updatedAt,
+          tab,
+        }),
+      ]);
+      return tab;
+    }
+    case "tools:saveTabLayout": {
+      const command = decodeToolCommand(
+        SaveSessionTabLayout,
+        args[0],
+        "save tab layout",
+      );
+      const tab = store.saveTabLayout(command.tabId, command.layoutJson);
+      runtime.events.emit("tools:event", [
+        SessionTabUpdated.make({
+          eventId: `evt-tab-layout-${Date.now()}-${tab.id}`,
+          revision: tab.revision ?? 1,
           occurredAt: tab.updatedAt,
           tab,
         }),
@@ -353,7 +371,7 @@ async function handleTools(
       runtime.events.emit("tools:event", [
         SessionUpdated.make({
           eventId: `evt-session-tab-${Date.now()}`,
-          revision: 1,
+          revision: session.revision ?? 1,
           occurredAt: session.updatedAt,
           session,
         }),
@@ -381,7 +399,7 @@ async function handleTools(
       runtime.events.emit("tools:event", [
         SessionRestored.make({
           eventId: `evt-${Date.now()}`,
-          revision: 1,
+          revision: session.revision ?? 1,
           occurredAt: session.updatedAt,
           session,
         }),
@@ -402,7 +420,7 @@ async function handleTools(
       runtime.events.emit("tools:event", [
         SessionUpdated.make({
           eventId: `evt-${Date.now()}`,
-          revision: 1,
+          revision: session.revision ?? 1,
           occurredAt: session.updatedAt,
           session,
         }),

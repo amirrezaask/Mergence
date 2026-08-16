@@ -31,6 +31,8 @@ export type PanelDockProps<TView> = {
   tabDnd: TabDndHandlers
   /** When false, parent owns TabDndRoot (e.g. sidebar + workspace share one context). */
   wrapTabDnd?: boolean
+  /** Optional visual treatment for every leaf in this dock. */
+  leafClassName?: string
   renderHeader: (view: TView, panelId: PanelId, meta: PanelSlotMeta) => ReactNode
   renderContent: (view: TView, panelId: PanelId, meta: PanelSlotMeta) => ReactNode
 }
@@ -51,6 +53,7 @@ function PanelLeaf<TView>({
   onEvent,
   renderHeader,
   renderContent,
+  leafClassName,
 }: {
   panelId: PanelId
   view: TView
@@ -59,6 +62,7 @@ function PanelLeaf<TView>({
   onEvent: (event: PanelEvent) => void
   renderHeader: PanelDockProps<TView>["renderHeader"]
   renderContent: PanelDockProps<TView>["renderContent"]
+  leafClassName?: string
 }) {
   const drag = usePanelDrag()
   const [dragOver, setDragOver] = useState(false)
@@ -89,6 +93,7 @@ function PanelLeaf<TView>({
         dragOver && isDropTarget
           ? "ring-1 ring-primary/40"
           : "",
+        leafClassName,
       )}
       data-yaade-panel-leaf={panelId.id}
       data-yaade-session-window=""
@@ -156,6 +161,7 @@ function PanelSplitNode<TView>({
             <ResizableHandle
               orientation={orientation}
               data-yaade-pane-separator=""
+              className="bg-transparent after:absolute after:bg-border/70 hover:after:bg-primary/60 data-[orientation=horizontal]:after:inset-y-0 data-[orientation=horizontal]:after:w-px data-[orientation=vertical]:after:inset-x-0 data-[orientation=vertical]:after:h-px"
               aria-label={
                 orientation === "horizontal"
                   ? "Resize panes horizontally"
@@ -202,6 +208,7 @@ function PanelTreeNode<TView>({
           onEvent={props.onEvent}
           renderHeader={props.renderHeader}
           renderContent={props.renderContent}
+          leafClassName={props.leafClassName}
         />
       </div>
     )

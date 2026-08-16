@@ -224,6 +224,7 @@ export class AppSession extends Schema.Class<AppSession>("AppSession")({
   activeTabId: Schema.optional(SessionTabId),
   /** Kept for one migration cycle for older clients. */
   activeToolUseId: Schema.optional(ToolUseId),
+  revision: Schema.optional(Schema.Number),
   createdAt: Schema.String,
   updatedAt: Schema.String,
   archivedAt: Schema.optional(Schema.String),
@@ -235,6 +236,9 @@ export class SessionTab extends Schema.Class<SessionTab>("SessionTab")({
   title: Schema.String,
   position: Schema.Number,
   activeToolUseId: Schema.optional(ToolUseId),
+  /** Versioned JSON snapshot of this Window's one-ToolUse-per-pane split tree. */
+  layoutJson: Schema.optional(Schema.String),
+  revision: Schema.optional(Schema.Number),
   createdAt: Schema.String,
   updatedAt: Schema.String,
   archivedAt: Schema.optional(Schema.String),
@@ -327,6 +331,13 @@ export class RenameSessionTab extends Schema.TaggedClass<RenameSessionTab>()(
   {
     tabId: SessionTabId,
     title: Schema.String,
+  },
+) {}
+export class SaveSessionTabLayout extends Schema.TaggedClass<SaveSessionTabLayout>()(
+  "SaveSessionTabLayout",
+  {
+    tabId: SessionTabId,
+    layoutJson: Schema.String.pipe(Schema.maxLength(65_536)),
   },
 ) {}
 export class ReorderSessionTabs extends Schema.TaggedClass<ReorderSessionTabs>()(
@@ -467,6 +478,7 @@ export const ToolCommand = Schema.Union(
   RenameSession,
   CreateSessionTab,
   RenameSessionTab,
+  SaveSessionTabLayout,
   ReorderSessionTabs,
   ArchiveSessionTab,
   SelectSessionTab,

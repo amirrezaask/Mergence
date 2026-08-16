@@ -40,6 +40,7 @@ type SessionRow = {
   position: number;
   active_tab_id: string | null;
   active_tool_use_id: string | null;
+  revision: number;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -51,6 +52,8 @@ type SessionTabRow = {
   title: string;
   position: number;
   active_tool_use_id: string | null;
+  layout_json: string | null;
+  revision: number;
   created_at: string;
   updated_at: string;
   archived_at: string | null;
@@ -194,6 +197,7 @@ export class ToolSessionStore {
         position INTEGER NOT NULL,
         active_tab_id TEXT,
         active_tool_use_id TEXT,
+        revision INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         archived_at TEXT
@@ -204,6 +208,8 @@ export class ToolSessionStore {
         title TEXT NOT NULL,
         position INTEGER NOT NULL,
         active_tool_use_id TEXT,
+        layout_json TEXT,
+        revision INTEGER NOT NULL DEFAULT 1,
         created_at TEXT NOT NULL,
         updated_at TEXT NOT NULL,
         archived_at TEXT
@@ -268,6 +274,9 @@ export class ToolSessionStore {
       }
     };
     addColumn("app_sessions", "active_tab_id", "TEXT");
+    addColumn("app_sessions", "revision", "INTEGER NOT NULL DEFAULT 1");
+    addColumn("app_tabs", "layout_json", "TEXT");
+    addColumn("app_tabs", "revision", "INTEGER NOT NULL DEFAULT 1");
     addColumn("tool_uses", "tab_id", "TEXT");
     this.db.exec(
       "CREATE INDEX IF NOT EXISTS tool_uses_tab_visible ON tool_uses(tab_id, archived_at, position)",
@@ -665,7 +674,7 @@ export class ToolSessionStore {
     const existing = this.listTabs(sessionId).find((tab) => !tab.archivedAt);
     const tab = existing ?? this.insertDefaultTab(sessionId);
     this.db
-      .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=? WHERE id=?")
+      .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=?,revision=revision+1 WHERE id=?")
       .run(tab.id, now(), sessionId);
     return tab;
   }
@@ -683,7 +692,7 @@ export class ToolSessionStore {
     if (!session) return;
     const tab = this.insertDefaultTab(session.id);
     this.db
-      .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=? WHERE id=?")
+      .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=?,revision=revision+1 WHERE id=?")
       .run(tab.id, timestamp, session.id);
   }
 
@@ -707,6 +716,7 @@ export class ToolSessionStore {
       ...(row.active_tool_use_id
         ? { activeToolUseId: validToolUseId(row.active_tool_use_id) }
         : {}),
+      revision: row.revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
@@ -722,6 +732,8 @@ export class ToolSessionStore {
       ...(row.active_tool_use_id
         ? { activeToolUseId: validToolUseId(row.active_tool_use_id) }
         : {}),
+      ...(row.layout_json ? { layoutJson: row.layout_json } : {}),
+      revision: row.revision,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
       ...(row.archived_at ? { archivedAt: row.archived_at } : {}),
@@ -816,7 +828,7 @@ export class ToolSessionStore {
     const session = this.getSession(sessionId);
     if (session && !session.activeTabId) {
       this.db
-        .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=? WHERE id=?")
+        .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=?,revision=revision+1 WHERE id=?")
         .run(tab.id, timestamp, sessionId);
     }
     return tab;
@@ -827,14 +839,24 @@ export class ToolSessionStore {
     if (!current)
       throw new ToolSessionStorageError({ message: `tab not found: ${id}` });
     this.db
-      .prepare("UPDATE app_tabs SET title=?,updated_at=? WHERE id=?")
+      .prepare("UPDATE app_tabs SET title=?,updated_at=?,revision=revision+1 WHERE id=?")
       .run(title.trim().slice(0, 160) || current.title, now(), id);
+    return this.getTab(id) as SessionTab;
+  }
+
+  saveTabLayout(id: SessionTabId, layoutJson: string): SessionTab {
+    const current = this.getTab(id);
+    if (!current)
+      throw new ToolSessionStorageError({ message: `tab not found: ${id}` });
+    this.db
+      .prepare("UPDATE app_tabs SET layout_json=?,updated_at=?,revision=revision+1 WHERE id=?")
+      .run(layoutJson, now(), id);
     return this.getTab(id) as SessionTab;
   }
 
   reorderTabs(sessionId: SessionId, ids: readonly SessionTabId[]): SessionTab[] {
     const update = this.db.prepare(
-      "UPDATE app_tabs SET position=?,updated_at=? WHERE id=? AND session_id=?",
+      "UPDATE app_tabs SET position=?,updated_at=?,revision=revision+1 WHERE id=? AND session_id=?",
     );
     const timestamp = now();
     for (const [position, id] of ids.entries())
@@ -848,7 +870,7 @@ export class ToolSessionStore {
       throw new ToolSessionStorageError({ message: `tab not found: ${id}` });
     const timestamp = now();
     this.db
-      .prepare("UPDATE app_tabs SET archived_at=?,updated_at=? WHERE id=?")
+      .prepare("UPDATE app_tabs SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=?")
       .run(timestamp, timestamp, id);
     const remaining = this.listTabs(current.sessionId);
     if (remaining.length === 0) this.createTab(current.sessionId, "Window 1");
@@ -856,7 +878,7 @@ export class ToolSessionStore {
     if (session?.activeTabId === id) {
       const next = this.listTabs(current.sessionId)[0];
       this.db
-        .prepare("UPDATE app_sessions SET active_tab_id=?,active_tool_use_id=?,updated_at=? WHERE id=?")
+        .prepare("UPDATE app_sessions SET active_tab_id=?,active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=?")
         .run(next?.id ?? null, next?.activeToolUseId ?? null, timestamp, current.sessionId);
     }
     return this.getTab(id) as SessionTab;
@@ -870,7 +892,7 @@ export class ToolSessionStore {
     }
     const activeToolUseId = tabId ? this.getTab(tabId)?.activeToolUseId ?? null : null;
     this.db
-      .prepare("UPDATE app_sessions SET active_tab_id=?,active_tool_use_id=?,updated_at=? WHERE id=? AND machine=?")
+      .prepare("UPDATE app_sessions SET active_tab_id=?,active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?")
       .run(tabId, activeToolUseId, now(), sessionId, this.machine);
     const result = this.getSession(sessionId);
     if (!result)
@@ -899,7 +921,7 @@ export class ToolSessionStore {
   renameSession(id: SessionId, title: string): AppSession {
     this.db
       .prepare(
-        "UPDATE app_sessions SET title=?,updated_at=? WHERE id=? AND machine=?",
+        "UPDATE app_sessions SET title=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
       )
       .run(title, now(), id, this.machine);
     const result = this.getSession(id);
@@ -912,7 +934,7 @@ export class ToolSessionStore {
 
   reorderSessions(ids: readonly SessionId[]): AppSession[] {
     const update = this.db.prepare(
-      "UPDATE app_sessions SET position=?,updated_at=? WHERE id=? AND machine=?",
+      "UPDATE app_sessions SET position=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
     );
     const timestamp = now();
     for (const [position, id] of ids.entries())
@@ -924,7 +946,7 @@ export class ToolSessionStore {
     const timestamp = now();
     this.db
       .prepare(
-        "UPDATE app_sessions SET archived_at=?,updated_at=? WHERE id=? AND machine=?",
+        "UPDATE app_sessions SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
       )
       .run(timestamp, timestamp, id, this.machine);
     this.ensureVisibleSession();
@@ -941,7 +963,7 @@ export class ToolSessionStore {
   restoreSession(id: SessionId): AppSession {
     this.db
       .prepare(
-        "UPDATE app_sessions SET archived_at=NULL,updated_at=? WHERE id=? AND machine=?",
+        "UPDATE app_sessions SET archived_at=NULL,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
       )
       .run(now(), id, this.machine);
     const result = this.getSession(id);
@@ -966,12 +988,12 @@ export class ToolSessionStore {
       const tab = row.tab_id ? validSessionTabId(row.tab_id) : this.ensureActiveTab(session).id;
       this.setActiveTab(session, tab);
       this.db
-        .prepare("UPDATE app_tabs SET active_tool_use_id=?,updated_at=? WHERE id=?")
+        .prepare("UPDATE app_tabs SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=?")
         .run(use, now(), tab);
     }
     this.db
       .prepare(
-        "UPDATE app_sessions SET active_tool_use_id=?,updated_at=? WHERE id=? AND machine=?",
+        "UPDATE app_sessions SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
       )
       .run(use, now(), session, this.machine);
     const result = this.getSession(session);
@@ -993,7 +1015,7 @@ export class ToolSessionStore {
         throw new ToolSessionStorageError({ message: "active tool use does not belong to tab" });
     }
     this.db
-      .prepare("UPDATE app_tabs SET active_tool_use_id=?,updated_at=? WHERE id=?")
+      .prepare("UPDATE app_tabs SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=?")
       .run(use, now(), tabId);
     return this.getTab(tabId) as SessionTab;
   }

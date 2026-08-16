@@ -76,6 +76,14 @@ export class ToolClient {
     }
   }
 
+  async reconcileSession(sessionId: SessionId): Promise<void> {
+    if (this.disposed) return
+    const snapshot = await this.api.getSession(sessionId)
+    if (!snapshot) return
+    this.store.replaceSession(snapshot.session, snapshot.toolUses, snapshot.tabs ?? [])
+    await this.hydrateSearchResults(snapshot.toolUses)
+  }
+
   async reconcile(): Promise<void> {
     if (this.disposed) return
     if (this.reconcilePromise) return this.reconcilePromise
@@ -97,11 +105,7 @@ export class ToolClient {
         ? gap.id as SessionId
         : this.store.getSnapshot().tabsById.get(gap.id as SessionTabId)?.sessionId
       if (!sessionId) return
-      const snapshot = await this.api.getSession(sessionId)
-      if (snapshot) {
-        this.store.replaceSession(snapshot.session, snapshot.toolUses, snapshot.tabs ?? [])
-        await this.hydrateSearchResults(snapshot.toolUses)
-      }
+      await this.reconcileSession(sessionId)
       return
     }
     const use = await this.api.getUse(gap.id as ToolUseId)
@@ -119,23 +123,26 @@ export class ToolClient {
   }
 
   private async hydrateSearchResults(uses: readonly ToolUse[]): Promise<void> {
-    for (const use of uses) {
-      if (use.kind !== "search" || use.output.kind !== "search") continue
-      const results: ProjectSearchResult[] = []
-      let cursor = 0
-      while (cursor < use.output.resultCount) {
-        const page = await this.api.listSearchResults(
-          use.id,
-          use.output.resultRevision,
-          cursor,
-          PAGE_SIZE,
-        )
-        results.push(...page)
-        if (page.length < PAGE_SIZE) break
-        cursor += page.length
-      }
-      this.store.replaceSearchResults(use.id, results)
-    }
+    await Promise.all(
+      uses.map(async use => {
+        if (use.kind !== "search" || use.output.kind !== "search") return
+        const output = use.output
+        const results: ProjectSearchResult[] = []
+        let cursor = 0
+        while (cursor < output.resultCount) {
+          const page = await this.api.listSearchResults(
+            use.id,
+            output.resultRevision,
+            cursor,
+            PAGE_SIZE,
+          )
+          results.push(...page)
+          if (page.length < PAGE_SIZE) break
+          cursor += page.length
+        }
+        this.store.replaceSearchResults(use.id, results)
+      }),
+    )
   }
 }
 

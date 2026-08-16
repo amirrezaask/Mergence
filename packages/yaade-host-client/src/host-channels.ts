@@ -54,6 +54,7 @@ export const HOST_CHANNELS = new Set([
   "tools:reorderSessions",
   "tools:createTab",
   "tools:renameTab",
+  "tools:saveTabLayout",
   "tools:reorderTabs",
   "tools:archiveTab",
   "tools:selectTab",

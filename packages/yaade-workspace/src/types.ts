@@ -30,6 +30,7 @@ import type {
   SessionTab,
   CreateSessionTab,
   RenameSessionTab,
+  SaveSessionTabLayout,
   ReorderSessionTabs,
   ArchiveSessionTab,
   SelectSessionTab,
@@ -175,6 +176,7 @@ export type JetElectronTools = {
   reorderSessions(command: ReorderSessions): Promise<AppSession[]>;
   createTab(command: CreateSessionTab): Promise<SessionTab>;
   renameTab(command: RenameSessionTab): Promise<SessionTab>;
+  saveTabLayout(command: SaveSessionTabLayout): Promise<SessionTab>;
   reorderTabs(command: ReorderSessionTabs): Promise<SessionTab[]>;
   archiveTab(command: ArchiveSessionTab): Promise<SessionTab>;
   selectTab(command: SelectSessionTab): Promise<AppSession>;

@@ -533,6 +533,8 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         transport.invoke("tools:reorderSessions", command),
       createTab: (command) => transport.invoke("tools:createTab", command),
       renameTab: (command) => transport.invoke("tools:renameTab", command),
+      saveTabLayout: (command) =>
+        transport.invoke("tools:saveTabLayout", command),
       reorderTabs: (command) =>
         transport.invoke("tools:reorderTabs", command),
       archiveTab: (command) => transport.invoke("tools:archiveTab", command),

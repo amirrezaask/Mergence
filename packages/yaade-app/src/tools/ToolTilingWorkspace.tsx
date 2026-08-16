@@ -1,6 +1,4 @@
 import { useCallback, type ReactNode } from "react";
-import { AnimatePresence } from "motion/react";
-import { div as MotionDiv } from "motion/react-m";
 import {
   GitBranch,
   PanelTopOpen,
@@ -16,12 +14,11 @@ import {
   type PanelSlotMeta,
   type TabDndHandlers,
 } from "@yaade/ui";
-import { yaadeMotion } from "@yaade/ui";
 import { Button } from "@yaade/ui/primitives";
 import { toolUsePaneTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 import type { ToolPaneView, ToolWorkspace } from "./tool-tiling.js";
-import { toolIdsInWorkspace } from "./tool-tiling.js";
+import { toolIdsInWorkspace, toolPaneCount } from "./tool-tiling.js";
 
 export type ToolTilingWorkspaceProps = {
   readonly workspace: ToolWorkspace;
@@ -93,18 +90,15 @@ const paneToolKinds: readonly {
 
 export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
   const openToolIds = toolIdsInWorkspace(props.workspace);
-  let paneCount = 0;
-  props.workspace.tree.visitLeaves(() => {
-    paneCount += 1;
-  });
+  const paneCount = toolPaneCount(props.workspace);
   const canZoom = paneCount > 1;
   const zoomedPanelId = props.workspace.zoomedPanelId;
 
   const renderHeader = useCallback(
     (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
       const activeUse =
-        view.kind === "tabs"
-          ? props.usesById.get(view.activeToolUseId)
+        view.kind === "tool"
+          ? props.usesById.get(view.toolUseId)
           : undefined;
       return (
         <MuxPaneChrome
@@ -121,9 +115,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           panelId={panelId}
           zoomed={zoomedPanelId?.id === panelId.id}
           canZoom={canZoom}
-          draggable={false}
           processName={activeUse?.kind}
-          className="min-h-9"
           onSplitRight={() => props.onSplit(panelId, "right")}
           onSplitDown={() => props.onSplit(panelId, "bottom")}
           onZoom={() => props.onZoom(panelId)}
@@ -150,7 +142,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           />
         );
       }
-      const use = props.usesById.get(view.activeToolUseId);
+      const use = props.usesById.get(view.toolUseId);
       if (!use) {
         return (
           <EmptyTile
@@ -159,23 +151,13 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
         );
       }
       return (
-        <AnimatePresence initial={false} mode="popLayout">
-          <MotionDiv
-            key={use.id}
-            initial={{ opacity: 0, scale: 0.985, y: 6 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.99, y: -4 }}
-            transition={{
-              opacity: yaadeMotion.quickFade,
-              default: yaadeMotion.layoutTransition,
-            }}
-            className="flex h-full min-h-0 min-w-0 flex-col"
-            data-yaade-tool-tile={use.id}
-            data-focused={meta.focused ? "" : undefined}
-          >
-            {props.renderTool(use, meta.focused)}
-          </MotionDiv>
-        </AnimatePresence>
+        <div
+          className="flex h-full min-h-0 min-w-0 flex-col"
+          data-yaade-tool-tile={use.id}
+          data-focused={meta.focused ? "" : undefined}
+        >
+          {props.renderTool(use, meta.focused)}
+        </div>
       );
     },
     [openToolIds.length, props],
@@ -187,7 +169,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
 
   return (
     <div
-      className="h-full min-h-0 w-full p-1.5"
+      className="h-full min-h-0 w-full"
       data-yaade-tool-workspace=""
       data-yaade-viewport-count={openToolIds.length}
       data-yaade-pane-count={paneCount}
@@ -195,7 +177,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
     >
       {zoomedPanelId && zoomedView ? (
         <div
-          className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden rounded-lg border border-border bg-card"
+          className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background"
           data-yaade-panel-leaf={zoomedPanelId.id}
           data-yaade-session-window=""
           data-focused=""
@@ -219,14 +201,15 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           onFocusPanel={(panelId) => {
             const view = props.workspace.tree.getView(panelId);
             const use =
-              view?.kind === "tabs"
-                ? props.usesById.get(view.activeToolUseId)
+              view?.kind === "tool"
+                ? props.usesById.get(view.toolUseId)
                 : undefined;
             props.onFocusPanel(panelId, use);
           }}
           onEvent={props.onPanelEvent}
           tabDnd={props.tabDnd}
           wrapTabDnd={false}
+          leafClassName="rounded-none border-0 bg-background"
           renderHeader={renderHeader}
           renderContent={renderContent}
         />

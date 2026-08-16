@@ -1,34 +1,37 @@
-import { PanelTree, type PanelTreeOptions } from "@yaade/panels";
-import type { DropAction, PanelId } from "@yaade/shared";
-import type { ToolUseId } from "@yaade/rpc";
+import { Schema } from "effect";
+import {
+  PanelTree,
+  type PanelNode,
+  type PanelTreeOptions,
+  type PanelTreeSnapshot,
+} from "@yaade/panels";
+import { panelId, type DropAction, type PanelId } from "@yaade/shared";
+import { ToolUseId } from "@yaade/rpc";
 
-/** Maximum number of simultaneously rendered panes. Each pane may hold many tabs. */
+/** Maximum number of simultaneously rendered ToolUse panes in one Window. */
 export const MAX_TOOL_TILES = 6;
 
+/** A Window leaf is either available or owns exactly one ToolUse. */
 export type ToolPaneView =
   | { readonly kind: "empty" }
-  | {
-      readonly kind: "tabs";
-      readonly activeToolUseId: ToolUseId;
-      readonly toolUseIds: readonly ToolUseId[];
-    };
+  | { readonly kind: "tool"; readonly toolUseId: ToolUseId };
 
 export type ToolWorkspace = {
   readonly tree: PanelTree<ToolPaneView>;
   readonly focusedPanelId: PanelId;
-  /** Temporary presentation state; zoom never changes the underlying layout. */
+  /** Temporary presentation state; zoom never changes the persisted split tree. */
   readonly zoomedPanelId: PanelId | null;
 };
 
 const TOOL_PANE_OPTIONS: PanelTreeOptions<ToolPaneView> = {
   emptyView: () => ({ kind: "empty" }),
-  isEmpty: (view) => view.kind === "empty",
+  isEmpty: view => view.kind === "empty",
 };
 
 function firstPanel(tree: PanelTree<ToolPaneView>): PanelId {
   if (tree.root.kind === "leaf") return tree.root.panelId;
   let first: PanelId | undefined;
-  tree.visitLeaves((leaf) => {
+  tree.visitLeaves(leaf => {
     first ??= leaf.panelId;
   });
   return first ?? tree.allocPanelId();
@@ -38,9 +41,9 @@ function panelExists(tree: PanelTree<ToolPaneView>, panelId: PanelId): boolean {
   return tree.getLeaf(panelId) != null;
 }
 
-function panelCount(tree: PanelTree<ToolPaneView>): number {
+export function toolPaneCount(workspace: ToolWorkspace): number {
   let count = 0;
-  tree.visitLeaves(() => {
+  workspace.tree.visitLeaves(() => {
     count += 1;
   });
   return count;
@@ -58,57 +61,21 @@ function findToolPanel(
   toolUseId: ToolUseId,
 ): PanelId | null {
   return tree.findPanelWithView(
-    (view) => view.kind === "tabs" && view.toolUseIds.includes(toolUseId),
+    view => view.kind === "tool" && view.toolUseId === toolUseId,
   );
 }
 
-function tabsView(
-  toolUseIds: readonly ToolUseId[],
-  activeToolUseId: ToolUseId,
-): ToolPaneView {
-  return { kind: "tabs", toolUseIds: [...toolUseIds], activeToolUseId };
-}
-
-function insertIntoPanel(
+function removeToolPanel(
   tree: PanelTree<ToolPaneView>,
   panelId: PanelId,
-  toolUseId: ToolUseId,
-  insertIndex?: number,
 ): void {
-  const view = tree.getView(panelId);
-  if (!view || view.kind === "empty") {
-    tree.setView(panelId, tabsView([toolUseId], toolUseId));
-    return;
-  }
-  const ids = view.toolUseIds.filter((id) => id !== toolUseId);
-  const index =
-    insertIndex == null
-      ? ids.length
-      : Math.max(0, Math.min(Math.trunc(insertIndex), ids.length));
-  ids.splice(index, 0, toolUseId);
-  tree.setView(panelId, tabsView(ids, toolUseId));
-}
-
-function removeFromPanel(
-  tree: PanelTree<ToolPaneView>,
-  panelId: PanelId,
-  toolUseId: ToolUseId,
-): void {
-  const view = tree.getView(panelId);
-  if (!view || view.kind !== "tabs") return;
-  const removedIndex = view.toolUseIds.indexOf(toolUseId);
-  if (removedIndex < 0) return;
-  const ids = view.toolUseIds.filter((id) => id !== toolUseId);
-  if (ids.length === 0) {
-    if (panelCount(tree) === 1) tree.setView(panelId, { kind: "empty" });
-    else tree.closePanel(panelId);
-    return;
-  }
-  const activeToolUseId =
-    view.activeToolUseId === toolUseId
-      ? ids[Math.min(removedIndex, ids.length - 1)]!
-      : view.activeToolUseId;
-  tree.setView(panelId, tabsView(ids, activeToolUseId));
+  if (tree.getLeaf(panelId) == null) return;
+  let count = 0;
+  tree.visitLeaves(() => {
+    count += 1;
+  });
+  if (count === 1) tree.setView(panelId, { kind: "empty" });
+  else tree.closePanel(panelId);
 }
 
 export function createToolWorkspace(): ToolWorkspace {
@@ -120,39 +87,29 @@ export function createToolWorkspace(): ToolWorkspace {
   };
 }
 
-/** Open a tool as a tab in the focused pane, or activate its existing tab. */
+/**
+ * Focus an existing ToolUse, fill an empty pane, or split the focused pane.
+ * It never replaces an occupied pane and never groups multiple tools in a leaf.
+ */
 export function openToolView(
   workspace: ToolWorkspace,
   toolUseId: ToolUseId,
 ): ToolWorkspace {
   const existing = findToolPanel(workspace.tree, toolUseId);
-  if (existing) {
-    const view = workspace.tree.getView(existing);
-    if (
-      view?.kind === "tabs" &&
-      view.activeToolUseId === toolUseId &&
-      workspace.focusedPanelId.id === existing.id
-    ) {
-      return workspace;
-    }
-    const tree = workspace.tree.clone();
-    if (view?.kind === "tabs") {
-      tree.setView(existing, tabsView(view.toolUseIds, toolUseId));
-    }
-    return {
-      tree,
-      focusedPanelId: existing,
-      zoomedPanelId:
-        workspace.zoomedPanelId?.id === existing.id
-          ? workspace.zoomedPanelId
-          : null,
-    };
-  }
+  if (existing) return focusToolPanel(workspace, existing);
 
   const tree = workspace.tree.clone();
   const target = resolvedFocus(tree, workspace.focusedPanelId);
-  insertIntoPanel(tree, target, toolUseId);
-  return { tree, focusedPanelId: target, zoomedPanelId: null };
+  const targetView = tree.getView(target);
+  if (!targetView || targetView.kind === "empty") {
+    tree.setView(target, { kind: "tool", toolUseId });
+    return { tree, focusedPanelId: target, zoomedPanelId: null };
+  }
+  if (toolPaneCount(workspace) >= MAX_TOOL_TILES) return workspace;
+
+  const created = tree.splitAtEdge(target, "right");
+  tree.setView(created, { kind: "tool", toolUseId });
+  return { tree, focusedPanelId: created, zoomedPanelId: null };
 }
 
 export function focusToolPanel(
@@ -160,7 +117,12 @@ export function focusToolPanel(
   panelId: PanelId,
 ): ToolWorkspace {
   if (!panelExists(workspace.tree, panelId)) return workspace;
-  if (workspace.focusedPanelId.id === panelId.id) return workspace;
+  if (
+    workspace.focusedPanelId.id === panelId.id &&
+    workspace.zoomedPanelId == null
+  ) {
+    return workspace;
+  }
   return {
     ...workspace,
     focusedPanelId: panelId,
@@ -168,56 +130,25 @@ export function focusToolPanel(
   };
 }
 
+/** Compatibility alias while callers migrate from pane-local tabs. */
 export function activateToolTab(
   workspace: ToolWorkspace,
   panelId: PanelId,
   toolUseId: ToolUseId,
 ): ToolWorkspace {
   const view = workspace.tree.getView(panelId);
-  if (
-    !view ||
-    view.kind !== "tabs" ||
-    !view.toolUseIds.includes(toolUseId)
-  ) {
-    return workspace;
-  }
-  if (
-    view.activeToolUseId === toolUseId &&
-    workspace.focusedPanelId.id === panelId.id
-  ) {
-    return workspace;
-  }
-  const tree = workspace.tree.clone();
-  tree.setView(panelId, tabsView(view.toolUseIds, toolUseId));
-  return {
-    tree,
-    focusedPanelId: panelId,
-    zoomedPanelId:
-      workspace.zoomedPanelId?.id === panelId.id
-        ? workspace.zoomedPanelId
-        : null,
-  };
+  if (view?.kind !== "tool" || view.toolUseId !== toolUseId) return workspace;
+  return focusToolPanel(workspace, panelId);
 }
 
+/** A one-tool pane has no local tab order. */
 export function reorderToolTabs(
   workspace: ToolWorkspace,
-  panelId: PanelId,
-  toolUseId: ToolUseId,
-  toIndex: number,
+  _panelId: PanelId,
+  _toolUseId: ToolUseId,
+  _toIndex: number,
 ): ToolWorkspace {
-  const view = workspace.tree.getView(panelId);
-  if (!view || view.kind !== "tabs") return workspace;
-  const fromIndex = view.toolUseIds.indexOf(toolUseId);
-  if (fromIndex < 0) return workspace;
-  const ids = [...view.toolUseIds];
-  const [moved] = ids.splice(fromIndex, 1);
-  if (!moved) return workspace;
-  const target = Math.max(0, Math.min(Math.trunc(toIndex), ids.length));
-  ids.splice(target, 0, moved);
-  if (ids.every((id, index) => id === view.toolUseIds[index])) return workspace;
-  const tree = workspace.tree.clone();
-  tree.setView(panelId, tabsView(ids, view.activeToolUseId));
-  return { ...workspace, tree };
+  return workspace;
 }
 
 export function splitToolPanel(
@@ -226,7 +157,7 @@ export function splitToolPanel(
   edge: "right" | "bottom",
 ): ToolWorkspace {
   if (!panelExists(workspace.tree, panelId)) return workspace;
-  if (panelCount(workspace.tree) >= MAX_TOOL_TILES) return workspace;
+  if (toolPaneCount(workspace) >= MAX_TOOL_TILES) return workspace;
   const tree = workspace.tree.clone();
   const created = tree.splitAtEdge(panelId, edge);
   return { tree, focusedPanelId: created, zoomedPanelId: null };
@@ -237,7 +168,7 @@ export function toggleToolPanelZoom(
   workspace: ToolWorkspace,
   panelId: PanelId,
 ): ToolWorkspace {
-  if (!panelExists(workspace.tree, panelId) || panelCount(workspace.tree) < 2) {
+  if (!panelExists(workspace.tree, panelId) || toolPaneCount(workspace) < 2) {
     return workspace;
   }
   return {
@@ -248,18 +179,14 @@ export function toggleToolPanelZoom(
   };
 }
 
-/** Close every tab in a pane without archiving any ToolUse. */
+/** Close a pane without archiving its ToolUse. */
 export function closeToolPanel(
   workspace: ToolWorkspace,
   panelId: PanelId,
 ): ToolWorkspace {
   if (!panelExists(workspace.tree, panelId)) return workspace;
   const tree = workspace.tree.clone();
-  if (panelCount(tree) === 1) {
-    tree.setView(panelId, { kind: "empty" });
-    return { tree, focusedPanelId: panelId, zoomedPanelId: null };
-  }
-  tree.closePanel(panelId);
+  removeToolPanel(tree, panelId);
   return {
     tree,
     focusedPanelId: resolvedFocus(tree, workspace.focusedPanelId),
@@ -270,30 +197,15 @@ export function closeToolPanel(
   };
 }
 
-/** Close one tab without archiving its ToolUse or stopping its process. */
+/** Close the pane containing a ToolUse without archiving the host ToolUse. */
 export function closeToolTab(
   workspace: ToolWorkspace,
   panelId: PanelId,
   toolUseId: ToolUseId,
 ): ToolWorkspace {
   const view = workspace.tree.getView(panelId);
-  if (
-    !view ||
-    view.kind !== "tabs" ||
-    !view.toolUseIds.includes(toolUseId)
-  ) {
-    return workspace;
-  }
-  const tree = workspace.tree.clone();
-  removeFromPanel(tree, panelId, toolUseId);
-  return {
-    tree,
-    focusedPanelId: resolvedFocus(tree, workspace.focusedPanelId),
-    zoomedPanelId:
-      workspace.zoomedPanelId && tree.getLeaf(workspace.zoomedPanelId)
-        ? workspace.zoomedPanelId
-        : null,
-  };
+  if (view?.kind !== "tool" || view.toolUseId !== toolUseId) return workspace;
+  return closeToolPanel(workspace, panelId);
 }
 
 export function resizeToolSplit(
@@ -306,6 +218,7 @@ export function resizeToolSplit(
   return { ...workspace, tree };
 }
 
+/** Move one ToolUse pane or split it beside another pane. */
 export function dockToolView(
   workspace: ToolWorkspace,
   toolUseId: ToolUseId,
@@ -315,65 +228,60 @@ export function dockToolView(
   if (!panelExists(workspace.tree, target)) return workspace;
   const source = findToolPanel(workspace.tree, toolUseId);
   const split = action.kind === "split" && action.edge !== "center";
-
-  if (source?.id === target.id) {
-    if (!split) {
-      if (action.kind === "moveToPane" && action.insertIndex != null) {
-        return reorderToolTabs(
-          activateToolTab(workspace, target, toolUseId),
-          target,
-          toolUseId,
-          action.insertIndex,
-        );
-      }
-      return activateToolTab(workspace, target, toolUseId);
-    }
-    const sourceView = workspace.tree.getView(source);
-    if (
-      sourceView?.kind !== "tabs" ||
-      sourceView.toolUseIds.length <= 1 ||
-      panelCount(workspace.tree) >= MAX_TOOL_TILES
-    ) {
-      return workspace;
-    }
-    const tree = workspace.tree.clone();
-    removeFromPanel(tree, source, toolUseId);
-    const created = tree.splitAtEdge(target, action.edge);
-    tree.setView(created, tabsView([toolUseId], toolUseId));
-    return { tree, focusedPanelId: created, zoomedPanelId: null };
-  }
+  if (source?.id === target.id) return focusToolPanel(workspace, target);
 
   const tree = workspace.tree.clone();
-  if (source) removeFromPanel(tree, source, toolUseId);
-  if (!panelExists(tree, target)) return workspace;
+  const targetView = tree.getView(target);
 
-  if (split && panelCount(tree) < MAX_TOOL_TILES) {
+  if (split) {
+    if (!source && toolPaneCount(workspace) >= MAX_TOOL_TILES) return workspace;
+    if (source) removeToolPanel(tree, source);
+    if (!panelExists(tree, target)) return workspace;
     const created = tree.splitAtEdge(target, action.edge);
-    tree.setView(created, tabsView([toolUseId], toolUseId));
+    tree.setView(created, { kind: "tool", toolUseId });
     return { tree, focusedPanelId: created, zoomedPanelId: null };
   }
 
-  const insertIndex =
-    action.kind === "moveToPane" ? action.insertIndex : undefined;
-  insertIntoPanel(tree, target, toolUseId, insertIndex);
-  return { tree, focusedPanelId: target, zoomedPanelId: null };
+  if (source) {
+    const sourceView = tree.getView(source);
+    if (targetView?.kind === "tool" && sourceView?.kind === "tool") {
+      // Center-drop swaps the two panes so neither ToolUse becomes hidden.
+      tree.setView(source, targetView);
+      tree.setView(target, sourceView);
+    } else {
+      tree.setView(target, { kind: "tool", toolUseId });
+      removeToolPanel(tree, source);
+    }
+    return { tree, focusedPanelId: target, zoomedPanelId: null };
+  }
+
+  if (targetView?.kind === "empty") {
+    tree.setView(target, { kind: "tool", toolUseId });
+    return { tree, focusedPanelId: target, zoomedPanelId: null };
+  }
+
+  if (toolPaneCount(workspace) >= MAX_TOOL_TILES) return workspace;
+  const created = tree.splitAtEdge(target, "right");
+  tree.setView(created, { kind: "tool", toolUseId });
+  return { tree, focusedPanelId: created, zoomedPanelId: null };
 }
 
 export function removeMissingToolViews(
   workspace: ToolWorkspace,
   liveToolUseIds: ReadonlySet<ToolUseId>,
 ): ToolWorkspace {
-  const missing: ToolUseId[] = [];
-  workspace.tree.visitLeaves((leaf) => {
-    if (leaf.view.kind !== "tabs") return;
-    for (const toolUseId of leaf.view.toolUseIds) {
-      if (!liveToolUseIds.has(toolUseId)) missing.push(toolUseId);
+  const missing: Array<{ panelId: PanelId; toolUseId: ToolUseId }> = [];
+  workspace.tree.visitLeaves(leaf => {
+    if (
+      leaf.view.kind === "tool" &&
+      !liveToolUseIds.has(leaf.view.toolUseId)
+    ) {
+      missing.push({ panelId: leaf.panelId, toolUseId: leaf.view.toolUseId });
     }
   });
   let next = workspace;
-  for (const toolUseId of missing) {
-    const panelId = findToolPanel(next.tree, toolUseId);
-    if (panelId) next = closeToolTab(next, panelId, toolUseId);
+  for (const item of missing) {
+    next = closeToolTab(next, item.panelId, item.toolUseId);
   }
   return next;
 }
@@ -382,8 +290,173 @@ export function toolIdsInWorkspace(
   workspace: ToolWorkspace,
 ): readonly ToolUseId[] {
   const ids: ToolUseId[] = [];
-  workspace.tree.visitLeaves((leaf) => {
-    if (leaf.view.kind === "tabs") ids.push(...leaf.view.toolUseIds);
+  workspace.tree.visitLeaves(leaf => {
+    if (leaf.view.kind === "tool") ids.push(leaf.view.toolUseId);
   });
   return ids;
+}
+
+type PersistedToolWorkspace = {
+  readonly version: 1;
+  readonly tree: PanelTreeSnapshot<ToolPaneView>;
+  readonly focusedPanelId: number;
+  readonly zoomedPanelId: number | null;
+};
+
+type PersistedPaneView =
+  | { readonly kind: "empty" }
+  | { readonly kind: "tool"; readonly toolUseId: ToolUseId };
+
+type PersistedPanelNode =
+  | {
+      readonly kind: "leaf";
+      readonly panelId: { readonly id: number };
+      readonly view: PersistedPaneView;
+    }
+  | {
+      readonly kind: "row" | "column";
+      readonly split: {
+        readonly children: readonly PersistedPanelNode[];
+        readonly ratios: readonly number[];
+      };
+    };
+
+type PersistedPanelNodeEncoded =
+  | {
+      readonly kind: "leaf";
+      readonly panelId: { readonly id: number };
+      readonly view:
+        | { readonly kind: "empty" }
+        | { readonly kind: "tool"; readonly toolUseId: string };
+    }
+  | {
+      readonly kind: "row" | "column";
+      readonly split: {
+        readonly children: readonly PersistedPanelNodeEncoded[];
+        readonly ratios: readonly number[];
+      };
+    };
+
+const PositiveInteger = Schema.Number.pipe(
+  Schema.filter(value => Number.isSafeInteger(value) && value > 0),
+);
+const PositiveRatio = Schema.Number.pipe(
+  Schema.filter(value => Number.isFinite(value) && value > 0),
+);
+const PersistedPaneViewSchema = Schema.Union(
+  Schema.Struct({ kind: Schema.Literal("empty") }),
+  Schema.Struct({ kind: Schema.Literal("tool"), toolUseId: ToolUseId }),
+);
+const PersistedPanelNodeSchema: Schema.Schema<
+  PersistedPanelNode,
+  PersistedPanelNodeEncoded
+> = Schema.suspend(
+  () =>
+    Schema.Union(
+      Schema.Struct({
+        kind: Schema.Literal("leaf"),
+        panelId: Schema.Struct({ id: PositiveInteger }),
+        view: PersistedPaneViewSchema,
+      }),
+      Schema.Struct({
+        kind: Schema.Literal("row", "column"),
+        split: Schema.Struct({
+          children: Schema.Array(PersistedPanelNodeSchema).pipe(
+            Schema.minItems(2),
+          ),
+          ratios: Schema.Array(PositiveRatio).pipe(Schema.minItems(2)),
+        }),
+      }),
+    ),
+);
+const PersistedToolWorkspaceSchema = Schema.Struct({
+  version: Schema.Literal(1),
+  tree: Schema.Struct({
+    root: PersistedPanelNodeSchema,
+    nextPanelId: PositiveInteger,
+  }),
+  focusedPanelId: PositiveInteger,
+  zoomedPanelId: Schema.Union(PositiveInteger, Schema.Null),
+});
+
+function runtimePanelNode(
+  node: PersistedPanelNode,
+): PanelNode<ToolPaneView> | null {
+  if (node.kind === "leaf") {
+    return {
+      kind: "leaf",
+      panelId: panelId(node.panelId.id),
+      view: node.view,
+    };
+  }
+  if (node.split.children.length !== node.split.ratios.length) return null;
+  const children: PanelNode<ToolPaneView>[] = [];
+  for (const child of node.split.children) {
+    const parsed = runtimePanelNode(child);
+    if (!parsed) return null;
+    children.push(parsed);
+  }
+  return {
+    kind: node.kind,
+    split: { children, ratios: [...node.split.ratios] },
+  };
+}
+
+function parseToolWorkspace(layoutJson: string | undefined): ToolWorkspace | null {
+  if (!layoutJson) return null;
+  try {
+    const decoded = Schema.decodeUnknownSync(PersistedToolWorkspaceSchema)(
+      JSON.parse(layoutJson),
+    );
+    const root = runtimePanelNode(decoded.tree.root);
+    if (!root) return null;
+    const tree = PanelTree.fromJSON(TOOL_PANE_OPTIONS, {
+      root,
+      nextPanelId: decoded.tree.nextPanelId,
+    });
+    const focusedPanelId = panelId(decoded.focusedPanelId);
+    if (!panelExists(tree, focusedPanelId)) return null;
+    const zoomedPanelId = decoded.zoomedPanelId === null
+      ? null
+      : panelId(decoded.zoomedPanelId);
+    return {
+      tree,
+      focusedPanelId,
+      zoomedPanelId:
+        zoomedPanelId && panelExists(tree, zoomedPanelId)
+          ? zoomedPanelId
+          : null,
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Decode a persisted Window, discard stale ToolUses, and place new tools. */
+export function restoreToolWorkspace(
+  layoutJson: string | undefined,
+  liveToolUseIds: readonly ToolUseId[],
+): ToolWorkspace {
+  const live = new Set(liveToolUseIds);
+  let workspace = parseToolWorkspace(layoutJson) ?? createToolWorkspace();
+  workspace = removeMissingToolViews(workspace, live);
+  const open = new Set(toolIdsInWorkspace(workspace));
+  for (const toolUseId of liveToolUseIds) {
+    if (open.has(toolUseId)) continue;
+    const next = openToolView(workspace, toolUseId);
+    if (next === workspace) break;
+    workspace = next;
+    open.add(toolUseId);
+  }
+  return workspace;
+}
+
+export function serializeToolWorkspace(workspace: ToolWorkspace): string {
+  const persisted: PersistedToolWorkspace = {
+    version: 1,
+    tree: workspace.tree.toJSON(),
+    focusedPanelId: workspace.focusedPanelId.id,
+    zoomedPanelId: workspace.zoomedPanelId?.id ?? null,
+  };
+  return JSON.stringify(persisted);
 }

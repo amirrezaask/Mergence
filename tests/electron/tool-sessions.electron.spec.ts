@@ -1092,18 +1092,18 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
   }
 });
 
-/** 13 */ test("pane tabs render one process viewport while host PTYs survive", async () => {
+/** 13 */ test("one ToolUse per pane keeps every process viewport mounted", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
     const ids: string[] = [];
-    for (let i = 0; i < 7; i += 1) {
+    for (let i = 0; i < 6; i += 1) {
       ids.push(await createTerminalViaApi(page, `term-${i}`));
     }
-    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 7);
-    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
-    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 1);
+    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 0);
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 6);
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 6);
     const firstId = ids[0]!;
     await page.evaluate(async (id) => {
       await window.__yaadeAgent!.selectToolUse!(id);
@@ -1114,6 +1114,50 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
     await page.keyboard.type(`echo ${marker}`);
     await page.keyboard.press("Enter");
     await waitForToolTerminalText(page, marker);
+
+    const fullWindowId = await page.evaluate(
+      () => window.__yaadeAgent?.getState().activeTabId,
+    );
+    await pressMuxPrefix(page, "KeyT");
+    await page.waitForFunction(
+      id => window.__yaadeAgent?.getState().activeTabId !== id,
+      fullWindowId,
+      { timeout: 30_000 },
+    );
+    await expectLocatorCount(page.locator("[data-yaade-session-tab]"), 2);
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 1);
+  } finally {
+    await app.app.close();
+  }
+});
+
+test("prefix-launched tools split instead of replacing the focused pane", async () => {
+  const app = await launchWeb({});
+  try {
+    const page = app.page;
+    await openToolSessionShell(page);
+    await createTerminalViaApi(page, "shortcut-one");
+    const firstId = await page.evaluate(
+      () => window.__yaadeAgent?.getState().activeToolUseId,
+    );
+    if (!firstId) throw new Error("first terminal missing");
+    await focusTerminal(page);
+    await pressMuxPrefix(page, "KeyT");
+    await page.waitForFunction(
+      id =>
+        (window.__yaadeAgent?.getState().toolUses ?? []).filter(
+          (use: { archivedAt?: string }) => !use.archivedAt,
+        ).length >= 2 &&
+        window.__yaadeAgent?.getState().activeToolUseId !== id,
+      firstId,
+      { timeout: 30_000 },
+    );
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
+    await expectLocatorVisible(
+      page.locator(`[data-yaade-tool-tile="${firstId}"]`),
+    );
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
   } finally {
     await app.app.close();
   }
@@ -1467,7 +1511,7 @@ test("pane separators fill the gap and resize horizontal and vertical splits", a
   try {
     const page = app.page
     await openToolSessionShell(page)
-    await createEditorToolUse(page)
+    await createTerminalViaApi(page, "resize-one")
 
     const firstPane = page.locator("[data-yaade-panel-leaf]").first()
     await firstPane.getByRole("button", { name: "Split right" }).click()
@@ -1531,149 +1575,79 @@ test("pane separators fill the gap and resize horizontal and vertical splits", a
     await expect
       .poll(async () => Math.abs(((await firstPane.boundingBox())?.height ?? heightBefore) - heightBefore))
       .toBeGreaterThan(30)
+
+    // Layout writes are debounced; reload proves the Window split tree and ratios
+    // are host-owned rather than transient React state.
+    await page.waitForTimeout(500)
+    await page.reload()
+    await openToolSessionShell(page)
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 3)
   } finally {
     await app.app.close()
   }
 })
 
-test("pane tiles contain ToolUse tabs and the sidebar lists sessions and agents", async () => {
+test("ToolUses render one-per-pane with draggable translucent chrome", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
-    await expectContainsText(page, "[data-yaade-single-sidebar]", "Sessions");
-    await expectContainsText(page, "[data-yaade-single-sidebar]", "Agents");
-
     const firstId = await createTerminalViaApi(page, "tile-one");
     const secondId = await createTerminalViaApi(page, "tile-two");
 
-    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
-    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
-    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 1);
-
-    const activeTab = page.locator("[data-yaade-tool-pane-tab][data-active]");
-    const indicator = activeTab.locator("[data-yaade-pane-tab-indicator]");
-    const processTile = page.locator("[data-yaade-mux-pane-process]").first();
-    await expectLocatorVisible(indicator);
-    const [tabBox, indicatorBox, processBox] = await Promise.all([
-      activeTab.boundingBox(),
-      indicator.boundingBox(),
-      processTile.boundingBox(),
-    ]);
-    if (!tabBox || !indicatorBox) {
-      throw new Error("active pane tab indicator geometry missing");
-    }
-    expect(indicatorBox.x).toBeGreaterThanOrEqual(tabBox.x);
-    expect(indicatorBox.x + indicatorBox.width).toBeLessThanOrEqual(
-      tabBox.x + tabBox.width + 1,
-    );
-    if (processBox) {
-      expect(indicatorBox.x).toBeGreaterThan(processBox.x + processBox.width);
-    }
-
-    const firstTab = page.locator(
-      `[data-yaade-tool-pane-tab="${firstId}"]`,
-    );
-    await firstTab.locator('button[aria-label^="Close "]').click();
-    await expectLocatorCount(
-      page.locator(`[data-yaade-tool-pane-tab="${firstId}"]`),
-      0,
-    );
-    await page.waitForFunction(
-      (id) =>
-        !(window.__yaadeAgent?.getState().toolUses ?? []).some(
-          (use: { id: string }) => use.id === id,
-        ),
-      firstId,
-    );
-
-    const pane = page.locator("[data-yaade-panel-leaf]").first();
-    await pane.getByRole("button", { name: "Split right" }).click();
     await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
-    const thirdId = await createTerminalViaApi(page, "tile-three");
     await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
+    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 0);
 
-    const source = page
-      .locator(`[data-yaade-tool-pane-tab="${thirdId}"]`)
-      .getByRole("tab");
-    const target = page.locator(`[data-yaade-tool-tile="${secondId}"]`);
-    const sourceBox = await source.boundingBox();
-    const targetBox = await target.boundingBox();
-    if (!sourceBox || !targetBox) throw new Error("tool tab drag target missing");
+    const firstTile = page.locator(`[data-yaade-tool-tile="${firstId}"]`);
+    const secondTile = page.locator(`[data-yaade-tool-tile="${secondId}"]`);
+    const secondChrome = page.locator(
+      `[data-yaade-mux-pane-chrome="${secondId}"]`,
+    );
+    const [firstBox, secondBox, chromeBox] = await Promise.all([
+      firstTile.boundingBox(),
+      secondTile.boundingBox(),
+      secondChrome.boundingBox(),
+    ]);
+    if (!firstBox || !secondBox || !chromeBox) {
+      throw new Error("one-tool pane geometry missing");
+    }
+    const material = await secondChrome.evaluate(element => {
+      const style = getComputedStyle(element);
+      return { background: style.backgroundColor, backdrop: style.backdropFilter };
+    });
+    expect(material.background).toContain("/");
+    expect(material.backdrop).toContain("blur");
+
     await page.mouse.move(
-      sourceBox.x + sourceBox.width / 2,
-      sourceBox.y + sourceBox.height / 2,
+      chromeBox.x + chromeBox.width * 0.55,
+      chromeBox.y + chromeBox.height / 2,
     );
     await page.mouse.down();
-    await page.mouse.move(sourceBox.x + sourceBox.width / 2 + 12, sourceBox.y, {
+    await page.mouse.move(chromeBox.x + chromeBox.width * 0.55 + 12, chromeBox.y, {
       steps: 4,
     });
-    await page.waitForTimeout(50);
     await page.mouse.move(
-      targetBox.x + targetBox.width / 2,
-      targetBox.y + targetBox.height / 2,
+      firstBox.x + firstBox.width / 2,
+      firstBox.y + firstBox.height / 2,
       { steps: 20 },
     );
     await page.mouse.up();
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
+    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
+
+    const firstChrome = page.locator(
+      `[data-yaade-mux-pane-chrome="${firstId}"]`,
+    );
+    await firstChrome.hover();
+    await firstChrome.getByRole("button", { name: "Close pane" }).click();
+    await page.waitForFunction(
+      id => !(window.__yaadeAgent?.getState().toolUses ?? []).some(
+        (use: { id: string }) => use.id === id,
+      ),
+      firstId,
+    );
     await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 1);
-    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
-
-    const thirdPtyId = await page.evaluate((id) => {
-      // SAFETY: the browser test harness exposes the optional process output fields.
-      const use = (window.__yaadeAgent?.getState().toolUses ?? []).find(
-        (candidate: { id: string }) => candidate.id === id,
-      ) as { output?: { ptyId?: string } } | undefined;
-      return use?.output?.ptyId ?? null;
-    }, thirdId);
-    if (!thirdPtyId) throw new Error("terminal PTY missing");
-    await page.evaluate(() => {
-      const terminal = window.yaade?.terminal;
-      if (!terminal) throw new Error("terminal API missing");
-      terminal.getForegroundProcess = async () => "claude";
-    });
-    await expectSelectorVisible(
-      page,
-      `[data-yaade-tool-use="${thirdId}"][data-yaade-detected-agent]`,
-    );
-
-    await page
-      .locator(`[data-yaade-tool-pane-tab="${thirdId}"]`)
-      .click({ button: "right" });
-    await expectSelectorVisible(
-      page,
-      `[data-yaade-pane-tab-context="${thirdId}"]`,
-    );
-    await page.keyboard.press("Escape");
-
-    await page.locator("[data-yaade-pane-new-tool]").click();
-    await expectLocatorCount(
-      page.locator("[data-yaade-pane-new-tool-kind]"),
-      4,
-    );
-    await expectLocatorCount(
-      page.locator('[data-yaade-pane-new-tool-kind="agent"]'),
-      0,
-    );
-    await page.keyboard.press("Escape");
-
-    const leftHoverZone = page.locator(
-      '[data-yaade-sidebar-hover-zone="left"]',
-    );
-    await page.locator("[data-yaade-sidebar-toolbar-toggle]").click();
-    await page.waitForFunction(
-      () =>
-        document
-          .querySelector('[data-yaade-shell="tool-session"]')
-          ?.getAttribute("data-yaade-sidebars-state") === "collapsed",
-    );
-    await leftHoverZone.hover();
-    await leftHoverZone.getByRole("button", { name: "Show sidebars" }).click();
-    await page.waitForFunction(
-      () =>
-        document
-          .querySelector('[data-yaade-shell="tool-session"]')
-          ?.getAttribute("data-yaade-sidebars-state") === "expanded",
-    );
   } finally {
     await app.app.close();
   }
@@ -1689,125 +1663,78 @@ async function clickLocatorPadding(
   await page.mouse.click(box.x + inset.x, box.y + inset.y);
 }
 
-test("sidebar session rows and pane tabs switch from the full hit target", async () => {
+test("Window tabs and pane chrome focus from their full hit targets", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
-
-    const firstSessionId = await page.evaluate(
-      () => window.__yaadeAgent!.getState().activeSessionId,
-    );
-    if (!firstSessionId) throw new Error("boot session missing");
     const firstTermId = await createTerminalViaApi(page, "hit-target-one");
+    const firstTabId = await page.evaluate(
+      () => window.__yaadeAgent!.getState().activeTabId,
+    );
+    if (!firstTabId) throw new Error("first Window missing");
 
-    await page.locator("[data-yaade-new-session]").click();
+    await page.locator("[data-yaade-new-session-tab]").click();
     await page.waitForFunction(
-      (id) => window.__yaadeAgent?.getState().activeSessionId !== id,
-      firstSessionId,
-      { timeout: 15_000 },
+      id => window.__yaadeAgent?.getState().activeTabId !== id,
+      firstTabId,
     );
-    const secondSessionId = await page.evaluate(
-      () => window.__yaadeAgent!.getState().activeSessionId,
+    const secondTabId = await page.evaluate(
+      () => window.__yaadeAgent!.getState().activeTabId,
     );
-    if (!secondSessionId) throw new Error("second session missing");
-    await createTerminalViaApi(page, "hit-target-two");
+    if (!secondTabId) throw new Error("second Window missing");
+    const secondTermId = await createTerminalViaApi(page, "hit-target-two");
 
-    const firstSession = page.locator(
-      `[data-yaade-session="${firstSessionId}"]`,
-    );
-    const secondSession = page.locator(
-      `[data-yaade-session="${secondSessionId}"]`,
-    );
-    await expectLocatorVisible(firstSession);
-    await expectLocatorVisible(secondSession);
-
-    const firstSessionBox = await firstSession.boundingBox();
-    if (!firstSessionBox) throw new Error("session row geometry missing");
-    expect(firstSessionBox.height).toBeGreaterThanOrEqual(32);
-    expect(firstSessionBox.width).toBeGreaterThan(80);
-
-    await clickLocatorPadding(page, firstSession);
+    const firstTab = page.locator(`[data-yaade-session-tab="${firstTabId}"]`);
+    const secondTab = page.locator(`[data-yaade-session-tab="${secondTabId}"]`);
+    await clickLocatorPadding(page, firstTab, { x: 8, y: 16 });
     await page.waitForFunction(
-      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
-      firstSessionId,
+      id => window.__yaadeAgent?.getState().activeTabId === id,
+      firstTabId,
     );
     await expectLocatorVisible(
-      page.locator(`[data-yaade-session="${firstSessionId}"][data-active]`),
-    );
-    await expectLocatorVisible(
-      page.locator(`[data-yaade-tool-pane-tab="${firstTermId}"][data-active]`),
+      page.locator(`[data-yaade-tool-tile="${firstTermId}"][data-focused]`),
     );
 
-    await firstSession.focus();
-    await page.keyboard.press("ArrowDown");
+    await clickLocatorPadding(page, secondTab, { x: 8, y: 16 });
     await page.waitForFunction(
-      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
-      secondSessionId,
+      id => window.__yaadeAgent?.getState().activeTabId === id,
+      secondTabId,
     );
-
-    await firstSession.focus();
-    await page.keyboard.press("Enter");
+    await page.evaluate(() => history.back());
     await page.waitForFunction(
-      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
-      firstSessionId,
+      id => window.__yaadeAgent?.getState().activeTabId === id,
+      firstTabId,
     );
-
-    await secondSession.focus();
-    await page.keyboard.press("Enter");
+    await page.evaluate(() => history.forward());
     await page.waitForFunction(
-      (id) => window.__yaadeAgent?.getState().activeSessionId === id,
-      secondSessionId,
+      id => window.__yaadeAgent?.getState().activeTabId === id,
+      secondTabId,
     );
-
-    await firstSession.locator('button[aria-label^="Close "]').click();
-    await expectLocatorVisible(page.getByRole("dialog"));
-    await expectContainsText(page, '[role="dialog"]', "Close session?");
-    await page.getByRole("button", { name: "Cancel" }).click();
-    await page.waitForFunction(
-      () => document.querySelector('[role="dialog"]') == null,
-    );
-    expect(
-      await page.evaluate(() => window.__yaadeAgent!.getState().activeSessionId),
-    ).toBe(secondSessionId);
-
-    const secondTermId = await page.evaluate(
-      () => window.__yaadeAgent!.getState().activeToolUseId,
-    );
-    if (!secondTermId) throw new Error("second session tool missing");
     const extraTermId = await createTerminalViaApi(page, "hit-target-three");
-    await expectLocatorCount(page.locator("[data-yaade-tool-pane-tab]"), 2);
+    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
 
-    const inactiveTab = page.locator(
-      `[data-yaade-tool-pane-tab="${secondTermId}"]`,
+    const inactiveChrome = page.locator(
+      `[data-yaade-mux-pane-chrome="${secondTermId}"]`,
     );
-    await expectLocatorVisible(inactiveTab);
-    await inactiveTab.locator("[data-yaade-pane-tab-status]").click();
-    await expectLocatorVisible(
-      page.locator(`[data-yaade-tool-pane-tab="${secondTermId}"][data-active]`),
-    );
+    await clickLocatorPadding(page, inactiveChrome, { x: 80, y: 14 });
     await page.waitForFunction(
-      (id) => window.__yaadeAgent?.getState().activeToolUseId === id,
+      id => window.__yaadeAgent?.getState().activeToolUseId === id,
       secondTermId,
     );
-
-    await page
-      .locator(`[data-yaade-tool-pane-tab="${secondTermId}"]`)
-      .getByRole("tab")
-      .focus();
-    await page.keyboard.press("ArrowRight");
     await expectLocatorVisible(
-      page.locator(`[data-yaade-tool-pane-tab="${extraTermId}"][data-active]`),
+      page.locator(`[data-yaade-tool-tile="${secondTermId}"][data-focused]`),
     );
 
-    const pane = page.locator("[data-yaade-panel-leaf]").first();
-    await pane.getByRole("button", { name: "Split right" }).click();
-    await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 2);
-    await expectSelectorVisible(page, "[data-yaade-empty-tool-tile]");
-    await expectLocatorCount(page.locator("[data-yaade-empty-tile-tool]"), 4);
-    await page.locator('[data-yaade-empty-tile-tool="terminal"]').click();
-    await expectLocatorCount(page.locator("[data-yaade-tool-tile]"), 2);
-    await expectLocatorCount(page.locator("[data-yaade-empty-tool-tile]"), 0);
+    await clickLocatorPadding(
+      page,
+      page.locator(`[data-yaade-mux-pane-chrome="${extraTermId}"]`),
+      { x: 80, y: 14 },
+    );
+    await page.waitForFunction(
+      id => window.__yaadeAgent?.getState().activeToolUseId === id,
+      extraTermId,
+    );
   } finally {
     await app.app.close();
   }

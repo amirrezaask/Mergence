@@ -24,9 +24,9 @@ compatibility; the primary product surface is the Session shell.
 
 - The Session switcher creates and switches top-level Sessions. `Mod-k w` opens it; `Mod-k c` creates a Session.
 - Every Session has one or more Windows (tabs). Create one with the `+` beside the Window tab strip or `Mod-k n`; switch with `Mod-k h` / `Mod-k l`.
-- Each Window owns its own tiled layout. ToolUses are panes in that layout, and switching Windows preserves the other Windows' layouts and running PTYs.
-- The existing tiling system is unchanged: dropping a ToolUse in a pane groups it with that pane; dropping on an edge creates a split, up to six panes. A pane can contain multiple ToolUses and its active ToolUse is shown in the pane.
-- Each pane titlebar has a `+` menu for Terminal, Git, and Search. Agents are created from the tool launcher/sidebar.
+- Each Window owns a host-persisted tiled layout: split geometry, ratios, focus, zoom, and ToolUse placement survive reloads and reconnects.
+- Every non-empty pane owns exactly one ToolUse. Creating a tool from a shortcut fills an empty pane or splits the focused pane; it never replaces the visible tool. A seventh pane opens in a new Window rather than hiding an existing ToolUse.
+- Drag anywhere on a pane's non-interactive title bar to move it. Center drops swap panes; edge drops split. The translucent pane chrome keeps split, zoom, and close controls available on hover or keyboard focus.
 - Closing a ToolUse archives it and stops its process. Closing a Window archives its ToolUses; closing a Session with live tools offers Keep running / Stop tools / Cancel.
 - Project, worktree, and provider settings belong to each ToolUse. ToolUse titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title.
 - Archived Sessions restore from the Session switcher.
@@ -45,9 +45,9 @@ attach replay, flow control). Search streams bounded result batches via
 `tools:event` and persists rows for reconnect.
 
 Terminal panes use a pinned `libghostty-vt` WebAssembly parser with a Canvas
-renderer. PTYs start independently of font/WASM setup, hidden panes keep their
-processes and parser state alive without painting, and buffer inspection never
-suppresses a pending repaint. Rebuild the vendored Ghostty assets with
+renderer. PTYs start independently of font/WASM setup, all panes in the visible
+Window remain mounted across focus and retiling, host PTYs survive Window or
+browser switches, and buffer inspection never suppresses a pending repaint. Rebuild the vendored Ghostty assets with
 `pnpm --filter @yaade/ui build:ghostty-wasm`.
 
 ### Checkout isolation

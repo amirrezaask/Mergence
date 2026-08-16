@@ -121,6 +121,14 @@ export class ToolSessionStore {
     }
   }
 
+  replaceTab(tab: SessionTab): void {
+    this.tabsById = new Map(this.tabsById).set(tab.id, tab)
+    this.rebuildVisibleTabs()
+    this.reconcileSelection()
+    this.notify(this.tabListeners, tab.id)
+    this.publish()
+  }
+
   replaceToolUse(use: ToolUse): void {
     const sessions = [...this.sessionsById.values()]
     const tabs = [...this.tabsById.values()]
@@ -253,14 +261,20 @@ export class ToolSessionStore {
     const knownRevision = entityKey
       ? Math.max(
           this.revisions.get(entityKey) ?? 0,
-          entity === "toolUse" && current && "revision" in current ? current.revision : 0,
+          current?.revision ?? 0,
         )
       : 0
     if (
       entityKey && knownRevision >= event.revision &&
       (!current || !entityUpdatedAt || current.updatedAt >= entityUpdatedAt)
     ) return
-    if (entityKey && entity && entityId && knownRevision > 0 && event.revision > knownRevision + 1) {
+    if (
+      entityKey &&
+      entity &&
+      entityId &&
+      knownRevision > 0 &&
+      event.revision > knownRevision + 1
+    ) {
       this.revisionGapHandler?.({
         entity,
         id: entityId,
@@ -336,9 +350,71 @@ export class ToolSessionStore {
   }
 
   private upsertUse(use: ToolUse): void {
+    const previous = this.usesById.get(use.id)
     this.usesById = new Map(this.usesById).set(use.id, use)
-    this.rebuildUseIndexes()
+    if (
+      !previous ||
+      previous.sessionId !== use.sessionId ||
+      previous.tabId !== use.tabId ||
+      previous.archivedAt !== use.archivedAt ||
+      previous.position !== use.position
+    ) {
+      this.updateUseIndexes(previous, use)
+    }
     this.notify(this.useListeners, use.id)
+  }
+
+  private updateUseIndexes(previous: ToolUse | undefined, next: ToolUse): void {
+    const sessionIndexes = new Map(this.useIdsBySession)
+    const tabIndexes = new Map(this.useIdsByTab)
+    const touchedSessions = new Set<SessionId>()
+    const touchedTabs = new Set<SessionTabId>()
+
+    const remove = (use: ToolUse) => {
+      if (use.archivedAt) return
+      const tabId = this.tabIdForUse(use)
+      const sessionIds = sessionIndexes.get(use.sessionId) ?? []
+      sessionIndexes.set(
+        use.sessionId,
+        sessionIds.filter(id => id !== use.id),
+      )
+      touchedSessions.add(use.sessionId)
+      if (!tabId) return
+      const tabIds = tabIndexes.get(tabId) ?? []
+      tabIndexes.set(tabId, tabIds.filter(id => id !== use.id))
+      touchedTabs.add(tabId)
+    }
+    const insert = (use: ToolUse) => {
+      if (use.archivedAt) return
+      const tabId = this.tabIdForUse(use)
+      if (!tabId || this.tabsById.get(tabId)?.archivedAt) return
+      sessionIndexes.set(use.sessionId, [
+        ...(sessionIndexes.get(use.sessionId) ?? []),
+        use.id,
+      ])
+      tabIndexes.set(tabId, [...(tabIndexes.get(tabId) ?? []), use.id])
+      touchedSessions.add(use.sessionId)
+      touchedTabs.add(tabId)
+    }
+
+    if (previous) remove(previous)
+    insert(next)
+    for (const sessionId of touchedSessions) {
+      sessionIndexes.get(sessionId)?.sort(
+        (a, b) =>
+          (this.usesById.get(a)?.position ?? 0) -
+          (this.usesById.get(b)?.position ?? 0),
+      )
+    }
+    for (const tabId of touchedTabs) {
+      tabIndexes.get(tabId)?.sort(
+        (a, b) =>
+          (this.usesById.get(a)?.position ?? 0) -
+          (this.usesById.get(b)?.position ?? 0),
+      )
+    }
+    this.useIdsBySession = sessionIndexes
+    this.useIdsByTab = tabIndexes
   }
 
   private rebuildUseIndexes(): void {

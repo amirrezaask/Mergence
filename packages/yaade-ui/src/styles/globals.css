@@ -395,7 +395,9 @@ body {
 @media (prefers-reduced-transparency: reduce) {
   [data-yaade-session-tabs],
   [data-yaade-tool-tabs],
-  [data-yaade-tool-context] {
+  [data-yaade-tool-context],
+  [data-yaade-window-tabs],
+  [data-yaade-mux-pane-chrome] {
     background: var(--card);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;

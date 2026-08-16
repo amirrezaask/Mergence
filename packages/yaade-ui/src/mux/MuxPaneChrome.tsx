@@ -31,9 +31,9 @@ function NeovimIcon(props: SVGProps<SVGSVGElement>) {
   )
 }
 
-/** Secondary chrome: always visible at reduced opacity; full on hover/focus-visible. */
+/** Secondary chrome reveals on pane hover or keyboard focus. */
 const secondaryControlClass =
-  "text-muted-foreground/70 hover:text-foreground opacity-70 hover:opacity-100 focus-visible:opacity-100 group-hover/mux-pane:opacity-100 group-focus-within/mux-pane:opacity-100"
+  "text-muted-foreground/70 hover:text-foreground opacity-0 hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
 
 export type MuxPaneChromeProps = {
   title: string
@@ -197,19 +197,24 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           data-dragging={isDragging ? "" : undefined}
           className={cn(
             "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 border-b px-1.5",
-            "border-border bg-card",
-            focused && "bg-secondary/30",
-            // Title-only panes keep a short focus hairline over the process tile.
-            // Tabbed panes own their own indicator on the active tab.
+            "border-border/50 bg-card/70 supports-[backdrop-filter]:bg-card/55 supports-[backdrop-filter]:backdrop-blur-md",
+            focused && "bg-secondary/45 supports-[backdrop-filter]:bg-secondary/35",
             focused &&
               !center &&
               "after:absolute after:top-0 after:left-2 after:h-px after:w-16 after:bg-primary",
+            draggable && !zoomed && "cursor-grab touch-none active:cursor-grabbing",
             isDragging && "opacity-45",
             className,
           )}
+          {...(draggable && !zoomed ? listeners : {})}
           onDoubleClick={event => {
             // Ignore double-clicks on buttons / controls.
-            if ((event.target as HTMLElement).closest("button") && !(event.target as HTMLElement).closest("[data-yaade-mux-pane-title]")) {
+            const target = event.target
+            if (
+              target instanceof Element &&
+              target.closest("button") &&
+              !target.closest("[data-yaade-mux-pane-title]")
+            ) {
               return
             }
             if (canZoom) onZoom()
@@ -225,12 +230,12 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             data-yaade-mux-pane-drag=""
             className={cn(
               "h-6 shrink justify-start gap-1.5 px-1",
-              title ? "max-w-[32%]" : "max-w-8",
+              title ? "max-w-[48%]" : "max-w-8",
               draggable && !zoomed
                 ? "cursor-grab touch-none active:cursor-grabbing"
                 : "",
             )}
-            {...(draggable && !zoomed ? { ...attributes, ...listeners } : {})}
+            {...(draggable && !zoomed ? attributes : {})}
           >
             <span
               aria-hidden
@@ -262,6 +267,15 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             ref={contextRef}
             data-yaade-session-header-context=""
             className="flex min-h-0 min-w-0 flex-1 items-stretch self-stretch overflow-hidden"
+            onPointerDown={event => {
+              const target = event.target
+              if (
+                target instanceof Element &&
+                target.closest("button,input,[role='tab'],[data-no-pane-drag]")
+              ) {
+                event.stopPropagation()
+              }
+            }}
           >
             {center}
           </div>
@@ -275,7 +289,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
               size="icon-xs"
               aria-label="Split right"
               data-yaade-mux-split="right"
-              className="text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
               onClick={onSplitRight}
             >
               <Columns2 />
@@ -286,7 +300,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
               size="icon-xs"
               aria-label="Split down"
               data-yaade-mux-split="down"
-              className="text-muted-foreground hover:text-foreground"
+              className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
               onClick={onSplitDown}
             >
               <Rows2 />

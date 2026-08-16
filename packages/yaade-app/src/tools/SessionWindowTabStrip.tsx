@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from "react"
 import { AnimatePresence } from "motion/react"
 import { div as MotionDiv } from "motion/react-m"
-import { Plus, X } from "lucide-react"
+import { PanelTop, Plus, X } from "lucide-react"
 import type { SessionTab, SessionTabId } from "@yaade/rpc"
 import { Button, Input } from "@yaade/ui/primitives"
 import { cn, yaadeMotion } from "@yaade/ui"
@@ -63,7 +63,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
 
   return (
     <div
-      className="flex h-10 min-w-0 shrink-0 items-center border-b border-border bg-muted/25 px-1"
+      className="flex h-9 min-w-0 shrink-0 items-center border-b border-border/50 bg-card/70 px-1 supports-[backdrop-filter]:bg-card/55 supports-[backdrop-filter]:backdrop-blur-md"
       data-yaade-window-tabs=""
     >
       <nav
@@ -111,10 +111,17 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                     }
                   }}
                   className={cn(
-                    "group relative flex h-9 min-w-28 max-w-56 cursor-pointer items-center gap-1 rounded-md px-2 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/50",
-                    active && "bg-background text-foreground shadow-sm ring-1 ring-border/80",
+                    "group relative flex h-8 min-w-28 max-w-56 cursor-pointer items-center gap-1.5 rounded-md px-2 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-accent/45 focus-visible:ring-2 focus-visible:ring-ring/50",
+                    active && "bg-secondary/70 text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-px after:bg-primary",
                   )}
                 >
+                  <PanelTop
+                    className={cn(
+                      "size-3.5 shrink-0",
+                      active ? "text-primary" : "text-muted-foreground/70",
+                    )}
+                    aria-hidden
+                  />
                   {editing ? (
                     <Input
                       aria-label={`Rename ${tab.title}`}

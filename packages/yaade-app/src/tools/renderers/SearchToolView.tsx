@@ -12,6 +12,12 @@ import { pathToFileUri, type ProjectSearchOptions, type YaadeTheme } from "@yaad
 import { ProjectSearchPanel } from "@yaade/ui";
 import { Button } from "@yaade/ui/primitives";
 import { nvimEditCommand, nvimLaunchArgs, type SearchNvimTarget } from "./search-neovim.js";
+import {
+  forgetSearchNvimSession,
+  rememberSearchNvimSession,
+  searchNvimPtyId,
+  searchNvimSessionKey,
+} from "./search-neovim-sessions.js";
 
 const TerminalPanel = lazy(() =>
   import("@yaade/ui/terminal").then(module => ({ default: module.TerminalPanel })),
@@ -38,17 +44,6 @@ export type SearchToolViewProps = {
 };
 
 type OpenResult = SearchNvimTarget;
-
-type SearchNvimSession = {
-  readonly ptyId: string;
-};
-
-/** One long-lived Neovim PTY per search tool, even while the tool is hidden. */
-const searchNvimSessions = new Map<string, SearchNvimSession>();
-
-function searchNvimSessionKey(useId: string, checkoutPath: string): string {
-  return `${useId}:${checkoutPath}`;
-}
 
 function absoluteResultPath(root: string, resultPath: string): string {
   if (resultPath.startsWith("/")) return resultPath;
@@ -78,7 +73,7 @@ export function SearchToolView(props: SearchToolViewProps) {
   const checkoutPath = props.use.context.checkoutPath;
   const nvimSessionKey = searchNvimSessionKey(props.use.id, checkoutPath);
   const [nvimPtyId, setNvimPtyId] = useState<string | null>(
-    () => searchNvimSessions.get(nvimSessionKey)?.ptyId ?? null,
+    () => searchNvimPtyId(nvimSessionKey) ?? null,
   );
   const searchTimer = useRef<number | undefined>(undefined);
 
@@ -90,7 +85,7 @@ export function SearchToolView(props: SearchToolViewProps) {
 
   useEffect(() => {
     setOpenResult(null);
-    setNvimPtyId(searchNvimSessions.get(nvimSessionKey)?.ptyId ?? null);
+    setNvimPtyId(searchNvimPtyId(nvimSessionKey) ?? null);
   }, [nvimSessionKey]);
 
   const sendNvimTarget = useCallback(async (ptyId: string, target: OpenResult) => {
@@ -116,14 +111,14 @@ export function SearchToolView(props: SearchToolViewProps) {
   const handleNvimPtyId = useCallback(
     (_tabId: string, ptyId: string | null) => {
       if (!ptyId) return;
-      searchNvimSessions.set(nvimSessionKey, { ptyId });
+      rememberSearchNvimSession(nvimSessionKey, ptyId);
       setNvimPtyId(ptyId);
     },
     [nvimSessionKey],
   );
 
   const handleNvimFailed = useCallback(() => {
-    searchNvimSessions.delete(nvimSessionKey);
+    forgetSearchNvimSession(nvimSessionKey);
     setNvimPtyId(null);
   }, [nvimSessionKey]);
 

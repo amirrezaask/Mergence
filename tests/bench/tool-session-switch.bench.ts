@@ -91,22 +91,33 @@ test("tool-switch viewport updates within budget", async () => {
       rounds: 5,
       measure: async () => {
         const started = Date.now()
-        await page.evaluate(async id => {
-          performance.clearMarks("yaade:tool-switch")
-          performance.clearMeasures("yaade:tool-switch")
-          performance.mark("yaade:tool-switch:start")
-          await window.__yaadeAgent!.selectToolUse!(id)
-          performance.mark("yaade:tool-switch:end")
-          performance.measure("yaade:tool-switch", "yaade:tool-switch:start", "yaade:tool-switch:end")
-        }, first)
-        await page.evaluate(async id => {
-          performance.clearMarks("yaade:tool-switch")
-          performance.clearMeasures("yaade:tool-switch")
-          performance.mark("yaade:tool-switch:start")
-          await window.__yaadeAgent!.selectToolUse!(id)
-          performance.mark("yaade:tool-switch:end")
-          performance.measure("yaade:tool-switch", "yaade:tool-switch:start", "yaade:tool-switch:end")
-        }, second)
+        const selectAndMeasure = async (id: string) => {
+          await page.evaluate(async toolUseId => {
+            performance.clearMarks("yaade:tool-switch")
+            performance.clearMeasures("yaade:tool-switch")
+            performance.mark("yaade:tool-switch:start")
+            await window.__yaadeAgent!.selectToolUse!(toolUseId)
+          }, id)
+          await page.waitForFunction(toolUseId => {
+            const tile = document.querySelector(
+              `[data-yaade-tool-tile="${toolUseId}"]`,
+            )
+            return tile?.hasAttribute("data-focused") === true
+          }, id)
+          await page.evaluate(async () => {
+            await new Promise<void>(resolve => {
+              requestAnimationFrame(() => requestAnimationFrame(() => resolve()))
+            })
+            performance.mark("yaade:tool-switch:end")
+            performance.measure(
+              "yaade:tool-switch",
+              "yaade:tool-switch:start",
+              "yaade:tool-switch:end",
+            )
+          })
+        }
+        await selectAndMeasure(first)
+        await selectAndMeasure(second)
         const duration = await page.evaluate(() => {
           const measure = performance.getEntriesByName("yaade:tool-switch").at(-1)
           return measure?.duration ?? Date.now()
