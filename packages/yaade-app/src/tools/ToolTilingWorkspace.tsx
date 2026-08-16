@@ -18,8 +18,7 @@ import {
 } from "@yaade/ui";
 import { yaadeMotion } from "@yaade/ui";
 import { Button } from "@yaade/ui/primitives";
-import type { RuntimeToolTitle } from "./tool-title.js";
-import { toolUseWorkTitle } from "./tool-title.js";
+import { toolUsePaneTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 import type { ToolPaneView, ToolWorkspace } from "./tool-tiling.js";
 import { toolIdsInWorkspace } from "./tool-tiling.js";
@@ -111,7 +110,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
         <MuxPaneChrome
           title={
             activeUse
-              ? toolUseWorkTitle(
+              ? toolUsePaneTitle(
                   activeUse,
                   props.runtimeTitles.get(activeUse.id),
                 )

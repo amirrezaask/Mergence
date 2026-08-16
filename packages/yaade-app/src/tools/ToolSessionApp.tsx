@@ -373,11 +373,6 @@ export function ToolSessionApp() {
     for (const [id, ids] of snapshot.useIdsBySession) counts.set(id, ids.length);
     return counts;
   }, [snapshot.useIdsBySession]);
-  const tabToolCounts = useMemo(() => {
-    const counts = new Map<SessionTabId, number>();
-    for (const [id, ids] of snapshot.useIdsByTab) counts.set(id, ids.length);
-    return counts;
-  }, [snapshot.useIdsByTab]);
   const selected = snapshot.activeToolUseId
     ? snapshot.usesById.get(snapshot.activeToolUseId)
     : undefined;
@@ -1240,15 +1235,9 @@ export function ToolSessionApp() {
     [activeTab, activateDockedTool, updateToolWorkspace],
   );
 
-  const renderPrefixHud = (placement: "main" | "dock") =>
+  const renderPrefixHud = () =>
     prefixPending ? (
-      <div
-        className={
-          placement === "main"
-            ? "pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-2"
-            : "pointer-events-none absolute inset-x-0 bottom-full z-20 flex justify-center px-2 pb-2"
-        }
-      >
+      <div className="pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-2">
         <div className="pointer-events-auto w-full max-w-4xl">
           <WhichKeyPanel
             variant="overlay"
@@ -1293,7 +1282,7 @@ export function ToolSessionApp() {
           <ToolDndRoot handlers={toolTabDnd}>
             {!sidebarLayout ? (
               <header
-                className="flex h-14 shrink-0 items-center gap-1 border-b border-border/80 bg-card px-1.5"
+                className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border/80 bg-card px-1.5"
                 data-yaade-session-tabs=""
                 data-yaade-top-tabbar=""
               >
@@ -1314,7 +1303,6 @@ export function ToolSessionApp() {
                 <SessionWindowTabStrip
                   tabs={visibleTabs}
                   activeTabId={activeTab?.id}
-                  toolCounts={tabToolCounts}
                   onSelect={selectTab}
                   onCreate={() => void createTab()}
                   onClose={closeTab}
@@ -1350,7 +1338,6 @@ export function ToolSessionApp() {
                 <SessionTabStrip
                   sessions={visibleSessions}
                   activeSessionId={snapshot.activeSessionId}
-                  toolCounts={toolCounts}
                   layout="two-sidebars"
                   collapsed={sidebarsCollapsed}
                   sidebarOrientation={sidebarOrientation}
@@ -1386,7 +1373,6 @@ export function ToolSessionApp() {
                   <SessionTabStrip
                     sessions={visibleSessions}
                     activeSessionId={snapshot.activeSessionId}
-                    toolCounts={toolCounts}
                     layout="single-sidebar"
                     collapsed={sidebarsCollapsed}
                     sidebarOrientation={sidebarOrientation}
@@ -1461,7 +1447,6 @@ export function ToolSessionApp() {
                   <SessionWindowTabStrip
                     tabs={visibleTabs}
                     activeTabId={activeTab?.id}
-                    toolCounts={tabToolCounts}
                     onSelect={selectTab}
                     onCreate={() => void createTab()}
                     onClose={closeTab}
@@ -1609,9 +1594,9 @@ export function ToolSessionApp() {
                     onAddKind={(kind) => void createTool(kind)}
                   />
                 )}
-                {renderPrefixHud("main")}
+                {renderPrefixHud()}
               </main>
-              {twoSidebarLayout || !sidebarLayout ? (
+              {twoSidebarLayout ? (
                 <div
                   className={
                     twoSidebarLayout
@@ -1619,7 +1604,6 @@ export function ToolSessionApp() {
                       : "relative shrink-0"
                   }
                 >
-                  {!sidebarLayout ? renderPrefixHud("dock") : null}
                   <ToolUseTabStrip
                     useIds={twoSidebarLayout ? agentUseIds : useIds}
                     usesById={snapshot.usesById}

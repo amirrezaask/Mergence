@@ -57,7 +57,6 @@ export type SessionTabStripProps = {
   readonly onCreate: () => void;
   readonly onRename: (id: SessionId, title: string) => void;
   readonly onReorder: (ids: readonly SessionId[]) => void;
-  readonly toolCounts?: ReadonlyMap<SessionId, number>;
   readonly layout?: SessionNavigationLayout;
   readonly collapsed?: boolean;
   readonly sidebarOrientation?: "horizontal" | "vertical";
@@ -126,7 +125,6 @@ export function SessionTabStrip(props: SessionTabStripProps) {
 
   const sessionItems = props.sessions.map((session, index) => {
     const active = session.id === props.activeSessionId;
-    const toolCount = props.toolCounts?.get(session.id) ?? 0;
     const editing = editingId === session.id;
     return (
       <MotionDiv
@@ -189,18 +187,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           />
         ) : (
           <span className="flex min-h-8 min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 transition-colors group-data-[active=true]:text-sidebar-accent-foreground">
-            <span className="grid size-5 shrink-0 place-items-center rounded border border-sidebar-border font-mono text-3xs tabular-nums text-sidebar-foreground/55 group-data-[active=true]:border-sidebar-primary/50 group-data-[active=true]:text-sidebar-primary">
-              {index + 1}
-            </span>
             <span className="min-w-0 flex-1 truncate">{session.title}</span>
-            {toolCount > 0 ? (
-              <span
-                className="shrink-0 rounded-full bg-sidebar/70 px-1.5 font-mono text-3xs tabular-nums text-sidebar-foreground/60"
-                data-yaade-session-tool-count={toolCount}
-              >
-                {toolCount}
-              </span>
-            ) : null}
           </span>
         )}
         <Button
@@ -332,7 +319,6 @@ export function SessionTabStrip(props: SessionTabStripProps) {
       >
         {props.sessions.map((session, index) => {
           const active = session.id === props.activeSessionId;
-          const toolCount = props.toolCounts?.get(session.id) ?? 0;
           const editing = editingId === session.id;
           return (
             <div
@@ -388,14 +374,6 @@ export function SessionTabStrip(props: SessionTabStripProps) {
               ) : (
                 <span className="flex min-h-full min-w-0 flex-1 items-center overflow-hidden px-1.5 text-left text-xs font-medium text-muted-foreground transition-colors group-data-[active=true]:text-foreground">
                   <span className="truncate">{session.title}</span>
-                  {toolCount > 0 ? (
-                    <span
-                      className="ml-1.5 font-mono text-3xs tabular-nums text-muted-foreground"
-                      data-yaade-session-tool-count={toolCount}
-                    >
-                      {toolCount}
-                    </span>
-                  ) : null}
                 </span>
               )}
               <Button

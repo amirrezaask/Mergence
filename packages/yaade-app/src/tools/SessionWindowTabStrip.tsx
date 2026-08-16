@@ -30,7 +30,6 @@ function handleWindowTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
 export type SessionWindowTabStripProps = {
   readonly tabs: readonly SessionTab[]
   readonly activeTabId?: SessionTabId
-  readonly toolCounts?: ReadonlyMap<SessionTabId, number>
   readonly onSelect: (tab: SessionTab) => void
   readonly onCreate: () => void
   readonly onClose: (tab: SessionTab) => void
@@ -77,7 +76,6 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
           {props.tabs.map((tab, index) => {
             const active = tab.id === props.activeTabId
             const editing = editingId === tab.id
-            const count = props.toolCounts?.get(tab.id) ?? 0
             return (
               <MotionDiv
                 key={tab.id}
@@ -117,9 +115,6 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                     active && "bg-background text-foreground shadow-sm ring-1 ring-border/80",
                   )}
                 >
-                  <span className="font-mono text-3xs tabular-nums text-muted-foreground/70" aria-hidden>
-                    {index + 1}
-                  </span>
                   {editing ? (
                     <Input
                       aria-label={`Rename ${tab.title}`}
@@ -140,11 +135,6 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                       {tab.title}
                     </span>
                   )}
-                  {count > 0 ? (
-                    <span className="font-mono text-3xs tabular-nums text-muted-foreground" data-yaade-session-tab-tool-count={count}>
-                      {count}
-                    </span>
-                  ) : null}
                   <Button
                     type="button"
                     size="icon-xs"

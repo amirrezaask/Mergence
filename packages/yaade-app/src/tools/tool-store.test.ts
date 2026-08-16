@@ -7,6 +7,7 @@ import {
   nextRuntimeToolTitle,
   toolUseContextCaption,
   toolUseDisplayTitle,
+  toolUsePaneTitle,
   toolUseWorkTitle,
 } from "./tool-title.js"
 
@@ -101,6 +102,10 @@ describe("smart ToolUse titles", () => {
     const terminal = use()
     const live = nextRuntimeToolTitle(terminal, undefined, "fish · ~/dev/yaade", "terminal")
     assert.equal(toolUseDisplayTitle(terminal, live), "p: fish · ~/dev/yaade")
+    assert.equal(toolUsePaneTitle(terminal, live), "fish")
+
+    const cwdOnly = nextRuntimeToolTitle(terminal, undefined, "~/dev/yaade", "terminal")
+    assert.equal(toolUsePaneTitle(terminal, cwdOnly), "")
   })
 })
 

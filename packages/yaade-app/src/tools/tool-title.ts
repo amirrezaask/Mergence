@@ -66,6 +66,23 @@ export function toolUseDisplayTitle(
   return projectName ? compactToolTitle(`${projectName}: ${title}`) : title;
 }
 
+function isWorkingDirectoryTitle(value: string): boolean {
+  return value === "~" || value.startsWith("~/") || value.startsWith("/");
+}
+
+/** Pane chrome omits terminal working-directory titles while keeping process names. */
+export function toolUsePaneTitle(
+  use: ToolUse,
+  runtimeTitle?: RuntimeToolTitle,
+): string {
+  const title = toolUseWorkTitle(use, runtimeTitle);
+  if (runtimeTitle?.source !== "terminal") return title;
+  return title
+    .split(" · ")
+    .filter((part) => !isWorkingDirectoryTitle(part))
+    .join(" · ");
+}
+
 export function nextRuntimeToolTitle(
   use: ToolUse,
   current: RuntimeToolTitle | undefined,
