@@ -49,19 +49,23 @@ export type QueuedHook = {
 }
 
 /** List queued hook files (oldest first). */
-export function listQueuedHooks(dataDir?: string): QueuedHook[] {
+export async function listQueuedHooks(dataDir?: string): Promise<QueuedHook[]> {
   const dir = hookQueueDir(dataDir)
-  if (!fs.existsSync(dir)) return []
-  const files = fs
-    .readdirSync(dir)
-    .filter((f) => f.endsWith(".json"))
-    .sort()
+  let files: string[]
+  try {
+    files = (await fs.promises.readdir(dir))
+      .filter(file => file.endsWith(".json"))
+      .sort()
+  } catch (error) {
+    if (isMissingFileError(error)) return []
+    throw error
+  }
   const out: QueuedHook[] = []
   const now = Date.now()
   for (const name of files) {
     const file = path.join(dir, name)
     try {
-      const raw = JSON.parse(fs.readFileSync(file, "utf8")) as {
+      const raw = JSON.parse(await fs.promises.readFile(file, "utf8")) as {
         payload: unknown
         meta: QueuedHook["meta"]
         enqueuedAt?: string
@@ -70,7 +74,7 @@ export function listQueuedHooks(dataDir?: string): QueuedHook[] {
       }
       const enqueuedAt = Date.parse(raw.enqueuedAt ?? "")
       if (Number.isFinite(enqueuedAt) && now - enqueuedAt > MAX_QUEUE_AGE_MS) {
-        removeQueuedHook(file)
+        await removeQueuedHook(file)
         discardedSinceLastRead += 1
         continue
       }
@@ -87,16 +91,16 @@ export function listQueuedHooks(dataDir?: string): QueuedHook[] {
         nextAttemptAt,
       })
     } catch {
-      removeQueuedHook(file)
+      await removeQueuedHook(file)
       discardedSinceLastRead += 1
     }
   }
   return out
 }
 
-export function markQueuedHookRetry(file: string, error: unknown): void {
+export async function markQueuedHookRetry(file: string, error: unknown): Promise<void> {
   try {
-    const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>
+    const parsed = JSON.parse(await fs.promises.readFile(file, "utf8")) as Record<string, unknown>
     const retryCount = Math.max(0, Number(parsed.retryCount ?? 0)) + 1
     const delayMs = Math.min(5 * 60_000, 1_000 * 2 ** Math.min(retryCount, 8))
     const next = {
@@ -106,10 +110,10 @@ export function markQueuedHookRetry(file: string, error: unknown): void {
       lastError: error instanceof Error ? error.message.slice(0, 500) : String(error).slice(0, 500),
     }
     const temporary = `${file}.tmp-${process.pid}`
-    fs.writeFileSync(temporary, JSON.stringify(next), "utf8")
-    fs.renameSync(temporary, file)
+    await fs.promises.writeFile(temporary, JSON.stringify(next), "utf8")
+    await fs.promises.rename(temporary, file)
   } catch {
-    removeQueuedHook(file)
+    await removeQueuedHook(file)
     discardedSinceLastRead += 1
   }
 }
@@ -135,16 +139,28 @@ function enforceQueueBounds(dir: string): void {
   while (sizes.length > MAX_QUEUE_ENTRIES || bytes > MAX_QUEUE_BYTES) {
     const oldest = sizes.shift()
     if (!oldest) break
-    removeQueuedHook(oldest.file)
+    removeQueuedHookSync(oldest.file)
     bytes -= oldest.size
     discardedSinceLastRead += 1
   }
 }
 
-export function removeQueuedHook(file: string): void {
+export async function removeQueuedHook(file: string): Promise<void> {
+  try {
+    await fs.promises.unlink(file)
+  } catch (error) {
+    if (!isMissingFileError(error)) throw error
+  }
+}
+
+function removeQueuedHookSync(file: string): void {
   try {
     fs.unlinkSync(file)
   } catch {
     /* ignore */
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return error instanceof Error && "code" in error && error.code === "ENOENT"
 }

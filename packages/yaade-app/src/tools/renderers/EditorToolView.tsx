@@ -1,7 +1,6 @@
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc"
 import type { YaadeTheme } from "@yaade/shared"
 import type { ReactNode } from "react"
-import { ToolEditorSurface } from "./ToolEditorSurface.js"
 
 export type EditorToolViewProps = {
   readonly use: ToolUse
@@ -16,18 +15,25 @@ export type EditorToolViewProps = {
   readonly visible?: boolean
 }
 
-/** The workspace editor tool is the canonical shared Monaco/LSP surface. */
+/** Browser editing is temporarily disabled while file navigation uses Neovim. */
 export function EditorToolView(props: EditorToolViewProps) {
   return (
-    <ToolEditorSurface
-      key={`${props.use.id}:${props.use.context.checkoutPath}`}
-      use={props.use}
-      checkoutPath={props.use.context.checkoutPath}
-      theme={props.theme}
-      fontSize={props.fontSize}
-      toolbar={props.toolbar}
-      visible={props.visible}
-    />
+    <div
+      className="flex min-h-0 flex-1 flex-col"
+      data-yaade-editor-disabled=""
+    >
+      {props.toolbar}
+      <div className="grid min-h-0 flex-1 place-items-center p-8 text-center">
+        <div className="max-w-sm">
+          <p className="text-sm font-medium text-foreground">
+            The in-browser editor is temporarily disabled.
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Search results open in Neovim inside a terminal pane.
+          </p>
+        </div>
+      </div>
+    </div>
   )
 }
 

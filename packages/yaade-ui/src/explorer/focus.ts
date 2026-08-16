@@ -1,4 +1,4 @@
-import { getListPanel, focusFirstListItem } from "../lib/list-registry.js"
+import { focusFirstListItem } from "../lib/list-registry.js"
 
 export const EXPLORER_LIST_ID = "yaade:explorer"
 

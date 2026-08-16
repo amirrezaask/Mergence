@@ -9,7 +9,7 @@ import { handleDroppedPaths } from "./drop-files.js"
 import {
   getEditorDiagnostics,
   type EditorDiagnostics,
-} from "./editor/editor-diagnostics.js"
+} from "./runtime-diagnostics.js"
 import {
   findTerminalBufferMatch,
   readTerminalBufferText,
@@ -43,8 +43,10 @@ export type JetAgentState = {
   sessionId: string | null
   sessionCwd: string | null
   activeSessionId?: string | null
+  activeTabId?: string | null
   activeToolUseId?: string | null
   sessions?: readonly unknown[]
+  tabs?: readonly unknown[]
   toolUses?: readonly unknown[]
   hqCounts?: { projects: number; agents: number; attention: number; unread: number }
 }
@@ -128,6 +130,9 @@ export type YaadeAgentAPI = {
   /** Session Tool shell controls (E2E). */
   createSession?(): Promise<void>
   selectSession?(sessionId: string): Promise<void>
+  createTab?(): Promise<void>
+  selectTab?(tabId: string): Promise<void>
+  closeTab?(tabId: string): Promise<void>
   createToolUse?(kind: "agent" | "terminal" | "search"): Promise<void>
   selectToolUse?(toolUseId: string): Promise<void>
   closeToolUse?(toolUseId: string): Promise<void>
@@ -267,7 +272,9 @@ export function createAgentBridge(ctx: () => AgentBridgeContext): YaadeAgentAPI 
     async waitForEditor(timeoutMs = 5000) {
       const deadline = Date.now() + timeoutMs
       while (Date.now() < deadline) {
-        const editor = document.querySelector("[data-yaade-monaco-editor], .monaco-editor")
+        const editor = document.querySelector(
+          "[data-yaade-code-editor], [data-yaade-editor-pane]",
+        )
         if (editor) {
           if (typeof performance?.mark === "function") {
             performance.mark("yaade:editor-mounted:end")
@@ -390,8 +397,8 @@ export function createAgentBridge(ctx: () => AgentBridgeContext): YaadeAgentAPI 
         normalizeAbsPath(w.path),
       )
       const target =
-        document.querySelector("[data-yaade-monaco-editor]") ??
-        document.querySelector("[data-yaade-mux-editor-pane]")
+        document.querySelector("[data-yaade-code-editor]") ??
+        document.querySelector("[data-yaade-editor-pane]")
       await handleDroppedPaths(
         paths,
         "editor",

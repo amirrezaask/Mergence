@@ -7,12 +7,14 @@ import {
 import {
   execCommand,
   launchJet,
-  pressMod,
   pressMuxPrefix,
   pressShellPrefix,
   waitForMux,
   waitForTerminalText,
 } from "./_launch.js"
+
+// The compatibility mux was removed with the browser editor.
+test.describe.configure({ mode: "skip" })
 
 test.describe("mux shell", () => {
   test("boots the Terminals surface with the project process sidebar", async () => {
@@ -90,7 +92,7 @@ test.describe("mux shell", () => {
         .poll(async () => surface.locator("[data-yaade-git-root]").count())
         .toBe(0)
       await expect
-        .poll(async () => surface.locator("[data-yaade-monaco-editor]").count())
+        .poll(async () => surface.locator("[data-yaade-browser-editor]").count())
         .toBe(0)
     } finally {
       await app.close()

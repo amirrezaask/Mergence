@@ -1,4 +1,3 @@
-import type { ReactNode } from "react"
 import { GripHorizontalIcon, GripVerticalIcon } from "lucide-react"
 import { Group, Panel, Separator, type Layout, type Orientation } from "react-resizable-panels"
 

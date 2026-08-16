@@ -18,6 +18,13 @@ export default {
     { name: "anti-slop", specifier: "./tools/oxlint/anti-slop/index.ts" },
   ],
   rules: {
+    // Keep dead code and common React identity traps from accumulating. React
+    // Compiler handles broad memoization; deliberately avoid noisy
+    // react-perf/no-new-*-as-prop rules that fight the compiler.
+    "eslint/no-unused-vars": "error",
+    "react/jsx-no-constructed-context-values": "error",
+    "react/no-object-type-as-default-prop": "error",
+    "unicorn/prefer-set-has": "error",
     "anti-slop/no-chained-type-assertions": "error",
     "anti-slop/no-conditional-empty-object-spread": "error",
     "anti-slop/no-known-value-widening": "error",

@@ -33,6 +33,11 @@ import {
   ArchiveToolUse,
   CancelToolUse,
   CreateSession,
+  CreateSessionTab,
+  RenameSessionTab,
+  ReorderSessionTabs,
+  ArchiveSessionTab,
+  SelectSessionTab,
   CreateToolUse,
   GetSession,
   GetToolUse,
@@ -44,9 +49,9 @@ import {
   RestoreSession,
   RenameSession,
   RestartToolUse,
-  SearchToolOutput,
   SelectSessionToolUse,
   SessionNotFound,
+  SessionTabNotFound,
   ToolUseNotFound,
   InvalidToolInput,
   InvalidToolCommand,
@@ -54,13 +59,12 @@ import {
   CheckoutResolutionFailed,
   ToolUseConflict,
   ToolRuntimeFailure,
-  SessionArchived,
   SessionCreated,
   SessionRestored,
   SessionUpdated,
+  SessionTabCreated,
+  SessionTabUpdated,
   ToolUseArchived,
-  ToolUseCreated,
-  ToolUseOutputChanged,
   ToolUseUpdated,
   UpdateToolUseInput,
   UpdateToolUseContext,
@@ -88,7 +92,6 @@ import type {
   ProjectSearchOptions,
 } from "@yaade/shared";
 import { fileUriToPath, pathToFileUri } from "@yaade/shared";
-import { getCliAgentDriver } from "@yaade/agents";
 import { GitServiceLive, GitServiceTag } from "./effect/git.js";
 import { HostRuntimeTag, LspHostTag } from "./effect/tags.js";
 import type { HostRuntime } from "./host-runtime.js";
@@ -132,6 +135,7 @@ export function mapDispatchError(
     error instanceof PathOutsideRootsError ||
     error instanceof PayloadTooLargeError ||
     error instanceof SessionNotFound ||
+    error instanceof SessionTabNotFound ||
     error instanceof ToolUseNotFound ||
     error instanceof InvalidToolInput ||
     error instanceof InvalidToolCommand ||
@@ -226,7 +230,7 @@ async function dispatchImpl(
     return handleNotifications(runtime, channel, args);
   }
   if (channel.startsWith("tools:"))
-    return handleTools(runtime, channel, args, clientId);
+    return handleTools(runtime, channel, args);
   if (channel.startsWith("fs:")) return handleFs(runtime, channel, args);
   if (channel.startsWith("search:"))
     return handleSearch(runtime, channel, args, signal);
@@ -246,7 +250,6 @@ async function handleTools(
   runtime: HostRuntime,
   channel: string,
   args: unknown[],
-  clientId: string,
 ): Promise<unknown> {
   const store = runtime.toolSessions;
   switch (channel) {
@@ -263,6 +266,7 @@ async function handleTools(
         .listSessions(command.includeArchived === true)
         .map((session) => ({
           session,
+          tabs: store.listTabs(session.id, command.includeArchived === true),
           toolUses: store.listToolUses(
             session.id,
             command.includeArchived === true,
@@ -279,6 +283,7 @@ async function handleTools(
         "create session",
       );
       const session = store.createSession(command.title ?? "New session");
+      const tabs = store.listTabs(session.id);
       runtime.events.emit("tools:event", [
         SessionCreated.make({
           eventId: `evt-${Date.now()}`,
@@ -286,6 +291,14 @@ async function handleTools(
           occurredAt: session.updatedAt,
           session,
         }),
+        ...tabs.map((tab) =>
+          SessionTabCreated.make({
+            eventId: `evt-tab-${Date.now()}-${tab.id}`,
+            revision: 1,
+            occurredAt: tab.updatedAt,
+            tab,
+          }),
+        ),
       ]);
       return store.getSession(session.id) ?? session;
     }
@@ -296,6 +309,56 @@ async function handleTools(
         "reorder sessions",
       );
       return store.reorderSessions(command.sessionIds);
+    }
+    case "tools:createTab": {
+      const command = decodeToolCommand(CreateSessionTab, args[0], "create tab");
+      const tab = store.createTab(command.sessionId, command.title ?? "New tab");
+      runtime.events.emit("tools:event", [
+        SessionTabCreated.make({
+          eventId: `evt-tab-${Date.now()}-${tab.id}`,
+          revision: 1,
+          occurredAt: tab.updatedAt,
+          tab,
+        }),
+      ]);
+      return tab;
+    }
+    case "tools:renameTab": {
+      const command = decodeToolCommand(RenameSessionTab, args[0], "rename tab");
+      const tab = store.renameTab(command.tabId, command.title);
+      runtime.events.emit("tools:event", [
+        SessionTabUpdated.make({
+          eventId: `evt-tab-${Date.now()}-${tab.id}`,
+          revision: 1,
+          occurredAt: tab.updatedAt,
+          tab,
+        }),
+      ]);
+      return tab;
+    }
+    case "tools:reorderTabs": {
+      const command = decodeToolCommand(ReorderSessionTabs, args[0], "reorder tabs");
+      const tabs = store.reorderTabs(command.sessionId, command.tabIds);
+      return tabs;
+    }
+    case "tools:archiveTab": {
+      const command = decodeToolCommand(ArchiveSessionTab, args[0], "archive tab");
+      const tab = await requiredToolService(runtime).archiveTab(command.tabId, command.mode === "stop-tools");
+      return tab;
+    }
+    case "tools:selectTab": {
+      const command = decodeToolCommand(SelectSessionTab, args[0], "select tab");
+      const tabId = command.tabId ?? store.listTabs(command.sessionId)[0]?.id ?? null;
+      const session = store.setActiveTab(command.sessionId, tabId);
+      runtime.events.emit("tools:event", [
+        SessionUpdated.make({
+          eventId: `evt-session-tab-${Date.now()}`,
+          revision: 1,
+          occurredAt: session.updatedAt,
+          session,
+        }),
+      ]);
+      return session;
     }
     case "tools:archiveSession": {
       const command = decodeToolCommand(
@@ -357,7 +420,11 @@ async function handleTools(
       );
       const session = store.getSession(command.sessionId);
       return session
-        ? { session, toolUses: store.listToolUses(session.id) }
+        ? {
+            session,
+            tabs: store.listTabs(session.id),
+            toolUses: store.listToolUses(session.id),
+          }
         : null;
     }
     case "tools:getUse": {
@@ -381,7 +448,6 @@ async function handleTools(
         command.toolUseId,
         command.inputRevision,
         command.input,
-        clientId,
       );
     }
     case "tools:updateUseContext": {
@@ -400,6 +466,7 @@ async function handleTools(
         {
           _tag: "CreateToolUse",
           sessionId: current.sessionId,
+          tabId: current.tabId,
           kind: current.kind,
           project: command.project,
           checkout: command.checkout,
@@ -407,7 +474,6 @@ async function handleTools(
         },
         current.id,
         command.revision,
-        clientId,
       );
     }
     case "tools:listSearchResults": {
@@ -447,7 +513,11 @@ async function handleTools(
         args[0],
         "reorder tool uses",
       );
-      return store.reorderToolUses(command.sessionId, command.toolUseIds);
+      return store.reorderToolUses(
+        command.sessionId,
+        command.toolUseIds,
+        command.tabId,
+      );
     }
     case "tools:selectUse": {
       const command = decodeToolCommand(
@@ -470,7 +540,7 @@ async function handleTools(
         args[0],
         "create tool use",
       );
-      return requiredToolService(runtime).create(command, clientId);
+      return requiredToolService(runtime).create(command);
     }
     case "tools:cancelUse": {
       const command = decodeToolCommand(
@@ -500,7 +570,6 @@ async function handleTools(
       return requiredToolService(runtime).restart(
         command.toolUseId,
         command.revision,
-        clientId,
       );
     }
     case "tools:archiveUse": {

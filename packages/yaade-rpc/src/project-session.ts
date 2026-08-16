@@ -17,7 +17,7 @@ export type ProjectSessionLayout = WorkspaceSessionLayoutType
 export const ProjectSessionLeaf = WorkspaceSessionLeaf
 export type ProjectSessionLeaf = WorkspaceSessionLeafType
 
-/** Monaco editor file target keyed by tab id. */
+/** Legacy browser-editor file target keyed by tab id. */
 export const ProjectSessionEditorFile = WorkspaceSessionEditorFile
 export type ProjectSessionEditorFile = WorkspaceSessionEditorFileType
 

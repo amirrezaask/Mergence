@@ -41,18 +41,10 @@ export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   colorSchemeMode: "system",
   fontSize: DEFAULT_FONT_SIZE,
   monoFontFamily: DEFAULT_MONO_FONT_NAME,
-  sessionLayout: "single-sidebar",
+  sessionLayout: "tabs",
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
   sidebarProjectFilterPath: null,
-  preferredEditor: "monaco",
-}
-
-export function normalizePreferredEditor(
-  value: PersistedAppearanceValue,
-  fallback: JetAppearanceSettings["preferredEditor"] = "monaco",
-): JetAppearanceSettings["preferredEditor"] {
-  return value === "monaco" || value === "neovim" ? value : fallback
 }
 
 function clampNumber(
@@ -100,9 +92,9 @@ export function themeIdForColorSchemeMode(
 }
 
 export function normalizeSessionLayout(_value: PersistedAppearanceValue): SessionLayout {
-  // The tiled Tool Session shell has one navigation model. Older persisted
-  // tab-bar and two-sidebar values migrate to the combined sidebar.
-  return "single-sidebar"
+  // The Tool Session shell now keeps session and tool navigation in one top tab bar.
+  // Older sidebar preferences migrate to the simplified layout.
+  return "tabs"
 }
 
 function normalizeProjectFilterPath(value: PersistedAppearanceValue): string | null {
@@ -253,10 +245,6 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         parsed.sidebarProjectFilterPath ??
           parsed.sidebarProjectFilterRootUri ??
           parsed.sidebarProjectFilterId,
-      ),
-      preferredEditor: normalizePreferredEditor(
-        parsed.preferredEditor,
-        base.preferredEditor,
       ),
     }
   } catch {

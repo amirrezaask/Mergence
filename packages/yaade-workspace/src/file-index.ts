@@ -16,7 +16,6 @@ export async function indexWorkspaceFiles(
     }
   }
   const results: string[] = []
-  const rootPath = rootUri.replace(/^file:\/\//, "")
 
   async function walk(uri: string, rel: string, depth: number): Promise<void> {
     if (results.length >= maxFiles || depth > 12) return

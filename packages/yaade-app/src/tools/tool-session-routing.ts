@@ -1,14 +1,17 @@
 import { Schema } from "effect"
 import {
+  AppSession,
   SessionId,
+  SessionTabId,
   ToolUseId,
-  type AppSession,
+  type SessionTab,
   type SessionId as SessionIdType,
   type ToolUseId as ToolUseIdType,
 } from "@yaade/rpc"
 
 export type ToolSessionRoute = {
   sessionId?: SessionIdType
+  tabId?: SessionTabId
   toolUseId?: ToolUseIdType
   legacyPath?: string
   legacyProjectSessionId?: string
@@ -18,6 +21,15 @@ function optionalSessionId(value: string | null): SessionIdType | undefined {
   if (!value) return undefined
   try {
     return Schema.decodeUnknownSync(SessionId)(value)
+  } catch {
+    return undefined
+  }
+}
+
+function optionalTabId(value: string | null): SessionTabId | undefined {
+  if (!value) return undefined
+  try {
+    return Schema.decodeUnknownSync(SessionTabId)(value)
   } catch {
     return undefined
   }
@@ -35,6 +47,7 @@ function optionalToolUseId(value: string | null): ToolUseIdType | undefined {
 export function parseToolSessionRoute(input: string | URL): ToolSessionRoute {
   const url = typeof input === "string" ? new URL(input, "http://yaade.local") : input
   const sessionId = optionalSessionId(url.searchParams.get("s"))
+  const tabId = optionalTabId(url.searchParams.get("t"))
   const toolUseId = optionalToolUseId(url.searchParams.get("u"))
   const legacyPath = url.pathname !== "/" ? url.pathname : undefined
   const legacyProjectSessionId =
@@ -43,15 +56,38 @@ export function parseToolSessionRoute(input: string | URL): ToolSessionRoute {
       : undefined
   return {
     ...(sessionId ? { sessionId } : {}),
+    ...(tabId ? { tabId } : {}),
     ...(toolUseId ? { toolUseId } : {}),
     ...(legacyPath ? { legacyPath } : {}),
     ...(legacyProjectSessionId ? { legacyProjectSessionId } : {}),
   }
 }
 
-export function toolSessionUrl(sessionId: SessionIdType, toolUseId?: ToolUseIdType): string {
+function isSessionTabId(value: SessionTabId | ToolUseIdType): value is SessionTabId {
+  return value.startsWith("tab-")
+}
+
+function isToolUseId(value: SessionTabId | ToolUseIdType): value is ToolUseIdType {
+  return value.startsWith("use-")
+}
+
+/** Build a deep link using tmux's session/window/pane hierarchy. */
+export function toolSessionUrl(
+  sessionId: SessionIdType,
+  tabOrToolUseId?: SessionTabId | ToolUseIdType,
+  toolUseId?: ToolUseIdType,
+): string {
   const params = new URLSearchParams({ s: sessionId })
-  if (toolUseId) params.set("u", toolUseId)
+  const tabId = tabOrToolUseId && isSessionTabId(tabOrToolUseId)
+    ? tabOrToolUseId
+    : undefined
+  const paneId = toolUseId ?? (
+    tabOrToolUseId && isToolUseId(tabOrToolUseId)
+      ? tabOrToolUseId
+      : undefined
+  )
+  if (tabId) params.set("t", tabId)
+  if (paneId) params.set("u", paneId)
   return `/?${params.toString()}`
 }
 
@@ -66,15 +102,30 @@ export function chooseSession(
   )
 }
 
+export function chooseTab(
+  requested: SessionTabId | undefined,
+  session: AppSession | undefined,
+  tabs: readonly SessionTab[],
+): SessionTab | undefined {
+  if (!session) return undefined
+  const visible = tabs
+    .filter(tab => tab.sessionId === session.id && !tab.archivedAt)
+    .sort((a, b) => a.position - b.position)
+  return (
+    visible.find(tab => tab.id === requested) ??
+    visible.find(tab => tab.id === session.activeTabId) ??
+    visible[0]
+  )
+}
+
 export function chooseToolUse(
   requested: ToolUseIdType | undefined,
-  session: AppSession | undefined,
+  tab: SessionTab | AppSession | undefined,
   toolUseIds: readonly ToolUseIdType[],
 ): ToolUseIdType | undefined {
-  if (!session) return undefined
+  if (!tab) return undefined
   if (requested && toolUseIds.includes(requested)) return requested
-  if (session.activeToolUseId && toolUseIds.includes(session.activeToolUseId)) {
-    return session.activeToolUseId
-  }
+  const activeToolUseId = tab.activeToolUseId
+  if (activeToolUseId && toolUseIds.includes(activeToolUseId)) return activeToolUseId
   return toolUseIds[0]
 }

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
+import { ChevronRight } from "lucide-react";
 import type {
   CheckoutTarget,
   ProjectSearchResult,
@@ -9,7 +10,12 @@ import type {
 } from "@yaade/rpc";
 import { pathToFileUri, type ProjectSearchOptions, type YaadeTheme } from "@yaade/shared";
 import { ProjectSearchPanel } from "@yaade/ui";
-import { ToolEditorSurface } from "./ToolEditorSurface.js";
+import { Button } from "@yaade/ui/primitives";
+import { nvimEditCommand, nvimLaunchArgs, type SearchNvimTarget } from "./search-neovim.js";
+
+const TerminalPanel = lazy(() =>
+  import("@yaade/ui/terminal").then(module => ({ default: module.TerminalPanel })),
+);
 
 export type SearchToolViewProps = {
   readonly use: ToolUse;
@@ -27,14 +33,22 @@ export type SearchToolViewProps = {
     options: ProjectSearchOptions,
   ) => Promise<void>;
   readonly onLoadMore: () => Promise<void>;
+  readonly visible?: boolean;
+  readonly focused?: boolean;
 };
 
-type OpenResult = {
-  readonly uri: string;
-  readonly path: string;
-  readonly line: number;
-  readonly column: number;
+type OpenResult = SearchNvimTarget;
+
+type SearchNvimSession = {
+  readonly ptyId: string;
 };
+
+/** One long-lived Neovim PTY per search tool, even while the tool is hidden. */
+const searchNvimSessions = new Map<string, SearchNvimSession>();
+
+function searchNvimSessionKey(useId: string, checkoutPath: string): string {
+  return `${useId}:${checkoutPath}`;
+}
 
 function absoluteResultPath(root: string, resultPath: string): string {
   if (resultPath.startsWith("/")) return resultPath;
@@ -42,18 +56,16 @@ function absoluteResultPath(root: string, resultPath: string): string {
 }
 
 function editableOptions(options: SearchToolOptions): ProjectSearchOptions {
-  return {
-    ...(options.include ? { include: [...options.include] } : {}),
-    ...(options.exclude ? { exclude: [...options.exclude] } : {}),
-    ...(options.caseSensitive != null
-      ? { caseSensitive: options.caseSensitive }
-      : {}),
-    ...(options.regex != null ? { regex: options.regex } : {}),
-    ...(options.fuzzy != null ? { fuzzy: options.fuzzy } : {}),
-    ...(options.wholeWord != null ? { wholeWord: options.wholeWord } : {}),
-    ...(options.limit != null ? { limit: options.limit } : {}),
-    ...(options.cursor != null ? { cursor: options.cursor } : {}),
-  };
+  const next: ProjectSearchOptions = {};
+  if (options.include) next.include = [...options.include];
+  if (options.exclude) next.exclude = [...options.exclude];
+  if (options.caseSensitive != null) next.caseSensitive = options.caseSensitive;
+  if (options.regex != null) next.regex = options.regex;
+  if (options.fuzzy != null) next.fuzzy = options.fuzzy;
+  if (options.wholeWord != null) next.wholeWord = options.wholeWord;
+  if (options.limit != null) next.limit = options.limit;
+  if (options.cursor != null) next.cursor = options.cursor;
+  return next;
 }
 
 export function SearchToolView(props: SearchToolViewProps) {
@@ -63,8 +75,12 @@ export function SearchToolView(props: SearchToolViewProps) {
     input ? editableOptions(input.options) : {},
   );
   const [openResult, setOpenResult] = useState<OpenResult | null>(null);
-  const searchTimer = useRef<number | undefined>(undefined);
   const checkoutPath = props.use.context.checkoutPath;
+  const nvimSessionKey = searchNvimSessionKey(props.use.id, checkoutPath);
+  const [nvimPtyId, setNvimPtyId] = useState<string | null>(
+    () => searchNvimSessions.get(nvimSessionKey)?.ptyId ?? null,
+  );
+  const searchTimer = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     if (props.use.input.kind !== "search") return;
@@ -72,18 +88,44 @@ export function SearchToolView(props: SearchToolViewProps) {
     setOptions(editableOptions(props.use.input.options));
   }, [props.use.id, props.use.inputRevision]);
 
+  useEffect(() => {
+    setOpenResult(null);
+    setNvimPtyId(searchNvimSessions.get(nvimSessionKey)?.ptyId ?? null);
+  }, [nvimSessionKey]);
+
+  const sendNvimTarget = useCallback(async (ptyId: string, target: OpenResult) => {
+    const write = window.yaade?.terminal?.write;
+    if (!write) return;
+    await write(ptyId, nvimEditCommand(target));
+  }, []);
+
   const openFile = useCallback(
     (relativePath: string, line = 1, column = 1) => {
       const path = absoluteResultPath(checkoutPath, relativePath);
-      setOpenResult({
+      const target: OpenResult = {
         path,
-        uri: pathToFileUri(path),
         line: Math.max(1, line),
         column: Math.max(1, column),
-      });
+      };
+      setOpenResult(target);
+      if (nvimPtyId) void sendNvimTarget(nvimPtyId, target);
     },
-    [checkoutPath],
+    [checkoutPath, nvimPtyId, sendNvimTarget],
   );
+
+  const handleNvimPtyId = useCallback(
+    (_tabId: string, ptyId: string | null) => {
+      if (!ptyId) return;
+      searchNvimSessions.set(nvimSessionKey, { ptyId });
+      setNvimPtyId(ptyId);
+    },
+    [nvimSessionKey],
+  );
+
+  const handleNvimFailed = useCallback(() => {
+    searchNvimSessions.delete(nvimSessionKey);
+    setNvimPtyId(null);
+  }, [nvimSessionKey]);
 
   useEffect(
     () => () => {
@@ -124,19 +166,47 @@ export function SearchToolView(props: SearchToolViewProps) {
 
   if (openResult) {
     return (
-      <ToolEditorSurface
-        key={`${props.use.id}:${checkoutPath}`}
-        use={props.use}
-        checkoutPath={checkoutPath}
-        theme={props.theme}
-        fontSize={props.fontSize}
-        toolbar={props.toolbar}
-        visible
-        initialUri={openResult.uri}
-        initialLine={openResult.line}
-        initialColumn={openResult.column}
-        onBack={() => setOpenResult(null)}
-      />
+      <div
+        className="flex min-h-0 flex-1 flex-col"
+        data-yaade-search-neovim=""
+        data-yaade-search-neovim-path={openResult.path}
+      >
+        {props.toolbar}
+        <div className="flex h-9 shrink-0 items-center gap-2 border-b border-border px-2">
+          <Button type="button" size="sm" variant="ghost" onClick={() => setOpenResult(null)}>
+            <ChevronRight className="mr-1 size-3.5 rotate-180" aria-hidden />
+            Search results
+          </Button>
+          <span className="min-w-0 truncate font-mono text-2xs text-muted-foreground" title={openResult.path}>
+            {openResult.path}
+          </span>
+        </div>
+        <div className="min-h-0 flex-1">
+          <Suspense
+            fallback={
+              <div className="grid h-full place-items-center text-sm text-muted-foreground">
+                Opening Neovim…
+              </div>
+            }
+          >
+            <TerminalPanel
+              cwdRootUri={pathToFileUri(checkoutPath)}
+              launchCommand="nvim"
+              launchArgs={[...nvimLaunchArgs(openResult)]}
+              theme={props.theme}
+              tabId={`search-neovim:${props.use.id}`}
+              focused={props.focused ?? true}
+              isActive={props.visible !== false}
+              existingPtyId={nvimPtyId ?? undefined}
+              status="starting"
+              sessionGeneration={1}
+              visible={props.visible !== false}
+              onPtyId={handleNvimPtyId}
+              onFailed={handleNvimFailed}
+            />
+          </Suspense>
+        </div>
+      </div>
     );
   }
 

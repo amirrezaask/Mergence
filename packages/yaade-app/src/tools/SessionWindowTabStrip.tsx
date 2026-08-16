@@ -1,0 +1,181 @@
+import { useRef, useState, type KeyboardEvent } from "react"
+import { AnimatePresence } from "motion/react"
+import { div as MotionDiv } from "motion/react-m"
+import { Plus, X } from "lucide-react"
+import type { SessionTab, SessionTabId } from "@yaade/rpc"
+import { Button, Input } from "@yaade/ui/primitives"
+import { cn, yaadeMotion } from "@yaade/ui"
+import { ShortcutTooltip } from "./ShortcutTooltip.js"
+import { toolSessionShortcutFor } from "./tool-session-keymap.js"
+
+function handleWindowTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')]
+  if (tabs.length === 0) return
+  const activeElement = document.activeElement
+  const current = Math.max(
+    0,
+    activeElement instanceof HTMLElement ? tabs.indexOf(activeElement) : -1,
+  )
+  const next = event.key === "Home"
+    ? 0
+    : event.key === "End"
+      ? tabs.length - 1
+      : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length
+  event.preventDefault()
+  tabs[next]?.focus()
+  tabs[next]?.click()
+}
+
+export type SessionWindowTabStripProps = {
+  readonly tabs: readonly SessionTab[]
+  readonly activeTabId?: SessionTabId
+  readonly toolCounts?: ReadonlyMap<SessionTabId, number>
+  readonly onSelect: (tab: SessionTab) => void
+  readonly onCreate: () => void
+  readonly onClose: (tab: SessionTab) => void
+  readonly onRename: (id: SessionTabId, title: string) => void
+  readonly onReorder: (ids: readonly SessionTabId[]) => void
+}
+
+export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
+  const dragId = useRef<SessionTabId | null>(null)
+  const [editingId, setEditingId] = useState<SessionTabId | null>(null)
+  const [draftTitle, setDraftTitle] = useState("")
+  const newTabShortcut = toolSessionShortcutFor("tab.new")
+
+  const finishRename = (tab: SessionTab) => {
+    const title = draftTitle.trim()
+    setEditingId(null)
+    if (title && title !== tab.title) props.onRename(tab.id, title)
+  }
+
+  const moveTab = (tabId: SessionTabId, index: number) => {
+    const from = dragId.current
+    dragId.current = null
+    if (!from || from === tabId) return
+    const ids = props.tabs.map(tab => tab.id)
+    const fromIndex = ids.indexOf(from)
+    if (fromIndex < 0) return
+    ids.splice(fromIndex, 1)
+    ids.splice(index, 0, from)
+    props.onReorder(ids)
+  }
+
+  return (
+    <div
+      className="flex h-10 min-w-0 shrink-0 items-center border-b border-border bg-muted/25 px-1"
+      data-yaade-window-tabs=""
+    >
+      <nav
+        className="flex h-full min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto"
+        aria-label="Session tabs"
+        role="tablist"
+        onKeyDown={handleWindowTabKeyDown}
+      >
+        <AnimatePresence initial={false} mode="popLayout">
+          {props.tabs.map((tab, index) => {
+            const active = tab.id === props.activeTabId
+            const editing = editingId === tab.id
+            const count = props.toolCounts?.get(tab.id) ?? 0
+            return (
+              <MotionDiv
+                key={tab.id}
+                layout
+                initial={{ opacity: 0, scale: 0.97, y: 3 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.97, y: -3 }}
+                transition={{ layout: yaadeMotion.layoutTransition, default: yaadeMotion.layoutTransition }}
+                className="min-w-0 shrink-0"
+              >
+                <div
+                  role="tab"
+                  tabIndex={active ? 0 : -1}
+                  aria-selected={active}
+                  aria-label={tab.title}
+                  data-yaade-session-tab={tab.id}
+                  data-active={active ? "true" : undefined}
+                  draggable={!editing}
+                  onDragStart={() => { dragId.current = tab.id }}
+                  onDragOver={event => event.preventDefault()}
+                  onDrop={() => moveTab(tab.id, index)}
+                  onClick={() => { if (!editing) props.onSelect(tab) }}
+                  onDoubleClick={() => {
+                    if (editing) return
+                    setDraftTitle(tab.title)
+                    setEditingId(tab.id)
+                  }}
+                  onKeyDown={event => {
+                    if (editing) return
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault()
+                      props.onSelect(tab)
+                    }
+                  }}
+                  className={cn(
+                    "group relative flex h-9 min-w-28 max-w-56 cursor-pointer items-center gap-1 rounded-md px-2 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-accent/60 focus-visible:ring-2 focus-visible:ring-ring/50",
+                    active && "bg-background text-foreground shadow-sm ring-1 ring-border/80",
+                  )}
+                >
+                  <span className="font-mono text-3xs tabular-nums text-muted-foreground/70" aria-hidden>
+                    {index + 1}
+                  </span>
+                  {editing ? (
+                    <Input
+                      aria-label={`Rename ${tab.title}`}
+                      autoFocus
+                      value={draftTitle}
+                      className="h-6 min-w-0 flex-1 bg-background px-1.5"
+                      onClick={event => event.stopPropagation()}
+                      onChange={event => setDraftTitle(event.target.value)}
+                      onBlur={() => finishRename(tab)}
+                      onKeyDown={event => {
+                        event.stopPropagation()
+                        if (event.key === "Enter") finishRename(tab)
+                        if (event.key === "Escape") setEditingId(null)
+                      }}
+                    />
+                  ) : (
+                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                      {tab.title}
+                    </span>
+                  )}
+                  {count > 0 ? (
+                    <span className="font-mono text-3xs tabular-nums text-muted-foreground" data-yaade-session-tab-tool-count={count}>
+                      {count}
+                    </span>
+                  ) : null}
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label={`Close ${tab.title}`}
+                    className="shrink-0 opacity-0 group-hover:opacity-70 group-focus-within:opacity-70"
+                    onClick={event => {
+                      event.stopPropagation()
+                      props.onClose(tab)
+                    }}
+                  >
+                    <X />
+                  </Button>
+                </div>
+              </MotionDiv>
+            )
+          })}
+        </AnimatePresence>
+      </nav>
+      <ShortcutTooltip label="New tab" shortcut={newTabShortcut} side="bottom">
+        <Button
+          type="button"
+          variant="ghost"
+          size="icon-sm"
+          aria-label="New tab"
+          data-yaade-new-session-tab=""
+          onClick={props.onCreate}
+        >
+          <Plus />
+        </Button>
+      </ShortcutTooltip>
+    </div>
+  )
+}

@@ -9,7 +9,7 @@ export function isFileUri(uri: string): uri is FileUri {
 
 /**
  * Collapse `.` / `..` and duplicate separators. Preserves a leading `/` or
- * Windows drive root. LSP / Monaco often emit `../`-laden or encoded variants
+ * Windows drive root. Language tooling often emits `../`-laden or encoded variants
  * of the same on-disk file; normalizing keeps tab identity stable.
  */
 export function normalizeFsPath(path: string): string {

@@ -13,7 +13,6 @@ import {
   type KeymapContext,
   type WorkspaceService,
 } from "@yaade/workspace"
-import { isMuxPaletteHardwire } from "../keybindings.js"
 import { useLatest } from "./useLatest.js"
 
 export type GlobalKeymapRefs = {
@@ -110,15 +109,9 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
       const inTerminal =
         target instanceof HTMLElement &&
         target.closest("[data-yaade-terminal-input], [data-yaade-terminal-canvas]") != null
-      // Monaco find/replace inputs stay focused after the widget hides; still
-      // allow shell chords (Mod-Shift-f → editor find, etc.) to run.
-      const inMonacoChrome =
-        target instanceof HTMLElement &&
-        target.closest(".monaco-editor, .find-widget, .replace-widget") != null
       if (
-        !inMonacoChrome &&
-        (target instanceof HTMLInputElement ||
-          (target instanceof HTMLTextAreaElement && !inTerminal))
+        target instanceof HTMLInputElement ||
+        (target instanceof HTMLTextAreaElement && !inTerminal)
       ) {
         const bindings = getBindingsRef.current?.() ?? bindingsRef.current
         const startsShellChord = bindings.some(binding => {
@@ -133,16 +126,6 @@ export function useGlobalKeymap(refs: GlobalKeymapRefs): void {
       }
 
       if (ctx.terminalFocus || inTerminal) {
-        // Hard-wire the palette so it never depends on the registerUser →
-        // revision → snapshot pipeline (repeated empty-map races). Everything
-        // else reaches the terminal through the prefix key, which the browser
-        // has no claim on.
-        if (isMuxPaletteHardwire(e)) {
-          e.preventDefault()
-          e.stopPropagation()
-          void executeCommandRef.current("ui.showCommandPalette")
-          return
-        }
         if (dispatchKeyBinding(e)) return
         if (ctx.terminalFocus && !inTerminal) {
           const panel = getFocusedPanelRef.current()

@@ -1031,13 +1031,6 @@ async function handleHttp(
     } catch {
       /* removal endpoint reports the unavailable worktree below */
     }
-    const project = runtime.db.projects().find(p => {
-      try {
-        return fs.realpathSync(p.rootPath) === fs.realpathSync(rootPath)
-      } catch {
-        return p.rootPath === rootPath
-      }
-    })
     const liveTerminalInstances = runtime.terminalInstances.listLiveForCheckout(canonicalWorktreePath)
     const blockingAgents = liveTerminalInstances
       .filter(instance => instance.provider)

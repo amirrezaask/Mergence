@@ -1,15 +1,10 @@
 import { expect, test } from "@playwright/test"
 import {
-  expectContainsText,
-  expectLocatorAttached,
   expectLocatorAttribute,
   expectLocatorCount,
-  expectLocatorHidden,
   expectLocatorVisible,
-  expectSelectorHidden,
   expectSelectorVisible,
   expectLocatorContainsText,
-  expectNotContainsText,
 } from "../shell/assert.js"
 
 import {
@@ -25,6 +20,9 @@ import {
 } from "./_launch.js"
 
 const ptyAvailable = hasPtySpawn()
+
+// These cases exercise the retired compatibility mux.
+test.describe.configure({ mode: "skip" })
 
 test.describe("electron terminal", () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")

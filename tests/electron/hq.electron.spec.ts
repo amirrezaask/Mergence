@@ -4,7 +4,10 @@ import os from "node:os"
 import path from "node:path"
 import { expectListRows } from "../helpers/list.js"
 import { expectSelectorVisible } from "../shell/assert.js"
-import { launchJet, waitForHq, waitForProjectPage } from "./_launch.js"
+import { launchJet, waitForProjectPage } from "./_launch.js"
+
+// Legacy HQ surface is retired with the browser editor.
+test.describe.configure({ mode: "skip" })
 
 function installFakeProviders(root: string): string {
   const bin = path.join(root, "bin")

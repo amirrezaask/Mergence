@@ -14,7 +14,7 @@ export type JetInitContext = {
   appCommands: JetCommands
   getCommandContext: () => JetCommandContext
   addKeybindings(bindings: JetKeyBinding[]): void
-  /** Monaco does not use CodeMirror extensions; kept for init script API stability. */
+  /** Kept for init script API stability while browser editing is disabled. */
   addEditorExtensions(extensions: unknown[]): void
   openFile(uri: string): Promise<void>
   showMessage(message: string): void

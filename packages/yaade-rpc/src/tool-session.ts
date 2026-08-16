@@ -1,6 +1,6 @@
 import { Data, Schema } from "effect";
 
-/** Stable identifiers for the top-level session and its persisted tool uses. */
+/** Stable identifiers for sessions, session windows, and persisted tool uses. */
 export const SessionId = Schema.String.pipe(
   Schema.pattern(/^ses-[A-Za-z0-9_-]+$/),
   Schema.brand("SessionId"),
@@ -12,6 +12,13 @@ export const ToolUseId = Schema.String.pipe(
   Schema.brand("ToolUseId"),
 );
 export type ToolUseId = Schema.Schema.Type<typeof ToolUseId>;
+
+/** A tmux-window equivalent: one session can contain many independent tabs. */
+export const SessionTabId = Schema.String.pipe(
+  Schema.pattern(/^tab-[A-Za-z0-9_-]+$/),
+  Schema.brand("SessionTabId"),
+);
+export type SessionTabId = Schema.Schema.Type<typeof SessionTabId>;
 
 export const ToolKind = Schema.Literal(
   "agent",
@@ -213,6 +220,20 @@ export class AppSession extends Schema.Class<AppSession>("AppSession")({
   id: SessionId,
   title: Schema.String,
   position: Schema.Number,
+  /** Current tmux-window equivalent. */
+  activeTabId: Schema.optional(SessionTabId),
+  /** Kept for one migration cycle for older clients. */
+  activeToolUseId: Schema.optional(ToolUseId),
+  createdAt: Schema.String,
+  updatedAt: Schema.String,
+  archivedAt: Schema.optional(Schema.String),
+}) {}
+
+export class SessionTab extends Schema.Class<SessionTab>("SessionTab")({
+  id: SessionTabId,
+  sessionId: SessionId,
+  title: Schema.String,
+  position: Schema.Number,
   activeToolUseId: Schema.optional(ToolUseId),
   createdAt: Schema.String,
   updatedAt: Schema.String,
@@ -222,6 +243,8 @@ export class AppSession extends Schema.Class<AppSession>("AppSession")({
 const ToolUseRecord = Schema.Struct({
   id: ToolUseId,
   sessionId: SessionId,
+  /** Optional only for decoding pre-window persisted records. New records always set it. */
+  tabId: Schema.optional(SessionTabId),
   kind: ToolKind,
   title: Schema.String,
   position: Schema.Number,
@@ -292,6 +315,41 @@ export class RenameSession extends Schema.TaggedClass<RenameSession>()(
     title: Schema.String,
   },
 ) {}
+export class CreateSessionTab extends Schema.TaggedClass<CreateSessionTab>()(
+  "CreateSessionTab",
+  {
+    sessionId: SessionId,
+    title: Schema.optional(Schema.String),
+  },
+) {}
+export class RenameSessionTab extends Schema.TaggedClass<RenameSessionTab>()(
+  "RenameSessionTab",
+  {
+    tabId: SessionTabId,
+    title: Schema.String,
+  },
+) {}
+export class ReorderSessionTabs extends Schema.TaggedClass<ReorderSessionTabs>()(
+  "ReorderSessionTabs",
+  {
+    sessionId: SessionId,
+    tabIds: Schema.Array(SessionTabId),
+  },
+) {}
+export class ArchiveSessionTab extends Schema.TaggedClass<ArchiveSessionTab>()(
+  "ArchiveSessionTab",
+  {
+    tabId: SessionTabId,
+    mode: Schema.Literal("keep-running", "stop-tools"),
+  },
+) {}
+export class SelectSessionTab extends Schema.TaggedClass<SelectSessionTab>()(
+  "SelectSessionTab",
+  {
+    sessionId: SessionId,
+    tabId: Schema.optional(SessionTabId),
+  },
+) {}
 export class ReorderSessions extends Schema.TaggedClass<ReorderSessions>()(
   "ReorderSessions",
   {
@@ -315,6 +373,8 @@ export class CreateToolUse extends Schema.TaggedClass<CreateToolUse>()(
   "CreateToolUse",
   {
     sessionId: SessionId,
+    /** Optional for older clients; the host resolves the session's active tab. */
+    tabId: Schema.optional(SessionTabId),
     title: Schema.optional(Schema.String),
     kind: ToolKind,
     project: ProjectTarget,
@@ -345,6 +405,8 @@ export class ReorderToolUses extends Schema.TaggedClass<ReorderToolUses>()(
   "ReorderToolUses",
   {
     sessionId: SessionId,
+    /** Optional for older clients; new clients reorder within one tab. */
+    tabId: Schema.optional(SessionTabId),
     toolUseIds: Schema.Array(ToolUseId),
   },
 ) {}
@@ -403,6 +465,11 @@ export class ListCheckoutTargets extends Schema.TaggedClass<ListCheckoutTargets>
 export const ToolCommand = Schema.Union(
   CreateSession,
   RenameSession,
+  CreateSessionTab,
+  RenameSessionTab,
+  ReorderSessionTabs,
+  ArchiveSessionTab,
+  SelectSessionTab,
   ReorderSessions,
   ArchiveSession,
   RestoreSession,
@@ -454,6 +521,27 @@ export class SessionRestored extends Schema.TaggedClass<SessionRestored>()(
   {
     ...EventBase,
     session: AppSession,
+  },
+) {}
+export class SessionTabCreated extends Schema.TaggedClass<SessionTabCreated>()(
+  "SessionTabCreated",
+  {
+    ...EventBase,
+    tab: SessionTab,
+  },
+) {}
+export class SessionTabUpdated extends Schema.TaggedClass<SessionTabUpdated>()(
+  "SessionTabUpdated",
+  {
+    ...EventBase,
+    tab: SessionTab,
+  },
+) {}
+export class SessionTabArchived extends Schema.TaggedClass<SessionTabArchived>()(
+  "SessionTabArchived",
+  {
+    ...EventBase,
+    tab: SessionTab,
   },
 ) {}
 export class ToolUseCreated extends Schema.TaggedClass<ToolUseCreated>()(
@@ -510,6 +598,9 @@ export const ToolEvent = Schema.Union(
   SessionUpdated,
   SessionArchived,
   SessionRestored,
+  SessionTabCreated,
+  SessionTabUpdated,
+  SessionTabArchived,
   ToolUseCreated,
   ToolUseUpdated,
   ToolUseOutputChanged,
@@ -519,6 +610,12 @@ export const ToolEvent = Schema.Union(
 );
 export type ToolEvent = Schema.Schema.Type<typeof ToolEvent>;
 
+export class SessionTabNotFound extends Data.TaggedError("SessionTabNotFound")<{
+  readonly tabId: string;
+  readonly message: string;
+}> {
+  readonly code = "NOT_FOUND" as const;
+}
 export class SessionNotFound extends Data.TaggedError("SessionNotFound")<{
   readonly sessionId: string;
   readonly message: string;
@@ -577,6 +674,7 @@ export class ToolRuntimeFailure extends Data.TaggedError("ToolRuntimeFailure")<{
 
 export type ToolSessionError =
   | SessionNotFound
+  | SessionTabNotFound
   | ToolUseNotFound
   | InvalidToolInput
   | InvalidToolCommand

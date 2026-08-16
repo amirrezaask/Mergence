@@ -2,7 +2,6 @@ import { PanelTree, type PanelNode, type PanelTreeOptions, type PanelTreeSnapsho
 import type { DropAction, PanelId, PanelView } from "@yaade/shared"
 import {
   buildTabsView,
-  panelHasTab,
   panelHasTabForFile,
   panelTabIds,
   popPanelTab,

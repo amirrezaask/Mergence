@@ -5,6 +5,9 @@ import { expect, test } from "@playwright/test"
 import { expectSelectorVisible } from "../shell/assert.js"
 import { execCommand, launchJet, waitForMux, waitForTerminalText } from "./_launch.js"
 
+// URL sessions for the retired compatibility mux are no longer active.
+test.describe.configure({ mode: "skip" })
+
 function createUrlSessionHome(): string {
   const homeDir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-url-session-"))
   fs.mkdirSync(path.join(homeDir, "dev", "consultation"), { recursive: true })
@@ -61,7 +64,7 @@ test.describe("browser URL workspace sessions", () => {
 
   test("reload restores split panes for the same URL", async () => {
     const fixtureHome = createUrlSessionHome()
-    const { app, page, homeDir } = await launchJet({
+    const { app, page } = await launchJet({
       homeDir: fixtureHome,
       launchWithoutWorkspace: true,
       startPath: "/dev/consultation",
@@ -110,7 +113,7 @@ test.describe("browser URL workspace sessions", () => {
 
   test("cd in the terminal does not change location.pathname", async () => {
     const fixtureHome = createUrlSessionHome()
-    const { app, page, homeDir } = await launchJet({
+    const { app, page } = await launchJet({
       homeDir: fixtureHome,
       launchWithoutWorkspace: true,
       startPath: "/dev/consultation",

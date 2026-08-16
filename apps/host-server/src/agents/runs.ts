@@ -113,15 +113,6 @@ type AgentRunRow = {
   removed_at?: string | null
 }
 
-const PROVIDERS: readonly AgentProvider[] = [
-  "claude",
-  "codex",
-  "cursor",
-  "opencode",
-  "grok",
-  "pi",
-]
-
 const PROVIDER_BINARIES: Record<AgentProvider, string> = {
   claude: "claude",
   codex: "codex",
@@ -139,9 +130,17 @@ function nowIso(): string {
 }
 
 function asProvider(value: string): AgentProvider | null {
-  return PROVIDERS.includes(value as AgentProvider)
-    ? (value as AgentProvider)
-    : null
+  switch (value) {
+    case "claude":
+    case "codex":
+    case "cursor":
+    case "opencode":
+    case "grok":
+    case "pi":
+      return value
+    default:
+      return null
+  }
 }
 
 function asProcessState(value: string): AgentRunProcessState {

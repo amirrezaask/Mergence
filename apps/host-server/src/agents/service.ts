@@ -13,7 +13,6 @@ import {
   type NotificationProjectionContext,
 } from "@yaade/agents"
 import type {
-  AppNotification,
   IngestNotificationRequest,
   NotificationType,
 } from "@yaade/shared"

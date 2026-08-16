@@ -21,7 +21,7 @@ export const WorkspaceSessionLayout = Schema.Struct({
 })
 export type WorkspaceSessionLayout = Schema.Schema.Type<typeof WorkspaceSessionLayout>
 
-/** One Monaco editor pane persisted for a workspace session (keyed by tab id). */
+/** Legacy browser-editor pane persisted for a workspace session (keyed by tab id). */
 export const WorkspaceSessionEditorFile = Schema.Struct({
   uri: Schema.String,
   line: Schema.optional(Schema.Number),

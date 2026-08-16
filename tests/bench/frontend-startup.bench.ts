@@ -102,9 +102,7 @@ test("bench frontend cold startup and first overlay", async () => {
     expect(snapshot.nodeCount, "cold HQ DOM should stay compact").toBeLessThan(2_000)
     expect(
       snapshot.scripts.some(name =>
-        /(?:MuxApp|monaco|git-entry|agent-picker-entry)/i.test(
-          name,
-        ),
+        /(?:git-entry|agent-picker-entry)/i.test(name),
       ),
       "workspace or agent-dialog implementation loaded on the cold HQ path",
     ).toBe(false)

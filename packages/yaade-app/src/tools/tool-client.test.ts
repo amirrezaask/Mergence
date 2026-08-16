@@ -24,7 +24,7 @@ class FakeWindow {
   }
 }
 
-function makeUse(revision: number, resultRevision = 1): ToolUse {
+function makeUse(revision: number): ToolUse {
   return Schema.decodeUnknownSync(ToolUse)({
     id: "use-client-test",
     sessionId: "ses-client-test",

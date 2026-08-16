@@ -287,7 +287,7 @@ export function resolveDropZoneFromElement(el: Element | null): DropZone {
   if (el.closest("[data-yaade-terminal-panel]")) return "terminal"
   if (
     el.closest(
-      "[data-yaade-modal-editor], [data-yaade-editor-scroll-area], [data-yaade-monaco-editor], .monaco-editor",
+      "[data-yaade-code-editor], [data-yaade-editor-pane]",
     )
   ) {
     return "editor"

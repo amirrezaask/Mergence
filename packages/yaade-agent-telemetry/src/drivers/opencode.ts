@@ -9,7 +9,6 @@ import type {
 import type { AgentEvent, AgentToolCategory } from "../types/events.js"
 import {
   asRecord,
-  asString,
   buildEvent,
   classifyGenericTool,
   detectBinary,

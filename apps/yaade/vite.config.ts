@@ -39,29 +39,13 @@ export default defineConfig(({ command }) => ({
       output: {
         onlyExplicitManualChunks: true,
         manualChunks(id) {
-          const isPending =
-            id.includes("pending-editor") || id.includes("/monaco/pending")
-          const basicLanguage =
-            /monaco-editor\/esm\/vs\/basic-languages\/([^/]+)\//.exec(id)?.[1]
-          if (basicLanguage) return `monaco-lang-${basicLanguage}`
-          const serviceLanguage =
-            /monaco-editor\/esm\/vs\/language\/(css|html|json)\//.exec(id)?.[1]
-          if (serviceLanguage) return `monaco-lang-${serviceLanguage}`
-          if (
-            !isPending &&
-            (id.includes("monaco-editor") ||
-              id.includes("yaade-monaco") ||
-              id.includes("@yaade/monaco"))
-          ) {
-            return "monaco"
-          }
           if (id.includes("node_modules")) {
-          if (id.includes("@pierre/diffs") || id.includes("@pierre/trees")) return "diffs"
+            if (id.includes("@pierre/diffs") || id.includes("@pierre/trees")) return "diffs"
             const shikiLang = /@shikijs\/langs\/dist\/([^/.]+)/.exec(id)?.[1]
             if (shikiLang) return `shiki-lang-${shikiLang}`
             if (id.includes("shiki") || id.includes("@shikijs")) return "shiki"
           }
-        },
+        }
       },
     },
   },

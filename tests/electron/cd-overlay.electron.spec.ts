@@ -1,15 +1,5 @@
 import { expect, test } from "@playwright/test"
-import {
-  expectContainsText,
-  expectLocatorAttached,
-  expectLocatorAttribute,
-  expectLocatorCount,
-  expectLocatorFocused,
-  expectLocatorHidden,
-  expectLocatorVisible,
-  expectSelectorHidden,
-  expectSelectorVisible,
-} from "../shell/assert.js"
+import { expectLocatorVisible } from "../shell/assert.js"
 
 import { confirmOverlay, execCommand, launchJet, REPO_ROOT, waitForDialog } from "./_launch.js"
 

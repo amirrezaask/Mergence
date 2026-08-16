@@ -1,10 +1,4 @@
-import {
-  FileCode2,
-  GitBranch,
-  Search,
-  Terminal,
-  type LucideIcon,
-} from "lucide-react"
+import { GitBranch, Search, Terminal, type LucideIcon } from "lucide-react"
 import type { ToolKind } from "@yaade/rpc"
 import { KeyBindingKbd } from "@yaade/ui"
 import {
@@ -39,13 +33,6 @@ const TOOL_TILES: readonly ToolTile[] = [
     Icon: Search,
   },
   {
-    kind: "editor",
-    label: "Editor",
-    hint: "Files in a worktree",
-    command: "tool.newEditor",
-    Icon: FileCode2,
-  },
-  {
     kind: "git",
     label: "Git",
     hint: "History and diff",
@@ -64,7 +51,7 @@ export function SessionBootState() {
     >
       <div className="flex w-full max-w-3xl flex-col items-center gap-6">
         <Skeleton className="h-4 w-28" />
-        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
           {TOOL_TILES.map(tile => (
             <Skeleton key={tile.kind} className="h-28 rounded-md" />
           ))}
@@ -85,7 +72,7 @@ export function SessionEmptyState(props: {
       aria-label="Available tools"
     >
       <EmptyContent className="max-w-3xl gap-6">
-        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
           {TOOL_TILES.map(tile => {
             const shortcut = toolSessionShortcutFor(tile.command)
             const Icon = tile.Icon

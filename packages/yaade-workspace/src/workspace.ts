@@ -15,7 +15,6 @@ import { allocListId, ListDocumentStore, type ListDocument } from "./list-docume
 import { TaskRunner } from "./task-runner.js"
 import {
   activatePanelTab,
-  buildTabsView,
   findPanelWithTab,
   panelHasTab,
   panelTabIds,

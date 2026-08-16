@@ -54,7 +54,7 @@ export type JetUI = {
 export type JetCommandContext = {
   workspace: WorkspaceService
   ui: JetUI
-  /** Active Monaco editor handle (or null). Typed as unknown to stay editor-neutral. */
+  /** Active code-editor handle (or null). Typed as unknown for integration neutrality. */
   getActiveEditorView: () => unknown
 }
 

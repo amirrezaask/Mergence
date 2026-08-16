@@ -1,15 +1,16 @@
 # YAADE
 
-**Browser IDE for local or remote machines — Session navigation with composable ToolUses.**
+**Browser multiplexer for local or remote machines — Sessions, Windows, and ToolUses.**
 
-YAADE opens at `/` with top-level **Session** navigation. Each Session is an ordered
-collection of **ToolUses** (Editor, Git History, Agent, Terminal, Search). Sessions open empty; add the tools you need. Project and checkout
-belong to each ToolUse, never to the Session. Layout and PTYs live on the host,
-so closing a browser tab does not kill shells.
+YAADE follows tmux's hierarchy while adding IDE tools: a **Session** contains
+multiple **Windows** (shown as tabs), and each Window contains ToolUses arranged
+with the existing tiled pane system. In tmux terms: Session = session, Window =
+tab, ToolUse = pane. Project and checkout belong to each ToolUse, never to the
+Session or Window. PTYs outlive browser tabs.
 
 ```
-http://localhost:5174/              → Session shell (Session navigation + tiled ToolUse workspace)
-http://localhost:5174/?s=ses-…&u=use-… → deep-link a Session + ToolUse
+http://localhost:5174/                         → Session shell
+http://localhost:5174/?s=ses-…&t=tab-…&u=use-… → Session + Window + ToolUse
 ```
 
 Legacy project-path URLs and mux workspaces remain available for one release of
@@ -19,17 +20,16 @@ compatibility; the primary product surface is the Session shell.
 
 ## What it does
 
-### Sessions
+### Sessions, Windows, and panes
 
-- The sidebar has two sections: Sessions, then Agents from every Session. `Mod-k b` (`⌘K` / `Ctrl+K`, then `b`) collapses or restores it; hover the workspace edge to reveal the same toggle. Older tab-bar and two-sidebar preferences migrate automatically to this layout.
-- The Sessions section creates and switches Sessions; the Agents section creates agents and lists agents across every Session. Terminal ToolUses running a recognized agent CLI are detected from foreground-process/Ghostty identity and appear there too.
-- The center workspace is a tiled pane tree, and each pane is a tab group of ToolUses. Dropping on a pane center groups a ToolUse as a tab; dropping on an edge creates a split, up to six panes.
-- Each pane titlebar has a `+` menu for Terminal, Git, Editor, and Search. Agents are created from the Agents section, not the tool menu.
-- Closing a ToolUse tab—or closing its containing pane—archives the ToolUse and kills its process. Dragging and rearranging tabs does not restart them.
-- Right-click a pane tab to open its project, worktree, and kind-specific context popover. Changing project or agent provider persists the change and restarts the underlying process.
-- ToolUse tab titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its Ghostty terminal title.
-- Closing a Session with live tools offers Keep running / Stop tools / Cancel
-- Archived Sessions restore from the Session switcher (`Mod-k w` / palette)
+- The Session switcher creates and switches top-level Sessions. `Mod-k w` opens it; `Mod-k c` creates a Session.
+- Every Session has one or more Windows (tabs). Create one with the `+` beside the Window tab strip or `Mod-k n`; switch with `Mod-k h` / `Mod-k l`.
+- Each Window owns its own tiled layout. ToolUses are panes in that layout, and switching Windows preserves the other Windows' layouts and running PTYs.
+- The existing tiling system is unchanged: dropping a ToolUse in a pane groups it with that pane; dropping on an edge creates a split, up to six panes. A pane can contain multiple ToolUses and its active ToolUse is shown in the pane.
+- Each pane titlebar has a `+` menu for Terminal, Git, and Search. Agents are created from the tool launcher/sidebar.
+- Closing a ToolUse archives it and stops its process. Closing a Window archives its ToolUses; closing a Session with live tools offers Keep running / Stop tools / Cancel.
+- Project, worktree, and provider settings belong to each ToolUse. ToolUse titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title.
+- Archived Sessions restore from the Session switcher.
 
 ### Tools (v1)
 
@@ -37,9 +37,8 @@ compatibility; the primary product surface is the Session shell.
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
 | **AgentTool**    | Launches a supported agent CLI in a PTY                                                                                       |
 | **TerminalTool** | Launches a shell in a PTY                                                                                                     |
-| **SearchTool**   | Host-owned project content search with durable per-file context cards; opening a hit enters the same Monaco workspace surface as EditorTool, including the left Explorer, shared buffers/LSP, breadcrumbs, and VS Code-style Quick Open |
-| **EditorTool** | Opens the active checkout in a compact Monaco editor with a togglable Explorer; LSP references open in Monaco's inline references view |
-| **GitHistoryTool** | Opens the active checkout's virtualized commit history, including uncommitted changes and commit diffs; one tab is created per Session |
+| **SearchTool**   | Host-owned project content search with durable per-file context cards; opening a hit reuses one Neovim terminal pane for that SearchTool and opens the absolute file path at the selected line |
+| **GitHistoryTool** | Opens the active checkout's virtualized commit history, including uncommitted changes and commit diffs |
 
 Git History is an interactive repository surface backed by the host's existing native Git API; it does not launch a PTY. Agent and Terminal share the existing PTY path (`terminal:data` binary frames,
 attach replay, flow control). Search streams bounded result batches via
@@ -79,14 +78,15 @@ to send literal `^K` (kill-line) into a terminal.
 | ---------------- | ------------------------------------------- |
 | `Mod-k t`        | New Terminal                                |
 | `Mod-k s`        | New Search                                  |
-| `Mod-k e`        | New Editor                                  |
 | `Mod-k g`        | New Git History                             |
 | `Mod-k b`        | Collapse or restore the navigation sidebar |
 | `Mod-k j` / `k`  | Next / previous ToolUse                     |
+| `Mod-k h` / `l`  | Previous / next Window                      |
 | `Mod-k u`        | Switch ToolUse                              |
 | `Mod-k w`        | Switch Session                              |
 | `Mod-k 1`–`9`    | Jump to ToolUse by index                    |
 | `Mod-k c`        | New Session                                 |
+| `Mod-k n`        | New Window                                  |
 | `Mod-k x`        | Close ToolUse                               |
 | `Mod-k Shift-X`  | Close Session                               |
 | `Mod-k ,`        | Settings                                    |
@@ -96,16 +96,16 @@ Direct and context-local:
 | Chord                | Action                                                                      |
 | -------------------- | --------------------------------------------------------------------------- |
 | `Mod-,`              | Settings                                                                    |
-| `Cmd-p` / `Ctrl-p`   | Quick-open a project file while Editor or Search is focused                |
 
 ### Appearance
 
-Settings applies one palette consistently to the app shell, Monaco, Git states,
+Settings applies one palette consistently to the app shell, Git states,
 terminals, and every ToolUse. Bundled families include all four Catppuccin
 flavors, Tokyo Night (Night, Storm, Moon, Day), Rosé Pine (main, Moon, Dawn),
 and Ayu (Dark, Mirage, Light). Geist Mono is the bundled default; the font
-picker can select another installed monospace face for terminals, Monaco, and
-code UI text.
+picker can select another installed monospace face for terminals and code UI
+text. File navigation uses Neovim in a terminal pane; browser-based file editing
+is currently unavailable.
 
 ---
 

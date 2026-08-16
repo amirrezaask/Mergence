@@ -65,6 +65,8 @@ export type ProjectWorkspaceSidebarSearch = {
   onClose: () => void
 }
 
+const EMPTY_SEARCHES: readonly ProjectWorkspaceSidebarSearch[] = []
+
 export type ProjectWorkspaceSidebarProps = {
   projectName: string
   projectSwitcher?: ReactNode
@@ -374,7 +376,7 @@ export function ProjectWorkspaceSidebar({
   gitHistoryError,
   onNewGitWorktree,
   processes,
-  searches = [],
+  searches = EMPTY_SEARCHES,
   onNewSearch,
   onOpenHq,
   onOpenSettings,

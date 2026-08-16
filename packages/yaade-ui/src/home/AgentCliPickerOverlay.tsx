@@ -38,6 +38,8 @@ export type AgentCliPickerProject = {
   path: string
 }
 
+const EMPTY_PROJECTS: readonly AgentCliPickerProject[] = []
+
 export type AgentCliLaunchSelection = {
   driver: AgentCliDriver
   /** When true, create a fresh git worktree for the launch. */
@@ -54,7 +56,7 @@ export type AgentCliPickerOverlayProps = {
   onOpenChange: (open: boolean) => void
   onSelect: (selection: AgentCliLaunchSelection) => void
   /** Workspace projects available for the new session. */
-  projects?: AgentCliPickerProject[]
+  projects?: readonly AgentCliPickerProject[]
   /** Selected project root URI (required when creating a session). */
   selectedRootUri?: string | null
   onSelectedRootUriChange?: (rootUri: string) => void
@@ -88,7 +90,7 @@ export function AgentCliPickerOverlay({
   open,
   onOpenChange,
   onSelect,
-  projects = [],
+  projects = EMPTY_PROJECTS,
   selectedRootUri = null,
   onSelectedRootUriChange,
   onRemoveProject,

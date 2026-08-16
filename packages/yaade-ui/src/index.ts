@@ -108,7 +108,6 @@ export {
   SettingsOverlay,
   type ColorSchemeMode,
   type JetAppearanceSettings,
-  type PreferredEditor,
   type SessionLayout,
 } from "./components/SettingsOverlay.js"
 export {

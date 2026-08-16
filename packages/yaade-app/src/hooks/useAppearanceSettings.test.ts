@@ -2,7 +2,6 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   normalizeColorSchemeMode,
-  normalizePreferredEditor,
   normalizeSessionLayout,
   normalizeThemeId,
   themeIdForColorSchemeMode,
@@ -32,21 +31,12 @@ describe("normalizeThemeId", () => {
 })
 
 describe("session layout", () => {
-  it("migrates every stored layout to the combined sidebar", () => {
-    assert.equal(normalizeSessionLayout("tabs"), "single-sidebar")
-    assert.equal(normalizeSessionLayout("two-sidebars"), "single-sidebar")
-    assert.equal(normalizeSessionLayout("single-sidebar"), "single-sidebar")
-    assert.equal(normalizeSessionLayout("sidebar"), "single-sidebar")
-    assert.equal(normalizeSessionLayout("cards"), "single-sidebar")
-  })
-})
-
-describe("preferred editor", () => {
-  it("normalizes monaco and neovim", () => {
-    assert.equal(normalizePreferredEditor("monaco"), "monaco")
-    assert.equal(normalizePreferredEditor("neovim"), "neovim")
-    assert.equal(normalizePreferredEditor("vim", "neovim"), "neovim")
-    assert.equal(normalizePreferredEditor(undefined), "monaco")
+  it("migrates every stored layout to the top tab bar", () => {
+    assert.equal(normalizeSessionLayout("tabs"), "tabs")
+    assert.equal(normalizeSessionLayout("two-sidebars"), "tabs")
+    assert.equal(normalizeSessionLayout("single-sidebar"), "tabs")
+    assert.equal(normalizeSessionLayout("sidebar"), "tabs")
+    assert.equal(normalizeSessionLayout("cards"), "tabs")
   })
 })
 

@@ -23,7 +23,7 @@ const visitStaticImports = fileName => {
 }
 visitStaticImports(entryMatch[1])
 const mandatorySource = [...mandatoryChunks.values()].join("\n")
-const forbidden = ["shiki-", "diffs-", "agents-entry-", "monaco-"]
+const forbidden = ["shiki-", "diffs-", "agents-entry-"]
 const forbiddenMarkers = [
   "lexical.dev",
   "LegendList",
@@ -31,9 +31,6 @@ const forbiddenMarkers = [
   "rehype-raw",
   "data-yaade-settings-tabs",
   "data-yaade-todo-board-columns",
-  'from"monaco-editor',
-  "from'monaco-editor",
-  "node_modules/monaco-editor",
 ]
 const violations = [
   ...forbidden.filter(name => [...mandatoryChunks.keys()].some(chunk => chunk.startsWith(name))),
@@ -47,37 +44,12 @@ const mandatoryGzipBytes = [...mandatoryChunks.values()].reduce(
   (total, source) => total + gzipSync(source).byteLength,
   0,
 )
-// Measured 343.6 KiB after isolating optional overlays and marking UI modules
-// side-effect-free. Keep ~7.7% headroom for product changes.
-const mandatoryGzipBudget = 370 * 1024
+// Measured 307.1 KiB after moving the compatibility shell behind its route
+// boundary. Keep ~7.4% headroom without giving that startup win back.
+const mandatoryGzipBudget = 330 * 1024
 if (mandatoryGzipBytes > mandatoryGzipBudget) {
   throw new Error(
     `mandatory startup JS is ${mandatoryGzipBytes} gzip bytes; budget is ${mandatoryGzipBudget}`,
-  )
-}
-
-const monacoChunkNames = fs
-  .readdirSync(assets)
-  .filter(
-    fileName =>
-      /^monaco-.*\.js$/.test(fileName) &&
-      !fileName.startsWith("monaco-lang-") &&
-      !fileName.startsWith("monaco-workers-"),
-  )
-if (monacoChunkNames.length !== 1) {
-  throw new Error(
-    `expected one Monaco base chunk, found: ${monacoChunkNames.join(", ") || "none"}`,
-  )
-}
-const monacoGzipBytes = gzipSync(
-  fs.readFileSync(path.join(assets, monacoChunkNames[0])),
-).byteLength
-// Recorded before language contributions/workers were made demand-loaded.
-// Raising this cap is an explicit editor bundle-budget decision.
-const monacoGzipBudget = 974 * 1024
-if (monacoGzipBytes > monacoGzipBudget) {
-  throw new Error(
-    `Monaco base chunk is ${monacoGzipBytes} gzip bytes; budget is ${monacoGzipBudget}`,
   )
 }
 
@@ -87,8 +59,5 @@ console.log(JSON.stringify({
   mandatoryChunks: [...mandatoryChunks.keys()],
   mandatoryGzipBytes,
   mandatoryGzipBudget,
-  monacoChunk: monacoChunkNames[0],
-  monacoGzipBytes,
-  monacoGzipBudget,
   preloads,
 }, null, 2))

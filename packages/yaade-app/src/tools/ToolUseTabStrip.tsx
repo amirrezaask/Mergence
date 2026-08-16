@@ -15,6 +15,7 @@ import {
   GitBranch,
   PanelLeftClose,
   PanelRightClose,
+  Plus,
   Search,
   Terminal as TerminalIcon,
   X,
@@ -40,6 +41,9 @@ import {
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   Input,
   Popover,
@@ -127,9 +131,10 @@ function handleToolTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
     ...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]'),
   ];
   if (tabs.length === 0) return;
+  const activeElement = document.activeElement;
   const current = Math.max(
     0,
-    tabs.indexOf(document.activeElement as HTMLElement),
+    activeElement instanceof HTMLElement ? tabs.indexOf(activeElement) : -1,
   );
   const next =
     event.key === "Home"
@@ -220,9 +225,11 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const [launchContext, setLaunchContext] =
     useState<ToolContextSelection | null>(null);
   const [agentMenuOpen, setAgentMenuOpen] = useState(false);
+  const [quickMenuOpen, setQuickMenuOpen] = useState(false);
   const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [loadingProviders, setLoadingProviders] = useState(false);
   const layout = props.layout ?? "tabs";
+  const compactTabs = layout === "tabs";
   const isTwoSidebar = layout === "two-sidebars";
   const isSingleSidebar = layout === "single-sidebar";
   const isSidebar = isTwoSidebar || isSingleSidebar;
@@ -230,7 +237,6 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     "agent",
     "terminal",
     "search",
-    "editor",
     "git",
   ];
 
@@ -243,7 +249,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   }, [props.collapsed]);
 
   useEffect(() => {
-    if (!agentMenuOpen) return;
+    if (!agentMenuOpen && !quickMenuOpen) return;
     let cancelled = false;
     setLoadingProviders(true);
     void window.yaade?.agents
@@ -260,7 +266,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     return () => {
       cancelled = true;
     };
-  }, [agentMenuOpen]);
+  }, [agentMenuOpen, quickMenuOpen]);
 
   const finishRename = (use: ToolUse) => {
     const next = draftTitle.trim();
@@ -346,6 +352,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             data-active={active ? "true" : undefined}
             data-open-in-workspace={openInWorkspace ? "true" : undefined}
             data-yaade-tool-use={id}
+            data-yaade-tool-pane-tab=""
             data-yaade-detected-agent={
               use.kind !== "agent" && props.agentLikeUseIds?.has(id)
                 ? ""
@@ -371,12 +378,8 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             onClick={() => {
               setLaunchPopoverKind(null);
               setLaunchContext(null);
-              if (!active || !openInWorkspace) {
-                props.onSelect(use);
-                setContextPopoverId(null);
-                return;
-              }
-              setContextPopoverId(id);
+              props.onSelect(use);
+              setContextPopoverId(null);
             }}
             onContextMenu={(event) => {
               event.preventDefault();
@@ -389,18 +392,17 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               event.preventDefault();
               setLaunchPopoverKind(null);
               setLaunchContext(null);
-              if (!active || !openInWorkspace) {
-                props.onSelect(use);
-                setContextPopoverId(null);
-                return;
-              }
-              setContextPopoverId(id);
+              props.onSelect(use);
+              setContextPopoverId(null);
             }}
             className={cn(
               "group relative flex shrink-0 cursor-pointer items-center outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)]",
               isSidebar
                 ? "min-h-14 w-full min-w-0 gap-2 rounded-md border border-transparent px-2 py-1.5 hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-44"
-                : "h-full min-w-36 max-w-64 gap-1 rounded-md border border-transparent px-1.5 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 data-[active=true]:border-border data-[active=true]:bg-background",
+                : cn(
+                    "h-full min-w-36 max-w-72 gap-1.5 rounded-lg border border-transparent px-2 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 data-[active=true]:border-border/80 data-[active=true]:bg-secondary/70 data-[active=true]:shadow-sm",
+                    compactTabs && "min-w-40",
+                  ),
             )}
           >
             <span
@@ -413,7 +415,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               )}
               aria-hidden
             />
-            {jump && !isSidebar ? (
+            {jump && !isSidebar && !compactTabs ? (
               <span
                 className="w-3 shrink-0 text-center font-mono text-3xs tabular-nums text-muted-foreground group-data-[active=true]:text-primary"
                 aria-hidden
@@ -462,6 +464,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             ) : (
               <button
                 type="button"
+                role="tab"
                 draggable={dockable && editingId !== id}
                 className="min-w-0 flex-1 truncate text-left outline-none"
                 onDragStart={() => {
@@ -482,15 +485,17 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                 >
                   {workTitle}
                 </span>
-                <span
-                  className={cn(
-                    "block truncate font-mono text-3xs text-muted-foreground",
-                    isSidebar && "text-sidebar-foreground/55",
-                  )}
-                  data-yaade-tool-context
-                >
-                  {secondaryCaption}
-                </span>
+                {!compactTabs ? (
+                  <span
+                    className={cn(
+                      "block truncate font-mono text-3xs text-muted-foreground",
+                      isSidebar && "text-sidebar-foreground/55",
+                    )}
+                    data-yaade-tool-context
+                  >
+                    {secondaryCaption}
+                  </span>
+                ) : null}
               </button>
             )}
             {dockable ? (
@@ -564,7 +569,13 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     );
   };
 
-  const launchSide = isSingleSidebar ? "bottom" : isTwoSidebar ? "left" : "top";
+  const launchSide = compactTabs
+    ? "bottom"
+    : isSingleSidebar
+      ? "bottom"
+      : isTwoSidebar
+        ? "left"
+        : "top";
   const renderLaunchPopover = (kind: ToolKind) => {
     const label = toolKindLabel(kind);
     return (
@@ -622,7 +633,6 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const contextLaunchKinds: readonly ToolKind[] = [
     "terminal",
     "search",
-    "editor",
     "git",
   ];
 
@@ -813,6 +823,123 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       {toolItems}
     </AnimatePresence>
   );
+  const compactNewToolMenu = (
+    <DropdownMenu
+      open={quickMenuOpen}
+      onOpenChange={setQuickMenuOpen}
+    >
+      <ShortcutTooltip
+        label="New tool"
+        shortcut={toolSessionShortcutFor("tool.newTerminal")}
+        side="bottom"
+      >
+        <DropdownMenuTrigger asChild>
+          <Button
+            type="button"
+            variant="ghost"
+            size="icon-sm"
+            aria-label="New tool"
+            data-yaade-new-tool-menu=""
+            className="size-8 shrink-0 rounded-md text-muted-foreground hover:text-foreground"
+          >
+            <Plus />
+          </Button>
+        </DropdownMenuTrigger>
+      </ShortcutTooltip>
+      <DropdownMenuContent
+        align="end"
+        side="bottom"
+        className="w-52"
+        data-yaade-new-tool-menu-content=""
+      >
+        <DropdownMenuLabel>New tool</DropdownMenuLabel>
+        {newToolKinds.includes("agent") ? (
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <Bot />
+              <span>Agent</span>
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-56">
+              <DropdownMenuLabel>Choose a provider</DropdownMenuLabel>
+              {loadingProviders ? (
+                <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
+                  <Spinner className="size-3.5" aria-hidden />
+                  Checking providers…
+                </div>
+              ) : providers.length > 0 ? (
+                providers.map(option => (
+                  <DropdownMenuItem
+                    key={option.provider}
+                    disabled={!option.available}
+                    data-yaade-agent-provider={option.provider}
+                    onSelect={() => {
+                      setQuickMenuOpen(false)
+                      props.onAddAgent(option.provider)
+                    }}
+                  >
+                    <AgentProviderIcon agent={option.provider} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {providerLabels[option.provider]}
+                    </span>
+                    {!option.available ? (
+                      <span className="text-2xs text-muted-foreground">
+                        unavailable
+                      </span>
+                    ) : null}
+                  </DropdownMenuItem>
+                ))
+              ) : (
+                <div className="px-2 py-2 text-xs text-muted-foreground">
+                  No providers found.
+                </div>
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        ) : null}
+        {newToolKinds
+          .filter(kind => kind !== "agent")
+          .map(kind => {
+            const Icon = toolIcon[kind]
+            return (
+              <DropdownMenuItem
+                key={kind}
+                data-yaade-new-tool-kind={kind}
+                onSelect={() => {
+                  setQuickMenuOpen(false)
+                  props.onAddKind(kind)
+                }}
+              >
+                <Icon />
+                <span>{toolKindLabel(kind)}</span>
+              </DropdownMenuItem>
+            )
+          })}
+      </DropdownMenuContent>
+    </DropdownMenu>
+  )
+
+  if (compactTabs) {
+    return (
+      <div
+        className="flex h-full min-w-0 flex-1 items-center"
+        data-yaade-tool-tabs
+        data-yaade-tool-tabs-layout="header"
+      >
+        <nav
+          className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1"
+          aria-label="Tool uses"
+          role="tablist"
+          onKeyDown={handleToolTabKeyDown}
+        >
+          {animatedToolItems}
+        </nav>
+        <Separator orientation="vertical" className="mx-1 h-6 shrink-0" />
+        <div className="flex h-full shrink-0 items-center px-1">
+          {compactNewToolMenu}
+        </div>
+      </div>
+    )
+  }
 
   if (isTwoSidebar) {
     return (

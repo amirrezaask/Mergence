@@ -93,9 +93,9 @@ describe("tool session keymap", () => {
     assert.equal(byCommand.get("tool.newAgent"), undefined)
     assert.equal(byCommand.get("tool.newTerminal")?.key, "t")
     assert.equal(byCommand.get("tool.newSearch")?.key, "s")
-    assert.equal(byCommand.get("tool.newEditor")?.key, "e")
+    assert.equal(byCommand.get("tool.newEditor"), undefined)
     assert.equal(byCommand.get("tool.newGit")?.key, "g")
-    assert.equal(byCommand.get("sidebar.toggle")?.key, "b")
+    assert.equal(byCommand.get("pane.zoom")?.key, "z")
   })
 
   it("keeps HUD groups covering every visible binding", () => {
@@ -107,6 +107,7 @@ describe("tool session keymap", () => {
 
   it("formats prefix and direct shortcuts from the binding tables", () => {
     assert.equal(toolSessionShortcutFor("tool.newAgent"), undefined)
+    assert.equal(toolSessionShortcutFor("tool.newEditor"), undefined)
     assert.equal(
       toolSessionShortcutFor("session.switch"),
       `${TOOL_SESSION_PREFIX} w`,
@@ -116,10 +117,10 @@ describe("tool session keymap", () => {
       `${TOOL_SESSION_PREFIX} u`,
     )
     assert.equal(
-      toolSessionShortcutFor("sidebar.toggle"),
-      `${TOOL_SESSION_PREFIX} b`,
+      toolSessionShortcutFor("pane.zoom"),
+      `${TOOL_SESSION_PREFIX} z`,
     )
-    assert.equal(toolSessionDirectShortcutFor("sidebar.toggle"), undefined)
+    assert.equal(toolSessionDirectShortcutFor("pane.zoom"), undefined)
     assert.equal(toolSessionDirectShortcutFor("settings.show"), "Mod-,")
   })
 

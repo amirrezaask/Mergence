@@ -16,7 +16,6 @@ import {
 import symbolsFontUrl from "../../styles/fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import {
   DEFAULT_MONO_FONT_NAME,
-  DEFAULT_MONO_FONT_FAMILY,
   NERD_FONT_FAMILY,
 } from "../../theme/appearance-defaults.js";
 import { shouldSuppressMacMetaKey } from "../terminal-keybindings.js";

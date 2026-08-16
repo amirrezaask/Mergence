@@ -6,7 +6,6 @@
  * dual-path: prefix `,` plus `Mod-,`).
  *
  *   Tool Session (`/`)           canonical — edit TOOL_SESSION_* tables
- *   Legacy mux (`/_project`)     compat only — do not extend MUX_* tables
  *
  * Browser-reserved chords stay unbound. Shell actions live behind Mod-k
  * (⌘K on macOS, Ctrl+K elsewhere). Press the prefix twice in a terminal to
@@ -23,8 +22,6 @@
  *   Overlay        Escape closes; CdOverlay confirms with Mod-Enter
  *   Terminal PTY   packages/yaade-ui/src/panels/terminal-keybindings.ts
  *                  (Shift-Enter, Escape, mac Option/Cmd arrows + Backspace)
- *   Monaco         packages/yaade-monaco/src/editor-shortcuts.ts
- *                  (Mod-p quick open, Mod-s save, Mod-Shift-p palette)
  *   Dead dump      packages/yaade-workspace/src/default-keybindings.ts
  *                  (VS Code leftover; layer 0 is empty in the live app)
  */
@@ -33,8 +30,6 @@ import { keyEventMatchesBinding } from "@yaade/workspace"
 
 export const SHELL_PREFIX = "Mod-k"
 export const TOOL_SESSION_PREFIX = SHELL_PREFIX
-export const MUX_PREFIX = SHELL_PREFIX
-
 export type ToolSessionPrefixGroupId = "open" | "move" | "session"
 
 export type ToolSessionPrefixBinding = {
@@ -52,7 +47,7 @@ export type ToolSessionDirectBinding = {
   readonly desc: string
 }
 
-export type ToolSessionContextKind = "editor" | "search"
+export type ToolSessionContextKind = "search"
 
 export type ToolSessionContextBinding = {
   readonly key: string
@@ -61,19 +56,6 @@ export type ToolSessionContextBinding = {
   readonly when: readonly ToolSessionContextKind[]
   /** Risky chord — only legal with a written reason. */
   readonly riskyReason?: string
-}
-
-export type MuxPrefixBinding = {
-  /** Second chord part, appended to {@link MUX_PREFIX}. */
-  readonly key: string
-  readonly command: string
-  readonly desc: string
-}
-
-export type MuxDirectBinding = {
-  readonly key: string
-  readonly command: string
-  readonly desc: string
 }
 
 export const TOOL_SESSION_PREFIX_GROUPS: readonly {
@@ -89,15 +71,17 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
   [
     { key: "t", command: "tool.newTerminal", desc: "New Terminal", group: "open" },
     { key: "s", command: "tool.newSearch", desc: "New Search", group: "open" },
-    { key: "e", command: "tool.newEditor", desc: "New Editor", group: "open" },
     { key: "g", command: "tool.newGit", desc: "New Git", group: "open" },
-    { key: "b", command: "sidebar.toggle", desc: "Toggle sidebars", group: "move" },
     { key: "j", command: "tool.next", desc: "Next tool", group: "move" },
     { key: "k", command: "tool.previous", desc: "Previous tool", group: "move" },
+    { key: "l", command: "tab.next", desc: "Next tab", group: "move" },
+    { key: "h", command: "tab.previous", desc: "Previous tab", group: "move" },
+    { key: "z", command: "pane.zoom", desc: "Zoom pane", group: "move" },
     { key: "u", command: "tool.switch", desc: "Switch tool", group: "move" },
     { key: "w", command: "session.switch", desc: "Switch session", group: "move" },
     { key: "1", command: "tool.jump", desc: "Jump tool 1–9", group: "move" },
     { key: "c", command: "session.new", desc: "New session", group: "session" },
+    { key: "n", command: "tab.new", desc: "New tab", group: "session" },
     { key: "x", command: "tool.close", desc: "Close tool", group: "session" },
     {
       key: "Shift-X",
@@ -112,92 +96,13 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
 export const TOOL_SESSION_DIRECT_BINDINGS: readonly ToolSessionDirectBinding[] =
   [{ key: "Mod-,", command: "settings.show", desc: "Settings" }]
 
-/**
- * Context-local chords. Not shell grammar. `Mod-p` is risky (print) on
- * purpose: VS Code quick-open, only while Editor or Search is focused.
- */
-export const TOOL_SESSION_CONTEXT_BINDINGS: readonly ToolSessionContextBinding[] =
-  [
-    {
-      key: "Mod-p",
-      command: "editor.quickOpen",
-      desc: "Quick open",
-      when: ["editor", "search"],
-      riskyReason:
-        "VS Code quick-open while a file tool is focused. Prefix cannot own Mod-p.",
-    },
-  ]
+/** File navigation is handled inside the Neovim terminal. */
+export const TOOL_SESSION_CONTEXT_BINDINGS: readonly ToolSessionContextBinding[] = []
 
 /** Commands allowed both as prefix (HUD) and as a direct chord. */
 export const TOOL_SESSION_DUAL_PATH_COMMANDS: readonly string[] = [
   "settings.show",
 ]
-
-/**
- * Source of truth for both `registerUser` and the which-key panel, so the hint
- * overlay can never drift from what is actually bound.
- *
- * Compat-only. Do not add rows.
- */
-export const MUX_PREFIX_BINDINGS: readonly MuxPrefixBinding[] = [
-  { key: "c", command: "terminal.new", desc: "New pane" },
-  { key: "d", command: "mux.splitRight", desc: "Split right" },
-  { key: "Shift-D", command: "mux.splitDown", desc: "Split down" },
-  { key: "x", command: "mux.closePane", desc: "Close pane" },
-  { key: "z", command: "mux.zoomPane", desc: "Zoom pane" },
-  { key: "h", command: "mux.focusLeft", desc: "Focus left" },
-  { key: "j", command: "mux.focusDown", desc: "Focus down" },
-  { key: "k", command: "mux.focusUp", desc: "Focus up" },
-  { key: "l", command: "mux.focusRight", desc: "Focus right" },
-  { key: "ArrowLeft", command: "mux.focusLeft", desc: "Focus left" },
-  { key: "ArrowDown", command: "mux.focusDown", desc: "Focus down" },
-  { key: "ArrowUp", command: "mux.focusUp", desc: "Focus up" },
-  { key: "ArrowRight", command: "mux.focusRight", desc: "Focus right" },
-  { key: "w", command: "terminal.list", desc: "Switch pane" },
-  { key: "t", command: "mux.newWindow", desc: "New browser tab" },
-  { key: "n", command: "mux.openNeovim", desc: "Open Neovim" },
-  { key: "g", command: "mux.openGit", desc: "Open Git" },
-  { key: "e", command: "explorer.focus", desc: "Explorer" },
-  { key: "f", command: "editor.quickOpen", desc: "Quick open" },
-  { key: "/", command: "search.focus", desc: "Project search" },
-  { key: "b", command: "buffers.focus", desc: "Buffers" },
-  { key: "o", command: "outline.focus", desc: "Outline" },
-  { key: "r", command: "references.focus", desc: "References" },
-  { key: "[", command: "editor.navigateBack", desc: "Go back" },
-  { key: "]", command: "editor.navigateForward", desc: "Go forward" },
-  { key: "s", command: "editor.save", desc: "Save" },
-  { key: "p", command: "ui.showCommandPalette", desc: "Command palette" },
-  { key: ".", command: "workspace.cd", desc: "Change directory" },
-  { key: ",", command: "settings.show", desc: "Settings" },
-  { key: "=", command: "ui.zoomIn", desc: "Font bigger" },
-  { key: "-", command: "ui.zoomOut", desc: "Font smaller" },
-]
-
-/**
- * Chords bound without the prefix. Kept to the minimum that Chromium delivers
- * and that users already expect an app to own.
- */
-export const MUX_DIRECT_BINDINGS: readonly MuxDirectBinding[] = [
-  {
-    key: "Mod-Shift-p",
-    command: "ui.showCommandPalette",
-    desc: "Command palette",
-  },
-  { key: "Mod-,", command: "settings.show", desc: "Settings" },
-]
-
-/**
- * Mux Escape is not in {@link MUX_DIRECT_BINDINGS} because it is gated on a
- * zoomed pane and focus outside the PTY. Listed here so it stays visible.
- */
-export const MUX_UNZOOM_BINDING = {
-  key: "Escape",
-  command: "mux.unzoom",
-  desc: "Unzoom pane",
-} as const
-
-/** Super+Shift+P on non-Mac, where `Mod` is Ctrl. */
-const MUX_PALETTE_META_ALIAS = "Cmd-Shift-p"
 
 export function toolSessionPrefixBindingKey(
   key: string,
@@ -254,16 +159,11 @@ export function matchToolSessionContextBinding(
   event: KeyboardEvent,
   kind: string | undefined,
 ): ToolSessionContextBinding | undefined {
-  if (kind !== "editor" && kind !== "search") return undefined
+  if (kind !== "search") return undefined
   return TOOL_SESSION_CONTEXT_BINDINGS.find(
     (item) =>
       item.when.includes(kind) && keyEventMatchesBinding(event, item.key),
   )
-}
-
-/** Full binding key for a prefix entry, e.g. `Mod-k z`. */
-export function muxPrefixBindingKey(key: string, prefix = MUX_PREFIX): string {
-  return `${prefix} ${key}`
 }
 
 /**
@@ -279,14 +179,4 @@ export function prefixLiteralByte(prefix = SHELL_PREFIX): string | null {
   const code = letter.charCodeAt(0) - 96
   if (code < 1 || code > 26) return null
   return String.fromCharCode(code)
-}
-
-/** Palette chord that must work even if `registerUser` has not landed. */
-export function isMuxPaletteHardwire(event: KeyboardEvent): boolean {
-  return MUX_DIRECT_BINDINGS.some(
-    (item) =>
-      item.command === "ui.showCommandPalette" &&
-      (keyEventMatchesBinding(event, item.key) ||
-        keyEventMatchesBinding(event, MUX_PALETTE_META_ALIAS)),
-  )
 }

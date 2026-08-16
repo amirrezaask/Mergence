@@ -10,6 +10,8 @@ export type QuickOpenWorkspace = {
   name: string
 }
 
+const EMPTY_WORKSPACES: readonly QuickOpenWorkspace[] = []
+
 type QuickOpenEntry = {
   path: string
   name: string
@@ -31,7 +33,7 @@ export function QuickOpenOverlay({
   onOpenChange,
   onSearch,
   scanReady = true,
-  workspaces = [],
+  workspaces = EMPTY_WORKSPACES,
   defaultWorkspaceId = null,
   onSelect,
 }: {
@@ -43,7 +45,7 @@ export function QuickOpenOverlay({
     signal: AbortSignal,
   ) => Promise<string[]>
   scanReady?: boolean
-  workspaces?: QuickOpenWorkspace[]
+  workspaces?: readonly QuickOpenWorkspace[]
   defaultWorkspaceId?: string | null
   onSelect: (path: string, query: string, workspaceId: string | null) => void
 }) {

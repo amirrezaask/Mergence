@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { Schema } from "effect"
-import { AppSession, SessionId, ToolUseId } from "@yaade/rpc"
+import { AppSession, SessionId, SessionTabId, ToolUseId } from "@yaade/rpc"
 import {
   chooseSession,
   chooseToolUse,
@@ -15,7 +15,9 @@ const sessionB = AppSession.make({ id: Schema.decodeUnknownSync(SessionId)("ses-
 describe("tool session routing", () => {
   it("parses and serializes the global session URL", () => {
     const sessionId = Schema.decodeUnknownSync(SessionId)("ses-a")
+    const tabId = Schema.decodeUnknownSync(SessionTabId)("tab-a")
     const useId = Schema.decodeUnknownSync(ToolUseId)("use-a")
+    assert.deepEqual(parseToolSessionRoute(toolSessionUrl(sessionId, tabId, useId)), { sessionId, tabId, toolUseId: useId })
     assert.deepEqual(parseToolSessionRoute(toolSessionUrl(sessionId, useId)), { sessionId, toolUseId: useId })
     assert.equal(parseToolSessionRoute("/dev/project").legacyPath, "/dev/project")
   })

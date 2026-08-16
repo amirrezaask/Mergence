@@ -5,7 +5,6 @@ import { Schema } from "effect"
 import {
   ProcessToolOutput,
   ProjectTarget,
-  SessionId,
   ToolUseId,
   ToolUseConflict,
 } from "@yaade/rpc"
@@ -44,9 +43,29 @@ describe("ToolSessionStore", () => {
     const first = store.listSessions()[0]
     assert.ok(first)
     assert.equal(first.title, "Session 1")
+    const firstTab = store.listTabs(first.id)[0]
+    assert.ok(firstTab)
+    assert.equal(first.activeTabId, firstTab.id)
+    const secondTab = store.createTab(first.id, "Logs")
+    assert.deepEqual(store.listTabs(first.id).map(tab => tab.title), ["Window 1", "Logs"])
+    assert.equal(store.renameTab(secondTab.id, "Builds").title, "Builds")
     const second = store.createSession("Review")
     assert.deepEqual(store.listSessions().map(session => session.title), ["Session 1", "Review"])
+    assert.deepEqual(store.listTabs(second.id).map(tab => tab.title), ["Window 1"])
     assert.equal(store.renameSession(second.id, "Renamed").title, "Renamed")
+    db.close()
+  })
+
+  it("creates a window for the replacement session after archiving the last session", () => {
+    const db = database()
+    const store = new ToolSessionStore(db)
+    const session = store.listSessions()[0]
+    assert.ok(session)
+    store.archiveSession(session.id)
+    const replacement = store.listSessions()[0]
+    assert.ok(replacement)
+    assert.equal(store.listTabs(replacement.id).length, 1)
+    assert.equal(replacement.activeTabId, store.listTabs(replacement.id)[0]?.id)
     db.close()
   })
 

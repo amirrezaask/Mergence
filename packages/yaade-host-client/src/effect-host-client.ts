@@ -15,6 +15,7 @@ import {
   PayloadTooLargeError,
   ProjectTargetUnavailable,
   SessionNotFound,
+  SessionTabNotFound,
   ToolRuntimeFailure,
   ToolUseConflict,
   ToolUseNotFound,
@@ -61,6 +62,7 @@ function mapFetchError(
   }
   if (code === "NOT_FOUND") {
     if (typeof details?.sessionId === "string") return new SessionNotFound({ sessionId: details.sessionId, message })
+    if (typeof details?.tabId === "string") return new SessionTabNotFound({ tabId: details.tabId, message })
     if (typeof details?.toolUseId === "string") return new ToolUseNotFound({ toolUseId: details.toolUseId, message })
     return new NotFoundError({ message })
   }

@@ -58,9 +58,6 @@ import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 /** Navigation chrome for the Session shell. */
 export type SessionLayout = "tabs" | "two-sidebars" | "single-sidebar"
 export type ColorSchemeMode = "system" | "light" | "dark"
-/** Preferred file editor for quick open / search / go-to-definition. */
-export type PreferredEditor = "monaco" | "neovim"
-
 export type JetAppearanceSettings = {
   themeId: string
   colorSchemeMode: ColorSchemeMode
@@ -78,8 +75,6 @@ export type JetAppearanceSettings = {
    * Persisted as absolute project path (stable across reloads).
    */
   sidebarProjectFilterPath: string | null
-  /** Monaco buffer groups vs Neovim PTY panes for file opens. */
-  preferredEditor: PreferredEditor
 }
 
 export type SettingsOverlayProps = {
@@ -590,50 +585,6 @@ export function SettingsOverlay({
                           )
                         }
                       />
-                    </Field>
-                    <Field
-                      orientation="responsive"
-                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
-                    >
-                      <FieldContent className="min-w-0">
-                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
-                          Editor
-                        </FieldLabel>
-                        <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Quick open, project search, and go-to-definition open files in the Editor tool.
-                        </FieldDescription>
-                      </FieldContent>
-                      <ToggleGroup
-                        type="single"
-                        variant="outline"
-                        size="sm"
-                        value={settings.preferredEditor}
-                        aria-label="Preferred editor"
-                        className="w-full"
-                        onValueChange={value => {
-                          if (value !== "monaco" && value !== "neovim") return
-                          onSettingsChange(
-                            settingPatch(settings, { preferredEditor: value }),
-                          )
-                        }}
-                      >
-                        <ToggleGroupItem
-                          value="monaco"
-                          aria-label="Monaco editor"
-                          className="flex-1"
-                          data-yaade-preferred-editor="monaco"
-                        >
-                          Monaco
-                        </ToggleGroupItem>
-                        <ToggleGroupItem
-                          value="neovim"
-                          aria-label="Neovim editor"
-                          className="flex-1"
-                          data-yaade-preferred-editor="neovim"
-                        >
-                          Neovim
-                        </ToggleGroupItem>
-                      </ToggleGroup>
                     </Field>
                   </FieldGroup>
                 </section>

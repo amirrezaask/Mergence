@@ -45,6 +45,7 @@ export type HostRuntime = {
   toolSessions: ToolSessionStore
   toolService: ToolService | null
   hookQueueTimer: ReturnType<typeof setInterval>
+  pendingHookQueueDrain: () => Promise<void> | null
 }
 
 function asAgentProvider(value: string | null | undefined): AgentProvider | null {
@@ -138,10 +139,16 @@ export function createRuntime(
 
   const workspace = new WorkspaceHost()
   const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? ""
-  const hookQueueTimer = setInterval(
-    () => drainHookQueue(agents, notifications, config.dataDir),
-    5_000,
-  )
+  let hookQueueDrain: Promise<void> | null = null
+  const requestHookQueueDrain = () => {
+    if (hookQueueDrain) return
+    hookQueueDrain = drainHookQueue(agents, notifications, config.dataDir)
+      .catch(error => console.warn("Failed to drain agent hook queue", error))
+      .finally(() => {
+        hookQueueDrain = null
+      })
+  }
+  const hookQueueTimer = setInterval(requestHookQueueDrain, 5_000)
   hookQueueTimer.unref?.()
   const runtime: HostRuntime = {
     config,
@@ -160,6 +167,7 @@ export function createRuntime(
     toolSessions,
     toolService: null,
     hookQueueTimer,
+    pendingHookQueueDrain: () => hookQueueDrain,
   }
   runtime.toolService = new ToolService(runtime)
   runtime.toolService.reconcile()
@@ -168,21 +176,21 @@ export function createRuntime(
   } catch {
     /* Launch target validation remains authoritative; HQ can still load. */
   }
-  // Drain offline hook queue from previous host downtime.
-  drainHookQueue(agents, notifications, config.dataDir)
+  // Drain offline hook queue from previous host downtime without blocking boot.
+  requestHookQueueDrain()
 
   return runtime
 }
 
-function drainHookQueue(
+async function drainHookQueue(
   agents: AgentTelemetryService,
   notifications: NotificationService,
   dataDir: string,
-): void {
-  for (const item of listQueuedHooks(dataDir)) {
+): Promise<void> {
+  for (const item of await listQueuedHooks(dataDir)) {
     const provider = asAgentProvider(item.meta.provider)
     if (!provider || !item.meta.sessionId) {
-      removeQueuedHook(item.file)
+      await removeQueuedHook(item.file)
       continue
     }
     try {
@@ -190,9 +198,9 @@ function drainHookQueue(
         provider,
         sessionId: item.meta.sessionId,
       })
-      removeQueuedHook(item.file)
+      await removeQueuedHook(item.file)
     } catch (error) {
-      markQueuedHookRetry(item.file, error)
+      await markQueuedHookRetry(item.file, error)
     }
   }
   const discarded = consumeHookQueueDiscardCount()
@@ -329,6 +337,7 @@ export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
   runtime.events.emit("server:shuttingDown", [])
   runtime.workspace.stopAll()
   clearInterval(runtime.hookQueueTimer)
+  await runtime.pendingHookQueueDrain()
   await runtime.toolService?.close()
   runtime.terminal.stopAll()
 }

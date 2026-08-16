@@ -1,6 +1,7 @@
 import {
   createContext,
   useContext,
+  useMemo,
   type ReactNode,
   type RefCallback,
 } from "react"
@@ -17,8 +18,9 @@ export function SessionHeaderChromeProvider(props: {
   target: HTMLElement | null
   children: ReactNode
 }) {
+  const value = useMemo(() => ({ target: props.target }), [props.target])
   return (
-    <SessionHeaderChromeContext.Provider value={{ target: props.target }}>
+    <SessionHeaderChromeContext.Provider value={value}>
       {props.children}
     </SessionHeaderChromeContext.Provider>
   )

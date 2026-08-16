@@ -109,7 +109,7 @@ describe("bundled Yaade themes", () => {
     assert.equal(siblingThemeForScheme("ayu-dark", "light").id, "ayu-light")
   })
 
-  it("uses official palette values across shell, Git, Monaco, and terminal tokens", () => {
+  it("uses official palette values across shell, Git, and terminal tokens", () => {
     const catppuccin = getThemeById("catppuccin-mocha")
     assert.equal(catppuccin.tokens.background, "#1e1e2e")
     assert.equal(catppuccin.highlights.keyword, "#cba6f7")

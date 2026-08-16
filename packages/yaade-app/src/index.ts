@@ -1,2 +1,1 @@
-export { MuxApp as YaadeApp } from "./mux/MuxApp.js"
-export { MuxApp } from "./mux/MuxApp.js"
+export { ToolSessionApp } from "./tools/ToolSessionApp.js"

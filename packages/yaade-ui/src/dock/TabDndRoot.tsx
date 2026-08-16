@@ -38,8 +38,6 @@ import {
   isSessionDragData,
   isTabDragData,
   type DockDragData,
-  type SessionDragData,
-  type TabDragData,
 } from "./tab-dnd-types.js"
 import { PanelDragProvider, usePanelDrag } from "./PanelDragContext.js"
 

@@ -88,15 +88,6 @@ type TerminalInstanceRow = {
   revision: number;
 };
 
-const PROVIDERS: readonly AgentProvider[] = [
-  "claude",
-  "codex",
-  "cursor",
-  "opencode",
-  "grok",
-  "pi",
-];
-
 const FINAL_TRANSCRIPT_BYTES = 256 * 1024;
 const TELEMETRY_GRACE_MS = 10_000;
 
@@ -105,10 +96,17 @@ function nowIso(): string {
 }
 
 function asProvider(value: string | null | undefined): AgentProvider | null {
-  if (!value) return null;
-  return PROVIDERS.includes(value as AgentProvider)
-    ? (value as AgentProvider)
-    : null;
+  switch (value) {
+    case "claude":
+    case "codex":
+    case "cursor":
+    case "opencode":
+    case "grok":
+    case "pi":
+      return value;
+    default:
+      return null;
+  }
 }
 
 function state(value: string): TerminalInstanceState {

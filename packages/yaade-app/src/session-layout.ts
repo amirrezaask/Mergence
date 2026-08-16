@@ -2,6 +2,8 @@ import type { DropAction, PanelId, PanelView } from "@yaade/shared"
 import {
   YaadePanelTree,
   buildTabsView,
+  EXPLORER_TAB_ID,
+  PROBLEMS_TAB_ID,
   findPanelWithTab,
   isEditorTabId,
   isGitTabId,
@@ -13,11 +15,16 @@ import {
 import { TERMINAL_TAB_TYPE_ID } from "./tabs/terminal-session.js"
 import { resolveTargetPanel, closePanelIfEmpty, getAllLeafPanels } from "./panel-routing.js"
 import { terminalSessionForTab } from "./tabs/terminal-session.js"
-import { isMuxToolTabId } from "./mux/tool-pane.js"
-
-/** Terminal, Git, or persistent tool leaf participating in tile DnD. */
+/** Terminal, Git, editor, or persistent tool leaf participating in tile DnD. */
 function isMuxPaneTabId(tabId: string): boolean {
-  return isTerminalTabId(tabId) || isGitTabId(tabId) || isMuxToolTabId(tabId)
+  return (
+    isTerminalTabId(tabId) ||
+    isGitTabId(tabId) ||
+    isEditorTabId(tabId) ||
+    tabId === EXPLORER_TAB_ID ||
+    tabId === PROBLEMS_TAB_ID ||
+    tabId.startsWith("yaade:tool:")
+  )
 }
 
 /** Panel view filtered to terminal session tabs only (for session window chrome). */

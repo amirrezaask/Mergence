@@ -80,13 +80,6 @@ function isExpectedBrowserFailure(
   const firstLine = failure.message.split("\n", 1)[0]?.replace(/^Error: /, "") ?? ""
   if (EXPECTED_BROWSER_MESSAGES.some(pattern => pattern.test(firstLine))) return true
   if (
-    failure.kind === "pageerror" &&
-    firstLine === "Canceled: Canceled" &&
-    failure.message.includes("/assets/monaco-")
-  ) {
-    return true
-  }
-  if (
     failure.kind === "requestfailed" &&
     failure.navigationRelated === true &&
     failure.message === "net::ERR_ABORTED"

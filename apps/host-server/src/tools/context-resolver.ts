@@ -60,7 +60,7 @@ function projectTarget(project: { id: string; rootPath: string; name: string }):
 function canonicalPath(value: string, label: string): string {
   try {
     return fs.realpathSync(path.resolve(value))
-  } catch (cause) {
+  } catch {
     throw new CheckoutResolutionFailed({ message: `${label} is unavailable: ${value}` })
   }
 }

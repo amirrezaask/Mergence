@@ -16,6 +16,8 @@ import type {
   CreateToolUse,
   ProjectTarget,
   SessionId,
+  SessionTab,
+  SessionTabId,
   ToolKind,
   ToolUse,
   ToolUseId,
@@ -62,6 +64,7 @@ import {
 import { createToolClient, type ToolClient } from "./tool-client.js";
 import {
   chooseSession,
+  chooseTab,
   chooseToolUse,
   parseToolSessionRoute,
   toolSessionUrl,
@@ -71,6 +74,7 @@ import {
   type ToolContextSelection,
 } from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
+import { SessionWindowTabStrip } from "./SessionWindowTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
@@ -79,7 +83,6 @@ import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { agentProviderFromTerminal } from "./agent-process.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
-  activateToolTab,
   closeToolPanel,
   createToolWorkspace,
   dockToolView,
@@ -89,6 +92,7 @@ import {
   reorderToolTabs,
   resizeToolSplit,
   splitToolPanel,
+  toggleToolPanelZoom,
   toolIdsInWorkspace,
   type ToolWorkspace,
 } from "./tool-tiling.js";
@@ -108,6 +112,8 @@ const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
 const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
 const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
+const EMPTY_TOOL_USE_IDS: readonly ToolUseId[] = [];
+const EMPTY_TAB_IDS: readonly SessionTabId[] = [];
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
 
@@ -182,11 +188,8 @@ export function ToolSessionApp() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [archivedSessions, setArchivedSessions] = useState<
-    readonly import("@yaade/rpc").AppSession[]
-  >([]);
   const [toolWorkspaces, setToolWorkspaces] = useState<
-    ReadonlyMap<SessionId, ToolWorkspace>
+    ReadonlyMap<SessionTabId, ToolWorkspace>
   >(() => new Map());
   const [prefixPending, setPrefixPending] = useState(false);
   const [runtimeTitles, setRuntimeTitles] = useState<
@@ -289,21 +292,32 @@ export function ToolSessionApp() {
       ...snapshot.sessionsById.values(),
     ]);
     if (!session) return;
-    const ids = snapshot.useIdsBySession.get(session.id) ?? [];
-    const useId = chooseToolUse(route.toolUseId, session, ids);
+    const tabs = snapshot.visibleTabIdsBySession.get(session.id) ?? [];
+    const tab = chooseTab(
+      route.tabId,
+      session,
+      tabs.map(id => snapshot.tabsById.get(id)).filter((value): value is SessionTab => Boolean(value)),
+    );
+    const ids = tab ? snapshot.useIdsByTab.get(tab.id) ?? [] : EMPTY_TOOL_USE_IDS;
+    const useId = chooseToolUse(route.toolUseId, tab, ids);
     if (snapshot.activeSessionId !== session.id)
       client.store.selectSession(session.id);
+    if (tab && snapshot.activeTabId !== tab.id)
+      client.store.selectTab(tab.id);
     if (useId && snapshot.activeToolUseId !== useId)
       client.store.selectToolUse(useId);
-    const url = toolSessionUrl(session.id, useId);
+    const url = toolSessionUrl(session.id, tab?.id, useId);
     if (location.href !== new URL(url, location.origin).href)
       history.replaceState(null, "", url);
   }, [
     client,
     snapshot.activeSessionId,
+    snapshot.activeTabId,
     snapshot.activeToolUseId,
     snapshot.sessionsById,
-    snapshot.useIdsBySession,
+    snapshot.tabsById,
+    snapshot.visibleTabIdsBySession,
+    snapshot.useIdsByTab,
   ]);
 
   const visibleSessions = snapshot.visibleSessionIds
@@ -314,9 +328,19 @@ export function ToolSessionApp() {
   const activeSession = snapshot.activeSessionId
     ? snapshot.sessionsById.get(snapshot.activeSessionId)
     : undefined;
-  const useIds = activeSession
-    ? (snapshot.useIdsBySession.get(activeSession.id) ?? [])
-    : [];
+  const activeTab = snapshot.activeTabId
+    ? snapshot.tabsById.get(snapshot.activeTabId)
+    : undefined;
+  const tabIds = activeSession
+    ? (snapshot.visibleTabIdsBySession.get(activeSession.id) ?? EMPTY_TAB_IDS)
+    : EMPTY_TAB_IDS;
+  const visibleTabs = tabIds
+    .map(id => snapshot.tabsById.get(id))
+    .filter((tab): tab is SessionTab => Boolean(tab));
+  const activeTabToolIds = activeTab
+    ? (snapshot.useIdsByTab.get(activeTab.id) ?? EMPTY_TOOL_USE_IDS)
+    : EMPTY_TOOL_USE_IDS;
+  const useIds = activeTabToolIds;
   const agentUseIds = useMemo(() => {
     const ids: ToolUseId[] = [];
     for (const sessionId of snapshot.visibleSessionIds) {
@@ -346,11 +370,14 @@ export function ToolSessionApp() {
   }, [visibleSessions]);
   const toolCounts = useMemo(() => {
     const counts = new Map<SessionId, number>();
-    for (const [id, ids] of snapshot.useIdsBySession) {
-      counts.set(id, ids.length);
-    }
+    for (const [id, ids] of snapshot.useIdsBySession) counts.set(id, ids.length);
     return counts;
   }, [snapshot.useIdsBySession]);
+  const tabToolCounts = useMemo(() => {
+    const counts = new Map<SessionTabId, number>();
+    for (const [id, ids] of snapshot.useIdsByTab) counts.set(id, ids.length);
+    return counts;
+  }, [snapshot.useIdsByTab]);
   const selected = snapshot.activeToolUseId
     ? snapshot.usesById.get(snapshot.activeToolUseId)
     : undefined;
@@ -420,14 +447,14 @@ export function ToolSessionApp() {
 
   const updateToolWorkspace = useCallback(
     (
-      sessionId: SessionId,
+      tabId: SessionTabId,
       update: (workspace: ToolWorkspace) => ToolWorkspace,
     ) => {
       setToolWorkspaces((previous) => {
-        const current = previous.get(sessionId) ?? createToolWorkspace();
+        const current = previous.get(tabId) ?? createToolWorkspace();
         const next = update(current);
-        if (next === current && previous.has(sessionId)) return previous;
-        return new Map(previous).set(sessionId, next);
+        if (next === current && previous.has(tabId)) return previous;
+        return new Map(previous).set(tabId, next);
       });
     },
     [],
@@ -435,11 +462,13 @@ export function ToolSessionApp() {
 
   const openToolInWorkspace = useCallback(
     (use: ToolUse) => {
-      updateToolWorkspace(use.sessionId, (workspace) =>
+      const tabId = use.tabId ?? activeTab?.id;
+      if (!tabId) return;
+      updateToolWorkspace(tabId, (workspace) =>
         openToolView(workspace, use.id),
       );
     },
-    [updateToolWorkspace],
+    [activeTab?.id, updateToolWorkspace],
   );
 
   const selectSession = useCallback(
@@ -447,10 +476,13 @@ export function ToolSessionApp() {
       markPerformance("yaade:session-switch");
       client.store.selectSession(id);
       const session = client.store.getSnapshot().sessionsById.get(id);
+      const nextTab = session?.activeTabId
+        ? client.store.getSnapshot().tabsById.get(session.activeTabId)
+        : undefined;
       history.pushState(
         null,
         "",
-        session ? toolSessionUrl(session.id, session.activeToolUseId) : "/",
+        session ? toolSessionUrl(session.id, nextTab?.id, nextTab?.activeToolUseId) : "/",
       );
     },
     [client],
@@ -462,8 +494,11 @@ export function ToolSessionApp() {
       openToolInWorkspace(use);
       const current = client.store.getSnapshot().activeToolUseId;
       client.store.selectToolUse(use.id);
+      const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
+      const request = window.yaade?.tools?.selectUse?.(use.sessionId, use.id);
+      if (request) void request.catch(error => setActionError(errorMessage(error)));
       if (current !== use.id) {
-        history.pushState(null, "", toolSessionUrl(use.sessionId, use.id));
+        history.pushState(null, "", toolSessionUrl(use.sessionId, tabId, use.id));
       }
     },
     [client, openToolInWorkspace],
@@ -479,12 +514,12 @@ export function ToolSessionApp() {
   }, [openToolInWorkspace, selected]);
 
   useEffect(() => {
-    if (!activeSession) return;
+    if (!activeTab) return;
     const liveIds = new Set(useIds);
-    updateToolWorkspace(activeSession.id, (workspace) =>
+    updateToolWorkspace(activeTab.id, (workspace) =>
       removeMissingToolViews(workspace, liveIds),
     );
-  }, [activeSession, updateToolWorkspace, useIds]);
+  }, [activeTab, updateToolWorkspace, useIds]);
 
   const createTool = useCallback(
     async (
@@ -492,7 +527,11 @@ export function ToolSessionApp() {
       requestedProvider?: AgentProvider,
       launchContext?: ToolContextSelection,
     ) => {
-      if (!activeSession) return;
+      if (!activeSession || !activeTab) return;
+      if (nextKind === "editor") {
+        setActionError("The in-browser editor is temporarily disabled.");
+        return;
+      }
       setActionError(undefined);
       try {
         let nextProjects = projects;
@@ -535,12 +574,11 @@ export function ToolSessionApp() {
                 }
               : nextKind === "git"
                 ? { _tag: "GitToolInput", kind: "git" }
-                : nextKind === "editor"
-                  ? { _tag: "EditorToolInput", kind: "editor" }
-                  : { _tag: "TerminalToolInput", kind: "terminal" };
+                : { _tag: "TerminalToolInput", kind: "terminal" };
         const command: CreateToolUse = {
           _tag: "CreateToolUse",
           sessionId: activeSession.id,
+          tabId: activeTab.id,
           kind: nextKind,
           project: nextProject,
           checkout:
@@ -555,18 +593,77 @@ export function ToolSessionApp() {
         setActionError(errorMessage(error));
       }
     },
-    [activeSession, client, projects, selectTool],
+    [activeSession, activeTab, client, projects, selectTool],
   );
 
-  const refreshArchived = useCallback(async () => {
-    const all = await window.yaade?.tools?.listSessions?.(true);
-    if (!all) return;
-    setArchivedSessions(
-      all
-        .map((item) => item.session)
-        .filter((session) => Boolean(session.archivedAt)),
-    );
-  }, []);
+  const selectTab = useCallback(
+    (tab: SessionTab) => {
+      markPerformance("yaade:tab-switch");
+      client.store.selectTab(tab.id);
+      const session = client.store.getSnapshot().sessionsById.get(tab.sessionId);
+      const nextUse = client.store.getSnapshot().activeToolUseId;
+      if (session) history.pushState(null, "", toolSessionUrl(session.id, tab.id, nextUse));
+      const request = window.yaade?.tools?.selectTab?.({
+        _tag: "SelectSessionTab",
+        sessionId: tab.sessionId,
+        tabId: tab.id,
+      });
+      if (request) void request.catch(error => setActionError(errorMessage(error)));
+    },
+    [client],
+  );
+
+  const createTab = useCallback(async () => {
+    if (!activeSession) return;
+    try {
+      const tab = await window.yaade?.tools?.createTab?.({
+        _tag: "CreateSessionTab",
+        sessionId: activeSession.id,
+        title: "New tab",
+      });
+      if (!tab) return;
+      await client.reconcile();
+      selectTab(tab);
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  }, [activeSession, client, selectTab]);
+
+  const renameTab = useCallback(async (id: SessionTabId, title: string) => {
+    try {
+      await window.yaade?.tools?.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
+      await client.reconcile();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  }, [client]);
+
+  const reorderTabs = useCallback(async (ids: readonly SessionTabId[]) => {
+    if (!activeSession) return;
+    try {
+      await window.yaade?.tools?.reorderTabs?.({
+        _tag: "ReorderSessionTabs",
+        sessionId: activeSession.id,
+        tabIds: ids,
+      });
+      await client.reconcile();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  }, [activeSession, client]);
+
+  const closeTab = useCallback(async (tab: SessionTab) => {
+    try {
+      await window.yaade?.tools?.archiveTab?.({
+        _tag: "ArchiveSessionTab",
+        tabId: tab.id,
+        mode: "stop-tools",
+      });
+      await client.reconcile();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  }, [client]);
 
   const createSession = useCallback(async () => {
     try {
@@ -672,27 +769,16 @@ export function ToolSessionApp() {
 
   const reorderToolUses = useCallback(
     async (ids: readonly ToolUseId[]) => {
-      if (!activeSession) return;
+      if (!activeSession || !activeTab) return;
       await window.yaade?.tools?.reorderUses?.({
         _tag: "ReorderToolUses",
         sessionId: activeSession.id,
+        tabId: activeTab.id,
         toolUseIds: ids,
       });
       await client.reconcile();
     },
-    [activeSession, client],
-  );
-
-  const restoreSession = useCallback(
-    async (session: import("@yaade/rpc").AppSession) => {
-      const restored = await window.yaade?.tools?.restoreSession?.({
-        _tag: "RestoreSession",
-        sessionId: session.id,
-      });
-      await client.reconcile();
-      if (restored) selectSession(restored.id);
-    },
-    [client, selectSession],
+    [activeSession, activeTab, client],
   );
 
   useEffect(() => {
@@ -702,6 +788,9 @@ export function ToolSessionApp() {
       getState: bridge.getState,
       createSession: bridge.createSession,
       selectSession: bridge.selectSession,
+      createTab: bridge.createTab,
+      selectTab: bridge.selectTab,
+      closeTab: bridge.closeTab,
       createToolUse: bridge.createToolUse,
       selectToolUse: bridge.selectToolUse,
       closeToolUse: bridge.closeToolUse,
@@ -712,12 +801,20 @@ export function ToolSessionApp() {
       [...snapshot.sessionsById.values()].find((session) => session.id === id);
     const useFor = (id: string) =>
       [...snapshot.usesById.values()].find((use) => use.id === id);
+    const tabFor = (id: string) =>
+      [...snapshot.tabsById.values()].find(tab => tab.id === id);
     bridge.getState = () => ({
       ...previous.getState(),
       route: "session",
       activeSessionId: snapshot.activeSessionId ?? null,
+      activeTabId: snapshot.activeTabId ?? null,
       activeToolUseId: snapshot.activeToolUseId ?? null,
       sessions: visibleSessions,
+      tabs: activeSession
+        ? (snapshot.visibleTabIdsBySession.get(activeSession.id) ?? [])
+            .map(id => snapshot.tabsById.get(id))
+            .filter((tab): tab is SessionTab => Boolean(tab))
+        : [],
       toolUses: [...snapshot.usesById.values()].filter(
         (use) => !use.archivedAt,
       ),
@@ -729,6 +826,17 @@ export function ToolSessionApp() {
     bridge.selectSession = async (id) => {
       const session = sessionFor(id);
       if (session) selectSession(session.id);
+    };
+    bridge.createTab = async () => {
+      await createTab();
+    };
+    bridge.selectTab = async (id) => {
+      const tab = tabFor(id);
+      if (tab) selectTab(tab);
+    };
+    bridge.closeTab = async (id) => {
+      const tab = tabFor(id);
+      if (tab) await closeTab(tab);
     };
     bridge.createToolUse = async (nextKind) => {
       await createTool(nextKind);
@@ -761,6 +869,9 @@ export function ToolSessionApp() {
       bridge.getState = previous.getState;
       bridge.createSession = previous.createSession;
       bridge.selectSession = previous.selectSession;
+      bridge.createTab = previous.createTab;
+      bridge.selectTab = previous.selectTab;
+      bridge.closeTab = previous.closeTab;
       bridge.createToolUse = previous.createToolUse;
       bridge.selectToolUse = previous.selectToolUse;
       bridge.closeToolUse = previous.closeToolUse;
@@ -769,10 +880,13 @@ export function ToolSessionApp() {
     };
   }, [
     closeSession,
+    closeTab,
     createSession,
+    createTab,
     createTool,
     runToolAction,
     selectSession,
+    selectTab,
     selectTool,
     snapshot,
     visibleSessions,
@@ -786,17 +900,21 @@ export function ToolSessionApp() {
   const runPrefixCommand = useCallback(
     (command: string, jumpIndex = 0) => {
       if (command === "session.new") void createSession();
-      if (command === "tool.newTerminal") void createTool("terminal");
-      if (command === "editor.quickOpen") {
-        window.dispatchEvent(new Event("yaade:quick-open"));
-        return;
+      if (command === "tab.new") void createTab();
+      if (command === "tab.next" || command === "tab.previous") {
+        if (!activeTab || tabIds.length === 0) return;
+        const index = tabIds.indexOf(activeTab.id);
+        const nextIndex = command === "tab.next"
+          ? (index + 1) % tabIds.length
+          : (index - 1 + tabIds.length) % tabIds.length;
+        const next = snapshot.tabsById.get(tabIds[nextIndex]!);
+        if (next) selectTab(next);
       }
+      if (command === "tool.newTerminal") void createTool("terminal");
       if (command === "tool.newAgent") void createTool("agent");
       if (command === "tool.newSearch") void createTool("search");
-      if (command === "tool.newEditor") void createTool("editor");
       if (command === "tool.newGit") void createTool("git");
-      if (command === "session.switch")
-        void refreshArchived().then(() => setSwitcherOpen(true));
+      if (command === "session.switch") setSwitcherOpen(true);
       if (command === "tool.switch") setToolUseSwitcherOpen(true);
       if (command === "tool.next" || command === "tool.previous") {
         if (!selected || useIds.length === 0) return;
@@ -818,20 +936,27 @@ export function ToolSessionApp() {
         void runToolAction("archive", selected);
       if (command === "session.close" && activeSession)
         requestCloseSession(activeSession.id);
+      if (command === "pane.zoom" && activeTab)
+        updateToolWorkspace(activeTab.id, workspace =>
+          toggleToolPanelZoom(workspace, workspace.focusedPanelId),
+        );
       if (command === "settings.show") setSettingsOpen(true);
-      if (command === "sidebar.toggle") toggleSidebars();
     },
     [
       activeSession,
+      activeTab,
       createSession,
+      createTab,
       createTool,
-      refreshArchived,
       requestCloseSession,
       runToolAction,
+      selectTab,
       selectTool,
       selected,
+      snapshot.tabsById,
       snapshot.usesById,
       toggleSidebars,
+      updateToolWorkspace,
       useIds,
     ],
   );
@@ -866,6 +991,21 @@ export function ToolSessionApp() {
           "[data-yaade-terminal-input], [data-yaade-terminal-canvas]",
         ),
       );
+      const activeWorkspaceZoomed = Boolean(
+        activeSession &&
+          activeTab ? toolWorkspaces.get(activeTab.id)?.zoomedPanelId : undefined,
+      );
+      if (
+        event.key === "Escape" &&
+        activeWorkspaceZoomed &&
+        !inEditable &&
+        !inTerminal
+      ) {
+        event.preventDefault();
+        event.stopPropagation();
+        runPrefixCommand("pane.zoom");
+        return;
+      }
       const inPrefixButton = Boolean(
         target?.closest("[data-yaade-which-key-item]"),
       );
@@ -921,10 +1061,15 @@ export function ToolSessionApp() {
     clearPrefix,
     closeChoice,
     runPrefixCommand,
+    activeSession,
+    clearPrefix,
+    closeChoice,
+    runPrefixCommand,
     selected,
     settingsOpen,
     switcherOpen,
     toolUseSwitcherOpen,
+    toolWorkspaces,
   ]);
 
   const updateToolContext = useCallback(
@@ -988,9 +1133,9 @@ export function ToolSessionApp() {
   );
 
   const activeToolWorkspace = useMemo(() => {
-    if (!activeSession) return createToolWorkspace();
-    return toolWorkspaces.get(activeSession.id) ?? createToolWorkspace();
-  }, [activeSession, toolWorkspaces]);
+    if (!activeTab) return createToolWorkspace();
+    return toolWorkspaces.get(activeTab.id) ?? createToolWorkspace();
+  }, [activeTab, toolWorkspaces]);
 
   const openToolUseIds = useMemo(
     () => new Set(toolIdsInWorkspace(activeToolWorkspace)),
@@ -1007,7 +1152,7 @@ export function ToolSessionApp() {
     (use: ToolUse) => {
       if (client.store.getSnapshot().activeToolUseId === use.id) return;
       client.store.selectToolUse(use.id);
-      history.replaceState(null, "", toolSessionUrl(use.sessionId, use.id));
+      history.replaceState(null, "", toolSessionUrl(use.sessionId, use.tabId, use.id));
     },
     [client],
   );
@@ -1015,40 +1160,40 @@ export function ToolSessionApp() {
   const toolTabDnd = useMemo((): TabDndHandlers => {
     return {
       onTabReorder: (panelId, tabId, toIndex) => {
-        if (!activeSession) return;
+        if (!activeTab) return;
         const toolUseId = toolUseIdForDrag(tabId);
         if (!toolUseId) return;
-        updateToolWorkspace(activeSession.id, (workspace) =>
+        updateToolWorkspace(activeTab.id, workspace =>
           reorderToolTabs(workspace, panelId, toolUseId, toIndex),
         );
       },
-      tabIdsForPanel: (panelId) => {
+      tabIdsForPanel: panelId => {
         const view = activeToolWorkspace.tree.getView(panelId);
         return view?.kind === "tabs" ? [...view.toolUseIds] : [];
       },
       onTabDrop: (_source, sourceTabId, target, action) => {
-        if (!activeSession) return;
+        if (!activeTab) return;
         const toolUseId = toolUseIdForDrag(sourceTabId);
         if (!toolUseId) return;
         const use = snapshot.usesById.get(toolUseId);
-        updateToolWorkspace(activeSession.id, (workspace) =>
+        updateToolWorkspace(activeTab.id, workspace =>
           dockToolView(workspace, toolUseId, target, action),
         );
         if (use) activateDockedTool(use);
       },
       onSessionDrop: (sourceTabId, target, action) => {
-        if (!activeSession) return;
+        if (!activeTab) return;
         const toolUseId = toolUseIdForDrag(sourceTabId);
         if (!toolUseId) return;
         const use = snapshot.usesById.get(toolUseId);
-        updateToolWorkspace(activeSession.id, (workspace) =>
+        updateToolWorkspace(activeTab.id, workspace =>
           dockToolView(workspace, toolUseId, target, action),
         );
         if (use) activateDockedTool(use);
       },
     };
   }, [
-    activeSession,
+    activeTab,
     activeToolWorkspace,
     activateDockedTool,
     snapshot.usesById,
@@ -1058,7 +1203,7 @@ export function ToolSessionApp() {
 
   const closeWorkspacePane = useCallback(
     (panelId: PanelId) => {
-      if (!activeSession) return;
+      if (!activeTab) return;
       const view = activeToolWorkspace.tree.getView(panelId);
       if (view?.kind === "tabs") {
         for (const toolUseId of view.toolUseIds) {
@@ -1067,61 +1212,32 @@ export function ToolSessionApp() {
         }
         return;
       }
-      updateToolWorkspace(activeSession.id, (workspace) =>
-        closeToolPanel(workspace, panelId),
-      );
+      updateToolWorkspace(activeTab.id, workspace => closeToolPanel(workspace, panelId));
     },
-    [
-      activeSession,
-      activeToolWorkspace,
-      runToolAction,
-      snapshot.usesById,
-      updateToolWorkspace,
-    ],
+    [activeTab, activeToolWorkspace, runToolAction, snapshot.usesById, updateToolWorkspace],
   );
 
   const handleToolPanelEvent = useCallback(
     (event: PanelEvent) => {
-      if (!activeSession) return;
+      if (!activeTab) return;
       if (event.type === "splitRatiosChanged") {
-        updateToolWorkspace(activeSession.id, (workspace) =>
+        updateToolWorkspace(activeTab.id, workspace =>
           resizeToolSplit(workspace, event.path, event.ratios),
         );
         return;
       }
       if (event.type === "panelClose") closeWorkspacePane(event.panelId);
     },
-    [activeSession, closeWorkspacePane, updateToolWorkspace],
+    [activeTab, closeWorkspacePane, updateToolWorkspace],
   );
 
   const focusWorkspacePanel = useCallback(
     (panelId: PanelId, use?: ToolUse) => {
-      if (!activeSession) return;
-      updateToolWorkspace(activeSession.id, (workspace) =>
-        focusToolPanel(workspace, panelId),
-      );
+      if (!activeTab) return;
+      updateToolWorkspace(activeTab.id, workspace => focusToolPanel(workspace, panelId));
       if (use) activateDockedTool(use);
     },
-    [activeSession, activateDockedTool, updateToolWorkspace],
-  );
-
-  const activateWorkspaceTab = useCallback(
-    (panelId: PanelId, toolUseId: ToolUseId, use?: ToolUse) => {
-      if (!activeSession) return;
-      updateToolWorkspace(activeSession.id, (workspace) =>
-        activateToolTab(workspace, panelId, toolUseId),
-      );
-      if (use) activateDockedTool(use);
-    },
-    [activeSession, activateDockedTool, updateToolWorkspace],
-  );
-
-  const closeWorkspaceTab = useCallback(
-    (_panelId: PanelId, toolUseId: ToolUseId) => {
-      const use = snapshot.usesById.get(toolUseId);
-      if (use) void runToolAction("archive", use);
-    },
-    [runToolAction, snapshot.usesById],
+    [activeTab, activateDockedTool, updateToolWorkspace],
   );
 
   const renderPrefixHud = (placement: "main" | "dock") =>
@@ -1176,18 +1292,36 @@ export function ToolSessionApp() {
         <Suspense fallback={<SessionBootState />}>
           <ToolDndRoot handlers={toolTabDnd}>
             {!sidebarLayout ? (
-              <SessionTabStrip
-                sessions={visibleSessions}
-                activeSessionId={snapshot.activeSessionId}
-                toolCounts={toolCounts}
-                layout="tabs"
-                onSelect={selectSession}
-                onClose={requestCloseSession}
-                onOpenSettings={() => setSettingsOpen(true)}
-                onCreate={() => void createSession()}
-                onRename={(id, title) => void renameSession(id, title)}
-                onReorder={(ids) => void reorderSessions(ids)}
-              />
+              <header
+                className="flex h-14 shrink-0 items-center gap-1 border-b border-border/80 bg-card px-1.5"
+                data-yaade-session-tabs=""
+                data-yaade-top-tabbar=""
+              >
+                <SessionSwitcher
+                  open={switcherOpen}
+                  onOpenChange={setSwitcherOpen}
+                  sessions={visibleSessions}
+                  activeSessionId={snapshot.activeSessionId}
+                  onSelect={(session) => selectSession(session.id)}
+                  onClose={requestCloseSession}
+                  onRename={(id, title) => void renameSession(id, title)}
+                  toolCounts={toolCounts}
+                />
+                <span
+                  className="mx-1 h-6 w-px shrink-0 bg-border/70"
+                  aria-hidden
+                />
+                <SessionWindowTabStrip
+                  tabs={visibleTabs}
+                  activeTabId={activeTab?.id}
+                  toolCounts={tabToolCounts}
+                  onSelect={selectTab}
+                  onCreate={() => void createTab()}
+                  onClose={closeTab}
+                  onRename={(id, title) => void renameTab(id, title)}
+                  onReorder={ids => void reorderTabs(ids)}
+                />
+              </header>
             ) : null}
             <div
               className={cn(
@@ -1323,6 +1457,18 @@ export function ToolSessionApp() {
                   sidebarLayout && "col-start-2",
                 )}
               >
+                {sidebarLayout ? (
+                  <SessionWindowTabStrip
+                    tabs={visibleTabs}
+                    activeTabId={activeTab?.id}
+                    toolCounts={tabToolCounts}
+                    onSelect={selectTab}
+                    onCreate={() => void createTab()}
+                    onClose={closeTab}
+                    onRename={(id, title) => void renameTab(id, title)}
+                    onReorder={ids => void reorderTabs(ids)}
+                  />
+                ) : null}
                 {snapshot.connection === "reconciling" ||
                 snapshot.connection === "offline" ? (
                   <Alert className="m-4">
@@ -1361,26 +1507,26 @@ export function ToolSessionApp() {
                 {snapshot.connection === "connecting" &&
                 visibleSessions.length === 0 ? (
                   <SessionBootState />
-                ) : activeSession ? (
+                ) : activeSession && activeTab ? (
                   <ToolTilingWorkspace
                     workspace={activeToolWorkspace}
                     usesById={snapshot.usesById}
                     runtimeTitles={runtimeTitles}
-                    projects={projects}
                     tabDnd={toolTabDnd}
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
-                    onActivateTab={activateWorkspaceTab}
-                    onCloseTab={closeWorkspaceTab}
                     onAddTool={(panelId, kind) => {
                       focusWorkspacePanel(panelId);
                       void createTool(kind);
                     }}
-                    onContextChange={updateToolContext}
-                    onProviderChange={updateToolProvider}
                     onSplit={(panelId, edge) =>
-                      updateToolWorkspace(activeSession.id, (workspace) =>
+                      updateToolWorkspace(activeTab.id, (workspace) =>
                         splitToolPanel(workspace, panelId, edge),
+                      )
+                    }
+                    onZoom={(panelId) =>
+                      updateToolWorkspace(activeTab.id, (workspace) =>
+                        toggleToolPanelZoom(workspace, panelId),
                       )
                     }
                     onCloseView={closeWorkspacePane}
@@ -1463,7 +1609,7 @@ export function ToolSessionApp() {
                     onAddKind={(kind) => void createTool(kind)}
                   />
                 )}
-                {sidebarLayout ? renderPrefixHud("main") : null}
+                {renderPrefixHud("main")}
               </main>
               {twoSidebarLayout || !sidebarLayout ? (
                 <div
@@ -1535,16 +1681,6 @@ export function ToolSessionApp() {
           activeToolUseId={snapshot.activeToolUseId}
           runtimeTitles={runtimeTitles}
           onSelect={selectTool}
-        />
-        <SessionSwitcher
-          open={switcherOpen}
-          onOpenChange={setSwitcherOpen}
-          sessions={visibleSessions}
-          archived={archivedSessions}
-          activeSessionId={snapshot.activeSessionId}
-          onSelect={(session) => selectSession(session.id)}
-          onRestore={(session) => void restoreSession(session)}
-          toolCounts={toolCounts}
         />
         {settingsOpen ? (
           <Suspense fallback={null}>

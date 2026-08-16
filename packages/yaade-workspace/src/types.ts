@@ -6,7 +6,6 @@ import type {
   GitRepositorySummary,
   GitStatusEntry,
   GitWorktree,
-  PanelId,
   PanelView,
   FileSearchOptions,
   ProjectSearchOptions,
@@ -28,6 +27,12 @@ import type {
   TextFileWriteResult,
   TrashEntry,
   AppSession,
+  SessionTab,
+  CreateSessionTab,
+  RenameSessionTab,
+  ReorderSessionTabs,
+  ArchiveSessionTab,
+  SelectSessionTab,
   CreateToolUse,
   ProjectTarget,
   ToolEvent,
@@ -154,6 +159,8 @@ export type JetTaskSpawnRequest = {
 
 export type ToolSessionSnapshot = {
   session: AppSession;
+  /** The tmux-window equivalents belonging to this session. Optional only for legacy host snapshots. */
+  tabs?: SessionTab[];
   toolUses: ToolUse[];
 };
 
@@ -166,13 +173,18 @@ export type ToolCheckoutTarget = {
 export type JetElectronTools = {
   listSessions(includeArchived?: boolean): Promise<ToolSessionSnapshot[]>;
   reorderSessions(command: ReorderSessions): Promise<AppSession[]>;
+  createTab(command: CreateSessionTab): Promise<SessionTab>;
+  renameTab(command: RenameSessionTab): Promise<SessionTab>;
+  reorderTabs(command: ReorderSessionTabs): Promise<SessionTab[]>;
+  archiveTab(command: ArchiveSessionTab): Promise<SessionTab>;
+  selectTab(command: SelectSessionTab): Promise<AppSession>;
   archiveSession(command: ArchiveSession): Promise<AppSession>;
   restoreSession(command: RestoreSession): Promise<AppSession>;
   createSession(title?: string): Promise<AppSession>;
   renameSession(sessionId: SessionId, title: string): Promise<AppSession>;
   getSession(
     sessionId: SessionId,
-  ): Promise<{ session: AppSession; toolUses: ToolUse[] } | null>;
+  ): Promise<{ session: AppSession; tabs?: SessionTab[]; toolUses: ToolUse[] } | null>;
   createUse(command: CreateToolUse): Promise<ToolUse>;
   getUse(toolUseId: ToolUseId): Promise<ToolUse | null>;
   reorderUses(command: ReorderToolUses): Promise<ToolUse[]>;

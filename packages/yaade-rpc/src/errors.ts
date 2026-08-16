@@ -162,7 +162,9 @@ export function hostErrorWire(error: HostRpcError): {
             }
           : error._tag === "SessionNotFound"
             ? { sessionId: error.sessionId }
-            : error._tag === "ToolUseNotFound"
+            : error._tag === "SessionTabNotFound"
+              ? { tabId: error.tabId }
+              : error._tag === "ToolUseNotFound"
             ? { toolUseId: error.toolUseId }
             : error._tag === "InvalidToolInput" ||
                 error._tag === "InvalidToolCommand" ||

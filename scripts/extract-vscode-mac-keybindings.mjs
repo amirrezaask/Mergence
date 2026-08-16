@@ -213,7 +213,6 @@ function extractFromFile(content, filePath) {
 
   const keybindingRe = /keybinding\s*:\s*\{([\s\S]*?)\}/g
   for (const match of content.matchAll(keybindingRe)) {
-    const block = match[1]
     const before = content.slice(Math.max(0, match.index - 600), match.index)
     const idMatch =
       before.match(/\bid\s*:\s*['"]([^'"]+)['"]\s*,?\s*$/m) ??
@@ -226,7 +225,6 @@ function extractFromFile(content, filePath) {
 
   const keybindingsRe = /keybindings\s*:\s*\{([\s\S]*?)\}/g
   for (const match of content.matchAll(keybindingsRe)) {
-    const block = match[1]
     const before = content.slice(Math.max(0, match.index - 600), match.index)
     const idMatch = before.match(/\bid\s*:\s*['"]([^'"]+)['"]\s*,?\s*$/m)
     if (!idMatch) continue

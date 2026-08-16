@@ -2,6 +2,7 @@ import type {
   AppSession,
   ProjectSearchResult,
   SessionId,
+  SessionTabId,
   ToolUse,
   ToolUseId,
 } from "@yaade/rpc"
@@ -91,10 +92,14 @@ export class ToolClient {
   }
 
   private async reconcileGap(gap: ToolRevisionGap): Promise<void> {
-    if (gap.entity === "session") {
-      const snapshot = await this.api.getSession(gap.id as SessionId)
+    if (gap.entity === "session" || gap.entity === "tab") {
+      const sessionId = gap.entity === "session"
+        ? gap.id as SessionId
+        : this.store.getSnapshot().tabsById.get(gap.id as SessionTabId)?.sessionId
+      if (!sessionId) return
+      const snapshot = await this.api.getSession(sessionId)
       if (snapshot) {
-        this.store.replaceSession(snapshot.session, snapshot.toolUses)
+        this.store.replaceSession(snapshot.session, snapshot.toolUses, snapshot.tabs ?? [])
         await this.hydrateSearchResults(snapshot.toolUses)
       }
       return
@@ -109,6 +114,7 @@ export class ToolClient {
     this.store.replace(
       snapshots.map(snapshot => snapshot.session),
       snapshots.flatMap(snapshot => snapshot.toolUses),
+      snapshots.flatMap(snapshot => snapshot.tabs ?? []),
     )
   }
 
@@ -142,9 +148,14 @@ export function activeToolUse(
   sessionId: SessionId,
 ): ToolUse | undefined {
   const snapshot = store.getSnapshot()
-  const id = snapshot.useIdsBySession.get(sessionId)?.find(useId =>
-    snapshot.usesById.get(useId)?.id === snapshot.sessionsById.get(sessionId)?.activeToolUseId,
-  )
+  const tabId = snapshot.activeSessionId === sessionId
+    ? snapshot.activeTabId
+    : snapshot.sessionsById.get(sessionId)?.activeTabId
+  const id = tabId
+    ? snapshot.useIdsByTab.get(tabId)?.find(useId =>
+        snapshot.usesById.get(useId)?.id === snapshot.tabsById.get(tabId)?.activeToolUseId,
+      )
+    : undefined
   return id ? snapshot.usesById.get(id) : undefined
 }
 

@@ -14,13 +14,15 @@
     "test": "tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "@effect/platform": "0.97.1",
-    "@effect/platform-browser": "0.77.1",
     "@yaade/agents": "workspace:*",
     "@yaade/rpc": "workspace:*",
     "@yaade/shared": "workspace:*",
     "@yaade/workspace": "workspace:*",
     "effect": "3.22.1"
   },
-  "devDependencies": { "@types/node": "^22.15.29", "tsx": "^4.23.0", "typescript": "^7.0.2" }
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
+  }
 }

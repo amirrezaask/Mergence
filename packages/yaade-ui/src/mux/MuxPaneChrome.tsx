@@ -52,8 +52,6 @@ export type MuxPaneChromeProps = {
   onOpenGit?: () => void
   /** Open Neovim (PTY) in a new split beside this pane. */
   onOpenNeovim?: () => void
-  /** Open Monaco editor in a new split beside this pane. */
-  onOpenEditor?: () => void
   onZoom: () => void
   onClose: () => void
   /**
@@ -85,7 +83,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     onSplitDown,
     onOpenGit,
     onOpenNeovim,
-    onOpenEditor,
     onZoom,
     onClose,
     shortcutFor,
@@ -116,7 +113,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
   const tileStyle = deckTileStyle(identity)
   const gitShortcut = shortcutFor?.("mux.openGit")
   const nvimShortcut = shortcutFor?.("mux.openNeovim")
-  const editorShortcut = shortcutFor?.("mux.openEditor")
   const zoomShortcut = shortcutFor?.("mux.zoomPane")
 
   const secondaryControls = (
@@ -134,20 +130,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           onClick={onOpenGit}
         >
           <GitBranch />
-        </Button>
-      ) : null}
-      {onOpenEditor ? (
-        <Button
-          type="button"
-          variant="ghost"
-          size="icon-xs"
-          aria-label={editorShortcut ? `Open Editor (${editorShortcut})` : "Open Editor"}
-          title={editorShortcut ? `Open Editor (${editorShortcut})` : "Open Editor"}
-          data-yaade-mux-open-editor=""
-          className={secondaryControlClass}
-          onClick={onOpenEditor}
-        >
-          <span className="font-mono text-3xs font-semibold leading-none">M</span>
         </Button>
       ) : null}
       {onOpenNeovim ? (
@@ -320,12 +302,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           <ContextMenuItem onSelect={onOpenGit}>
             Open Git
             {gitShortcut ? <ContextMenuShortcut>{gitShortcut}</ContextMenuShortcut> : null}
-          </ContextMenuItem>
-        ) : null}
-        {onOpenEditor ? (
-          <ContextMenuItem onSelect={onOpenEditor}>
-            Open Editor
-            {editorShortcut ? <ContextMenuShortcut>{editorShortcut}</ContextMenuShortcut> : null}
           </ContextMenuItem>
         ) : null}
         {onOpenNeovim ? (

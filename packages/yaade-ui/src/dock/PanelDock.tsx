@@ -43,11 +43,6 @@ function splitGroupDomId(path: number[]): string {
   return path.length === 0 ? "yaade-root-split" : `yaade-split-group-${path.join(".")}`
 }
 
-function structureKey<TView>(node: PanelNode<TView>): string {
-  if (node.kind === "leaf") return `leaf-${node.panelId.id}`
-  return `${node.kind}:${node.split.children.map(structureKey).join("|")}`
-}
-
 function PanelLeaf<TView>({
   panelId,
   view,
