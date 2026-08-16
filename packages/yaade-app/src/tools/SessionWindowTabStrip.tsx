@@ -84,7 +84,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                 animate={{ opacity: 1, scale: 1, y: 0 }}
                 exit={{ opacity: 0, scale: 0.97, y: -3 }}
                 transition={{ layout: yaadeMotion.layoutTransition, default: yaadeMotion.layoutTransition }}
-                className="min-w-0 shrink-0"
+                className="flex h-full min-w-0 shrink-0 items-center"
               >
                 <div
                   role="tab"

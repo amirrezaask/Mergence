@@ -23,6 +23,7 @@ const SHELLS = new Set([
   "powershell",
   "cmd",
   "cmd.exe",
+  "terminal",
 ])
 
 interface ProcessIdentityMap {
@@ -40,6 +41,9 @@ const IDENTITY: ProcessIdentityMap = {
   codex: { glyph: "◇", hue: 265, label: "Codex" },
   opencode: { glyph: "◇", hue: 280 },
   "cursor-agent": { glyph: "◆", hue: 195, label: "Cursor" },
+  agent: { glyph: "✦", hue: 265, label: "Agent" },
+  editor: { glyph: "Ed", hue: 215, label: "Editor" },
+  search: { glyph: "⌕", hue: 195, label: "Search" },
   git: { glyph: "⌥", hue: 25 },
   node: { glyph: "js", hue: 130 },
   python: { glyph: "py", hue: 210 },

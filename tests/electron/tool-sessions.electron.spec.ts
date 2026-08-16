@@ -1514,10 +1514,24 @@ test("pane separators fill the gap and resize horizontal and vertical splits", a
     await createTerminalViaApi(page, "resize-one")
 
     const firstPane = page.locator("[data-yaade-panel-leaf]").first()
+    await expect
+      .poll(async () => firstPane.locator("[data-yaade-mux-pane-title]").count())
+      .toBe(1)
+    await expect
+      .poll(async () =>
+        firstPane.locator('[data-yaade-mux-pane-chrome] [data-slot="button"]').count(),
+      )
+      .toBe(3)
     await firstPane.getByRole("button", { name: "Split right" }).click()
     await expect
       .poll(async () => page.locator("[data-yaade-panel-leaf]").count())
       .toBe(2)
+    await expect
+      .poll(async () => firstPane.locator("[data-yaade-mux-zoom]").count())
+      .toBe(0)
+    await expect
+      .poll(async () => firstPane.locator("[data-yaade-mux-close-pane]").count())
+      .toBe(1)
 
     const horizontal = page.locator(
       '[data-yaade-pane-separator][data-orientation="horizontal"]',

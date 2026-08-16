@@ -92,8 +92,11 @@
 /* Scheme-invariant metrics. Theme colors are applied synchronously from YaadeTheme.tokens. */
 :root {
   color-scheme: light;
-  --radius: 0.5rem;
-  --yaade-island-radius: var(--radius);
+  --radius: 0.875rem;
+  --yaade-island-radius: 1.125rem;
+  --yaade-pane-radius: 1rem;
+  --yaade-control-radius: 0.75rem;
+  --yaade-pill-radius: 999rem;
   --yaade-app-header-height: 2.75rem;
 
   /* Compact editor scale: dense, but never sub-10px for ordinary metadata. */
@@ -143,11 +146,18 @@
   --yaade-press-y: 0.5px;
   --agent-diff-add: var(--git-added);
   --agent-diff-del: var(--git-deleted);
-  --agent-composer-radius: var(--radius);
-  --control-radius: 0.5rem;
-  --glass-blur: 12px;
-  --glass-opacity: 80%;
-  --glass-saturation: 1.14;
+  --agent-composer-radius: 1.375rem;
+  --control-radius: var(--yaade-control-radius);
+  --glass-blur: 28px;
+  --glass-blur-compact: 20px;
+  --glass-opacity: 72%;
+  --glass-saturation: 1.45;
+  --yaade-material-fill: color-mix(in srgb, var(--card) 72%, transparent);
+  --yaade-material-fill-strong: color-mix(in srgb, var(--popover) 84%, transparent);
+  --yaade-material-fill-soft: color-mix(in srgb, var(--card) 52%, transparent);
+  --yaade-material-stroke: color-mix(in srgb, var(--foreground) 13%, transparent);
+  --yaade-material-highlight: color-mix(in srgb, var(--foreground) 11%, transparent);
+  --yaade-material-shadow: color-mix(in srgb, var(--foreground) 28%, transparent);
 }
 
 /* Legacy session chrome remains flat if it is mounted by an integration. */
@@ -309,8 +319,13 @@
 /* Color values live in the required theme token object, never in CSS. */
 .dark {
   color-scheme: dark;
-  --glass-blur: 16px;
-  --glass-saturation: 1.08;
+  --glass-blur: 32px;
+  --glass-blur-compact: 24px;
+  --glass-opacity: 64%;
+  --glass-saturation: 1.32;
+  --yaade-material-stroke: color-mix(in srgb, var(--foreground) 16%, transparent);
+  --yaade-material-highlight: color-mix(in srgb, var(--foreground) 10%, transparent);
+  --yaade-material-shadow: color-mix(in srgb, var(--background) 78%, transparent);
 }
 
 * {
@@ -342,6 +357,98 @@ body {
   text-rendering: optimizeLegibility;
 }
 
+/* Apple-inspired material primitives. Semantic colors remain theme-owned; this
+ * layer only controls translucency, optical edges, depth, and shape. */
+:is(
+  [data-slot="card"],
+  [data-slot="dialog-content"],
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="combobox-popup"]
+) {
+  border-color: var(--yaade-material-stroke);
+  background: var(--yaade-material-fill-strong);
+  box-shadow:
+    inset 0 1px var(--yaade-material-highlight),
+    0 20px 54px -30px var(--yaade-material-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+[data-slot="card"] {
+  border-radius: var(--yaade-island-radius);
+}
+
+[data-slot="dialog-content"] {
+  border-radius: 1.5rem;
+}
+
+:is(
+  [data-slot="popover-content"],
+  [data-slot="dropdown-menu-content"],
+  [data-slot="dropdown-menu-sub-content"],
+  [data-slot="context-menu-content"],
+  [data-slot="context-menu-sub-content"],
+  [data-slot="select-content"],
+  [data-slot="combobox-popup"]
+) {
+  border-radius: 1rem;
+}
+
+:is(
+  [data-slot="input"],
+  [data-slot="textarea"],
+  [data-slot="select-trigger"],
+  [data-slot="combobox-input"],
+  [data-slot="toggle"],
+  [data-slot="toggle-group-item"]
+) {
+  border-radius: var(--yaade-control-radius);
+  background: var(--yaade-material-fill-soft);
+  box-shadow: inset 0 1px var(--yaade-material-highlight);
+}
+
+[data-slot="button"] {
+  border-radius: var(--yaade-control-radius);
+}
+
+[data-slot="button"][data-size^="icon"] {
+  border-radius: var(--yaade-pill-radius);
+}
+
+:is(
+  [data-slot="dropdown-menu-item"],
+  [data-slot="dropdown-menu-sub-trigger"],
+  [data-slot="context-menu-item"],
+  [data-slot="context-menu-sub-trigger"],
+  [data-slot="select-item"],
+  [data-slot="command-item"]
+) {
+  border-radius: 0.625rem;
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  :is(
+    [data-slot="card"],
+    [data-slot="dialog-content"],
+    [data-slot="popover-content"],
+    [data-slot="dropdown-menu-content"],
+    [data-slot="dropdown-menu-sub-content"],
+    [data-slot="context-menu-content"],
+    [data-slot="context-menu-sub-content"],
+    [data-slot="select-content"],
+    [data-slot="combobox-popup"]
+  ) {
+    background: var(--popover);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
 ::selection {
   background: color-mix(in oklch, var(--primary) 42%, transparent);
   color: var(--foreground);
@@ -352,20 +459,38 @@ body {
   scrollbar-width: thin;
 }
 
-/* Tool Session shell: dense workbench chrome with layered session and tool navigation. */
+/* Tool Session shell: floating controls and panes over an atmospheric canvas. */
 [data-yaade-shell="tool-session"] {
   background:
     radial-gradient(
-      circle at 70% -20%,
-      color-mix(in oklch, var(--primary) 8%, transparent),
-      transparent 36rem
+      circle at 15% -15%,
+      color-mix(in oklch, var(--primary) 17%, transparent),
+      transparent 34rem
     ),
-    var(--background);
+    radial-gradient(
+      circle at 92% 105%,
+      color-mix(in oklch, var(--info) 11%, transparent),
+      transparent 38rem
+    ),
+    linear-gradient(
+      145deg,
+      color-mix(in oklch, var(--background) 94%, var(--primary)),
+      var(--background) 48%,
+      color-mix(in oklch, var(--background) 96%, var(--info))
+    );
 }
 
 .yaade-tool-session-grid {
+  gap: 0.625rem;
+  padding: 0.625rem;
   transition: grid-template-columns var(--yaade-motion-menu) var(--yaade-ease-drawer);
   will-change: grid-template-columns;
+}
+
+[data-yaade-shell="tool-session"][data-yaade-sidebars-state="collapsed"]
+  .yaade-tool-session-grid {
+  gap: 0;
+  padding-inline: 0;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -378,12 +503,101 @@ body {
 [data-yaade-session-tabs],
 [data-yaade-tool-tabs],
 [data-yaade-tool-context] {
-  -webkit-backdrop-filter: blur(18px) saturate(1.12);
-  backdrop-filter: blur(18px) saturate(1.12);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 }
 
 [data-yaade-tool-use] {
   transform: translateZ(0);
+}
+
+/* Navigation rails are floating materials rather than opaque app bars. */
+[data-yaade-shell="tool-session"] [data-yaade-top-tabbar],
+[data-yaade-shell="tool-session"] [data-yaade-window-tabs],
+[data-yaade-shell="tool-session"] [data-yaade-session-sidebar],
+[data-yaade-shell="tool-session"] [data-yaade-tool-sidebar],
+[data-yaade-shell="tool-session"] [data-yaade-single-sidebar] {
+  border: 1px solid var(--yaade-material-stroke);
+  background: var(--yaade-material-fill);
+  box-shadow:
+    inset 0 1px var(--yaade-material-highlight),
+    0 18px 42px -32px var(--yaade-material-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+[data-yaade-shell="tool-session"] [data-yaade-top-tabbar] {
+  height: 3rem;
+  margin: 0.625rem 0.625rem 0;
+  border-radius: var(--yaade-island-radius);
+}
+
+[data-yaade-shell="tool-session"] [data-yaade-window-tabs] {
+  height: 2.75rem;
+  margin: 0 0 0.625rem;
+  border-radius: var(--yaade-pane-radius);
+}
+
+/* In the top-tab layout, Window tabs live inside the shared header material.
+ * Do not give that nested strip a second surface or independent vertical box. */
+[data-yaade-shell="tool-session"][data-yaade-session-layout="tabs"]
+  [data-yaade-window-tabs] {
+  height: 100%;
+  margin: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  -webkit-backdrop-filter: none;
+  backdrop-filter: none;
+}
+
+[data-yaade-shell="tool-session"] :is(
+  [data-yaade-session-sidebar],
+  [data-yaade-tool-sidebar],
+  [data-yaade-single-sidebar]
+) {
+  overflow: hidden;
+  border-radius: var(--yaade-island-radius);
+}
+
+[data-yaade-shell="tool-session"] [data-yaade-tool-pane-tab][data-active="true"],
+[data-yaade-shell="tool-session"] [data-yaade-session][data-active="true"],
+[data-yaade-shell="tool-session"] [data-yaade-session-tab][data-active="true"] {
+  border-color: var(--yaade-material-stroke);
+  border-radius: var(--yaade-control-radius);
+  background: color-mix(in srgb, var(--accent) 76%, transparent);
+  box-shadow:
+    inset 0 1px var(--yaade-material-highlight),
+    0 8px 20px -16px var(--yaade-material-shadow);
+}
+
+[data-yaade-tool-workspace] {
+  padding: 0.625rem;
+}
+
+[data-yaade-tool-workspace] [data-yaade-panel-leaf] {
+  border: 1px solid var(--yaade-material-stroke);
+  border-radius: var(--yaade-pane-radius);
+  background: var(--yaade-material-fill);
+  box-shadow:
+    inset 0 1px var(--yaade-material-highlight),
+    0 20px 48px -34px var(--yaade-material-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+}
+
+[data-yaade-tool-workspace] [data-yaade-mux-pane-chrome] {
+  height: 2.25rem;
+  border-bottom-color: color-mix(in srgb, var(--border) 56%, transparent);
+  background: color-mix(in srgb, var(--card) 52%, transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur-compact)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur-compact)) saturate(var(--glass-saturation));
+}
+
+[data-yaade-tool-workspace] [data-yaade-pane-separator]::after {
+  border-radius: var(--yaade-pill-radius);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--background) 24%, transparent);
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -397,7 +611,11 @@ body {
   [data-yaade-tool-tabs],
   [data-yaade-tool-context],
   [data-yaade-window-tabs],
-  [data-yaade-mux-pane-chrome] {
+  [data-yaade-mux-pane-chrome],
+  [data-yaade-session-sidebar],
+  [data-yaade-tool-sidebar],
+  [data-yaade-single-sidebar],
+  [data-yaade-tool-workspace] [data-yaade-panel-leaf] {
     background: var(--card);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
@@ -461,17 +679,23 @@ body {
   }
 }
 
-/* Primary work surfaces sit on the canvas as compact, border-led islands. */
+/* Primary work surfaces materialize above the canvas as rounded glass islands. */
 [data-yaade-island] {
-  border: 1px solid var(--border);
+  border: 1px solid var(--yaade-material-stroke);
   border-radius: var(--yaade-island-radius);
-  background: var(--card);
+  background: var(--yaade-material-fill);
+  box-shadow:
+    inset 0 1px var(--yaade-material-highlight),
+    0 18px 48px -34px var(--yaade-material-shadow);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
+  backdrop-filter: blur(var(--glass-blur)) saturate(var(--glass-saturation));
 }
 
 [data-yaade-raised-surface] {
-  border: 1px solid color-mix(in oklch, var(--border) 82%, transparent);
-  border-radius: var(--radius-md);
-  background: var(--secondary);
+  border: 1px solid var(--yaade-material-stroke);
+  border-radius: var(--yaade-control-radius);
+  background: var(--yaade-material-fill-strong);
+  box-shadow: inset 0 1px var(--yaade-material-highlight);
 }
 
 [data-yaade-terminal-panel] canvas {

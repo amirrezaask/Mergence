@@ -116,6 +116,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           zoomed={zoomedPanelId?.id === panelId.id}
           canZoom={canZoom}
           processName={activeUse?.kind}
+          splitControlsOnly
           onSplitRight={() => props.onSplit(panelId, "right")}
           onSplitDown={() => props.onSplit(panelId, "bottom")}
           onZoom={() => props.onZoom(panelId)}

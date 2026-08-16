@@ -9,7 +9,7 @@ import {
   paletteHighlights,
 } from "./theme-palette.js"
 
-const designSource = "https://github.com/pingdotgg/t3code"
+const designSource = "https://developer.apple.com/design/human-interface-guidelines/materials"
 
 // Syntax + ANSI stay vivid against the soft graphite chrome — same cool-blue
 // primary family as the UI tokens, without pulling chrome chroma into code.
@@ -92,7 +92,7 @@ export const defaultDark: YaadeTheme = makeTheme({
   name: "Default Dark",
   family: "Default",
   scheme: "dark",
-  sourceName: "YAADE graphite (T3 Code–inspired)",
+  sourceName: "YAADE Liquid Glass (Apple materials–inspired)",
   sourceUrl: designSource,
   license: "MIT",
   tokens: shadcnDefaultDark,
@@ -105,7 +105,7 @@ export const defaultLight: YaadeTheme = makeTheme({
   name: "Default Light",
   family: "Default",
   scheme: "light",
-  sourceName: "YAADE zinc (T3 Code–inspired)",
+  sourceName: "YAADE Liquid Glass (Apple materials–inspired)",
   sourceUrl: designSource,
   license: "MIT",
   tokens: shadcnDefaultLight,

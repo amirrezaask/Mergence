@@ -46,6 +46,8 @@ export type MuxPaneChromeProps = {
   processName?: string | null
   /** When false, title is not a drag handle (e.g. zoomed solo). */
   draggable?: boolean
+  /** Use compact Superlogical-style identity with split and close controls only. */
+  splitControlsOnly?: boolean
   onSplitRight: () => void
   onSplitDown: () => void
   /** Open Git workspace in a new split beside this pane. */
@@ -79,6 +81,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     canZoom,
     processName,
     draggable = true,
+    splitControlsOnly = false,
     onSplitRight,
     onSplitDown,
     onOpenGit,
@@ -201,6 +204,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             focused && "bg-secondary/45 supports-[backdrop-filter]:bg-secondary/35",
             focused &&
               !center &&
+              !splitControlsOnly &&
               "after:absolute after:top-0 after:left-2 after:h-px after:w-16 after:bg-primary",
             draggable && !zoomed && "cursor-grab touch-none active:cursor-grabbing",
             isDragging && "opacity-45",
@@ -220,49 +224,87 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             if (canZoom) onZoom()
           }}
         >
-          <Button
-            type="button"
-            variant="ghost"
-            size="xs"
-            aria-label={title || "Pane"}
-            title={title || undefined}
-            data-yaade-mux-pane-title=""
-            data-yaade-mux-pane-drag=""
-            className={cn(
-              "h-6 shrink justify-start gap-1.5 px-1",
-              title ? "max-w-[48%]" : "max-w-8",
-              draggable && !zoomed
-                ? "cursor-grab touch-none active:cursor-grabbing"
-                : "",
-            )}
-            {...(draggable && !zoomed ? attributes : {})}
-          >
-            <span
-              aria-hidden
-              data-yaade-mux-pane-process={processName ?? ""}
-              style={tileStyle}
-              className="flex size-3.5 shrink-0 items-center justify-center rounded-sm text-4xs font-semibold leading-none ring-1 ring-border"
+          {splitControlsOnly ? (
+            <div
+              aria-label={title || "Pane"}
+              data-yaade-mux-pane-drag=""
+              className={cn(
+                "flex min-w-0 flex-1 items-center gap-2 self-stretch px-1.5",
+                draggable && !zoomed
+                  ? "cursor-grab touch-none active:cursor-grabbing"
+                  : "",
+              )}
+              {...(draggable && !zoomed ? attributes : {})}
             >
-              {identity.glyph}
-            </span>
-            {dirty ? (
               <span
-                aria-label="Unsaved changes"
-                data-yaade-mux-pane-dirty=""
-                className="size-1.5 shrink-0 rounded-full bg-primary"
-              />
-            ) : null}
-            {title ? (
+                aria-hidden
+                data-yaade-mux-pane-process={processName ?? ""}
+                className="shrink-0 font-mono text-xs font-semibold text-muted-foreground"
+              >
+                {identity.glyph}
+              </span>
               <span
+                data-yaade-mux-pane-title=""
                 className={cn(
-                  "min-w-0 truncate text-xs font-medium",
+                  "min-w-0 truncate font-mono text-xs font-semibold tracking-[-0.015em]",
                   focused ? "text-foreground" : "text-muted-foreground",
                 )}
               >
-                {title}
+                {title || "Pane"}
               </span>
-            ) : null}
-          </Button>
+              {dirty ? (
+                <span
+                  aria-label="Unsaved changes"
+                  data-yaade-mux-pane-dirty=""
+                  className="size-1.5 shrink-0 rounded-full bg-primary"
+                />
+              ) : null}
+            </div>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="xs"
+              aria-label={title || "Pane"}
+              title={title || undefined}
+              data-yaade-mux-pane-title=""
+              data-yaade-mux-pane-drag=""
+              className={cn(
+                "h-6 shrink justify-start gap-1.5 px-1",
+                title ? "max-w-[48%]" : "max-w-8",
+                draggable && !zoomed
+                  ? "cursor-grab touch-none active:cursor-grabbing"
+                  : "",
+              )}
+              {...(draggable && !zoomed ? attributes : {})}
+            >
+              <span
+                aria-hidden
+                data-yaade-mux-pane-process={processName ?? ""}
+                style={tileStyle}
+                className="flex size-3.5 shrink-0 items-center justify-center rounded-sm text-4xs font-semibold leading-none ring-1 ring-border"
+              >
+                {identity.glyph}
+              </span>
+              {dirty ? (
+                <span
+                  aria-label="Unsaved changes"
+                  data-yaade-mux-pane-dirty=""
+                  className="size-1.5 shrink-0 rounded-full bg-primary"
+                />
+              ) : null}
+              {title ? (
+                <span
+                  className={cn(
+                    "min-w-0 truncate text-xs font-medium",
+                    focused ? "text-foreground" : "text-muted-foreground",
+                  )}
+                >
+                  {title}
+                </span>
+              ) : null}
+            </Button>
+          )}
           <div
             ref={contextRef}
             data-yaade-session-header-context=""
@@ -280,7 +322,11 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             {center}
           </div>
           <div
-            className="flex shrink-0 items-center gap-0.5"
+            className={cn(
+              "flex shrink-0 items-center gap-0.5",
+              splitControlsOnly &&
+                "rounded-full border border-border/60 bg-secondary/55 p-0.5 shadow-sm supports-[backdrop-filter]:bg-secondary/35 supports-[backdrop-filter]:backdrop-blur-xl",
+            )}
             onPointerDown={event => event.stopPropagation()}
           >
             <Button
@@ -305,7 +351,20 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             >
               <Rows2 />
             </Button>
-            {secondaryControls}
+            {splitControlsOnly ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label="Close pane"
+                title="Close pane"
+                data-yaade-mux-close-pane=""
+                className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
+                onClick={onClose}
+              >
+                <X />
+              </Button>
+            ) : secondaryControls}
           </div>
         </div>
       </ContextMenuTrigger>

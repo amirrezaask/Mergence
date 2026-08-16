@@ -100,12 +100,15 @@ Direct and context-local:
 ### Appearance
 
 Settings applies one palette consistently to the app shell, Git states,
-terminals, and every ToolUse. Bundled families include all four Catppuccin
-flavors, Tokyo Night (Night, Storm, Moon, Day), Rosé Pine (main, Moon, Dawn),
-and Ayu (Dark, Mirage, Light). Geist Mono is the bundled default; the font
-picker can select another installed monospace face for terminals and code UI
-text. File navigation uses Neovim in a terminal pane; browser-based file editing
-is currently unavailable.
+terminals, and every ToolUse. The default appearance uses rounded, translucent
+materials with adaptive blur, luminous edges, and reduced-transparency
+fallbacks. Bundled families also include all four Catppuccin flavors, Tokyo
+Night (Night, Storm, Moon, Day), Rosé Pine (main, Moon, Dawn), and Ayu (Dark,
+Mirage, Light). Geist Mono is the bundled default; the font picker can select
+another installed monospace face for terminals and code UI text. Tool pane
+headers use a compact monospace process glyph and title with split and close
+controls. File navigation uses Neovim in a terminal pane; browser-based file
+editing is currently unavailable.
 
 ---
 

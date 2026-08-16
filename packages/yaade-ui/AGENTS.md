@@ -1,6 +1,6 @@
 # @yaade/ui — Design System
 
-Unified UI primitives + shells for every YAADE surface. Shadcn-derived, semantic tokens, single motion + typography scale.
+Unified UI primitives + shells for every YAADE surface. Apple-inspired liquid materials over semantic tokens, with a single motion + typography scale.
 
 ## Public surface
 
@@ -20,7 +20,7 @@ Semantic: shadcn roles plus `success`, `warning`, `info`, `backdrop`, Git added/
 
 ### Radius
 
-`--radius: 0.5rem` (8px at default zoom). Use `rounded-md` for controls and compact surfaces; reserve full pills for badges.
+`--radius: 0.875rem` is the base material radius. Controls use `--yaade-control-radius`, pane islands use `--yaade-pane-radius`, and larger surfaces use `--yaade-island-radius`. Icon-only controls and badges may use `--yaade-pill-radius`. Preserve rounded silhouettes at every material size.
 
 ### Typography
 
@@ -130,7 +130,7 @@ Only path for destructive confirms. Never `window.confirm`.
 
 ## Surface composition
 
-Use full shadcn `Card` anatomy for grouped surfaces and `Item`/`ItemGroup` for compact data rows. Background, card, and sidebar layers stay flat; shadows belong only to floating popovers and dialogs. The removed `Surface`, `Text`, `SectionLabel`, and liquid-glass abstractions must not be reintroduced.
+Use full `Card` anatomy for grouped surfaces and `Item`/`ItemGroup` for compact data rows. Navigation, pane, card, popover, and dialog surfaces use the shared material variables in `globals.css`: translucent semantic fills, backdrop blur, a luminous inset edge, and restrained depth. Never stack multiple translucent fills over the same content; use the stronger material only for floating surfaces. Honor `prefers-reduced-transparency` with an opaque semantic fallback. Keep material behavior centralized in primitives/selectors rather than reintroducing one-off `Surface`, `Text`, or `SectionLabel` wrappers.
 
 ## Rules
 
