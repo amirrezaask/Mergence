@@ -383,7 +383,8 @@ changing protocol or renderer hot paths.
 ### Security posture (remote is NOT ready)
 
 - **No authentication on HTTP or WS.** None. No tokens, no sessions.
-- Protection is only: startup refuses a non-loopback bind, `pathAllowed()` against
+- Protection is only: the default bind is loopback (an explicit `--host` or
+  `JET_HOST` can opt into a LAN bind), `pathAllowed()` against
   `JET_ALLOWED_ROOTS` (default `$HOME`), and a WS origin check that allows
   loopback or an exact `Origin.host === Host` match.
 - Putting this behind a reverse proxy to make it "remote" removes both, and any

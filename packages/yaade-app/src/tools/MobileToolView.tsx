@@ -42,6 +42,7 @@ import {
   AlertTitle,
   Button,
   Drawer,
+  DrawerClose,
   DrawerContent,
   DrawerDescription,
   DrawerHeader,
@@ -366,7 +367,7 @@ export function MobileToolView(props: MobileToolViewProps) {
             <DrawerTitle>{sessionActions?.title ?? "Session"}</DrawerTitle>
             <DrawerDescription>Session actions</DrawerDescription>
           </DrawerHeader>
-          <div className="px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
+          <div className="flex flex-col gap-2 px-4 pb-[max(1rem,env(safe-area-inset-bottom))]">
             <Button
               type="button"
               variant="destructive"
@@ -380,6 +381,11 @@ export function MobileToolView(props: MobileToolViewProps) {
               <X data-icon="inline-start" />
               Close session
             </Button>
+            <DrawerClose asChild>
+              <Button type="button" variant="outline" className="min-h-11 w-full">
+                Cancel
+              </Button>
+            </DrawerClose>
           </div>
         </DrawerContent>
       </Drawer>

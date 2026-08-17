@@ -82,9 +82,9 @@ one-shot Ctrl/Alt, arrows, and paste. Git uses a list-first drill-down: commits
 YAADE ships a web app manifest, 192/512px and maskable icons, safe-area metadata,
 and a bounded service-worker cache, so a supported browser can add it to the
 home screen from a secure origin. The cached shell can reopen without a network,
-but tools still require the YAADE host. The host remains loopback-only because
-HTTP and WebSocket authentication plus TLS are prerequisites for exposing a
-shell to a phone, LAN, or remote network.
+but tools still require the YAADE host. The default remains loopback-only; use
+`pnpm dev:lan` only on a trusted LAN because HTTP and WebSocket authentication
+are not implemented yet.
 
 ### Checkout isolation
 
@@ -153,7 +153,9 @@ browser-based Monaco editing remains unavailable.
 
 ```bash
 pnpm install
-pnpm dev          # host-server + Vite
+pnpm dev          # host-server + Vite (loopback)
+pnpm dev:lan      # bind host-server + Vite to 0.0.0.0 for LAN access
+# Then open http://<this-computer-ip>:5174 from another device.
 pnpm -r typecheck
 pnpm test
 pnpm test:e2e     # Playwright web E2E
@@ -175,9 +177,11 @@ pnpm exec playwright test --project=web-e2e tests/electron/neovim-tool.electron.
 
 ## Security note
 
-There is **no authentication** on HTTP or WS yet. Startup refuses a non-loopback
-bind; paths are gated by `allowedRoots` (default `$HOME`). A shared-secret token
-on HTTP + WS is required before shipping remote.
+There is **no authentication** on HTTP or WS yet. The default bind is loopback,
+but `pnpm dev:lan` (or `JET_HOST=0.0.0.0 pnpm dev`) intentionally exposes the
+unauthenticated host API on every network interface. Use it only on a trusted
+LAN; paths are still gated by `allowedRoots` (default `$HOME`). A shared-secret
+token on HTTP + WS is required before shipping remote.
 
 See [AGENTS.md](AGENTS.md) for architecture invariants and [NEXT.md](NEXT.md)
 for the migration checklist.

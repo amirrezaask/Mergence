@@ -11,6 +11,7 @@ import {
   expectLocatorCount,
   expectLocatorVisible,
   expectNotContainsText,
+  expectSelectorHidden,
   expectSelectorVisible,
 } from "../shell/assert.js";
 import {
@@ -40,6 +41,12 @@ async function openToolSessionShell(page: ShellDriver): Promise<void> {
 }
 
 async function openToolContext(page: ShellDriver): Promise<void> {
+  const paneTrigger = page.locator("[data-yaade-mux-context-trigger]");
+  if ((await paneTrigger.count()) > 0) {
+    await paneTrigger.click();
+    await expectSelectorVisible(page, "[data-yaade-pane-tool-context-popover]");
+    return;
+  }
   await page
     .locator('[data-yaade-tool-pane-tab][data-active]')
     .evaluate(element => {
@@ -569,9 +576,7 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
     await page.waitForFunction(
       () => {
         const title = document
-          .querySelector(
-            '[data-yaade-tool-pane-tab][data-active] button[role="tab"]',
-          )
+          .querySelector('[data-yaade-mux-pane-title], [data-yaade-tool-title]')
           ?.textContent?.trim();
         return Boolean(title && title !== "Terminal");
       },
@@ -751,7 +756,7 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
     });
     await expectContainsText(
       page,
-      "[data-yaade-tool-pane-tab][data-active]",
+      "[data-yaade-mux-pane-title]",
       "nonGitSearchFixture",
     );
     await expectNotContainsText(
@@ -1085,10 +1090,17 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
     const page = app.page;
     await openToolSessionShell(page);
     await createTerminalToolUse(page);
+    await page.keyboard.press("Escape");
     const sessionTitle = await page.evaluate(
       () => window.__yaadeAgent!.getState().sessions?.[0]?.title ?? "Session",
     );
-    await page.getByRole("button", { name: `Close ${sessionTitle}` }).click();
+    await page.getByRole("button", { name: /Switch session/i }).click();
+    await page
+      .locator("[data-yaade-session-switcher-popover]")
+      .getByRole("button", { name: `Close ${sessionTitle}` })
+      .evaluate(element => {
+        if (element instanceof HTMLElement) element.click();
+      });
     await expectContainsText(page, "body", "Close session?");
     await expectLocatorVisible(
       page.getByRole("button", { name: "Keep running and archive" }),
@@ -1326,7 +1338,11 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
     });
     await expectSelectorVisible(page, "[data-yaade-mobile-session-actions]");
     await expectSelectorVisible(page, "[data-yaade-mobile-session-actions] button");
-    await page.keyboard.press("Escape");
+    await page
+      .locator("[data-yaade-mobile-session-actions]")
+      .getByRole("button", { name: "Cancel" })
+      .click();
+    await expectSelectorHidden(page, "[data-yaade-mobile-session-actions]");
 
     await page.locator(`[data-yaade-mobile-tool="${terminalId}"]`).click();
     await expectSelectorVisible(page, "[data-yaade-mobile-tool-detail]");
@@ -1743,7 +1759,7 @@ test("pane plus opens the new tool picker", async () => {
     await expectSelectorVisible(page, "[data-yaade-pane-tool-menu]")
     await expectLocatorCount(
       page.locator("[data-yaade-pane-new-tool-kind]"),
-      5,
+      4,
     )
 
     await page

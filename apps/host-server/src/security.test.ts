@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import test from "node:test"
 import { isAllowedWebSocketOrigin, isLoopbackHostname } from "./security.js"
 
-test("host server accepts only explicit loopback bind hosts", () => {
+test("identifies loopback bind hosts", () => {
   assert.equal(isLoopbackHostname("127.0.0.1"), true)
   assert.equal(isLoopbackHostname("localhost"), true)
   assert.equal(isLoopbackHostname("ide.local"), false)

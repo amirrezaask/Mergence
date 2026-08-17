@@ -6,6 +6,11 @@ import { describe, it } from "node:test"
 import { loadConfig } from "./config.js"
 
 describe("loadConfig launch workspace", () => {
+  it("accepts an explicit non-loopback host for LAN mode", async () => {
+    const config = await loadConfig(["--host", "0.0.0.0", "--port", "0"])
+    assert.equal(config.host, "0.0.0.0")
+  })
+
   it("falls back to home when process cwd is outside allowed roots", async () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-host-cwd-"))
     const prev = process.cwd()

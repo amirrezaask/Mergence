@@ -55,5 +55,6 @@ packSelfExtracting(runtimeDir, sefOut)
 
 console.log(`Standalone binary: ${sefOut}`)
 console.log(`  ${sefOut}              # serve SPA + API on http://127.0.0.1:4747`)
+console.log(`  ${sefOut} --host 0.0.0.0 # expose the unauthenticated app on the LAN`)
 console.log(`  ${sefOut} /path/to/repo  # open workspace at path`)
 console.log(`  ${sefOut} --open         # also open the default browser`)

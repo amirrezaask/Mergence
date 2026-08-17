@@ -35,6 +35,10 @@ export function registerPwa(): void {
   })
 }
 
+export function isPwaUpdateReady(): boolean {
+  return waitingWorker !== null
+}
+
 export function applyPwaUpdate(): void {
   if (!waitingWorker) return
   reloadForUpdate = true

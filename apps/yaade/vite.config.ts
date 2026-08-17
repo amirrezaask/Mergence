@@ -8,6 +8,28 @@ const appRoot = path.resolve(__dirname, "../../packages/yaade-app")
 const uiRoot = path.resolve(__dirname, "../../packages/yaade-ui/src")
 
 const browserTargets = ["chrome107", "edge107", "firefox104", "safari16"]
+const viteHost = process.env.JET_WEB_HOST ?? process.env.JET_HOST ?? "127.0.0.1"
+const rawProxyHost =
+	process.env.JET_PROXY_HOST ??
+	(viteHost === "0.0.0.0" || viteHost === "::" ? "127.0.0.1" : viteHost)
+const proxyHost =
+	rawProxyHost.includes(":") && !rawProxyHost.startsWith("[")
+		? `[${rawProxyHost}]`
+		: rawProxyHost
+const configuredAllowedHosts = (process.env.JET_ALLOWED_HOSTS ?? "")
+	.split(",")
+	.map(host => host.trim())
+	.filter(Boolean)
+const isLoopbackHost = (host: string): boolean =>
+	["localhost", "127.0.0.1", "::1"].includes(
+		host.trim().toLowerCase().replace(/^\[|\]$/g, ""),
+	)
+const allowedHosts =
+	configuredAllowedHosts.length > 0
+		? configuredAllowedHosts
+		: isLoopbackHost(viteHost)
+			? ["ide.local"]
+			: true
 
 function yaadeBuildBranding(command: "build" | "serve"): Plugin {
 	return {
@@ -69,13 +91,13 @@ export default defineConfig(({ command }) => ({
 		port: Number(process.env.JET_WEB_PORT ?? 5174),
 		// Prefer the configured port; if busy, Vite picks the next free one.
 		strictPort: false,
-		host: "127.0.0.1",
-		allowedHosts: ["ide.local"],
+		host: viteHost,
+		allowedHosts,
 		proxy: {
-			"/api": `http://127.0.0.1:${process.env.JET_PORT ?? 4747}`,
-			"/health": `http://127.0.0.1:${process.env.JET_PORT ?? 4747}`,
+			"/api": `http://${proxyHost}:${process.env.JET_PORT ?? 4747}`,
+			"/health": `http://${proxyHost}:${process.env.JET_PORT ?? 4747}`,
 			"/ws": {
-				target: `ws://127.0.0.1:${process.env.JET_PORT ?? 4747}`,
+				target: `ws://${proxyHost}:${process.env.JET_PORT ?? 4747}`,
 				ws: true,
 			},
 		},

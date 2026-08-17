@@ -4,11 +4,11 @@ import { GlassMaterialGallery } from "@yaade/ui"
 import { Button } from "@yaade/ui/primitives"
 import { basicAgentBridge } from "./basic-agent-bridge.js"
 import { ToolSessionApp } from "./tools/ToolSessionApp.js"
-import { applyPwaUpdate } from "./pwa.js"
+import { applyPwaUpdate, isPwaUpdateReady } from "./pwa.js"
 
 /** The Session shell is now the only browser app surface. */
 export function AppRoot() {
-  const [updateReady, setUpdateReady] = useState(false)
+  const [updateReady, setUpdateReady] = useState(isPwaUpdateReady)
 
   useEffect(() => {
     window.__yaadeAgent = basicAgentBridge({ route: "hq", workspace: "/" })
@@ -21,6 +21,7 @@ export function AppRoot() {
 
   useEffect(() => {
     const onUpdate = () => setUpdateReady(true)
+    if (isPwaUpdateReady()) onUpdate()
     window.addEventListener("yaade:pwa-update", onUpdate)
     return () => window.removeEventListener("yaade:pwa-update", onUpdate)
   }, [])

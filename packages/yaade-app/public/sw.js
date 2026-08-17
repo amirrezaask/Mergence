@@ -8,6 +8,22 @@ async function trimCache(cache, maxEntries = 128) {
   await Promise.all(removable.slice(0, excess).map(request => cache.delete(request)))
 }
 
+async function precacheShell() {
+  const response = await fetch(new Request("/", { cache: "reload" }))
+  if (!response.ok) return
+  const html = await response.clone().text()
+  const assetPaths = [...html.matchAll(/(?:src|href)="(\/assets\/[^"]+)"/g)]
+    .map(match => match[1])
+    .filter(Boolean)
+  const cache = await caches.open(CACHE_NAME)
+  await cache.put(SHELL_KEY, response)
+  await Promise.all(assetPaths.map(async path => {
+    const asset = await fetch(path)
+    if (asset.ok) await cache.put(path, asset)
+  }))
+  await trimCache(cache)
+}
+
 function cacheable(request) {
   if (request.method !== "GET") return false
   const url = new URL(request.url)
@@ -19,7 +35,7 @@ function cacheable(request) {
 }
 
 self.addEventListener("install", event => {
-  event.waitUntil(Promise.resolve())
+  event.waitUntil(precacheShell())
 })
 
 self.addEventListener("activate", event => {
