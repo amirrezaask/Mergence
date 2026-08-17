@@ -32,10 +32,12 @@ export function WhichKeyPanel({
     <div
       className={cn(
         overlay
-          ? "rounded-md border border-border bg-popover/96 shadow-lg backdrop-blur-xl"
+          ? "rounded-md border border-border bg-popover shadow-lg"
           : "border-t border-primary/35 bg-popover px-4 py-2.5",
       )}
       data-yaade-which-key=""
+      data-yaade-glass-surface={overlay ? "" : undefined}
+      data-yaade-glass-material={overlay ? "floating" : undefined}
       data-variant={variant}
       role="dialog"
       aria-label="Prefix commands"

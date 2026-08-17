@@ -21,6 +21,15 @@ import {
   scrollTerminalLines,
   focusRegisteredTerminal,
 } from "@yaade/ui/terminal-registry"
+import {
+  focusRegisteredNeovim,
+  dispatchNeovimTestInput,
+  readNeovimCursor,
+  readNeovimDiagnostics,
+  readNeovimRegistryDiagnostics,
+  readNeovimDims,
+  readNeovimText,
+} from "@yaade/ui/neovim"
 
 export type JetAgentState = {
   /** @deprecated Use `activeWorkspace` + `workspaces` for multi-root. */
@@ -103,6 +112,15 @@ export type YaadeAgentAPI = {
     needle: string,
     tabId?: string,
   ): { col: number; viewportRow: number; cols: number; rows: number } | null
+  /** Buffer/model-backed Neovim inspection for E2E and host diagnostics. */
+  getNeovimText(toolUseId?: string): string
+  getNeovimCursor(toolUseId?: string): { x: number; y: number; hidden: boolean } | null
+  getNeovimDims(toolUseId?: string): { cols: number; rows: number } | null
+  getNeovimDiagnostics(toolUseId?: string): unknown
+  getNeovimRegistryDiagnostics?(): unknown
+  focusNeovim(toolUseId?: string): boolean
+  /** Test-only in-page input correlation; excludes Playwright transport time. */
+  dispatchNeovimInput?(toolUseId: string, value: string): Promise<number>
   /** Ingest a notification (E2E / agent harness). */
   ingestNotification?(
     req: import("@yaade/shared").IngestNotificationRequest,
@@ -133,7 +151,7 @@ export type YaadeAgentAPI = {
   createTab?(): Promise<void>
   selectTab?(tabId: string): Promise<void>
   closeTab?(tabId: string): Promise<void>
-  createToolUse?(kind: "agent" | "terminal" | "search"): Promise<void>
+  createToolUse?(kind: "agent" | "terminal" | "search" | "neovim"): Promise<void>
   selectToolUse?(toolUseId: string): Promise<void>
   closeToolUse?(toolUseId: string): Promise<void>
   closeSession?(sessionId: string, mode?: "keep-running" | "stop-tools"): Promise<void>
@@ -457,6 +475,27 @@ export function createAgentBridge(ctx: () => AgentBridgeContext): YaadeAgentAPI 
     },
     findTerminalText(needle, tabId) {
       return findTerminalBufferMatch(needle, tabId)
+    },
+    getNeovimText(toolUseId) {
+      return readNeovimText(toolUseId)
+    },
+    getNeovimCursor(toolUseId) {
+      return readNeovimCursor(toolUseId)
+    },
+    getNeovimDims(toolUseId) {
+      return readNeovimDims(toolUseId)
+    },
+    getNeovimDiagnostics(toolUseId) {
+      return readNeovimDiagnostics(toolUseId)
+    },
+    getNeovimRegistryDiagnostics() {
+      return readNeovimRegistryDiagnostics()
+    },
+    focusNeovim(toolUseId) {
+      return focusRegisteredNeovim(toolUseId)
+    },
+    async dispatchNeovimInput(toolUseId, value) {
+      return dispatchNeovimTestInput(toolUseId, value)
     },
     async ingestNotification(req) {
       const api = window.yaade?.notifications

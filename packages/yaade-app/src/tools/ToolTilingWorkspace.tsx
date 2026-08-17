@@ -1,20 +1,39 @@
-import { useCallback, type ReactNode } from "react";
+import { useCallback, useState, type ReactNode } from "react";
 import {
+  FileCode2,
   GitBranch,
   PanelTopOpen,
+  Plus,
   Search,
   Terminal as TerminalIcon,
 } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
-import type { ToolKind, ToolUse, ToolUseId } from "@yaade/rpc";
+import type {
+  CheckoutTarget,
+  ProjectTarget,
+  ToolKind,
+  ToolUse,
+  ToolUseId,
+} from "@yaade/rpc";
 import type { PanelId } from "@yaade/shared";
 import {
+  KeyBindingKbd,
   MuxPaneChrome,
   PanelDock,
   type PanelSlotMeta,
   type TabDndHandlers,
 } from "@yaade/ui";
-import { Button } from "@yaade/ui/primitives";
+import {
+  Button,
+  Popover,
+  PopoverAnchor,
+  PopoverContent,
+  PopoverTrigger,
+} from "@yaade/ui/primitives";
+import {
+  ToolContextControls,
+  type AgentProvider,
+} from "./ToolContextControls.js";
 import { toolUsePaneTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 import type { ToolPaneView, ToolWorkspace } from "./tool-tiling.js";
@@ -24,6 +43,16 @@ export type ToolTilingWorkspaceProps = {
   readonly workspace: ToolWorkspace;
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
+  readonly projects: readonly ProjectTarget[];
+  readonly onContextChange: (
+    use: ToolUse,
+    project: ProjectTarget,
+    checkout: CheckoutTarget,
+  ) => Promise<void>;
+  readonly onProviderChange: (
+    use: ToolUse,
+    provider: AgentProvider,
+  ) => Promise<void>;
   readonly tabDnd: TabDndHandlers;
   readonly empty: ReactNode;
   readonly onPanelEvent: (event: PanelEvent) => void;
@@ -70,29 +99,105 @@ function EmptyTile(props: {
   );
 }
 
-const paneToolKinds: readonly {
-  kind: Exclude<ToolKind, "agent">;
+type PaneTool = {
+  kind: Exclude<ToolKind, "agent" | "editor">;
   label: string;
   icon: typeof TerminalIcon;
-}[] = [
+  command: string;
+};
+
+const paneToolKinds: readonly PaneTool[] = [
   {
     kind: "terminal",
     label: "Terminal",
     icon: TerminalIcon,
+    command: "tool.newTerminal",
   },
-  { kind: "git", label: "Git", icon: GitBranch },
+  {
+    kind: "git",
+    label: "Git",
+    icon: GitBranch,
+    command: "tool.newGit",
+  },
+  {
+    kind: "neovim",
+    label: "Neovim",
+    icon: FileCode2,
+    command: "tool.newNeovim",
+  },
   {
     kind: "search",
     label: "Search",
     icon: Search,
+    command: "tool.newSearch",
   },
 ];
+
+function PaneNewToolMenu(props: {
+  readonly panelId: PanelId;
+  readonly onAddTool: (panelId: PanelId, kind: ToolKind) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <Button
+          type="button"
+          size="icon-xs"
+          variant="ghost"
+          aria-label="New tool"
+          title="New tool"
+          data-yaade-pane-new-tool=""
+        >
+          <Plus />
+        </Button>
+      </PopoverTrigger>
+      <PopoverContent
+        align="end"
+        side="bottom"
+        sideOffset={6}
+        className="w-48 p-1.5"
+        data-yaade-pane-tool-menu=""
+      >
+        <p className="px-2 py-1 text-3xs font-bold uppercase tracking-[0.1em] text-muted-foreground">
+          New tool
+        </p>
+        {paneToolKinds.map(item => {
+          const Icon = item.icon;
+          const shortcut = toolSessionShortcutFor(item.command);
+          return (
+            <Button
+              key={item.kind}
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start"
+              data-yaade-pane-new-tool-kind={item.kind}
+              onClick={() => {
+                setOpen(false);
+                props.onAddTool(props.panelId, item.kind);
+              }}
+            >
+              <Icon data-icon="inline-start" />
+              <span className="flex-1 text-left">{item.label}</span>
+              {shortcut ? <KeyBindingKbd binding={shortcut} /> : null}
+            </Button>
+          );
+        })}
+      </PopoverContent>
+    </Popover>
+  );
+}
 
 export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
   const openToolIds = toolIdsInWorkspace(props.workspace);
   const paneCount = toolPaneCount(props.workspace);
   const canZoom = paneCount > 1;
   const zoomedPanelId = props.workspace.zoomedPanelId;
+  const [contextTarget, setContextTarget] = useState<{
+    readonly panelId: number;
+    readonly toolUseId: ToolUseId;
+  } | null>(null);
 
   const renderHeader = useCallback(
     (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
@@ -100,7 +205,11 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
         view.kind === "tool"
           ? props.usesById.get(view.toolUseId)
           : undefined;
-      return (
+      const contextOpen =
+        activeUse != null &&
+        contextTarget?.panelId === panelId.id &&
+        contextTarget.toolUseId === activeUse.id;
+      const chrome = (
         <MuxPaneChrome
           title={
             activeUse
@@ -117,8 +226,24 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           canZoom={canZoom}
           processName={activeUse?.kind}
           splitControlsOnly
+          trailing={
+            <PaneNewToolMenu
+              panelId={panelId}
+              onAddTool={props.onAddTool}
+            />
+          }
           onSplitRight={() => props.onSplit(panelId, "right")}
           onSplitDown={() => props.onSplit(panelId, "bottom")}
+          onOpenContext={
+            activeUse
+              ? () =>
+                  setContextTarget({
+                    panelId: panelId.id,
+                    toolUseId: activeUse.id,
+                  })
+              : undefined
+          }
+          contextOpen={contextOpen}
           onZoom={() => props.onZoom(panelId)}
           shortcutFor={command =>
             command === "mux.zoomPane"
@@ -128,8 +253,56 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           onClose={() => props.onCloseView(panelId)}
         />
       );
+      if (!activeUse) return chrome;
+
+      return (
+        <Popover
+          open={contextOpen}
+          onOpenChange={open => {
+            setContextTarget(current =>
+              open
+                ? { panelId: panelId.id, toolUseId: activeUse.id }
+                : current?.panelId === panelId.id &&
+                    current.toolUseId === activeUse.id
+                  ? null
+                  : current,
+            );
+          }}
+        >
+          <PopoverAnchor asChild>
+            <div className="shrink-0">{chrome}</div>
+          </PopoverAnchor>
+          <PopoverContent
+            side="bottom"
+            align="start"
+            sideOffset={8}
+            className="w-80 max-w-[calc(100vw-1rem)] p-0"
+            data-yaade-tool-context-popover
+            data-yaade-pane-tool-context-popover
+          >
+            <div className="border-b border-border px-3 py-2">
+              <p className="text-sm font-medium">Project and worktree</p>
+              <p className="truncate text-2xs text-muted-foreground">
+                This tool only. Other tools keep their own checkout.
+              </p>
+            </div>
+            <ToolContextControls
+              use={activeUse}
+              projects={props.projects}
+              active={meta.focused}
+              presentation="popover"
+              onChange={(project, checkout) =>
+                props.onContextChange(activeUse, project, checkout)
+              }
+              onProviderChange={provider =>
+                props.onProviderChange(activeUse, provider)
+              }
+            />
+          </PopoverContent>
+        </Popover>
+      );
     },
-    [canZoom, paneCount, props, zoomedPanelId],
+    [canZoom, contextTarget, paneCount, props, zoomedPanelId],
   );
 
   const renderContent = useCallback(

@@ -5,6 +5,7 @@ import {
   EditorToolOutput,
   GitToolOutput,
   InvalidToolInput,
+  NeovimToolOutput,
   ProcessToolOutput,
   SearchToolOutput,
   SessionArchived,
@@ -28,6 +29,8 @@ import {
   parseProcessProvider,
 } from "./process-driver.js";
 import { EditorToolDriver } from "./editor-driver.js";
+import { NeovimToolDriver } from "./neovim-driver.js";
+import type { NeovimExitEvent } from "../neovim/host.js";
 import { GitToolDriver } from "./git-driver.js";
 import { SearchDriver } from "./search-driver.js";
 import { ToolRegistry } from "./registry.js";
@@ -37,13 +40,21 @@ function eventId(prefix: string, id: string): string {
 }
 
 function pendingOutput(
-  kind: "agent" | "terminal" | "search" | "git" | "editor",
+  kind: "agent" | "terminal" | "search" | "git" | "editor" | "neovim",
 ): ToolUseOutput {
   if (kind === "editor") {
     return EditorToolOutput.make({ kind: "editor" });
   }
   if (kind === "git") {
     return GitToolOutput.make({ kind: "git" });
+  }
+  if (kind === "neovim") {
+    return NeovimToolOutput.make({
+      kind: "neovim",
+      serverInstanceId: "pending",
+      generation: 1,
+      processState: "starting",
+    });
   }
   if (kind === "search") {
     return SearchToolOutput.make({
@@ -83,6 +94,7 @@ export class ToolService {
       this.search,
       new GitToolDriver(),
       new EditorToolDriver(),
+      new NeovimToolDriver(runtime),
     ]);
   }
 
@@ -151,6 +163,9 @@ export class ToolService {
       if (!current) throw error;
       const failed = store.compareAndSetToolUse(current.id, current.revision, {
         status: "failed",
+        ...(current.output.kind === "neovim"
+          ? { output: NeovimToolOutput.make({ ...current.output, processState: "failed" }) }
+          : {}),
         error: error instanceof Error ? error.message : String(error),
       });
       this.emitUpdated(failed);
@@ -305,6 +320,33 @@ export class ToolService {
     return cancelled;
   }
 
+  async archiveUse(useId: ToolUseId): Promise<ToolUse> {
+    const current = this.require(useId);
+    if (
+      current.kind === "neovim" &&
+      (current.status === "created" ||
+        current.status === "starting" ||
+        current.status === "running" ||
+        current.status === "waiting")
+    ) {
+      try {
+        await this.registry.get(current.kind).close(current).pipe(Effect.runPromise);
+      } catch {
+        /* The process may have exited between the lookup and close. */
+      }
+    }
+    const archived = this.runtime.toolSessions.archiveToolUse(useId);
+    this.runtime.events.emit("tools:event", [
+      ToolUseArchived.make({
+        eventId: eventId("tool-archived", archived.id),
+        toolUseId: archived.id,
+        revision: archived.revision,
+        occurredAt: archived.updatedAt,
+      }),
+    ]);
+    return archived;
+  }
+
   async restart(
     useId: ToolUseId,
     expectedRevision: number,
@@ -375,6 +417,9 @@ export class ToolService {
         starting.revision,
         {
           status: "failed",
+          ...(starting.output.kind === "neovim"
+            ? { output: NeovimToolOutput.make({ ...starting.output, processState: "failed" }) }
+            : {}),
           error: error instanceof Error ? error.message : String(error),
         },
       );
@@ -404,15 +449,7 @@ export class ToolService {
         }
       }
       try {
-        const archived = this.runtime.toolSessions.archiveToolUse(use.id);
-        this.runtime.events.emit("tools:event", [
-          ToolUseArchived.make({
-            eventId: eventId("tool-archived", archived.id),
-            toolUseId: archived.id,
-            revision: archived.revision,
-            occurredAt: archived.updatedAt,
-          }),
-        ]);
+        await this.archiveUse(use.id);
       } catch {
         /* another lifecycle operation may already have archived it */
       }
@@ -448,19 +485,28 @@ export class ToolService {
     sessionId: import("@yaade/rpc").SessionId,
     stopTools: boolean,
   ): Promise<import("@yaade/rpc").AppSession> {
-    if (stopTools) {
-      for (const use of this.runtime.toolSessions.listToolUses(sessionId)) {
-        if (
-          use.status === "created" ||
+    for (const use of this.runtime.toolSessions.listToolUses(sessionId)) {
+      if (
+        stopTools &&
+        (use.status === "created" ||
           use.status === "starting" ||
           use.status === "running" ||
-          use.status === "waiting"
-        ) {
-          try {
-            await this.cancel(use.id, use.revision);
-          } catch {
-            /* continue archiving remaining tools */
-          }
+          use.status === "waiting")
+      ) {
+        try {
+          await this.cancel(use.id, use.revision);
+        } catch {
+          /* continue archiving remaining tools */
+        }
+      }
+      // A Neovim process has no durable host-side handle after its ToolUse is
+      // archived. Keep-running is a terminal compatibility affordance; native
+      // editor servers must always be closed with their ToolUse.
+      if (use.kind === "neovim") {
+        try {
+          await this.archiveUse(use.id);
+        } catch {
+          /* another lifecycle operation may already have archived it */
         }
       }
     }
@@ -474,6 +520,27 @@ export class ToolService {
       }),
     ]);
     return session;
+  }
+
+  onNeovimExit(event: NeovimExitEvent): void {
+    const use = this.runtime.toolSessions.getToolUse(event.toolUseId);
+    if (!use || use.kind !== "neovim" || use.output.kind !== "neovim") return;
+    try {
+      const updated = this.runtime.toolSessions.compareAndSetToolUse(
+        use.id,
+        use.revision,
+        {
+          status: event.output.processState === "exited" ? "succeeded" : "failed",
+          output: event.output,
+          ...(event.output.processState === "exited"
+            ? {}
+            : { error: `Neovim exited with ${event.output.exitCode ?? "an error"}` }),
+        },
+      );
+      this.emitUpdated(updated);
+    } catch {
+      /* A cancel or restart may already own the revision. */
+    }
   }
 
   onProcessExit(ptyId: string): void {
@@ -520,6 +587,33 @@ export class ToolService {
           this.startSearch(use);
           continue;
         }
+        if (use.output.kind === "neovim") {
+          if (
+            use.status === "running" ||
+            use.status === "starting" ||
+            use.status === "waiting"
+          ) {
+            const runtime = this.runtime.neovim.get(use.id);
+            if (runtime && runtime.generation === use.output.generation) continue;
+            try {
+              const disconnected = this.runtime.toolSessions.compareAndSetToolUse(
+                use.id,
+                use.revision,
+                {
+                  status: "disconnected",
+                  output: NeovimToolOutput.make({
+                    ...use.output,
+                    processState: "disconnected",
+                  }),
+                },
+              );
+              this.emitUpdated(disconnected);
+            } catch {
+              /* another reconciliation won */
+            }
+          }
+          continue;
+        }
         if (use.output.kind !== "process") continue;
         if (
           !(
@@ -563,6 +657,7 @@ export class ToolService {
       this.stopSearch(use.id);
     }
     if (fibers.length > 0) await Effect.runPromise(Fiber.interruptAll(fibers));
+    await this.runtime.neovim.closeAll();
     await Effect.runPromise(Scope.close(this.scope, Exit.void));
   }
 
@@ -622,7 +717,7 @@ export class ToolService {
 
   private async stopLiveProcess(current: ToolUse): Promise<void> {
     this.stopSearch(current.id);
-    if (current.output.kind !== "process") return;
+    if (current.output.kind !== "process" && current.output.kind !== "neovim") return;
     try {
       await this.registry
         .get(current.kind)
@@ -631,7 +726,9 @@ export class ToolService {
     } catch {
       /* instance may already be gone */
     }
-    this.runtime.terminalInstances.unbindToolUse(current.id);
+    if (current.output.kind === "process") {
+      this.runtime.terminalInstances.unbindToolUse(current.id);
+    }
   }
 
   private require(id: ToolUseId): ToolUse {
@@ -650,7 +747,8 @@ export class ToolService {
       (command.kind === "agent" && command.input.kind === "agent") ||
       (command.kind === "terminal" && command.input.kind === "terminal") ||
       (command.kind === "git" && command.input.kind === "git") ||
-      (command.kind === "editor" && command.input.kind === "editor");
+      (command.kind === "editor" && command.input.kind === "editor") ||
+      (command.kind === "neovim" && command.input.kind === "neovim");
     if (!valid) {
       throw new InvalidToolInput({
         message: "tool kind does not match input",
@@ -696,5 +794,6 @@ function defaultTitle(kind: CreateToolUse["kind"]): string {
   if (kind === "terminal") return "Terminal";
   if (kind === "search") return "Search";
   if (kind === "git") return "Git History";
-  return "Editor";
+  if (kind === "editor") return "Editor";
+  return "Neovim";
 }

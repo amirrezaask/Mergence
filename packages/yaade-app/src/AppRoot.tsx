@@ -1,4 +1,5 @@
 import { useEffect } from "react"
+import { GlassMaterialGallery } from "@yaade/ui"
 import { basicAgentBridge } from "./basic-agent-bridge.js"
 import { ToolSessionApp } from "./tools/ToolSessionApp.js"
 
@@ -13,5 +14,8 @@ export function AppRoot() {
     }
   }, [])
 
+  if (location.pathname === "/__yaade/glass-gallery") {
+    return <GlassMaterialGallery />
+  }
   return <ToolSessionApp />
 }

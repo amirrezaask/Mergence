@@ -4,7 +4,7 @@ import { div as MotionDiv } from "motion/react-m"
 import { PanelTop, Plus, X } from "lucide-react"
 import type { SessionTab, SessionTabId } from "@yaade/rpc"
 import { Button, Input } from "@yaade/ui/primitives"
-import { cn, yaadeMotion } from "@yaade/ui"
+import { GlassSurface, cn, yaadeMotion } from "@yaade/ui"
 import { ShortcutTooltip } from "./ShortcutTooltip.js"
 import { toolSessionShortcutFor } from "./tool-session-keymap.js"
 
@@ -62,12 +62,13 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
   }
 
   return (
+    <GlassSurface material="chrome" asChild>
     <div
-      className="flex h-9 min-w-0 shrink-0 items-center border-b border-border/50 bg-card/70 px-1 supports-[backdrop-filter]:bg-card/55 supports-[backdrop-filter]:backdrop-blur-md"
+      className="flex h-8 min-w-0 shrink-0 items-center border-b border-border/50 bg-transparent px-0"
       data-yaade-window-tabs=""
     >
       <nav
-        className="flex h-full min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto"
+        className="flex h-full min-w-0 flex-1 items-stretch gap-0 overflow-x-auto"
         aria-label="Session tabs"
         role="tablist"
         onKeyDown={handleWindowTabKeyDown}
@@ -111,13 +112,13 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                     }
                   }}
                   className={cn(
-                    "group relative flex h-8 min-w-28 max-w-56 cursor-pointer items-center gap-1.5 rounded-md px-2 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-accent/45 focus-visible:ring-2 focus-visible:ring-ring/50",
-                    active && "bg-secondary/70 text-foreground after:absolute after:inset-x-2 after:bottom-0 after:h-px after:bg-primary",
+                    "group relative flex h-full min-w-20 max-w-48 cursor-pointer items-center gap-1 rounded-md px-1.5 outline-none transition-[color,background-color,border-color,box-shadow,transform] duration-[var(--yaade-motion-hot)] hover:bg-accent/45 focus-visible:ring-2 focus-visible:ring-ring/50",
+                    active && "text-foreground",
                   )}
                 >
                   <PanelTop
                     className={cn(
-                      "size-3.5 shrink-0",
+                      "size-3 shrink-0",
                       active ? "text-primary" : "text-muted-foreground/70",
                     )}
                     aria-hidden
@@ -127,7 +128,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                       aria-label={`Rename ${tab.title}`}
                       autoFocus
                       value={draftTitle}
-                      className="h-6 min-w-0 flex-1 bg-background px-1.5"
+                      className="h-5 min-w-0 flex-1 bg-background px-1"
                       onClick={event => event.stopPropagation()}
                       onChange={event => setDraftTitle(event.target.value)}
                       onBlur={() => finishRename(tab)}
@@ -165,7 +166,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
         <Button
           type="button"
           variant="ghost"
-          size="icon-sm"
+          size="icon-xs"
           aria-label="New tab"
           data-yaade-new-session-tab=""
           onClick={props.onCreate}
@@ -174,5 +175,6 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
         </Button>
       </ShortcutTooltip>
     </div>
+    </GlassSurface>
   )
 }

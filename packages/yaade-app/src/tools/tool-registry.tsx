@@ -28,6 +28,12 @@ export type ToolRendererProps = {
   ) => Promise<void>;
   readonly onLoadMore: () => Promise<void>;
   readonly onTitleChange?: (title: string) => void;
+  readonly onAction?: (action: "cancel" | "restart" | "archive") => void;
+  readonly onOpenLocation?: (location: {
+    readonly path: string;
+    readonly line: number;
+    readonly column: number;
+  }) => Promise<void>;
   readonly visible?: boolean;
   readonly focused?: boolean;
 };
@@ -80,6 +86,13 @@ async function loadEditorRenderer(): Promise<{
   return { default: module.EditorToolView as ComponentType<ToolRendererProps> };
 }
 
+async function loadNeovimRenderer(): Promise<{
+  default: ComponentType<ToolRendererProps>;
+}> {
+  const module = await import("./renderers/NeovimToolView.js");
+  return { default: module.NeovimToolView as ComponentType<ToolRendererProps> };
+}
+
 const entries: readonly RegistryEntry[] = [
   {
     kind: "agent",
@@ -122,6 +135,14 @@ const entries: readonly RegistryEntry[] = [
     mountPolicy: "remountable",
     describeInput: () => "workspace",
     loadRenderer: loadEditorRenderer,
+  },
+  {
+    kind: "neovim",
+    label: "Neovim",
+    icon: Code2,
+    mountPolicy: "remountable",
+    describeInput: () => "native editor",
+    loadRenderer: loadNeovimRenderer,
   },
 ];
 

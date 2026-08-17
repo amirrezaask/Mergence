@@ -147,7 +147,7 @@ export function PaletteShell<T>({
         data-yaade-palette-fit={fitContent ? "content" : undefined}
         style={fitStyle}
         className={[
-          "max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] gap-0 overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl backdrop-blur-none",
+          "max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] gap-0 overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl",
           contentClassName,
         ]
           .filter(Boolean)

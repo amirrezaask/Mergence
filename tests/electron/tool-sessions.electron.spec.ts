@@ -46,6 +46,11 @@ async function openToolContext(page: ShellDriver): Promise<void> {
   await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
 }
 
+async function openPaneToolContext(page: ShellDriver): Promise<void> {
+  await page.locator("[data-yaade-mux-context-trigger]").click();
+  await expectSelectorVisible(page, "[data-yaade-pane-tool-context-popover]");
+}
+
 async function waitForVisibleTerminalSurface(page: ShellDriver): Promise<void> {
   await page.waitForFunction(
     () => {
@@ -589,75 +594,31 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
   }
 });
 
-/** 5 */ test("creates an AgentTool when a provider is available", async () => {
+/** 5 */ test("does not expose AgentTool launchers", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await openToolSessionShell(page);
-    await createTerminalToolUse(page);
-    const provider = await page.evaluate(async () => {
-      const list = await window.yaade?.agents?.listProviders?.(true);
-      return list?.find((item) => item.available)?.provider ?? null;
-    });
-    test.skip(!provider, "no agent CLI provider available on this host");
-    await page.locator('[data-yaade-new-tool="agent"]').click();
-    const providerMenu = page.locator("[data-yaade-agent-provider-menu]");
-    await expectSelectorVisible(page, "[data-yaade-agent-provider-menu]");
-    await providerMenu
-      .locator(`[data-yaade-agent-provider="${provider}"]`)
-      .click();
-    await page.waitForFunction(
-      () =>
-        (window.__yaadeAgent?.getState().toolUses ?? []).some(
-          (use: { kind: string }) => use.kind === "agent",
-        ),
-      null,
-      { timeout: 30_000 },
+    await expectLocatorCount(
+      page.locator('[data-yaade-new-tool="agent"]'),
+      0,
     );
-    const agentId = await page.evaluate(
-      () =>
-        window.__yaadeAgent
-          ?.getState()
-          .toolUses?.find((use: { kind: string }) => use.kind === "agent")?.id,
+    await expectLocatorCount(
+      page.locator('[data-yaade-empty-tool="agent"]'),
+      0,
     );
-    if (!agentId) throw new Error("agent tool missing after creation");
-    await page.locator(`[data-yaade-tool-use="${agentId}"]`).click();
-    await openToolContext(page);
-    await expectSelectorVisible(page, "#tool-provider");
-    const use = await page.evaluate(() =>
-      (window.__yaadeAgent!.getState().toolUses ?? []).find(
-        (item: { kind: string }) => item.kind === "agent",
-      ),
+    await expectLocatorCount(
+      page.locator('[data-yaade-pane-new-tool-kind="agent"]'),
+      0,
     );
-    expect(use).toBeTruthy();
-    const updatedProvider = await page.evaluate(async () => {
-      const state = window.__yaadeAgent!.getState();
-      const agent = (state.toolUses ?? []).find(
-        (item: { kind: string }) => item.kind === "agent",
-      );
-      if (!agent || agent.input.kind !== "agent")
-        throw new Error("agent tool missing");
-      const updated = await window.yaade!.tools!.updateUseInput({
-        _tag: "UpdateToolUseInput",
-        toolUseId: agent.id,
-        inputRevision: agent.inputRevision,
-        input: agent.input.args
-          ? {
-              _tag: "AgentToolInput",
-              kind: "agent",
-              provider: agent.input.provider,
-              args: agent.input.args,
-            }
-          : {
-              _tag: "AgentToolInput",
-              kind: "agent",
-              provider: agent.input.provider,
-            },
-      });
-      return updated.input.kind === "agent" ? updated.input.provider : null;
-    });
-    expect(updatedProvider).toBe(provider);
-    await waitForVisibleTerminalSurface(page);
+    await expectLocatorCount(
+      page.locator('[data-yaade-new-tool-kind="agent"]'),
+      0,
+    );
+    await expectLocatorCount(
+      page.getByRole("button", { name: "New Agent" }),
+      0,
+    );
   } finally {
     await app.app.close();
   }
@@ -1367,11 +1328,14 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
   try {
     const page = app.page;
     await openToolSessionShell(page);
-    const agentLaunchButton = page.locator('[data-yaade-new-tool="agent"]').first();
-    await agentLaunchButton.hover();
-    const agentTooltip = page.getByRole("tooltip");
-    await expectLocatorVisible(agentTooltip);
-    expect((await agentTooltip.textContent())?.trim()).toBe("New Agent");
+    await expectLocatorCount(
+      page.locator('[data-yaade-new-tool="agent"]'),
+      0,
+    );
+    await expectLocatorCount(
+      page.getByRole("button", { name: "New Agent" }),
+      0,
+    );
     await page.locator("[data-yaade-session-tabs]").click();
     await pressShellPrefix(page);
     await expectSelectorVisible(page, "[data-yaade-which-key]");
@@ -1449,7 +1413,7 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
 });
 
 /** 22 */ test(
-  "pane tool menu creates a tool and tab right-click edits its context",
+  "pane title bar arrow edits its tool context",
   async () => {
     const homeDir = fs.mkdtempSync(
       path.join(path.dirname(REPO_ROOT), "yaade-e2e-home-"),
@@ -1460,14 +1424,9 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
       await openToolSessionShell(page);
       await ensureProjectGitRepo(page);
 
-      await page.locator("[data-yaade-pane-new-tool]").click();
-      await expectLocatorCount(
-        page.locator("[data-yaade-pane-new-tool-kind]"),
-        3,
-      );
-      await page.locator('[data-yaade-pane-new-tool-kind="terminal"]').click();
+      await page.locator('[data-yaade-empty-tool="terminal"]').click();
       await waitForVisibleTerminalSurface(page);
-      await openToolContext(page);
+      await openPaneToolContext(page);
       await expectSelectorVisible(page, "#tool-project");
       await expectSelectorVisible(page, "#tool-checkout");
 
@@ -1497,8 +1456,6 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
         { timeout: 30_000 },
       );
 
-      await openToolContext(page);
-      await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
     } finally {
       await app.app.close();
       fs.rmSync(homeDir, { recursive: true, force: true });
@@ -1521,7 +1478,7 @@ test("pane separators fill the gap and resize horizontal and vertical splits", a
       .poll(async () =>
         firstPane.locator('[data-yaade-mux-pane-chrome] [data-slot="button"]').count(),
       )
-      .toBe(3)
+      .toBe(4)
     await firstPane.getByRole("button", { name: "Split right" }).click()
     await expect
       .poll(async () => page.locator("[data-yaade-panel-leaf]").count())
@@ -1596,6 +1553,32 @@ test("pane separators fill the gap and resize horizontal and vertical splits", a
     await page.reload()
     await openToolSessionShell(page)
     await expectLocatorCount(page.locator("[data-yaade-panel-leaf]"), 3)
+  } finally {
+    await app.app.close()
+  }
+})
+
+test("pane plus opens the new tool picker", async () => {
+  const app = await launchWeb({})
+  try {
+    const page = app.page
+    await openToolSessionShell(page)
+    await createTerminalViaApi(page, "pane-plus")
+
+    const firstPane = page.locator("[data-yaade-panel-leaf]").first()
+    await firstPane.getByRole("button", { name: "New tool" }).click()
+    await expectSelectorVisible(page, "[data-yaade-pane-tool-menu]")
+    await expectLocatorCount(
+      page.locator("[data-yaade-pane-new-tool-kind]"),
+      5,
+    )
+
+    await page
+      .locator('[data-yaade-pane-new-tool-kind="search"]')
+      .click()
+    await expect
+      .poll(async () => page.locator("[data-yaade-panel-leaf]").count())
+      .toBe(2)
   } finally {
     await app.app.close()
   }

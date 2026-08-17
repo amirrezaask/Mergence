@@ -62,13 +62,13 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
           data-yaade-session-switcher=""
           data-yaade-active-session={activeSession?.id}
           title={switchShortcut ? `Switch session (${formatKeyBinding(switchShortcut)})` : "Switch session"}
-          className="h-9 min-w-0 max-w-64 shrink-0 justify-start gap-2 rounded-md px-2 text-left hover:bg-accent/70"
+          className="h-8 min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-md px-1.5 text-left hover:bg-accent/70"
         >
           <span
-            className="grid size-6 shrink-0 place-items-center rounded-md border border-border/70 bg-secondary/80 text-muted-foreground"
+            className="grid size-5 shrink-0 place-items-center rounded border border-border/70 bg-secondary/80 text-muted-foreground"
             aria-hidden
           >
-            <FolderKanban className="size-3.5" />
+            <FolderKanban className="size-3" />
           </span>
           <span className="min-w-0 flex-1 truncate text-xs font-semibold tracking-[-0.01em]">
             {activeSession?.title ?? "Choose session"}

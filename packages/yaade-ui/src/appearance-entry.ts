@@ -24,6 +24,7 @@ export {
 export { applyColorScheme } from "@yaade/shared"
 export type {
   ColorSchemeMode,
+  InterfaceMaterial,
   JetAppearanceSettings,
   SessionLayout,
 } from "./components/SettingsOverlay.js"

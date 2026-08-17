@@ -83,18 +83,26 @@ export async function launchJet(
   const opts: LaunchJetOptions =
     typeof workspaceRelOrOpts === "string" ? { workspaceRel: workspaceRelOrOpts } : workspaceRelOrOpts
   const result = await launchWeb(opts)
-  if (opts.expectBootError) return result
-  if (opts.hq) {
-    await waitForHq(result.page)
-  } else if (!opts.projectPage) {
-    await waitForMux(result.page)
-    if (opts.withTerminal !== false) {
-      await openMuxTerminal(result.page)
+  try {
+    if (opts.expectBootError) return result
+    if (opts.hq) {
+      await waitForHq(result.page)
+    } else if (!opts.projectPage) {
+      await waitForMux(result.page)
+      if (opts.withTerminal !== false) {
+        await openMuxTerminal(result.page)
+      }
+    } else {
+      await waitForProjectPage(result.page)
     }
-  } else {
-    await waitForProjectPage(result.page)
+    return result
+  } catch (error) {
+    // launchWeb has already created the host process by this point. If a
+    // readiness helper fails, the caller never receives `result` and cannot
+    // run its normal finally block, so tear the host down here as well.
+    await result.app.close().catch(() => {})
+    throw error
   }
-  return result
 }
 
 export async function waitForHq(
@@ -120,6 +128,15 @@ export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise
   let attemptedOpen = false
   let sessionParamWaitStarted: number | null = null
   while (Date.now() < deadline) {
+    if ((await page.locator('[data-yaade-shell="tool-session"]').count()) > 0) {
+      try {
+        await page.evaluate(() => window.__yaadeAgent!.waitForReady())
+        return
+      } catch {
+        await page.waitForTimeout(100)
+        continue
+      }
+    }
     if ((await page.locator('[data-yaade-search-results="fullscreen"]').count()) > 0) {
       try {
         await page.evaluate(() => window.__yaadeAgent!.waitForReady())
@@ -245,6 +262,7 @@ export async function openMuxTerminal(
   const deadline = Date.now() + timeoutMs
   const terminal = page.locator("[data-yaade-terminal-panel]")
   const emptyTile = page.locator('[data-yaade-mux-empty-action="terminal"]')
+  const sessionEmptyTool = page.locator('[data-yaade-empty-tool="terminal"]')
   const sidebarNew = page.locator(
     '[data-yaade-mux] [data-yaade-instance-sidebar="running"] [data-yaade-instance-sidebar-new]',
   )
@@ -275,6 +293,13 @@ export async function openMuxTerminal(
     if ((await emptyTile.count()) > 0) {
       await emptyTile.click()
       await confirmTerminalCheckout(page)
+      await page.waitForSelector("[data-yaade-terminal-panel]", {
+        timeout: Math.max(1_000, deadline - Date.now()),
+      })
+      return
+    }
+    if ((await sessionEmptyTool.count()) > 0) {
+      await sessionEmptyTool.click()
       await page.waitForSelector("[data-yaade-terminal-panel]", {
         timeout: Math.max(1_000, deadline - Date.now()),
       })

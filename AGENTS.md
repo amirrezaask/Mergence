@@ -7,8 +7,9 @@ Guide for AI agents and contributors working in this repo.
 **YAADE is a browser-only IDE for a local or remote machine.**
 
 The app opens at `/` as a **Session shell**: top-level Session tabs, each an
-ordered collection of **ToolUses** (Agent / Terminal / Search). Project and
-checkout belong to each ToolUse. Opening a ToolUse mounts its renderer in the
+ordered collection of **ToolUses** (Terminal / Search / Git / Neovim). Agent CLIs run
+inside Terminal ToolUses rather than as a separate launcher. Project and checkout
+belong to each ToolUse. Opening a ToolUse mounts its renderer in the
 main viewport — terminals keep PTYs alive on the host across tab switches and
 reloads.
 
@@ -254,11 +255,11 @@ prefix key. Do not add aliases.
 
 | `Mod-k` + | Action | | `Mod-k` + | Action |
 | --- | --- | --- | --- | --- |
-| `a` | New Agent | | `j` / `k` | Next / previous tool |
-| `t` | New Terminal | | `u` | Switch tool (list) |
-| `s` | New Search | | `w` | Switch session (list) |
-| `e` | New Editor | | `1`–`9` | Jump tool by index |
-| `g` | New Git | | `c` | New session |
+| `t` | New Terminal | | `j` / `k` | Next / previous tool |
+| `s` | New Search | | `u` | Switch tool (list) |
+| `e` | New Neovim | | `w` | Switch session (list) |
+| `g` | New Git | | `1`–`9` | Jump tool by index |
+| | | | `c` | New session |
 | | | | `b` | Toggle navigation sidebar(s) |
 | | | | `x` | Close tool |
 | | | | `Shift-X` | Close session |
@@ -325,6 +326,7 @@ types in `@yaade/workspace` (`YaadeHostAPI` name retained for stability).
 | `git:defaultBranch` | Resolve HEAD / default branch |
 | `lsp:start`, `lsp:stop` | Spawn language server, WS bridge |
 | `terminal:create/attach/write/resize/dispose` | PTY lifecycle |
+| `/ws/neovim/:toolUseId?generation=:n` | Binary Neovim Msgpack-RPC UI lease; redraw bytes are not EventHub history |
 | `notifications:*` | Notification center CRUD + WS `notifications:event` |
 | `POST /api/v1/notifications/ingest` | Provider hook ingest (Claude/Codex Stop) |
 | `GET/POST /api/v1/project-sessions` | List / create project sessions |
@@ -359,6 +361,24 @@ Deliberately engineered; do not "simplify" it:
 
 Caps: 64 PTY entries, 2 MB WS buffered bytes (slow clients get closed 1013),
 `EventHub` history 1024 events / 16 MB (`terminal:data` is live-only — not retained).
+Neovim has one host-owned `nvim --headless --listen` process per live ToolUse;
+the browser UI lease may disconnect/reconnect without stopping it. Neovim 0.10+
+is required, and `YAADE_NVIM_BIN` overrides the executable for tests. Its
+ext_linegrid model and WebGL2 renderer stay outside React state, EventHub, and
+SQLite.
+
+Neovim browser leases are guarded by a generation plus monotonically increasing
+connection epoch; stale socket messages, attach continuations, and retry timers
+must not mutate the current surface. The client supports the normal single-grid
+contract (`ext_multigrid=false`) and never uses a Canvas display fallback.
+Line-grid dimensions/CPU model bytes, RPC receive queues, glyph interning,
+highlight metadata, atlas layers, pending glyph bitmaps, packet capacity,
+retry timers, and surface/location registries are explicitly bounded. Cell
+packets are 32-byte retained records uploaded by dirty row ranges and rendered
+with four instanced passes; clear the default framebuffer every frame (do not
+restore `preserveDrawingBuffer`). Use the deterministic mock plus
+`pnpm test:neovim-compat` against pinned Neovim 0.10/current artifacts before
+changing protocol or renderer hot paths.
 
 ### Security posture (remote is NOT ready)
 
@@ -569,7 +589,12 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 | --- | --- |
 | `packages/yaade-app/src/main.tsx` | Entry: `createWebTransport` → `window.yaade`, mounts `AppRoot` |
 | `packages/yaade-app/src/AppRoot.tsx` | `/` → ToolSessionApp; legacy routes otherwise |
-| `packages/yaade-app/src/tools/ToolSessionApp.tsx` | Session shell composition |
+| `packages/yaade-app/src/tools/ToolSessionApp.tsx` | Session shell composition, native input focus, Search → Neovim routing |
+| `apps/host-server/src/neovim/host.ts` | One-process-per-Neovim-ToolUse lifecycle and generation ownership |
+| `apps/host-server/src/neovim/ws-proxy.ts` | Dedicated bounded binary Neovim WebSocket proxy |
+| `packages/yaade-ui/src/panels/neovim/` | Msgpack-RPC, ext_linegrid model, atlas, retained WebGL2 surface |
+| `tests/electron/neovim-tool.electron.spec.ts` | Mock Neovim WebGL2, input, Search, resize, and reload coverage |
+| `tests/bench/neovim-render.bench.ts` | Production-build renderer CPU budgets |
 | `packages/yaade-app/src/keybindings.ts` | Command key catalog (Tool Session + legacy mux) |
 | `packages/yaade-app/src/tools/tool-store.ts` | Normalized browser store (no PTY bytes) |
 | `packages/yaade-app/src/tools/tool-session-routing.ts` | `/?s=&u=` parse/build |

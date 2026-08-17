@@ -58,9 +58,14 @@ import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 /** Navigation chrome for the Session shell. */
 export type SessionLayout = "tabs" | "two-sidebars" | "single-sidebar"
 export type ColorSchemeMode = "system" | "light" | "dark"
+export type InterfaceMaterial = "classic" | "liquid-glass"
 export type JetAppearanceSettings = {
   themeId: string
   colorSchemeMode: ColorSchemeMode
+  /** Chrome material treatment; content surfaces remain matte in either mode. */
+  interfaceMaterial: InterfaceMaterial
+  /** Disable translucency and blur while preserving material geometry. */
+  reducedTransparency: boolean
   fontSize: number
   /** Primary monospace face name (CSS stack built via `buildMonoFontStack`). */
   monoFontFamily: string
@@ -489,6 +494,80 @@ export function SettingsOverlay({
                           Dark
                         </ToggleGroupItem>
                       </ToggleGroup>
+                    </Field>
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
+                    >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
+                          Interface material
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Liquid glass is limited to navigation and temporary chrome.
+                        </FieldDescription>
+                      </FieldContent>
+                      <ToggleGroup
+                        type="single"
+                        variant="outline"
+                        size="sm"
+                        value={settings.interfaceMaterial}
+                        aria-label="Interface material"
+                        className="w-full"
+                        onValueChange={value => {
+                          if (value !== "classic" && value !== "liquid-glass") return
+                          onSettingsChange(
+                            settingPatch(settings, { interfaceMaterial: value }),
+                          )
+                        }}
+                      >
+                        <ToggleGroupItem
+                          value="classic"
+                          aria-label="Classic interface material"
+                          className="flex-1"
+                          data-yaade-interface-material-option="classic"
+                        >
+                          Classic
+                        </ToggleGroupItem>
+                        <ToggleGroupItem
+                          value="liquid-glass"
+                          aria-label="Liquid glass interface material"
+                          className="flex-1"
+                          data-yaade-interface-material-option="liquid-glass"
+                        >
+                          Liquid glass
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </Field>
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
+                    >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel
+                          htmlFor="yaade-reduced-transparency"
+                          className="text-sm font-medium leading-snug text-foreground"
+                        >
+                          Reduced transparency
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Use opaque surfaces when translucency is distracting or expensive.
+                        </FieldDescription>
+                      </FieldContent>
+                      <div className="flex justify-start sm:justify-end">
+                        <Checkbox
+                          id="yaade-reduced-transparency"
+                          checked={settings.reducedTransparency}
+                          onCheckedChange={checked =>
+                            onSettingsChange(
+                              settingPatch(settings, {
+                                reducedTransparency: checked === true,
+                              }),
+                            )
+                          }
+                          data-yaade-reduced-transparency-toggle=""
+                        />
+                      </div>
                     </Field>
                     <div className="grid gap-4">
                       {Array.from(

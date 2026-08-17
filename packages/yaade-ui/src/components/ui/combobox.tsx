@@ -170,8 +170,10 @@ function ComboboxPopup({
         sideOffset={sideOffset}
       >
         <span
+          data-yaade-glass-surface=""
+          data-yaade-glass-material="floating"
           className={cn(
-            "relative flex w-(--anchor-width) min-w-0 max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg border border-border bg-popover/96 not-dark:bg-clip-padding shadow-lg transition-[scale,opacity] backdrop-blur-xl before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
+            "relative flex w-(--anchor-width) min-w-0 max-w-(--available-width) origin-(--transform-origin) overflow-hidden rounded-lg border border-border bg-popover not-dark:bg-clip-padding shadow-lg transition-[scale,opacity] before:pointer-events-none before:absolute before:inset-0 before:rounded-[calc(var(--radius-lg)-1px)] before:shadow-[0_1px_--theme(--color-black/4%)] dark:before:shadow-[0_-1px_--theme(--color-white/6%)]",
             className,
           )}
         >

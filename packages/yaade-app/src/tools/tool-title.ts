@@ -43,9 +43,11 @@ export function toolUseWorkTitle(
       ? "Agent"
       : use.kind === "editor"
         ? "Editor"
-        : use.kind === "git"
-          ? "Git History"
-          : "Terminal")
+        : use.kind === "neovim"
+          ? "Neovim"
+          : use.kind === "git"
+            ? "Git History"
+            : "Terminal")
   );
 }
 

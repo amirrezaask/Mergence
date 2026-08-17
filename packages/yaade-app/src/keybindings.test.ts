@@ -35,6 +35,7 @@ describe("keybinding catalog", () => {
       "toolSession prefix Mod-k t → tool.newTerminal",
       "toolSession prefix Mod-k s → tool.newSearch",
       "toolSession prefix Mod-k g → tool.newGit",
+      "toolSession prefix Mod-k e → tool.newNeovim",
       "toolSession prefix Mod-k j → tool.next",
       "toolSession prefix Mod-k k → tool.previous",
       "toolSession prefix Mod-k l → tab.next",

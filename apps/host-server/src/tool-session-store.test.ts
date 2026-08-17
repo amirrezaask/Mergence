@@ -3,6 +3,7 @@ import { DatabaseSync } from "node:sqlite"
 import { describe, it } from "node:test"
 import { Schema } from "effect"
 import {
+  NeovimToolOutput,
   ProcessToolOutput,
   ProjectTarget,
   ToolUseId,
@@ -96,6 +97,36 @@ describe("ToolSessionStore", () => {
       () => store.setActiveToolUse(session.id, Schema.decodeUnknownSync(ToolUseId)("use-missing")),
       ToolSessionStorageError,
     )
+    db.close()
+  })
+
+  it("round-trips a Neovim ToolUse without storing editor state", () => {
+    const db = database()
+    const store = new ToolSessionStore(db)
+    const session = store.listSessions()[0]
+    assert.ok(session)
+    const use = store.createToolUse({
+      sessionId: session.id,
+      kind: "neovim",
+      title: "Neovim",
+      position: 0,
+      context: context(),
+      input: { _tag: "NeovimToolInput", kind: "neovim" },
+      output: NeovimToolOutput.make({
+        kind: "neovim",
+        serverInstanceId: "opaque-instance",
+        generation: 3,
+        processState: "running",
+        version: "0.13.0",
+      }),
+    })
+    const decoded = store.getToolUse(use.id)
+    assert.equal(decoded?.kind, "neovim")
+    assert.equal(decoded?.output.kind, "neovim")
+    if (decoded?.output.kind === "neovim") {
+      assert.equal(decoded.output.generation, 3)
+      assert.equal(decoded.output.serverInstanceId, "opaque-instance")
+    }
     db.close()
   })
 

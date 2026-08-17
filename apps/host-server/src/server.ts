@@ -46,6 +46,7 @@ import { normalizeProviderHookRequest } from "./notifications/index.js"
 import { resolveWorktreePath } from "./worktree-path.js"
 import { pathToFileUri } from "@yaade/shared"
 import { buildHqSnapshot } from "./hq.js"
+import { handleNeovimSocket, MAX_NEOVIM_MESSAGE_BYTES } from "./neovim/ws-proxy.js"
 
 const VERSION = "0.0.1"
 const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024
@@ -118,6 +119,13 @@ export async function startHostServer(
   })
 
   const wss = new WebSocketServer({ noServer: true })
+  // Keep raw Neovim payload policy isolated from EventHub and LSP sockets. One
+  // byte above the application limit reaches the proxy so it can close with
+  // the documented 1013 backpressure code instead of ws's generic 1009.
+  const neovimWss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_NEOVIM_MESSAGE_BYTES + 1,
+  })
 
   server.on("upgrade", (req, socket, head) => {
     if (!isAllowedWebSocketOrigin(req.headers.origin, req.headers.host)) {
@@ -126,6 +134,28 @@ export async function startHostServer(
       return
     }
     const url = new URL(req.url ?? "/", `http://${req.headers.host ?? "localhost"}`)
+    const neovimMatch = /^\/ws\/neovim\/([^/]+)$/.exec(url.pathname)
+    if (neovimMatch) {
+      const rawGeneration = url.searchParams.get("generation")
+      const generation = rawGeneration === null ? NaN : Number(rawGeneration)
+      let toolUseId = ""
+      try {
+        toolUseId = decodeURIComponent(neovimMatch[1] ?? "")
+      } catch {
+        socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+        socket.destroy()
+        return
+      }
+      if (!/^use-[A-Za-z0-9_-]+$/.test(toolUseId) || !Number.isSafeInteger(generation) || generation < 1) {
+        socket.write("HTTP/1.1 400 Bad Request\r\nConnection: close\r\n\r\n")
+        socket.destroy()
+        return
+      }
+      neovimWss.handleUpgrade(req, socket, head, ws => {
+        void handleNeovimSocket(runtime, ws, toolUseId, generation)
+      })
+      return
+    }
     if (url.pathname === "/ws") {
       wss.handleUpgrade(req, socket, head, ws => {
         handleEventSocket(runtime, managed, ws, url)
@@ -155,7 +185,11 @@ export async function startHostServer(
         server.close(err => (err ? reject(err) : resolve()))
       })
       for (const client of wss.clients) client.terminate()
-      await new Promise<void>(resolve => wss.close(() => resolve()))
+      for (const client of neovimWss.clients) client.terminate()
+      await Promise.all([
+        new Promise<void>(resolve => wss.close(() => resolve())),
+        new Promise<void>(resolve => neovimWss.close(() => resolve())),
+      ])
       await serverClosed
       await managed.dispose()
     })()

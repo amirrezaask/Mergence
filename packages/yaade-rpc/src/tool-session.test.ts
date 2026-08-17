@@ -7,6 +7,8 @@ import {
   GitToolInput,
   GitToolOutput,
   MainCheckout,
+  NeovimToolInput,
+  NeovimToolOutput,
   ProcessToolOutput,
   SearchResultsAppended,
   SearchToolInput,
@@ -82,10 +84,12 @@ describe("tool session contracts", () => {
       options: { regex: false },
     })
     const git = decode(ToolUseInput, { _tag: "GitToolInput", kind: "git" })
+    const neovim = decode(ToolUseInput, { _tag: "NeovimToolInput", kind: "neovim" })
     assert.equal(agent.kind, "agent")
     assert.equal(terminal.kind, "terminal")
     assert.equal(search.kind, "search")
     assert.equal(git.kind, "git")
+    assert.equal(neovim.kind, "neovim")
     assert.equal(decode(ToolUseOutput, processUse(terminal).output).kind, "process")
     assert.equal(
       decode(ToolUseOutput, {
@@ -101,6 +105,16 @@ describe("tool session contracts", () => {
     assert.equal(
       decode(ToolUseOutput, { _tag: "GitToolOutput", kind: "git" }).kind,
       "git",
+    )
+    assert.equal(
+      decode(ToolUseOutput, {
+        _tag: "NeovimToolOutput",
+        kind: "neovim",
+        serverInstanceId: "instance-1",
+        generation: 2,
+        processState: "running",
+      }).generation,
+      2,
     )
   })
 
@@ -169,6 +183,13 @@ describe("tool session contracts", () => {
     assert.equal(TerminalToolInput.make({ kind: "terminal" }).kind, "terminal")
     assert.equal(GitToolInput.make({ kind: "git" }).kind, "git")
     assert.equal(GitToolOutput.make({ kind: "git" }).kind, "git")
+    assert.equal(NeovimToolInput.make({ kind: "neovim" }).kind, "neovim")
+    assert.equal(NeovimToolOutput.make({
+      kind: "neovim",
+      serverInstanceId: "instance",
+      generation: 1,
+      processState: "running",
+    }).processState, "running")
     assert.equal(ProcessToolOutput.make({
       kind: "process",
       terminalInstanceId: "term",

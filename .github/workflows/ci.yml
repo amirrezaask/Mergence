@@ -26,3 +26,36 @@ jobs:
       - run: pnpm test:e2e
         env:
           YAADE_E2E_RUN_FLAKY: "1"
+
+  neovim-compat:
+    name: Neovim compatibility (${{ matrix.version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        version: [v0.10.4, v0.11.5]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - name: Download pinned Neovim artifact
+        env:
+          NVIM_VERSION: ${{ matrix.version }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/nvim"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/nvim/nvim-linux-x86_64.tar.gz" \
+            "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz"
+          curl --fail --location --retry 3 --output "$RUNNER_TEMP/nvim/nvim-linux-x86_64.tar.gz.sha256sum" \
+            "https://github.com/neovim/neovim/releases/download/${NVIM_VERSION}/nvim-linux-x86_64.tar.gz.sha256sum"
+          (cd "$RUNNER_TEMP/nvim" && sha256sum -c nvim-linux-x86_64.tar.gz.sha256sum)
+          tar -xzf "$RUNNER_TEMP/nvim/nvim-linux-x86_64.tar.gz" -C "$RUNNER_TEMP/nvim"
+      - name: Run isolated real-Neovim linegrid compatibility harness
+        env:
+          YAADE_NVIM_BIN: ${{ runner.temp }}/nvim/nvim-linux-x86_64/bin/nvim
+        run: pnpm test:neovim-compat

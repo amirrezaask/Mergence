@@ -107,6 +107,7 @@ export { ProjectSwitcherOverlay } from "./components/ProjectSwitcherOverlay.js"
 export {
   SettingsOverlay,
   type ColorSchemeMode,
+  type InterfaceMaterial,
   type JetAppearanceSettings,
   type SessionLayout,
 } from "./components/SettingsOverlay.js"
@@ -160,6 +161,20 @@ export {
   type PanelRect,
 } from "./motion/layoutMorph.js"
 export { cn } from "./lib/utils.js"
+export { GlassMaterialGallery } from "./components/GlassMaterialGallery.js"
+export {
+  AmbientCanvas,
+  GlassControlGroup,
+  GlassDivider,
+  GlassFocusRing,
+  GlassSurface,
+  type AmbientCanvasProps,
+  type GlassControlGroupProps,
+  type GlassDividerProps,
+  type GlassFocusRingProps,
+  type GlassMaterial,
+  type GlassSurfaceProps,
+} from "./components/glass.js"
 export { formatKeyBinding } from "./lib/format-key.js"
 export { TooltipProvider } from "./components/ui/tooltip.js"
 export { MessageScroller } from "./components/ui/message-scroller.js"

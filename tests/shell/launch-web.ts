@@ -145,12 +145,25 @@ function attachLogs(proc: ChildProcessWithoutNullStreams): () => string {
   return () => logs
 }
 
+function signalProcessTree(proc: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+  if (proc.pid == null) return
+  if (process.platform !== "win32") {
+    try {
+      process.kill(-proc.pid, signal)
+      return
+    } catch {
+      /* Fall back to the wrapper when the process group is already gone. */
+    }
+  }
+  proc.kill(signal)
+}
+
 async function killProc(proc: ChildProcessWithoutNullStreams): Promise<void> {
   if (proc.exitCode !== null) return
-  proc.kill("SIGTERM")
+  signalProcessTree(proc, "SIGTERM")
   await new Promise<void>(resolve => {
     const force = setTimeout(() => {
-      if (proc.exitCode === null) proc.kill("SIGKILL")
+      if (proc.exitCode === null) signalProcessTree(proc, "SIGKILL")
     }, 1_000)
     proc.once("exit", () => {
       clearTimeout(force)
@@ -158,7 +171,7 @@ async function killProc(proc: ChildProcessWithoutNullStreams): Promise<void> {
     })
     setTimeout(resolve, 2_500)
   })
-  if (proc.exitCode === null) proc.kill("SIGKILL")
+  if (proc.exitCode === null) signalProcessTree(proc, "SIGKILL")
 }
 
 export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchShellResult> {
@@ -216,6 +229,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
       cwd: REPO_ROOT,
       env: sharedEnv,
       stdio: ["ignore", "pipe", "pipe"],
+      detached: process.platform !== "win32",
     },
   ) as ChildProcessWithoutNullStreams
   const jetLogs = attachLogs(server)

@@ -57,8 +57,8 @@ function DialogOverlay({
       className={cn(
         "yaade-dialog-overlay fixed inset-0 z-50 overscroll-contain",
         placement === "quick-input"
-          ? "bg-transparent backdrop-blur-none"
-          : "bg-backdrop backdrop-blur-sm",
+          ? "bg-transparent"
+          : "bg-backdrop",
         className
       )}
       data-yaade-dialog-motion={motion}
@@ -98,7 +98,7 @@ function DialogContent({
         <DialogPrimitive.Content
           data-slot="dialog-content"
           className={cn(
-            "pointer-events-auto grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-xl border border-border bg-popover/96 p-5 shadow-lg backdrop-blur-xl outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
+            "pointer-events-auto grid w-full max-w-[calc(100%-2rem)] gap-4 rounded-xl border border-border bg-popover p-5 shadow-lg outline-none focus-visible:ring-[3px] focus-visible:ring-ring/50",
             dialogSizeClass[size],
             yaadeOverlayContentClass,
             className

@@ -6,6 +6,7 @@ import {
   DEFAULT_MONO_FONT_FAMILY,
   DEFAULT_MONO_FONT_NAME,
   DEFAULT_UI_FONT_FAMILY,
+  type InterfaceMaterial,
   buildMonoFontStack,
   preloadNerdFont,
   siblingThemeForScheme,
@@ -39,6 +40,8 @@ export const MAX_SIDEBAR_WIDTH = 480
 export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   themeId: defaultThemeId,
   colorSchemeMode: "system",
+  interfaceMaterial: "liquid-glass",
+  reducedTransparency: false,
   fontSize: DEFAULT_FONT_SIZE,
   monoFontFamily: DEFAULT_MONO_FONT_NAME,
   sessionLayout: "tabs",
@@ -95,6 +98,13 @@ export function normalizeSessionLayout(_value: PersistedAppearanceValue): Sessio
   // The Tool Session shell now keeps session and tool navigation in one top tab bar.
   // Older sidebar preferences migrate to the simplified layout.
   return "tabs"
+}
+
+export function normalizeInterfaceMaterial(
+  value: PersistedAppearanceValue,
+  fallback: InterfaceMaterial = "liquid-glass",
+): InterfaceMaterial {
+  return value === "classic" || value === "liquid-glass" ? value : fallback
 }
 
 function normalizeProjectFilterPath(value: PersistedAppearanceValue): string | null {
@@ -229,6 +239,15 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         preferredColorScheme(),
       ),
       colorSchemeMode,
+      interfaceMaterial: normalizeInterfaceMaterial(
+        parsed.interfaceMaterial,
+        base.interfaceMaterial,
+      ),
+      reducedTransparency:
+        parsed.reducedTransparency === true ||
+        parsed.reducedTransparency === false
+          ? parsed.reducedTransparency
+          : base.reducedTransparency,
       fontSize: clampNumber(parsed.fontSize, base.fontSize, 10, 24),
       monoFontFamily: normalizeMonoFontFamily(
         parsed.monoFontFamily ?? base.monoFontFamily,
@@ -278,6 +297,8 @@ export function applyAppearanceCss(settings: JetAppearanceSettings): void {
   root.style.setProperty("--yaade-terminal-cursor-blink", "1")
   root.dataset.jetDensity = "compact"
   root.dataset.yaadeReducedMotion = "false"
+  root.dataset.yaadeReducedTransparency = String(settings.reducedTransparency)
+  root.dataset.yaadeInterfaceMaterial = settings.interfaceMaterial
   root.dataset.yaadeSessionLayout = settings.sessionLayout
 }
 

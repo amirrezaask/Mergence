@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   normalizeColorSchemeMode,
+  normalizeInterfaceMaterial,
   normalizeSessionLayout,
   normalizeThemeId,
   themeIdForColorSchemeMode,
@@ -27,6 +28,15 @@ describe("normalizeThemeId", () => {
   it("uses the stored scheme for unknown ids", () => {
     assert.equal(normalizeThemeId("removed-theme", "light"), "default-light")
     assert.equal(normalizeThemeId("removed-theme", "dark"), "default-dark")
+  })
+})
+
+describe("interface material", () => {
+  it("accepts the named material modes and falls back safely", () => {
+    assert.equal(normalizeInterfaceMaterial("liquid-glass"), "liquid-glass")
+    assert.equal(normalizeInterfaceMaterial("classic"), "classic")
+    assert.equal(normalizeInterfaceMaterial("removed"), "liquid-glass")
+    assert.equal(normalizeInterfaceMaterial("removed", "classic"), "classic")
   })
 })
 

@@ -7,6 +7,8 @@ import {
   SessionTabId,
   EditorToolInput,
   EditorToolOutput,
+  NeovimToolInput,
+  NeovimToolOutput,
   GitToolInput,
   GitToolOutput,
   ProcessToolOutput,
@@ -101,12 +103,14 @@ const ToolUseInputSchema = Schema.Union(
   SearchToolInput,
   GitToolInput,
   EditorToolInput,
+  NeovimToolInput,
 );
 const ToolUseOutputSchema = Schema.Union(
   ProcessToolOutput,
   SearchToolOutput,
   GitToolOutput,
   EditorToolOutput,
+  NeovimToolOutput,
 );
 
 function decodeJson<A>(

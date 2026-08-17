@@ -7,15 +7,20 @@ scope, exact code surfaces, verification gates, risks, and stop conditions.
 
 | Plan | Title | Priority | Effort | Depends on | Status |
 | --- | --- | --- | --- | --- | --- |
-| [001](001-webgl-neovim-tool.md) | Add a standalone WebGL2 Neovim ToolUse backed by one host process per tool | P1 | XL | — | TODO |
+| [001](001-webgl-neovim-tool.md) | Add a standalone WebGL2 Neovim ToolUse backed by one host process per tool | P1 | XL | — | SUPERSEDED |
+| [002](002-production-webgl-neovim-client.md) | Finish, harden, and optimize the WebGL2 Neovim client for production use | P1 | XL | 001 baseline | TODO |
 
-Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED
+Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED | SUPERSEDED
 
 ## Dependency notes
 
-- Plan 001 is one vertical feature plan. Execute its internal steps in order:
-  contracts/mock → host lifecycle → binary proxy → linegrid → WebGL2 → shell →
-  Search migration → E2E/performance/docs.
+- Plan 001 established the baseline process, transport, linegrid, WebGL2,
+  Session-shell, Search, E2E, and benchmark slice in the current working tree.
+  Do not re-execute it.
+- Plan 002 is now authoritative. It consumes that baseline and proceeds in this
+  order: truthful baseline + real-Neovim contracts → bounded reducer →
+  instrumentation → retained packed GPU packets → atlas/typography → input and
+  lifecycle hardening → correctness/stress/performance gates → documentation.
 
 ## Findings considered and rejected
 

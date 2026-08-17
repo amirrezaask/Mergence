@@ -26,6 +26,7 @@ import { TerminalInstanceService } from "./terminal-instances.js"
 import { ToolSessionStore } from "./tool-session-store.js"
 import { WorkspaceHost } from "./workspace.js"
 import { ToolService } from "./tools/service.js"
+import { NeovimHost } from "./neovim/host.js"
 
 export type HostRuntime = {
   config: HostConfig
@@ -43,6 +44,7 @@ export type HostRuntime = {
   agentRuns: AgentRunService
   terminalInstances: TerminalInstanceService
   toolSessions: ToolSessionStore
+  neovim: NeovimHost
   toolService: ToolService | null
   hookQueueTimer: ReturnType<typeof setInterval>
   pendingHookQueueDrain: () => Promise<void> | null
@@ -109,6 +111,10 @@ export function createRuntime(
   terminalInstances = processInstances
   // Construct after terminal persistence so migration 15 can correlate existing PTYs.
   const toolSessions = new ToolSessionStore(db.raw(), os.hostname())
+  let runtimeRef: HostRuntime | null = null
+  const neovim = new NeovimHost({
+    onExit: event => runtimeRef?.toolService?.onNeovimExit(event),
+  })
 
   terminal.setEmit((channel, args) => {
     events.emit(channel, args)
@@ -165,10 +171,12 @@ export function createRuntime(
     agentRuns: runService,
     terminalInstances: processInstances,
     toolSessions,
+    neovim,
     toolService: null,
     hookQueueTimer,
     pendingHookQueueDrain: () => hookQueueDrain,
   }
+  runtimeRef = runtime
   runtime.toolService = new ToolService(runtime)
   runtime.toolService.reconcile()
   try {
@@ -339,5 +347,6 @@ export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
   clearInterval(runtime.hookQueueTimer)
   await runtime.pendingHookQueueDrain()
   await runtime.toolService?.close()
+  await runtime.neovim.closeAll()
   runtime.terminal.stopAll()
 }

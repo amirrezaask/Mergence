@@ -1,5 +1,11 @@
 # Plan 001: Add a standalone WebGL2 Neovim ToolUse backed by one host process per tool
 
+> **Superseded**: The baseline architecture and feature slice in this plan are
+> implemented in the current working tree. Do not re-execute this plan. Continue
+> with `plans/002-production-webgl-neovim-client.md`, which owns correctness,
+> production hardening, real-Neovim compatibility, truthful benchmarks, bounded
+> memory, and final acceptance gates.
+>
 > **Executor instructions (LUNA)**: Read this plan fully before editing. Implement
 > it in the stated order and run every gate before continuing. Preserve all
 > unrelated work already present in the working tree. Do not commit, push, or
@@ -34,6 +40,7 @@
 - **Risk**: HIGH — process lifetime, binary RPC, keyboard semantics, text rendering, and GPU resource ownership all meet here
 - **Depends on**: none
 - **Category**: direction / architecture / performance
+- **Status**: SUPERSEDED — baseline implemented; Plan 002 is the authoritative follow-up
 - **Planned at**: commit `1c80ddd`, 2026-08-16, plus the uncommitted liquid-material changes listed above
 
 ## Goal
@@ -984,31 +991,54 @@ and effects are asserted through model/host state, not only screenshots.
   children/endpoints.
 - Idle surface frame count stays flat.
 
+## Verification status (2026-08-16, updated 2026-08-17)
+
+The feature slice and its dedicated gates are complete:
+
+- `pnpm -r typecheck` passes.
+- `pnpm test` passes (all workspace unit tests).
+- `pnpm build` passes.
+- `pnpm exec playwright test --project=web-e2e tests/electron/neovim-tool.electron.spec.ts` passes (9/9), including process exit/restart, Session/Window/reload durability, Search reuse, mouse/IME/paste input, context restore, WebGL2 failure, and dark/light/mobile appearance.
+- `pnpm exec playwright test --project=bench tests/bench/neovim-render.bench.ts` passes, including the first-frame, input-paint, and 10k-cell budgets.
+- Host tests cover endpoint privacy, distinct processes, lease supersession, generation gates, binary proxying, 2 MiB backpressure, restart/archive cleanup, process exits, and missing binaries.
+- Dark/light desktop and 390x844 mobile screenshots were attached to the focused appearance scenario and reviewed.
+- A real local Neovim 0.13 development binary reaches `ready`, paints the welcome screen, handles real empty continuation cells, and reports no malformed protocol events.
+
+The repository-wide gates are not yet clean because they include unrelated legacy-shell
+migration failures:
+
+- `pnpm lint` still reports the repository's existing anti-slop findings, plus boundary-style findings in the newly added Neovim decoder/model files; this requires a separate lint migration rather than suppressions.
+- The required `tool-sessions.electron.spec.ts` run reaches the known legacy Session parity scenarios and stalls in the pre-existing “creates two Sessions; reload preserves order” scenario, outside the Neovim path. `pnpm test:e2e` and `pnpm test:bench` still contain additional legacy mux/HQ/terminal selectors and lifecycle assumptions.
+- `pnpm validate:keybindings` currently exits before validation because the repository no longer contains `packages/yaade-workspace/data/jet-vscode-command-map.json`; the active keybinding catalog and Tool Session keymap unit suites pass.
+
+Do not mark this plan `DONE` until those repository-wide failures are either fixed
+or explicitly split into a follow-up migration plan.
+
 ## Done criteria
 
 All must hold:
 
-- [ ] `"neovim"` is a first-class ToolKind with matched schema input/output.
-- [ ] Two live Neovim ToolUses produce two distinct host server instances.
-- [ ] Renderer mount/unmount never calls process spawn.
-- [ ] Browser reload preserves server instance id/generation and restores grid.
-- [ ] Cancel/archive/context-change/host-close leave no Neovim child or endpoint.
-- [ ] Neovim redraw bytes never enter EventHub, SQLite, React state, or
+- [x] `"neovim"` is a first-class ToolKind with matched schema input/output.
+- [x] Two live Neovim ToolUses produce two distinct host server instances.
+- [x] Renderer mount/unmount never calls process spawn.
+- [x] Browser reload preserves server instance id/generation and restores grid.
+- [x] Cancel/archive/context-change/host-close leave no Neovim child or endpoint.
+- [x] Neovim redraw bytes never enter EventHub, SQLite, React state, or
       `ToolSessionStore`.
-- [ ] `data-yaade-neovim-renderer="webgl2"` is present in the running surface.
-- [ ] No Canvas 2D final-display fallback exists.
-- [ ] New WebGL code batches instanced draws and reuses buffers/textures.
-- [ ] New caches/maps/queues all have explicit bounds or ToolUse-scoped cleanup.
-- [ ] Theme/font changes repaint without restarting the server.
-- [ ] New UI uses semantic/material/motion/type tokens and Lucide only.
-- [ ] `Mod-k e` appears in the canonical HUD and no reserved direct chord was added.
-- [ ] Bare Escape and normal Neovim input work in a focused surface.
-- [ ] Search opens/reuses a standalone matching-checkout Neovim pane.
-- [ ] `rg "search-neovim-sessions|nvimEditCommand" packages/yaade-app/src/tools`
+- [x] `data-yaade-neovim-renderer="webgl2"` is present in the running surface.
+- [x] No Canvas 2D final-display fallback exists.
+- [x] New WebGL code batches instanced draws and reuses buffers/textures.
+- [x] New caches/maps/queues all have explicit bounds or ToolUse-scoped cleanup.
+- [x] Theme/font changes repaint without restarting the server.
+- [x] New UI uses semantic/material/motion/type tokens and Lucide only.
+- [x] `Mod-k e` appears in the canonical HUD and no reserved direct chord was added.
+- [x] Bare Escape and normal Neovim input work in a focused surface.
+- [x] Search opens/reuses a standalone matching-checkout Neovim pane.
+- [x] `rg "search-neovim-sessions|nvimEditCommand" packages/yaade-app/src/tools`
       returns no matches after migration.
 - [ ] Focused and full typecheck, lint, unit, E2E, bench, and build commands exit 0.
-- [ ] Dark/light desktop and mobile screenshots were actually reviewed.
-- [ ] No unrelated/pre-existing edits were reverted.
+- [x] Dark/light desktop and mobile screenshots were actually reviewed.
+- [x] No unrelated/pre-existing edits were reverted.
 - [ ] `plans/README.md` marks this plan DONE only after every gate passes.
 
 ## STOP conditions

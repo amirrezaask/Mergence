@@ -1,4 +1,12 @@
-import { Columns2, GitBranch, Maximize2, Minimize2, Rows2, X } from "lucide-react"
+import {
+  ChevronDown,
+  Columns2,
+  GitBranch,
+  Maximize2,
+  Minimize2,
+  Rows2,
+  X,
+} from "lucide-react"
 import { useDraggable } from "@dnd-kit/core"
 import type { ReactNode, RefCallback, SVGProps } from "react"
 import type { PanelId } from "@yaade/shared"
@@ -12,6 +20,7 @@ import {
   ContextMenuTrigger,
 } from "@/components/ui/context-menu.js"
 import { cn } from "@/lib/utils.js"
+import { GlassControlGroup } from "../components/glass.js"
 import { tabDndId, type TabDragData } from "../dock/tab-dnd-types.js"
 import { deckTileStyle, processIdentity } from "./process-identity.js"
 
@@ -56,6 +65,10 @@ export type MuxPaneChromeProps = {
   onOpenNeovim?: () => void
   onZoom: () => void
   onClose: () => void
+  /** Open a pane-specific context editor from the title bar. */
+  onOpenContext?: () => void
+  /** Whether the pane context editor is currently open. */
+  contextOpen?: boolean
   /**
    * Resolve a display shortcut for a command id (e.g. `mux.openGit` → `Mod-k g`).
    * App layer owns the binding table; UI must not import mux-keymap.
@@ -88,6 +101,8 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     onOpenNeovim,
     onZoom,
     onClose,
+    onOpenContext,
+    contextOpen = false,
     shortcutFor,
     contextRef,
     className,
@@ -200,8 +215,8 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           data-dragging={isDragging ? "" : undefined}
           className={cn(
             "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 border-b px-1.5",
-            "border-border/50 bg-card/70 supports-[backdrop-filter]:bg-card/55 supports-[backdrop-filter]:backdrop-blur-md",
-            focused && "bg-secondary/45 supports-[backdrop-filter]:bg-secondary/35",
+            "border-border/50 bg-transparent",
+            focused && "bg-transparent",
             focused &&
               !center &&
               !splitControlsOnly &&
@@ -243,6 +258,25 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
               >
                 {identity.glyph}
               </span>
+              {onOpenContext ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label="Set tool context"
+                  aria-haspopup="dialog"
+                  aria-expanded={contextOpen}
+                  data-yaade-mux-context-trigger=""
+                  className="size-5 text-muted-foreground/70 hover:text-foreground"
+                  onPointerDown={event => event.stopPropagation()}
+                  onClick={event => {
+                    event.stopPropagation()
+                    onOpenContext()
+                  }}
+                >
+                  <ChevronDown />
+                </Button>
+              ) : null}
               <span
                 data-yaade-mux-pane-title=""
                 className={cn(
@@ -321,14 +355,11 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           >
             {center}
           </div>
-          <div
-            className={cn(
-              "flex shrink-0 items-center gap-0.5",
-              splitControlsOnly &&
-                "rounded-full border border-border/60 bg-secondary/55 p-0.5 shadow-sm supports-[backdrop-filter]:bg-secondary/35 supports-[backdrop-filter]:backdrop-blur-xl",
-            )}
+          <GlassControlGroup
+            className={cn("shrink-0", splitControlsOnly && "rounded-full")}
             onPointerDown={event => event.stopPropagation()}
           >
+            {splitControlsOnly ? trailing : null}
             <Button
               type="button"
               variant="ghost"
@@ -365,7 +396,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
                 <X />
               </Button>
             ) : secondaryControls}
-          </div>
+          </GlassControlGroup>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent data-yaade-mux-pane-context-menu="">

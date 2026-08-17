@@ -23,7 +23,7 @@ import type {
   ToolUseId,
   ToolUseInput,
 } from "@yaade/rpc";
-import { MainCheckout } from "@yaade/rpc";
+import { ExistingWorktreeCheckout, MainCheckout } from "@yaade/rpc";
 import type { PanelId, ProjectSearchOptions, YaadeTheme } from "@yaade/shared";
 import type { PanelEvent } from "@yaade/panels";
 import {
@@ -45,15 +45,27 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  Settings,
 } from "lucide-react";
 import {
+  AmbientCanvas,
+  GlassSurface,
   WhichKeyPanel,
   cn,
   useIsMobile,
   yaadeMotion,
   type TabDndHandlers,
 } from "@yaade/ui";
-import { CHORD_TIMEOUT_MS, keyEventMatchesBinding } from "@yaade/workspace";
+import {
+  openRegisteredNeovimLocation,
+  queueNeovimLocation,
+  sendLiteralNeovimInput,
+} from "@yaade/ui/neovim";
+import {
+  CHORD_TIMEOUT_MS,
+  keyEventMatchesBinding,
+  keyEventMatchesChordSecond,
+} from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
 import {
@@ -76,11 +88,11 @@ import {
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionWindowTabStrip } from "./SessionWindowTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
+import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
 import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
-import { agentProviderFromTerminal } from "./agent-process.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
   MAX_TOOL_TILES,
@@ -100,6 +112,7 @@ import {
   toolPaneCount,
   type ToolWorkspace,
 } from "./tool-tiling.js";
+import { toolSessionDirectShortcutFor } from "./tool-session-keymap.js";
 import {
   TOOL_SESSION_PREFIX,
   TOOL_SESSION_PREFIX_GROUPS,
@@ -202,21 +215,9 @@ export function ToolSessionApp() {
   const [runtimeTitles, setRuntimeTitles] = useState<
     ReadonlyMap<ToolUseId, RuntimeToolTitle>
   >(() => new Map());
-  const [terminalProcessNames, setTerminalProcessNames] = useState<
-    ReadonlyMap<ToolUseId, string>
-  >(() => new Map());
   const prefixPendingRef = useRef(false);
   const toolUsesRef = useRef(snapshot.usesById);
-  const visibleToolIdsRef = useRef<readonly ToolUseId[]>([]);
   toolUsesRef.current = snapshot.usesById;
-  const visibleWorkspace = snapshot.activeTabId
-    ? toolWorkspaces.get(snapshot.activeTabId)
-    : undefined;
-  visibleToolIdsRef.current = visibleWorkspace
-    ? toolIdsInWorkspace(visibleWorkspace)
-    : snapshot.activeToolUseId
-      ? [snapshot.activeToolUseId]
-      : EMPTY_TOOL_USE_IDS;
 
   useEffect(() => {
     prefixPendingRef.current = prefixPending;
@@ -236,63 +237,6 @@ export function ToolSessionApp() {
     void client.hydrate().catch(() => undefined);
     return () => client.dispose();
   }, [client]);
-
-  useEffect(() => {
-    const terminalApi = window.yaade?.terminal;
-    if (!terminalApi?.getForegroundProcess) return;
-    let cancelled = false;
-
-    const tick = async () => {
-      const candidates = new Map<ToolUseId, string>();
-      for (const toolUseId of visibleToolIdsRef.current) {
-        const use = toolUsesRef.current.get(toolUseId);
-        if (
-          use?.kind === "terminal" &&
-          !use.archivedAt &&
-          isLive(use) &&
-          use.output.kind === "process" &&
-          use.output.ptyId
-        ) {
-          candidates.set(use.id, use.output.ptyId);
-        }
-      }
-      const entries = await Promise.all(
-        [...candidates].map(async ([toolUseId, ptyId]) => {
-          try {
-            return [
-              toolUseId,
-              await terminalApi.getForegroundProcess(ptyId),
-            ] as const;
-          } catch {
-            return [toolUseId, null] as const;
-          }
-        }),
-      );
-      if (cancelled) return;
-      const next = new Map<ToolUseId, string>();
-      for (const [toolUseId, processName] of entries) {
-        if (processName) next.set(toolUseId, processName);
-      }
-      setTerminalProcessNames((previous) => {
-        if (
-          previous.size === next.size &&
-          [...next].every(([id, name]) => previous.get(id) === name)
-        ) {
-          return previous;
-        }
-        return next;
-      });
-    };
-
-    void tick();
-    const handle = window.setInterval(() => void tick(), 2_000);
-    window.addEventListener("yaade:host-reconnected", tick);
-    return () => {
-      cancelled = true;
-      window.clearInterval(handle);
-      window.removeEventListener("yaade:host-reconnected", tick);
-    };
-  }, []);
 
   useEffect(() => {
     void window.yaade?.tools
@@ -365,28 +309,6 @@ export function ToolSessionApp() {
     ? (snapshot.useIdsByTab.get(activeTab.id) ?? EMPTY_TOOL_USE_IDS)
     : EMPTY_TOOL_USE_IDS;
   const useIds = activeTabToolIds;
-  const agentUseIds = useMemo(() => {
-    const ids: ToolUseId[] = [];
-    for (const sessionId of snapshot.visibleSessionIds) {
-      for (const id of snapshot.useIdsBySession.get(sessionId) ?? []) {
-        const use = snapshot.usesById.get(id);
-        if (!use) continue;
-        const detectedProvider = agentProviderFromTerminal(
-          terminalProcessNames.get(id),
-          runtimeTitles.get(id)?.title,
-        );
-        if (use.kind === "agent" || detectedProvider) ids.push(id);
-      }
-    }
-    return ids;
-  }, [
-    runtimeTitles,
-    snapshot.useIdsBySession,
-    snapshot.usesById,
-    snapshot.visibleSessionIds,
-    terminalProcessNames,
-  ]);
-  const agentLikeUseIds = useMemo(() => new Set(agentUseIds), [agentUseIds]);
   const sessionTitlesById = useMemo(() => {
     const titles = new Map<SessionId, string>();
     for (const session of visibleSessions) titles.set(session.id, session.title);
@@ -561,11 +483,11 @@ export function ToolSessionApp() {
       nextKind: ToolKind = "terminal",
       requestedProvider?: AgentProvider,
       launchContext?: ToolContextSelection,
-    ) => {
-      if (!activeSession || !activeTab) return;
+    ): Promise<ToolUse | undefined> => {
+      if (!activeSession || !activeTab) return undefined;
       if (nextKind === "editor") {
         setActionError("The in-browser editor is temporarily disabled.");
-        return;
+        return undefined;
       }
       setActionError(undefined);
       try {
@@ -577,7 +499,7 @@ export function ToolSessionApp() {
         const nextProject = launchContext?.project ?? nextProjects[0];
         if (!nextProject) {
           setActionError("No project available.");
-          return;
+          return undefined;
         }
         let provider: AgentProvider = "codex";
         if (nextKind === "agent") {
@@ -609,7 +531,9 @@ export function ToolSessionApp() {
                 }
               : nextKind === "git"
                 ? { _tag: "GitToolInput", kind: "git" }
-                : { _tag: "TerminalToolInput", kind: "terminal" };
+                : nextKind === "neovim"
+                  ? { _tag: "NeovimToolInput", kind: "neovim" }
+                  : { _tag: "TerminalToolInput", kind: "terminal" };
         const currentWorkspace =
           toolWorkspaces.get(activeTab.id) ??
           restoreToolWorkspace(activeTab.layoutJson, useIds);
@@ -647,6 +571,7 @@ export function ToolSessionApp() {
           if (created) client.store.replaceToolUse(created);
           await client.reconcileSession(activeSession.id);
           if (created) selectTool(created);
+          return created;
         } catch (error) {
           if (rollbackTab) {
             const rollback = window.yaade?.tools?.archiveTab?.({
@@ -660,6 +585,7 @@ export function ToolSessionApp() {
         }
       } catch (error) {
         setActionError(errorMessage(error));
+        return undefined;
       }
     },
     [
@@ -673,6 +599,43 @@ export function ToolSessionApp() {
       visibleTabs.length,
     ],
   );
+
+  const openLocationInNeovim = useCallback(
+    async (
+      source: ToolUse,
+      location: { readonly path: string; readonly line: number; readonly column: number },
+    ): Promise<void> => {
+      const current = [...snapshot.usesById.values()].find(
+        candidate =>
+          candidate.kind === "neovim" &&
+          candidate.tabId === activeTab?.id &&
+          candidate.context.checkoutPath === source.context.checkoutPath &&
+          !candidate.archivedAt &&
+          ["created", "starting", "running", "waiting"].includes(candidate.status),
+      )
+      if (current) {
+        selectTool(current)
+        openRegisteredNeovimLocation(current.id, location)
+        return
+      }
+      const checkout = source.context.checkoutKey === "main"
+        ? MainCheckout.make({ kind: "main" })
+        : ExistingWorktreeCheckout.make({
+            kind: "existing-worktree",
+            path: source.context.checkoutPath,
+            ...(source.context.branch ? { branch: source.context.branch } : {}),
+          })
+      const created = await createTool("neovim", undefined, {
+        project: source.context.project,
+        checkout,
+      })
+      if (created) {
+        queueNeovimLocation(created.id, location)
+        selectTool(created)
+      }
+    },
+    [activeTab?.id, createTool, selectTool, snapshot.usesById],
+  )
 
   const selectTab = useCallback(
     (tab: SessionTab) => {
@@ -732,16 +695,6 @@ export function ToolSessionApp() {
 
   const closeTab = useCallback(async (tab: SessionTab) => {
     try {
-      const searchIds = (client.store.getSnapshot().useIdsByTab.get(tab.id) ?? [])
-        .filter(id => client.store.getSnapshot().usesById.get(id)?.kind === "search");
-      if (searchIds.length > 0) {
-        const { disposeSearchNvimSessions } = await import(
-          "./renderers/search-neovim-sessions.js"
-        );
-        await Promise.all(
-          searchIds.map(id => disposeSearchNvimSessions(id)),
-        );
-      }
       await window.yaade?.tools?.archiveTab?.({
         _tag: "ArchiveSessionTab",
         tabId: tab.id,
@@ -768,12 +721,6 @@ export function ToolSessionApp() {
     async (action: "cancel" | "restart" | "archive", use: ToolUse) => {
       setActionError(undefined);
       try {
-        if (action === "archive" && use.kind === "search") {
-          const { disposeSearchNvimSessions } = await import(
-            "./renderers/search-neovim-sessions.js"
-          );
-          await disposeSearchNvimSessions(use.id);
-        }
         const api = window.yaade?.tools;
         const result =
           action === "cancel"
@@ -797,16 +744,6 @@ export function ToolSessionApp() {
   const closeSession = useCallback(
     async (sessionId: SessionId, mode: "keep-running" | "stop-tools") => {
       try {
-        const searchIds = (client.store.getSnapshot().useIdsBySession.get(sessionId) ?? [])
-          .filter(id => client.store.getSnapshot().usesById.get(id)?.kind === "search");
-        if (searchIds.length > 0) {
-          const { disposeSearchNvimSessions } = await import(
-            "./renderers/search-neovim-sessions.js"
-          );
-          await Promise.all(
-            searchIds.map(id => disposeSearchNvimSessions(id)),
-          );
-        }
         const archived = await window.yaade?.tools?.archiveSession?.({
           _tag: "ArchiveSession",
           sessionId,
@@ -1015,9 +952,9 @@ export function ToolSessionApp() {
         if (next) selectTab(next);
       }
       if (command === "tool.newTerminal") void createTool("terminal");
-      if (command === "tool.newAgent") void createTool("agent");
       if (command === "tool.newSearch") void createTool("search");
       if (command === "tool.newGit") void createTool("git");
+      if (command === "tool.newNeovim") void createTool("neovim");
       if (command === "session.switch") setSwitcherOpen(true);
       if (command === "tool.switch") setToolUseSwitcherOpen(true);
       if (command === "tool.next" || command === "tool.previous") {
@@ -1095,6 +1032,11 @@ export function ToolSessionApp() {
           "[data-yaade-terminal-input], [data-yaade-terminal-canvas]",
         ),
       );
+      const inNeovim = Boolean(
+        target?.closest(
+          "[data-yaade-neovim-input], [data-yaade-neovim-canvas]",
+        ),
+      );
       const activeWorkspaceZoomed = Boolean(
         activeSession &&
           activeTab ? toolWorkspaces.get(activeTab.id)?.zoomedPanelId : undefined,
@@ -1103,7 +1045,8 @@ export function ToolSessionApp() {
         event.key === "Escape" &&
         activeWorkspaceZoomed &&
         !inEditable &&
-        !inTerminal
+        !inTerminal &&
+        !inNeovim
       ) {
         event.preventDefault();
         event.stopPropagation();
@@ -1120,7 +1063,7 @@ export function ToolSessionApp() {
       ) {
         return;
       }
-      if (!prefixPendingRef.current && inEditable && !inTerminal) return;
+      if (!prefixPendingRef.current && inEditable && !inTerminal && !inNeovim) return;
 
       if (
         !prefixPendingRef.current &&
@@ -1138,15 +1081,26 @@ export function ToolSessionApp() {
       event.stopPropagation();
       clearPrefix();
       if (event.key === "Escape") return;
-      if (keyEventMatchesBinding(event, TOOL_SESSION_PREFIX) && inTerminal) {
+      if (
+        keyEventMatchesChordSecond(
+          event,
+          `${TOOL_SESSION_PREFIX} k`,
+          TOOL_SESSION_PREFIX,
+        ) &&
+        (inTerminal || inNeovim)
+      ) {
         const byte = prefixLiteralByte(TOOL_SESSION_PREFIX);
         if (byte) {
-          void window.yaade?.terminal?.write?.(
-            selected?.output.kind === "process"
-              ? (selected.output.ptyId ?? "")
-              : "",
-            byte,
-          );
+          if (inNeovim && selected?.kind === "neovim") {
+            sendLiteralNeovimInput(selected.id, byte);
+          } else {
+            void window.yaade?.terminal?.write?.(
+              selected?.output.kind === "process"
+                ? (selected.output.ptyId ?? "")
+                : "",
+              byte,
+            );
+          }
         }
         return;
       }
@@ -1184,12 +1138,6 @@ export function ToolSessionApp() {
     ) => {
       const latest = client.store.getSnapshot().usesById.get(use.id) ?? use;
       try {
-        if (latest.kind === "search") {
-          const { disposeSearchNvimSessions } = await import(
-            "./renderers/search-neovim-sessions.js"
-          );
-          await disposeSearchNvimSessions(latest.id);
-        }
         const updated = await window.yaade?.tools?.updateUseContext?.({
           _tag: "UpdateToolUseContext",
           toolUseId: latest.id,
@@ -1406,8 +1354,9 @@ export function ToolSessionApp() {
       <LazyMotion features={loadMotionFeatures}>
       <TooltipProvider delayDuration={400} skipDelayDuration={200}>
         <LayoutGroup id="yaade-tool-session">
+      <AmbientCanvas asChild>
       <div
-        className="flex h-full min-h-0 flex-col bg-background text-foreground"
+        className="flex h-full min-h-0 flex-col bg-transparent text-foreground"
         data-yaade-shell="tool-session"
         data-yaade-session-layout={appearanceSettings.sessionLayout}
         data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
@@ -1415,11 +1364,28 @@ export function ToolSessionApp() {
         <Suspense fallback={<SessionBootState />}>
           <ToolDndRoot handlers={toolTabDnd}>
             {!sidebarLayout ? (
+              <GlassSurface material="shell" asChild>
               <header
-                className="flex h-10 shrink-0 items-center gap-0.5 border-b border-border/80 bg-card px-1.5"
+                className="flex h-10 shrink-0 items-center gap-0 border-b border-border/80 bg-transparent px-1.5"
                 data-yaade-session-tabs=""
                 data-yaade-top-tabbar=""
               >
+                <ShortcutTooltip
+                  label="Settings"
+                  shortcut={toolSessionDirectShortcutFor("settings.show")}
+                  side="bottom"
+                >
+                  <Button
+                    type="button"
+                    size="icon-xs"
+                    variant="ghost"
+                    aria-label="Open settings"
+                    onClick={() => setSettingsOpen(true)}
+                    data-yaade-session-settings=""
+                  >
+                    <Settings />
+                  </Button>
+                </ShortcutTooltip>
                 <SessionSwitcher
                   open={switcherOpen}
                   onOpenChange={setSwitcherOpen}
@@ -1429,10 +1395,6 @@ export function ToolSessionApp() {
                   onClose={requestCloseSession}
                   onRename={(id, title) => void renameSession(id, title)}
                   toolCounts={toolCounts}
-                />
-                <span
-                  className="mx-1 h-6 w-px shrink-0 bg-border/70"
-                  aria-hidden
                 />
                 <SessionWindowTabStrip
                   tabs={visibleTabs}
@@ -1444,6 +1406,7 @@ export function ToolSessionApp() {
                   onReorder={ids => void reorderTabs(ids)}
                 />
               </header>
+              </GlassSurface>
             ) : null}
             <div
               className={cn(
@@ -1518,17 +1481,15 @@ export function ToolSessionApp() {
                     onReorder={(ids) => void reorderSessions(ids)}
                   />
                   <ToolUseTabStrip
-                    useIds={agentUseIds}
+                    useIds={useIds}
                     usesById={snapshot.usesById}
                     activeToolUseId={snapshot.activeToolUseId}
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
                     sessionTitlesById={sessionTitlesById}
-                    agentLikeUseIds={agentLikeUseIds}
-                    sectionLabel="Agents"
-                    emptyLabel="No agents yet"
-                    newToolKinds={["agent"]}
+                    sectionLabel="Tools"
+                    emptyLabel="No tools yet"
                     layout="single-sidebar"
                     collapsed={sidebarsCollapsed}
                     sidebarOrientation={sidebarOrientation}
@@ -1537,16 +1498,13 @@ export function ToolSessionApp() {
                     onSelect={selectTool}
                     onContextChange={updateToolContext}
                     onProviderChange={updateToolProvider}
-                    onAddAgent={(provider) =>
-                      void createTool("agent", provider)
-                    }
                     onAddKind={(kind) => void createTool(kind)}
                     onAddWithContext={(kind, project, checkout) =>
                       void createTool(kind, undefined, { project, checkout })
                     }
                     onClose={(use) => void runToolAction("archive", use)}
                     onRename={(use, title) => void renameToolUse(use, title)}
-                    onReorder={() => undefined}
+                    onReorder={(ids) => void reorderToolUses(ids)}
                     onToggleSidebar={toggleSidebars}
                   />
                 </MotionAside>
@@ -1631,6 +1589,9 @@ export function ToolSessionApp() {
                     workspace={activeToolWorkspace}
                     usesById={snapshot.usesById}
                     runtimeTitles={runtimeTitles}
+                    projects={projects}
+                    onContextChange={updateToolContext}
+                    onProviderChange={updateToolProvider}
                     tabDnd={toolTabDnd}
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
@@ -1673,6 +1634,7 @@ export function ToolSessionApp() {
                         visible
                         focused={focused}
                         onAction={(action) => void runToolAction(action, use)}
+                        onOpenLocation={(location) => openLocationInNeovim(use, location)}
                         onSearchChange={async (next, options) => {
                           const latest =
                             client.store.getSnapshot().usesById.get(use.id) ??
@@ -1739,21 +1701,15 @@ export function ToolSessionApp() {
                   }
                 >
                   <ToolUseTabStrip
-                    useIds={twoSidebarLayout ? agentUseIds : useIds}
+                    useIds={useIds}
                     usesById={snapshot.usesById}
                     activeToolUseId={snapshot.activeToolUseId}
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
-                    sessionTitlesById={
-                      twoSidebarLayout ? sessionTitlesById : undefined
-                    }
-                    agentLikeUseIds={
-                      twoSidebarLayout ? agentLikeUseIds : undefined
-                    }
-                    sectionLabel={twoSidebarLayout ? "Agents" : undefined}
-                    emptyLabel={twoSidebarLayout ? "No agents yet" : undefined}
-                    newToolKinds={twoSidebarLayout ? ["agent"] : undefined}
+                    sessionTitlesById={sessionTitlesById}
+                    sectionLabel="Tools"
+                    emptyLabel="No tools yet"
                     layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
                     collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
                     sidebarOrientation={sidebarOrientation}
@@ -1762,18 +1718,13 @@ export function ToolSessionApp() {
                     onSelect={selectTool}
                     onContextChange={updateToolContext}
                     onProviderChange={updateToolProvider}
-                    onAddAgent={(provider) =>
-                      void createTool("agent", provider)
-                    }
                     onAddKind={(kind) => void createTool(kind)}
                     onAddWithContext={(kind, project, checkout) =>
                       void createTool(kind, undefined, { project, checkout })
                     }
                     onClose={(use) => void runToolAction("archive", use)}
                     onRename={(use, title) => void renameToolUse(use, title)}
-                    onReorder={(ids) => {
-                      if (!twoSidebarLayout) void reorderToolUses(ids);
-                    }}
+                    onReorder={(ids) => void reorderToolUses(ids)}
                     onToggleSidebar={twoSidebarLayout ? toggleSidebars : undefined}
                   />
                 </div>
@@ -1822,6 +1773,7 @@ export function ToolSessionApp() {
           }
         />
       </div>
+      </AmbientCanvas>
         </LayoutGroup>
       </TooltipProvider>
       </LazyMotion>
@@ -1893,6 +1845,11 @@ function SelectedToolUse(props: {
   visible?: boolean;
   focused?: boolean;
   onAction: (action: "cancel" | "restart" | "archive") => void;
+  onOpenLocation: (location: {
+    readonly path: string;
+    readonly line: number;
+    readonly column: number;
+  }) => Promise<void>;
   onContextChange: (
     project: ProjectTarget,
     checkout: CheckoutTarget,
@@ -1929,6 +1886,8 @@ function SelectedToolUse(props: {
         onSearchChange={props.onSearchChange}
         onLoadMore={props.onLoadMore}
         onTitleChange={props.onTitleChange}
+        onAction={props.onAction}
+        onOpenLocation={props.onOpenLocation}
         visible={props.visible}
         focused={props.focused}
       />

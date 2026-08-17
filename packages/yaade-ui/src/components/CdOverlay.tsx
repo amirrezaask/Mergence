@@ -368,7 +368,7 @@ export function CdOverlay({
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
-        className="max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl backdrop-blur-none"
+        className="max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl"
         motion="instant"
         placement="quick-input"
         size="wide"

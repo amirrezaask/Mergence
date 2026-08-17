@@ -7,6 +7,7 @@ import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 const toolIcons = {
   agent: Bot,
   editor: FileCode2,
+  neovim: FileCode2,
   terminal: Terminal,
   search: Search,
   git: GitBranch,

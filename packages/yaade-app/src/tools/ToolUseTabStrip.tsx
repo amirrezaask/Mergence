@@ -29,33 +29,23 @@ import type {
   ToolUseId,
 } from "@yaade/rpc";
 import { ExistingWorktreeCheckout, MainCheckout } from "@yaade/rpc";
-import {
-  AgentProviderIcon,
-  SidebarShell,
-  cn,
-  yaadeMotion,
-} from "@yaade/ui";
+import { SidebarShell, cn, yaadeMotion } from "@yaade/ui";
 import {
   Button,
   DropdownMenu,
   DropdownMenuContent,
   DropdownMenuItem,
   DropdownMenuLabel,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
   Input,
   Popover,
   PopoverAnchor,
   PopoverContent,
   Separator,
-  Spinner,
 } from "@yaade/ui/primitives";
 import {
   ToolContextControls,
   type AgentProvider,
-  type ProviderOption,
   type ToolContextSelection,
 } from "./ToolContextControls.js";
 import {
@@ -88,19 +78,11 @@ function toolStatusClass(status: ToolUse["status"]): string {
 const toolIcon = {
   agent: Bot,
   editor: FileCode2,
+  neovim: FileCode2,
   terminal: TerminalIcon,
   search: Search,
   git: GitBranch,
 } satisfies Record<ToolKind, typeof Bot>;
-
-const providerLabels = {
-  claude: "Claude",
-  codex: "Codex",
-  cursor: "Cursor",
-  opencode: "OpenCode",
-  grok: "Grok",
-  pi: "Pi",
-} satisfies Record<AgentProvider, string>;
 
 function checkoutTargetForUse(use: ToolUse): CheckoutTarget {
   if (use.context.checkoutKey === "main") {
@@ -162,6 +144,8 @@ function toolKindLabel(kind: ToolKind): string {
       return "Search";
     case "editor":
       return "Editor";
+    case "neovim":
+      return "Neovim";
     case "git":
       return "Git";
   }
@@ -189,9 +173,7 @@ export type ToolUseTabStripProps = {
     use: ToolUse,
     provider: AgentProvider,
   ) => Promise<void>;
-  readonly onAddAgent: (provider: AgentProvider) => void;
   readonly onAddKind: (kind: ToolKind) => void;
-  readonly newToolKinds?: readonly ToolKind[];
   readonly onAddWithContext: (
     kind: ToolKind,
     project: ProjectTarget,
@@ -204,7 +186,6 @@ export type ToolUseTabStripProps = {
   readonly sectionLabel?: string;
   readonly emptyLabel?: string;
   readonly sessionTitlesById?: ReadonlyMap<SessionId, string>;
-  readonly agentLikeUseIds?: ReadonlySet<ToolUseId>;
   readonly dockable?: boolean;
   readonly dockableUseIds?: ReadonlySet<ToolUseId>;
   readonly layout?: ToolUseNavigationLayout;
@@ -224,49 +205,19 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   );
   const [launchContext, setLaunchContext] =
     useState<ToolContextSelection | null>(null);
-  const [agentMenuOpen, setAgentMenuOpen] = useState(false);
   const [quickMenuOpen, setQuickMenuOpen] = useState(false);
-  const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
-  const [loadingProviders, setLoadingProviders] = useState(false);
   const layout = props.layout ?? "tabs";
   const compactTabs = layout === "tabs";
   const isTwoSidebar = layout === "two-sidebars";
   const isSingleSidebar = layout === "single-sidebar";
   const isSidebar = isTwoSidebar || isSingleSidebar;
-  const newToolKinds = props.newToolKinds ?? [
-    "agent",
-    "terminal",
-    "search",
-    "git",
-  ];
 
   useEffect(() => {
     if (!props.collapsed) return;
     setContextPopoverId(null);
     setLaunchPopoverKind(null);
     setLaunchContext(null);
-    setAgentMenuOpen(false);
   }, [props.collapsed]);
-
-  useEffect(() => {
-    if (!agentMenuOpen && !quickMenuOpen) return;
-    let cancelled = false;
-    setLoadingProviders(true);
-    void window.yaade?.agents
-      ?.listProviders?.()
-      .then((next) => {
-        if (!cancelled) setProviders(next ?? []);
-      })
-      .catch(() => {
-        if (!cancelled) setProviders([]);
-      })
-      .finally(() => {
-        if (!cancelled) setLoadingProviders(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [agentMenuOpen, quickMenuOpen]);
 
   const finishRename = (use: ToolUse) => {
     const next = draftTitle.trim();
@@ -276,7 +227,6 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
 
   const openLaunchPopover = (kind: ToolKind) => {
     setContextPopoverId(null);
-    setAgentMenuOpen(false);
     const activeUse = props.activeToolUseId
       ? props.usesById.get(props.activeToolUseId)
       : undefined;
@@ -308,7 +258,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
   const renderToolUse = (id: ToolUseId, index: number) => {
     const use = props.usesById.get(id);
     if (!use) return null;
-    const Icon = props.agentLikeUseIds?.has(id) ? Bot : toolIcon[use.kind];
+    const Icon = toolIcon[use.kind];
     const active = id === props.activeToolUseId;
     const openInWorkspace = props.openToolUseIds?.has(id) ?? active;
     const dockable =
@@ -353,11 +303,6 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             data-open-in-workspace={openInWorkspace ? "true" : undefined}
             data-yaade-tool-use={id}
             data-yaade-tool-pane-tab=""
-            data-yaade-detected-agent={
-              use.kind !== "agent" && props.agentLikeUseIds?.has(id)
-                ? ""
-                : undefined
-            }
             data-yaade-tool-index={jump}
             draggable={!dockable && !props.dockable && editingId !== id}
             onDragStart={() => {
@@ -400,8 +345,8 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
               isSidebar
                 ? "min-h-14 w-full min-w-0 gap-2 rounded-md border border-transparent px-2 py-1.5 hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-44"
                 : cn(
-                    "h-full min-w-36 max-w-72 gap-1.5 rounded-lg border border-transparent px-2 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 data-[active=true]:border-border/80 data-[active=true]:bg-secondary/70 data-[active=true]:shadow-sm",
-                    compactTabs && "min-w-40",
+                    "h-full min-w-28 max-w-56 gap-1 rounded-none border border-transparent px-1.5 focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/50 data-[active=true]:border-border/80 data-[active=true]:bg-secondary/70 data-[active=true]:shadow-sm",
+                    compactTabs && "min-w-28",
                   ),
             )}
           >
@@ -634,6 +579,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     "terminal",
     "search",
     "git",
+    "neovim",
   ];
 
   const newToolActions = (
@@ -646,95 +592,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       role="toolbar"
       aria-label={props.sectionLabel ? `${props.sectionLabel} actions` : "New tool"}
     >
-      {newToolKinds.includes("agent") ? (
-        <Popover
-          open={!props.collapsed && launchPopoverKind === "agent"}
-          onOpenChange={(open) => {
-            if (!open && launchPopoverKind === "agent") {
-              setLaunchPopoverKind(null);
-              setLaunchContext(null);
-            }
-          }}
-        >
-          <PopoverAnchor asChild>
-            <span className="inline-flex">
-              <DropdownMenu
-                open={!props.collapsed && agentMenuOpen}
-                onOpenChange={setAgentMenuOpen}
-              >
-                <ShortcutTooltip
-                  label="New Agent"
-                  shortcut={toolSessionShortcutFor("tool.newAgent")}
-                  side={launchSide}
-                >
-                  <DropdownMenuTrigger asChild>
-                    <Button
-                      size={isSidebar ? "icon-lg" : "icon-xs"}
-                      variant="ghost"
-                      className={cn(
-                        isSingleSidebar && "flex-1",
-                        isSidebar && "[&_svg]:size-5",
-                      )}
-                      aria-label="New Agent"
-                      aria-haspopup="menu"
-                      data-yaade-new-tool="agent"
-                      onContextMenu={(event) => {
-                        event.preventDefault();
-                        event.stopPropagation();
-                        openLaunchPopover("agent");
-                      }}
-                    >
-                      <Bot />
-                    </Button>
-                  </DropdownMenuTrigger>
-                </ShortcutTooltip>
-                <DropdownMenuContent
-                  align="end"
-                  side={launchSide}
-                  className="w-56"
-                  data-yaade-agent-provider-menu
-                >
-                  <DropdownMenuLabel>
-                    Choose an agent provider
-                  </DropdownMenuLabel>
-                  {loadingProviders ? (
-                    <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-                      <Spinner className="size-3.5" aria-hidden />
-                      Checking available providers…
-                    </div>
-                  ) : providers.length > 0 ? (
-                    providers.map((option) => (
-                      <DropdownMenuItem
-                        key={option.provider}
-                        disabled={!option.available}
-                        data-yaade-agent-provider={option.provider}
-                        onSelect={() => props.onAddAgent(option.provider)}
-                      >
-                        <AgentProviderIcon agent={option.provider} />
-                        <span className="min-w-0 flex-1 truncate">
-                          {providerLabels[option.provider]}
-                        </span>
-                        {!option.available ? (
-                          <span className="text-2xs text-muted-foreground">
-                            unavailable
-                          </span>
-                        ) : null}
-                      </DropdownMenuItem>
-                    ))
-                  ) : (
-                    <div className="px-2 py-2 text-xs text-muted-foreground">
-                      No providers found.
-                    </div>
-                  )}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            </span>
-          </PopoverAnchor>
-          {renderLaunchPopover("agent")}
-        </Popover>
-      ) : null}
-
-      {contextLaunchKinds.filter((kind) => newToolKinds.includes(kind)).map((kind) => {
+      {contextLaunchKinds.map((kind) => {
         const Icon = toolIcon[kind];
         const label = `New ${toolKindLabel(kind)}`;
         const shortcut = toolSessionShortcutFor(
@@ -742,8 +600,8 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             ? "tool.newTerminal"
             : kind === "search"
               ? "tool.newSearch"
-              : kind === "editor"
-                ? "tool.newEditor"
+              : kind === "neovim"
+                ? "tool.newNeovim"
                 : "tool.newGit",
         );
         return (
@@ -853,67 +711,22 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         data-yaade-new-tool-menu-content=""
       >
         <DropdownMenuLabel>New tool</DropdownMenuLabel>
-        {newToolKinds.includes("agent") ? (
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <Bot />
-              <span>Agent</span>
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-56">
-              <DropdownMenuLabel>Choose a provider</DropdownMenuLabel>
-              {loadingProviders ? (
-                <div className="flex items-center gap-2 px-2 py-2 text-xs text-muted-foreground">
-                  <Spinner className="size-3.5" aria-hidden />
-                  Checking providers…
-                </div>
-              ) : providers.length > 0 ? (
-                providers.map(option => (
-                  <DropdownMenuItem
-                    key={option.provider}
-                    disabled={!option.available}
-                    data-yaade-agent-provider={option.provider}
-                    onSelect={() => {
-                      setQuickMenuOpen(false)
-                      props.onAddAgent(option.provider)
-                    }}
-                  >
-                    <AgentProviderIcon agent={option.provider} />
-                    <span className="min-w-0 flex-1 truncate">
-                      {providerLabels[option.provider]}
-                    </span>
-                    {!option.available ? (
-                      <span className="text-2xs text-muted-foreground">
-                        unavailable
-                      </span>
-                    ) : null}
-                  </DropdownMenuItem>
-                ))
-              ) : (
-                <div className="px-2 py-2 text-xs text-muted-foreground">
-                  No providers found.
-                </div>
-              )}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
-        ) : null}
-        {newToolKinds
-          .filter(kind => kind !== "agent")
-          .map(kind => {
-            const Icon = toolIcon[kind]
-            return (
-              <DropdownMenuItem
-                key={kind}
-                data-yaade-new-tool-kind={kind}
-                onSelect={() => {
-                  setQuickMenuOpen(false)
-                  props.onAddKind(kind)
-                }}
-              >
-                <Icon />
-                <span>{toolKindLabel(kind)}</span>
-              </DropdownMenuItem>
-            )
-          })}
+        {contextLaunchKinds.map(kind => {
+          const Icon = toolIcon[kind]
+          return (
+            <DropdownMenuItem
+              key={kind}
+              data-yaade-new-tool-kind={kind}
+              onSelect={() => {
+                setQuickMenuOpen(false)
+                props.onAddKind(kind)
+              }}
+            >
+              <Icon />
+              <span>{toolKindLabel(kind)}</span>
+            </DropdownMenuItem>
+          )
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
   )
@@ -926,7 +739,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         data-yaade-tool-tabs-layout="header"
       >
         <nav
-          className="flex h-full min-w-0 flex-1 items-center gap-1 overflow-x-auto px-1"
+          className="flex h-full min-w-0 flex-1 items-center gap-0 overflow-x-auto px-0"
           aria-label="Tool uses"
           role="tablist"
           onKeyDown={handleToolTabKeyDown}
@@ -1038,7 +851,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
       data-yaade-tool-tabs
     >
       <nav
-        className="flex h-full min-w-0 flex-1 items-stretch gap-0.5 overflow-x-auto px-1 py-1"
+        className="flex h-full min-w-0 flex-1 items-stretch gap-0 overflow-x-auto px-0 py-0.5"
         aria-label="Tool uses"
         role="tablist"
         onKeyDown={handleToolTabKeyDown}

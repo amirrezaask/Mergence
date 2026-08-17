@@ -466,13 +466,30 @@ export function ProjectSearchPanel({
             onChange={event => onQueryChange(event.target.value)}
             placeholder="Search project…"
             aria-label="Search project"
-            className="h-9 pr-[20rem] pl-9 font-mono text-sm"
+            className={cn(
+              "h-9 pl-9 font-mono text-sm",
+              loading || loadingMore || results.length > 0
+                ? "pr-[30rem]"
+                : "pr-[20rem]",
+            )}
             data-yaade-project-search-input=""
           />
           <div
-            className="absolute inset-y-1 right-1 flex max-w-[calc(100%-3rem)] items-center gap-0.5 overflow-x-auto bg-card pl-1 [scrollbar-width:none]"
+            className="absolute inset-y-1 right-1 flex max-w-[calc(100%-3rem)] items-center gap-0.5 overflow-x-auto bg-transparent pl-1 [scrollbar-width:none]"
             data-yaade-project-search-options=""
           >
+            {loading || loadingMore ? <Spinner className="size-3.5 shrink-0" /> : null}
+            {results.length > 0 ? (
+              <span
+                className="shrink-0 whitespace-nowrap px-1 text-xs text-muted-foreground tabular-nums"
+                role="status"
+              >
+                {results.length}
+                {truncated ? "+" : ""} match{results.length === 1 ? "" : "es"} in{" "}
+                {buckets.length}
+                {truncated ? "+" : ""} file{buckets.length === 1 ? "" : "s"}
+              </span>
+            ) : null}
             {(
               [
                 ["Case", caseSensitive, () => patchOptions({ caseSensitive: !caseSensitive })],
@@ -507,17 +524,6 @@ export function ProjectSearchPanel({
               onValueChange={value => patchOptions({ exclude: parseGlobs(value) })}
             />
           </div>
-        </div>
-        <div className="flex h-4 items-center">
-          {loading || loadingMore ? <Spinner className="size-3.5" /> : null}
-          {results.length > 0 ? (
-            <span className="ml-auto text-xs text-muted-foreground" role="status">
-              {results.length}
-              {truncated ? "+" : ""} match{results.length === 1 ? "" : "es"} in{" "}
-              {buckets.length}
-              {truncated ? "+" : ""} file{buckets.length === 1 ? "" : "s"}
-            </span>
-          ) : null}
         </div>
       </div>
 

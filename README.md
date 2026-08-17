@@ -26,23 +26,42 @@ compatibility; the primary product surface is the Session shell.
 - Every Session has one or more Windows (tabs). Create one with the `+` beside the Window tab strip or `Mod-k n`; switch with `Mod-k h` / `Mod-k l`.
 - Each Window owns a host-persisted tiled layout: split geometry, ratios, focus, zoom, and ToolUse placement survive reloads and reconnects.
 - Every non-empty pane owns exactly one ToolUse. Creating a tool from a shortcut fills an empty pane or splits the focused pane; it never replaces the visible tool. A seventh pane opens in a new Window rather than hiding an existing ToolUse.
-- Drag anywhere on a pane's non-interactive title bar to move it. Center drops swap panes; edge drops split. The translucent pane chrome keeps split, zoom, and close controls available on hover or keyboard focus.
+- Drag anywhere on a pane's non-interactive title bar to move it. Center drops swap panes; edge drops split. The translucent pane chrome keeps split, zoom, and close controls available on hover or keyboard focus. Use the down arrow before a pane title to change that ToolUse's project or worktree.
 - Closing a ToolUse archives it and stops its process. Closing a Window archives its ToolUses; closing a Session with live tools offers Keep running / Stop tools / Cancel.
-- Project, worktree, and provider settings belong to each ToolUse. ToolUse titles stay live: Search uses its query, Agent uses its first prompt then terminal title, and Terminal follows its terminal title.
+- Project and worktree settings belong to each ToolUse. ToolUse titles stay live: Search uses its query and Terminal follows its terminal title. Agent CLIs run inside TerminalTool rather than as a separate tool.
 - Archived Sessions restore from the Session switcher.
 
 ### Tools (v1)
 
 | Tool             | Behavior                                                                                                                      |
 | ---------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| **AgentTool**    | Launches a supported agent CLI in a PTY                                                                                       |
-| **TerminalTool** | Launches a shell in a PTY                                                                                                     |
-| **SearchTool**   | Host-owned project content search with durable per-file context cards; opening a hit reuses one Neovim terminal pane for that SearchTool and opens the absolute file path at the selected line |
+| **TerminalTool** | Launches a shell or supported agent CLI in a PTY                                                                                |
+| **SearchTool**   | Host-owned project content search with durable per-file context cards; opening a hit reuses or creates a standalone Neovim ToolUse in the same checkout and opens the absolute file path at the selected line |
+| **NeovimTool**   | Host-owned Neovim server rendered as a direct WebGL2 ext-linegrid surface; the process survives browser reloads, pane retile, and Window switches while the ToolUse remains live |
 | **GitHistoryTool** | Opens the active checkout's virtualized commit history, including uncommitted changes and commit diffs |
 
-Git History is an interactive repository surface backed by the host's existing native Git API; it does not launch a PTY. Agent and Terminal share the existing PTY path (`terminal:data` binary frames,
+Git History is an interactive repository surface backed by the host's existing native Git API; it does not launch a PTY. Terminal shells and agent CLIs share the existing PTY path (`terminal:data` binary frames,
 attach replay, flow control). Search streams bounded result batches via
-`tools:event` and persists rows for reconnect.
+`tools:event` and persists rows for reconnect. Neovim requires version 0.10 or
+newer (override the executable with `YAADE_NVIM_BIN` for tests), runs one
+headless server per ToolUse, and sends redraw traffic over the dedicated binary
+`/ws/neovim/<tool-use>?generation=<n>` channel. The browser uses WebGL2 for the
+final surface; it never falls back to Canvas 2D. Closing a Neovim ToolUse stops
+its server; browser reloads preserve it, while a host restart marks it
+`disconnected`.
+
+Neovim v1 uses the normal single grid (`ext_multigrid=false`) and preserves the
+user's Neovim configuration, plugins, keymaps, and clipboard provider. It
+requires WebGL2; there is no Canvas display fallback. Temporary channel loss
+reconnects the browser lease without replacing the host process, while WebGL,
+API, protocol, and process failures expose category-specific recovery actions.
+Search locations use one-based UTF-16 character columns at the app boundary and
+are converted to Neovim's UTF-8 byte columns before the cursor is placed.
+Visual-selection copy requires browser clipboard permission and reports a
+non-blocking notice when permission is unavailable. The production renderer
+uses bounded retained packets and atlas resources (up to four instanced draws);
+its local benchmark budgets are 300/500/750 ms for first paint at median/p95/p99,
+12/24/40 ms for input-to-paint, and 8/16/24 ms for 10k-cell renderer CPU.
 
 Terminal panes use a pinned `libghostty-vt` WebAssembly parser with a Canvas
 renderer. PTYs start independently of font/WASM setup, all panes in the visible
@@ -56,7 +75,7 @@ Each ToolUse picks Main, an existing worktree, or an isolated branch worktree
 under `~/.yaade/worktrees/`. Two ToolUses in one Session may target different
 projects and worktrees. Branches never switch Main as a side effect.
 
-### Agent CLIs (PTY)
+### Agent CLIs in TerminalTool (PTY)
 
 | Agent    | Binary         |
 | -------- | -------------- |
@@ -78,6 +97,7 @@ to send literal `^K` (kill-line) into a terminal.
 | ---------------- | ------------------------------------------- |
 | `Mod-k t`        | New Terminal                                |
 | `Mod-k s`        | New Search                                  |
+| `Mod-k e`        | New Neovim                                 |
 | `Mod-k g`        | New Git History                             |
 | `Mod-k b`        | Collapse or restore the navigation sidebar |
 | `Mod-k j` / `k`  | Next / previous ToolUse                     |
@@ -102,13 +122,16 @@ Direct and context-local:
 Settings applies one palette consistently to the app shell, Git states,
 terminals, and every ToolUse. The default appearance uses rounded, translucent
 materials with adaptive blur, luminous edges, and reduced-transparency
-fallbacks. Bundled families also include all four Catppuccin flavors, Tokyo
+fallbacks. Appearance settings can switch between the default Liquid glass
+chrome and a classic opaque treatment without changing layout or keyboard
+behavior. A reduced-transparency option keeps the same geometry while removing
+blur and translucent fills. Bundled families also include all four Catppuccin flavors, Tokyo
 Night (Night, Storm, Moon, Day), Rosé Pine (main, Moon, Dawn), and Ayu (Dark,
 Mirage, Light). Geist Mono is the bundled default; the font picker can select
 another installed monospace face for terminals and code UI text. Tool pane
 headers use a compact monospace process glyph and title with split and close
-controls. File navigation uses Neovim in a terminal pane; browser-based file
-editing is currently unavailable.
+controls. File navigation from Search opens the standalone Neovim ToolUse in the active
+Window; browser-based Monaco editing remains unavailable.
 
 ---
 
@@ -124,10 +147,14 @@ pnpm test:bench
 pnpm build
 ```
 
+The internal material gallery is available at `/__yaade/glass-gallery` while
+working on the chrome system.
+
 Focused Tool Session E2E:
 
 ```bash
 pnpm exec playwright test --project=web-e2e tests/electron/tool-sessions.electron.spec.ts
+pnpm exec playwright test --project=web-e2e tests/electron/neovim-tool.electron.spec.ts
 ```
 
 ---

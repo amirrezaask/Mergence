@@ -596,16 +596,7 @@ async function handleTools(
         args[0],
         "archive tool use",
       );
-      const use = store.archiveToolUse(command.toolUseId);
-      runtime.events.emit("tools:event", [
-        ToolUseArchived.make({
-          eventId: `evt-${Date.now()}`,
-          toolUseId: use.id,
-          revision: use.revision,
-          occurredAt: use.updatedAt,
-        }),
-      ]);
-      return use;
+      return requiredToolService(runtime).archiveUse(command.toolUseId);
     }
     case "tools:renameUse": {
       const toolUseId = args[0];

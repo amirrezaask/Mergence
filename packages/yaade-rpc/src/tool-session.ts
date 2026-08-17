@@ -26,6 +26,7 @@ export const ToolKind = Schema.Literal(
   "search",
   "git",
   "editor",
+  "neovim",
 );
 export type ToolKind = Schema.Schema.Type<typeof ToolKind>;
 
@@ -145,12 +146,19 @@ export class EditorToolInput extends Schema.TaggedClass<EditorToolInput>()(
   { kind: Schema.Literal("editor") },
 ) {}
 
+/** Neovim is a host-owned server surfaced through a browser UI lease. */
+export class NeovimToolInput extends Schema.TaggedClass<NeovimToolInput>()(
+  "NeovimToolInput",
+  { kind: Schema.Literal("neovim") },
+) {}
+
 export const ToolUseInput = Schema.Union(
   AgentToolInput,
   TerminalToolInput,
   SearchToolInput,
   GitToolInput,
   EditorToolInput,
+  NeovimToolInput,
 );
 export type ToolUseInput = Schema.Schema.Type<typeof ToolUseInput>;
 
@@ -208,11 +216,24 @@ export class EditorToolOutput extends Schema.TaggedClass<EditorToolOutput>()(
   { kind: Schema.Literal("editor") },
 ) {}
 
+export class NeovimToolOutput extends Schema.TaggedClass<NeovimToolOutput>()(
+  "NeovimToolOutput",
+  {
+    kind: Schema.Literal("neovim"),
+    serverInstanceId: Schema.String,
+    generation: Schema.Number.pipe(Schema.int(), Schema.greaterThan(0)),
+    processState: ProcessState,
+    version: Schema.optional(Schema.String),
+    exitCode: Schema.optional(Schema.Number),
+  },
+) {}
+
 export const ToolUseOutput = Schema.Union(
   ProcessToolOutput,
   SearchToolOutput,
   GitToolOutput,
   EditorToolOutput,
+  NeovimToolOutput,
 );
 export type ToolUseOutput = Schema.Schema.Type<typeof ToolUseOutput>;
 
@@ -279,9 +300,13 @@ export const ToolUse = ToolUseRecord.pipe(
       (value.kind === "editor" &&
         value.input.kind === "editor" &&
         value.output.kind === "editor") ||
+      (value.kind === "neovim" &&
+        value.input.kind === "neovim" &&
+        value.output.kind === "neovim") ||
       (value.kind !== "search" &&
         value.kind !== "git" &&
         value.kind !== "editor" &&
+        value.kind !== "neovim" &&
         value.input.kind === value.kind &&
         value.output.kind === "process"),
     { message: () => "ToolUse kind does not match its input and output" },

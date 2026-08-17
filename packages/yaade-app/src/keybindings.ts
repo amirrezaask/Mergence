@@ -72,6 +72,7 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
     { key: "t", command: "tool.newTerminal", desc: "New Terminal", group: "open" },
     { key: "s", command: "tool.newSearch", desc: "New Search", group: "open" },
     { key: "g", command: "tool.newGit", desc: "New Git", group: "open" },
+    { key: "e", command: "tool.newNeovim", desc: "New Neovim", group: "open" },
     { key: "j", command: "tool.next", desc: "Next tool", group: "move" },
     { key: "k", command: "tool.previous", desc: "Previous tool", group: "move" },
     { key: "l", command: "tab.next", desc: "Next tab", group: "move" },

@@ -11,6 +11,15 @@ import {
   readTerminalViewportY,
   scrollTerminalLines,
 } from "@yaade/ui/terminal-registry"
+import {
+  focusRegisteredNeovim,
+  readNeovimCursor,
+  readNeovimDiagnostics,
+  readNeovimRegistryDiagnostics,
+  readNeovimDims,
+  readNeovimText,
+  dispatchNeovimTestInput,
+} from "@yaade/ui/neovim"
 
 export type HqCounts = {
   projects: number
@@ -98,6 +107,15 @@ export function basicAgentBridge(input: {
     scrollTerminalLines: (amount, tabId) => scrollTerminalLines(amount, tabId),
     focusTerminal: tabId => focusRegisteredTerminal(tabId),
     findTerminalText: (needle, tabId) => findTerminalBufferMatch(needle, tabId),
+    getNeovimText: toolUseId => readNeovimText(toolUseId),
+    getNeovimCursor: toolUseId => readNeovimCursor(toolUseId),
+    getNeovimDims: toolUseId => readNeovimDims(toolUseId),
+    getNeovimDiagnostics: toolUseId => readNeovimDiagnostics(toolUseId),
+    getNeovimRegistryDiagnostics: () => readNeovimRegistryDiagnostics(),
+    focusNeovim: toolUseId => focusRegisteredNeovim(toolUseId),
+    async dispatchNeovimInput(toolUseId, value) {
+      return dispatchNeovimTestInput(toolUseId, value)
+    },
     createProjectSession: input.createProjectSession,
     listProjectSessions: input.listProjectSessions,
     openProjectSession: input.openProjectSession,

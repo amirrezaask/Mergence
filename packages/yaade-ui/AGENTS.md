@@ -7,6 +7,10 @@ Unified UI primitives + shells for every YAADE surface. Apple-inspired liquid ma
 - `@yaade/ui` — high-level shells (overlays, dialogs, panels, tabs, editor host).
 - `@yaade/ui/primitives` — shadcn primitives. Live chrome is composed from `Button`, `Card`, `Item`, `Badge`, `Tabs`, `Dialog`, `Popover`, `Command`, `Input`, `Checkbox`, `Empty`, `Skeleton`, `Alert`, `Separator`, `Tooltip`, and `Sonner`.
 - `@yaade/ui/styles.css` — theme tokens + globals.
+- `@yaade/ui/neovim` — imperative WebGL2 Neovim surface, bounded registry,
+  Msgpack-RPC, ext_linegrid model, glyph atlas, and renderer diagnostics.
+  `NeovimSurface` owns the browser UI lease only; it never starts a host
+  process. `NeovimToolUse` lifecycle remains in `@yaade/host-server`.
 
 **Apps must never import shadcn primitives from `@yaade/ui/src/components/ui/*` directly.** Import from `@yaade/ui/primitives`.
 
@@ -127,6 +131,38 @@ Only path for destructive confirms. Never `window.confirm`.
 ### Context menus
 
 `createContextMenuHost()` + `dispatchContextMenuAt()` from `@yaade/ui`. Used by `EditorContextMenu` (via `registerEditorContextMenuHandler` / `showEditorContextMenuAt`).
+
+## Neovim surface rules
+
+The Neovim surface is a retained WebGL2 text plane, not a DOM text list or a
+Canvas 2D display fallback. Canvas/OffscreenCanvas is allowed only for alpha
+glyph rasterization before upload to the bounded texture-array atlas. Keep
+redraw text, cursor state, highlights, and RPC bytes in the imperative model;
+never put them in React state or generic store snapshots. Every WebGL color
+comes from Neovim `hl_attr_define` / `default_colors_set` RGB, with `YaadeTheme`
+sRGB values only as the fallback when Neovim omits a color. Every font/metric
+comes from `--font-mono` plus the existing editor line-height token. Glyphs are
+left-aligned to the cell origin and sit on one shared baseline.
+
+The host owns one Neovim process per ToolUse. Browser surfaces may mount,
+unmount, reconnect, or be retiled without spawning or stopping it. Use the
+bounded surface/location registry for Search → Neovim navigation, and keep
+location requests structured (`nvim_cmd` arguments, never interpolated Ex
+commands). Preserve `data-yaade-neovim-*` hooks and renderer diagnostics for
+Playwright; inspect model text rather than pixels in tests.
+
+The retained packet layout is a fixed 32-byte cell record: packed background,
+foreground, and special RGBA colors; atlas x/y/width/height; layer/span/flags;
+and signed glyph bearings. The model owns typed cell arrays and dirty rows;
+the renderer owns packet capacity and uploads contiguous dirty row ranges. A
+full packet upload is required after an atlas rebuild or style/metric change;
+otherwise do not rebuild or upload untouched rows. Atlas allocation targets
+8 MiB per surface (16 MiB hard cap), releases CPU bitmaps after upload, and
+uses one reusable raster context. Connection generations/epochs, focus,
+clipboard, input, and renderer context restoration remain imperative surface
+state. Profile with the production benchmark before changing this hot path;
+report raw p50/p95/p99, stage CPU, bytes uploaded, draw calls, atlas/model
+bytes, and idle-frame behavior.
 
 ## Surface composition
 
