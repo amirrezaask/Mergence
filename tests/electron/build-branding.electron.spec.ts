@@ -1,13 +1,10 @@
 import { expect, test } from "@playwright/test"
-import { launchJet, waitForHome, waitForMux } from "./_launch.js"
+import { launchJet } from "./_launch.js"
 
 test.describe("release build branding", () => {
   test("serves release favicon and omits the DEV badge", async () => {
-    const { app, page } = await launchJet()
+    const { app, page } = await launchJet({ withTerminal: false })
     try {
-      await waitForHome(page)
-      await waitForMux(page)
-
       const branding = await page.evaluate(() => {
         const icon = document.querySelector('link[rel="icon"]')?.getAttribute("href")
         const apple = document

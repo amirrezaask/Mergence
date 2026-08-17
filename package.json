@@ -11,7 +11,7 @@
     "test:e2e": "playwright test --project=web-e2e",
     "typecheck": "turbo run typecheck",
     "lint": "oxlint --config oxlint.config.mjs --disable-nested-config .",
-    "test": "pnpm --filter yaade test && pnpm --filter @yaade/rpc test && pnpm --filter @yaade/shared test && pnpm --filter @yaade/panels test && pnpm --filter @yaade/agent-telemetry test && pnpm --filter @yaade/ui test && pnpm --filter @yaade/workspace test && pnpm --filter @yaade/node-host test && pnpm --filter @yaade/host-client test && pnpm --filter @yaade/app test && pnpm --filter @yaade/host-server test",
+    "test": "turbo run test --concurrency=3",
     "test:bench": "playwright test --project=bench",
     "test:neovim-compat": "pnpm --filter @yaade/host-server test:neovim-compat",
     "extract:vscode-keybindings": "node scripts/extract-vscode-mac-keybindings.mjs && node scripts/generate-default-keybindings.mjs",

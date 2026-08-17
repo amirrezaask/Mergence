@@ -68,7 +68,7 @@ test("session-switch chrome updates within budget", async () => {
           const measure = performance.getEntriesByName("yaade:session-switch").at(-1)
           return measure?.duration ?? Date.now()
         })
-        return typeof duration === "number" && duration < 10_000 ? duration : Date.now() - started
+        return duration < 10_000 ? duration : Date.now() - started
       },
     })
     assertBudget(result)
@@ -126,7 +126,7 @@ test("tool-switch viewport updates within budget", async () => {
           const measure = performance.getEntriesByName("yaade:tool-switch").at(-1)
           return measure?.duration ?? Date.now()
         })
-        return typeof duration === "number" && duration < 10_000 ? duration : Date.now() - started
+        return duration < 10_000 ? duration : Date.now() - started
       },
     })
     assertBudget(result)
@@ -160,7 +160,7 @@ test("search-first-result stays within budget", async () => {
       })
       await window.__yaadeAgent!.selectToolUse?.(created.id)
     })
-    await page.waitForSelector('[data-yaade-list-panel="tool-search-results"]', { timeout: 30_000 })
+    await page.waitForSelector('[data-yaade-list-panel="project-search"]', { timeout: 30_000 })
     const result = await runBench({
       name: "search-first-result",
       warmup: 1,
@@ -187,7 +187,7 @@ test("search-first-result stays within budget", async () => {
           })
         })
         await page.waitForFunction(() => {
-          const panel = document.querySelector('[data-yaade-list-panel="tool-search-results"]')
+          const panel = document.querySelector('[data-yaade-list-panel="project-search"]')
           return [...panel?.querySelectorAll("[data-yaade-list-item]") ?? []].some(row =>
             (row.textContent ?? "").includes("nonGitSearchFixture"),
           )
@@ -200,7 +200,7 @@ test("search-first-result stays within budget", async () => {
           const measure = performance.getEntriesByName("yaade:search-first-result").at(-1)
           return measure?.duration ?? Date.now()
         })
-        return typeof duration === "number" && duration < 10_000 ? duration : Date.now() - started
+        return duration < 10_000 ? duration : Date.now() - started
       },
     })
     assertBudget(result)

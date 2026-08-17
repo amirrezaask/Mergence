@@ -4,7 +4,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import type { ShellDriver } from "../shell/driver.js";
-import { createMockLspHarness } from "../../apps/host-server/mocks/mock-lsp-harness.js";
 import { launchWeb } from "../shell/launch-web.js";
 import {
   expectContainsText,
@@ -14,13 +13,7 @@ import {
   expectSelectorHidden,
   expectSelectorVisible,
 } from "../shell/assert.js";
-import {
-  expectLayout,
-  expectListRows,
-  expectNoOverlap,
-  expectRowSpacing,
-  expectRowTextVisible,
-} from "../helpers/list.js";
+import { expectListRows } from "../helpers/list.js";
 import {
   REPO_ROOT,
   focusTerminal,
@@ -92,11 +85,6 @@ async function createTerminalToolUse(page: ShellDriver): Promise<void> {
   await waitForVisibleTerminalSurface(page);
   await openToolContext(page);
   await expectSelectorVisible(page, "#tool-project");
-}
-
-async function createEditorToolUse(page: ShellDriver): Promise<void> {
-  await page.locator('[data-yaade-empty-tool="editor"]').click();
-  await page.waitForSelector('[data-yaade-editor-tool]', { timeout: 30_000 });
 }
 
 async function createSearchToolUse(
@@ -277,218 +265,6 @@ async function createSearchViaApi(
     );
     await expectLocatorCount(page.locator('[data-yaade-empty-tool="editor"]'), 0);
     await expectSelectorVisible(page, '[data-yaade-empty-tool="git"]');
-  } finally {
-    await app.app.close();
-  }
-});
-
-test.skip("Editor tabs preserve dirty state, save, and reconnect the language server", async () => {
-  const mock = createMockLspHarness();
-  const app = await launchWeb({
-    env: mock.env,
-    workspaceRel: "fixtures/non-git-search",
-  });
-  try {
-    const page = app.page;
-    await openToolSessionShell(page);
-    await createEditorToolUse(page);
-    await page.getByRole("treeitem", { name: /index\.ts$/i }).click();
-    await expectSelectorVisible(page, "[data-yaade-browser-editor]");
-    await mock.waitForClientMethod("textDocument/didOpen", {
-      timeoutMs: 15_000,
-    });
-    await page.getByRole("treeitem", { name: /other\.ts$/i }).click();
-    await expectLocatorCount(
-      page.locator('[data-yaade-editor-tabs] [role="tab"]'),
-      2,
-    );
-    await page
-      .locator('[data-yaade-editor-tab$="/src/index.ts"] [role="tab"]')
-      .click();
-
-    const input = page.locator(
-      "[data-yaade-browser-editor] textarea.inputarea",
-    );
-    await input.focus();
-    await page.keyboard.press("Control+End");
-    await page.keyboard.type("\n// tool-editor-dirty");
-    await expect
-      .poll(() =>
-        page
-          .locator('[data-yaade-editor-tab$="/src/index.ts"]')
-          .getAttribute("data-dirty"),
-      )
-      .toBe("true");
-
-    const beforeSave = mock.captures().length;
-    await page.keyboard.press(
-      `${process.platform === "darwin" ? "Meta" : "Control"}+KeyS`,
-    );
-    await mock.waitForClientMethod("textDocument/didSave", {
-      timeoutMs: 15_000,
-      afterCaptureCount: beforeSave,
-    });
-    await expect
-      .poll(() =>
-        page
-          .locator('[data-yaade-editor-tab$="/src/index.ts"]')
-          .getAttribute("data-dirty"),
-      )
-      .toBeNull();
-
-    const beforeCrash = mock.captures().length;
-    mock.crash(1, 72);
-    await mock.waitForStartCount(2, 15_000);
-    await mock.waitForClientMethod("textDocument/didOpen", {
-      timeoutMs: 15_000,
-      afterCaptureCount: beforeCrash,
-    });
-    await expect
-      .poll(() =>
-        page
-          .locator("[data-yaade-editor-lsp-status]")
-          .getAttribute("data-yaade-editor-lsp-status"),
-      )
-      .toBe("ready");
-  } finally {
-    await app.app.close();
-    mock.dispose();
-  }
-});
-
-test.skip("Editor references render and the compact Explorer toggles", async () => {
-  const mock = createMockLspHarness();
-  const app = await launchWeb({
-    env: mock.env,
-    workspaceRel: "fixtures/non-git-search",
-  });
-  try {
-    const page = app.page;
-    await openToolSessionShell(page);
-    await createEditorToolUse(page);
-    await page.getByRole("treeitem", { name: /index\.ts$/i }).click();
-    await expectSelectorVisible(page, "[data-yaade-browser-editor]");
-    await mock.waitForClientMethod("textDocument/didOpen", {
-      timeoutMs: 15_000,
-    });
-
-    const explorerRow = page.getByRole("treeitem", { name: /index\.ts$/i });
-    const explorerFontSize = await explorerRow.evaluate(element =>
-      Number.parseFloat(getComputedStyle(element).fontSize),
-    );
-    expect(explorerFontSize).toBeGreaterThanOrEqual(12);
-
-    await expectLocatorCount(page.getByText("LSP on", { exact: true }), 0);
-    await expectLocatorCount(page.getByText("⌘P quick open", { exact: true }), 0);
-
-    const explorerToggle = page.locator(
-      "[data-yaade-editor-explorer-header] [data-yaade-editor-explorer-toggle]",
-    );
-    await expectLocatorCount(explorerToggle, 1);
-    expect(await explorerToggle.getAttribute("aria-label")).toBe("Hide Explorer");
-    await explorerToggle.click();
-    await page
-      .locator("[data-yaade-editor-file-tree]")
-      .first()
-      .waitFor({ state: "hidden" });
-    expect(await explorerToggle.getAttribute("aria-label")).toBe("Show Explorer");
-    await explorerToggle.click();
-    await expectSelectorVisible(page, "[data-yaade-editor-file-tree]");
-
-    const editorTypography = await page
-      .locator("[data-yaade-browser-editor] .view-line")
-      .first()
-      .evaluate(element => {
-        const style = getComputedStyle(element);
-        return {
-          fontFamily: style.fontFamily,
-          lineHeight: Number.parseFloat(style.lineHeight),
-        };
-      });
-    expect(editorTypography.fontFamily).toContain("Geist Mono Variable");
-    expect(editorTypography.lineHeight).toBeLessThanOrEqual(20);
-
-    const input = page.locator(
-      "[data-yaade-browser-editor] textarea.inputarea",
-    );
-    await input.focus();
-    await page.keyboard.press("Control+Home");
-    const beforeReferences = mock.captures().length;
-    await page.keyboard.press("Shift+F12");
-    await mock.waitForClientMethod("textDocument/references", {
-      timeoutMs: 15_000,
-      afterCaptureCount: beforeReferences,
-    });
-
-    const references = ".reference-zone-widget";
-    const referenceRows = `${references} .browser-editor-list-row`;
-    await expectSelectorVisible(page, references);
-    await expectContainsText(page, references, "index.ts");
-    await expectNotContainsText(page, references, "No references");
-    await expectLayout(page, {
-      selector: referenceRows,
-      minItems: 2,
-      minUniqueTops: 2,
-      minRowHeight: 18,
-    });
-    await expectNoOverlap(page, { selector: referenceRows, minItems: 2 });
-    await expectRowSpacing(page, { selector: referenceRows, minItems: 2 });
-    await expectRowTextVisible(page, {
-      selector: referenceRows,
-      minItems: 2,
-    });
-  } finally {
-    await app.app.close();
-    mock.dispose();
-  }
-});
-
-test.skip("Mod-P opens Editor Quick Open before and after a file is open", async () => {
-  const app = await launchWeb({
-    workspaceRel: path.join(REPO_ROOT, "fixtures/non-git-search"),
-    startPath: "/",
-  });
-  try {
-    const page = app.page;
-    await openToolSessionShell(page);
-    await createEditorToolUse(page);
-    await expectContainsText(
-      page,
-      "[data-yaade-editor-tool]",
-      "Open a file to start editing",
-    );
-
-    const shortcut = `${process.platform === "darwin" ? "Meta" : "Control"}+KeyP`;
-    await page.keyboard.press(shortcut);
-    await expectSelectorVisible(
-      page,
-      '[data-yaade-list-panel="yaade:palette"]',
-    );
-    await page.keyboard.type("other");
-    await expectListRows(page, {
-      panel: "yaade:palette",
-      minItems: 1,
-      needle: "other.ts",
-    });
-    await expectNotContainsText(
-      page,
-      '[data-yaade-list-panel="yaade:palette"]',
-      "No matching files",
-    );
-    await page
-      .locator('[data-yaade-list-panel="yaade:palette"] [data-yaade-list-item]')
-      .first()
-      .click();
-    await expectSelectorVisible(
-      page,
-      '[data-yaade-editor-tool] [data-yaade-browser-editor]',
-    );
-
-    await page.keyboard.press(shortcut);
-    await expectSelectorVisible(
-      page,
-      '[data-yaade-list-panel="yaade:palette"]',
-    );
   } finally {
     await app.app.close();
   }
@@ -685,7 +461,7 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
   }
 });
 
-/** 6 */ test("SearchTool renders file cards and reuses a Neovim terminal", async () => {
+/** 6 */ test("SearchTool renders grouped, paged file cards", async () => {
   const project = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-tool-search-"));
   fs.cpSync(path.join(REPO_ROOT, "fixtures/non-git-search"), project, {
     recursive: true,
@@ -820,59 +596,6 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
       .toContain("520 matches in 1 file");
     await expectLocatorCount(manualLoadButtons, 0);
 
-    await searchInput.fill("nonGitSearchFixture");
-    await expectListRows(page, {
-      panel: "project-search",
-      minItems: 1,
-      needle: "nonGitSearchFixture",
-    });
-    await expectSelectorVisible(
-      page,
-      '[data-yaade-project-search-file*="src/index.ts"]',
-    );
-    await page.locator('[data-yaade-project-search-hit="src/index.ts:2"]').click();
-    await expectSelectorVisible(page, "[data-yaade-search-neovim]");
-    await expectContainsText(
-      page,
-      "[data-yaade-search-neovim]",
-      path.join(project, "src/index.ts"),
-    );
-    await waitForVisibleTerminalSurface(page);
-    await expect
-      .poll(() =>
-        page
-          .locator("[data-yaade-terminal-panel]")
-          .getAttribute("data-yaade-terminal-pty-id"),
-      )
-      .not.toBe("");
-    const firstPtyId = await page
-      .locator("[data-yaade-terminal-panel]")
-      .getAttribute("data-yaade-terminal-pty-id");
-    expect(firstPtyId).toBeTruthy();
-
-    await page.getByRole("button", { name: "Search results" }).click();
-    await expectSelectorVisible(page, '[data-yaade-list-panel="project-search"]');
-    await searchInput.fill("other");
-    await expectListRows(page, {
-      panel: "project-search",
-      minItems: 1,
-      needle: "excludedSearchFixture",
-    });
-    await page.locator('[data-yaade-project-search-hit="src/other.ts:1"]').click();
-    await expectSelectorVisible(page, "[data-yaade-search-neovim]");
-    await expectContainsText(
-      page,
-      "[data-yaade-search-neovim]",
-      path.join(project, "src/other.ts"),
-    );
-    await waitForVisibleTerminalSurface(page);
-    await expect
-      .poll(() =>
-        page
-          .locator("[data-yaade-terminal-panel]")
-          .getAttribute("data-yaade-terminal-pty-id"),
-      )
-      .toBe(firstPtyId);
   } finally {
     await app.app.close();
     fs.rmSync(project, { recursive: true, force: true });
@@ -1482,7 +1205,7 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
   }
 });
 
-/** 19 */ test("Session settings opens from the tab bar and Mod-,", async ({}, testInfo) => {
+/** 19 */ test("Session settings opens from the tab bar and Mod-,", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
@@ -1497,10 +1220,6 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
       .toBe("default-light");
-    await testInfo.attach("tool-session-settings.png", {
-      body: Buffer.from(await page.screenshot(), "base64"),
-      contentType: "image/png",
-    });
 
     await page.getByRole("button", { name: "Close settings" }).click();
     await page.keyboard.press(

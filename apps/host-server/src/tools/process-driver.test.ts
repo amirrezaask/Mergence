@@ -29,6 +29,22 @@ async function waitFor(check: () => boolean, timeout = 5_000): Promise<void> {
   }
 }
 
+function makeFakeAgentBinDir(): string {
+  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-fake-agents-"));
+  const script = `#!/bin/sh
+if [ "$1" = "--version" ]; then
+  echo "fake-agent 1.0"
+  exit 0
+fi
+exit 0
+`;
+  for (const binary of ["claude", "codex"]) {
+    const file = path.join(binDir, binary);
+    fs.writeFileSync(file, script, { mode: 0o755 });
+  }
+  return binDir;
+}
+
 async function hostWithProject() {
   const parent = fs.mkdtempSync(
     path.join(os.tmpdir(), "yaade-process-driver-"),
@@ -303,12 +319,18 @@ describe("process Tool driver", () => {
   });
 
   it("changes agent provider even with a stale input revision", async () => {
+    const binDir = makeFakeAgentBinDir();
+    const previousPath = process.env.PATH;
+    process.env.PATH = binDir;
     const { host, parent, projectRoot } = await hostWithProject();
     try {
       const available = host.runtime.agentRuns
         .listProviders(true)
         .filter((item) => item.available);
-      if (available.length === 0) return;
+      assert.deepEqual(
+        available.map((item) => item.provider),
+        ["claude", "codex"],
+      );
       const project = host.runtime.db
         .projects()
         .find((item) => item.rootPath === projectRoot);
@@ -344,14 +366,10 @@ describe("process Tool driver", () => {
       });
       const current = host.runtime.toolSessions.getToolUse(created.id);
       assert.ok(current);
-      const nextProvider = (
-        ["claude", "codex", "cursor", "opencode", "grok", "pi"] as const
-      ).find(
-        (name) =>
-          name !==
-          (current.input.kind === "agent" ? current.input.provider : ""),
-      );
-      assert.ok(nextProvider);
+      const nextProvider =
+        current.input.kind === "agent" && current.input.provider === "claude"
+          ? "codex"
+          : "claude";
       const updated = Schema.decodeUnknownSync(ToolUse)(
         await dispatchPromise(
           host.runtime,
@@ -388,7 +406,10 @@ describe("process Tool driver", () => {
       }
     } finally {
       await host.close();
+      if (previousPath === undefined) delete process.env.PATH;
+      else process.env.PATH = previousPath;
       fs.rmSync(parent, { recursive: true, force: true });
+      fs.rmSync(binDir, { recursive: true, force: true });
     }
   });
 

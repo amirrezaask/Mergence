@@ -43,13 +43,12 @@ The app pivoted from Mission Control → bare mux → project/session IDE →
 
 | Thing | Status |
 | --- | --- |
-| `packages/yaade-app/src/AppRoot.tsx` | **Router.** `/` (+ home-relative legacy paths) → `ToolSessionApp`; `/_project/*` and HQ → legacy shell. |
+| `packages/yaade-app/src/AppRoot.tsx` | Mounts `ToolSessionApp` for browser routes; the internal material gallery is the only alternate surface. |
 | `packages/yaade-app/src/tools/` | **Primary shell.** Sessions, ToolUses, in-pane combobox config, renderers. |
-| `packages/yaade-app/src/project/` | Legacy project landing — kept for `/_project` compat; do not extend. |
-| `packages/yaade-app/src/mux/MuxApp.tsx` | Legacy session workspace — kept for `/_project` compat; do not extend. |
-| `packages/yaade-app/src/App.tsx` (~3.3k lines) | **Legacy Mission Control. Not mounted.** Kept for reference; do not extend. |
-| `tests/electron/tool-sessions.electron.spec.ts` | Required Session/ToolUse parity suite (19 scenarios). |
-| `NEXT.md` | Migration plan; cutover deletes of project/mux wait until remaining legacy specs are retired. |
+| `packages/yaade-app/src/project/` | Unmounted compatibility modules; do not extend. |
+| `packages/yaade-app/src/mux/MuxApp.tsx` | Removed. |
+| `packages/yaade-app/src/App.tsx` | Removed. |
+| `tests/electron/tool-sessions.electron.spec.ts` | Required Session/ToolUse parity suite (27 scenarios). |
 
 When a task touches something in the "legacy / dead" rows, ask before
 extending it — deleting is usually the right answer.
@@ -77,7 +76,7 @@ yaade/
 │   ├── yaade-monaco/           Monaco editor host + model registry (lazy in mux)
 │   ├── yaade-lsp/              Language server client pool → Monaco providers (lazy)
 │   ├── yaade-ui/               Panel dock, TerminalPanel, overlays, themes
-│   └── yaade-app/              Root React app — ToolSessionApp (+ legacy mux/project)
+│   └── yaade-app/              Root React app — ToolSessionApp
 ├── tests/
 │   ├── electron/               E2E specs (Playwright `web-e2e` project)
 │   ├── shell/                  launchWeb() against the TS host
@@ -526,7 +525,7 @@ window.__yaadeAgent.getPerfMeasures() // User Timing measures (jet:*)
 
 1. Decide layer — shared / panels / workspace / ui / app / host-server.
 2. Add types to `@yaade/shared` or `@yaade/rpc` if cross-cutting.
-3. Register the command in `MuxApp`'s command effect.
+3. Register the command in `ToolSessionApp`'s command effect.
 4. If it needs a shortcut, add it to `TOOL_SESSION_PREFIX_BINDINGS` in
    `packages/yaade-app/src/keybindings.ts` — do **not** invent a new `Mod-`
    chord or a second key for an existing command. Legacy mux only:
@@ -565,8 +564,7 @@ Ordered by severity. Items reflect an August 2026 review after the session pivot
 - [ ] No roving tabindex across the tile grid (active pane has a focus ring;
       chrome controls reveal on `focus-visible`).
 - [ ] Boot state is a bare "Loading…".
-- [ ] Delete the dead shells: `App.tsx`, `MuxTabStrip`, `PanelTabBar`, and the
-      ~29 skipped Mission Control specs.
+- [x] Delete the dead shells and skipped Mission Control compatibility specs.
 - [ ] Optional README / recent-commits polish on the project page main column.
 
 ### P3 — hygiene (carried over, still valid)
@@ -602,8 +600,7 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
 | `packages/yaade-rpc/src/tool-session.ts` | Session/ToolUse contracts |
 | `apps/host-server/src/tools/service.ts` | Host ToolService orchestration |
 | `apps/host-server/src/tool-session-store.ts` | SQLite Sessions/ToolUses |
-| `packages/yaade-app/src/mux/MuxApp.tsx` | Legacy mux shell (compat) |
-| `packages/yaade-app/src/project/ProjectPage.tsx` | Legacy project landing (compat) |
+| `packages/yaade-app/src/project/ProjectPage.tsx` | Unmounted project compatibility surface; do not extend |
 | `packages/yaade-node-host/src/terminal.ts` | PTY batching, flow control, replay |
 | `packages/yaade-node-host/src/search.ts` | Ripgrep/FFF search engine |
 
@@ -618,7 +615,7 @@ Backlog items that referenced `jet-codemirror`, `LocationListPanel`, or
   browser chrome.
 - Shipping UI/UX changes without `pnpm test:e2e`.
 - Writing new tests with vitest; this repo uses `node:test`.
-- Extending `App.tsx` or anything in the legacy Mission Control surface.
+- Extending unmounted project compatibility modules.
 - Putting terminal output or editor document text in React state.
 - Calling Node APIs from lower packages (use `window.yaade` / `@yaade/host-client`).
 - Adding Rust / Cargo / Tauri / Electron back into the repo.
