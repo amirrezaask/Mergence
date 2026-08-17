@@ -3,7 +3,6 @@ import { DatabaseSync } from "node:sqlite"
 import { describe, it } from "node:test"
 import { Schema } from "effect"
 import {
-  NeovimToolOutput,
   ProcessToolOutput,
   ProjectTarget,
   ToolUseId,
@@ -100,36 +99,6 @@ describe("ToolSessionStore", () => {
     db.close()
   })
 
-  it("round-trips a Neovim ToolUse without storing editor state", () => {
-    const db = database()
-    const store = new ToolSessionStore(db)
-    const session = store.listSessions()[0]
-    assert.ok(session)
-    const use = store.createToolUse({
-      sessionId: session.id,
-      kind: "neovim",
-      title: "Neovim",
-      position: 0,
-      context: context(),
-      input: { _tag: "NeovimToolInput", kind: "neovim" },
-      output: NeovimToolOutput.make({
-        kind: "neovim",
-        serverInstanceId: "opaque-instance",
-        generation: 3,
-        processState: "running",
-        version: "0.13.0",
-      }),
-    })
-    const decoded = store.getToolUse(use.id)
-    assert.equal(decoded?.kind, "neovim")
-    assert.equal(decoded?.output.kind, "neovim")
-    if (decoded?.output.kind === "neovim") {
-      assert.equal(decoded.output.generation, 3)
-      assert.equal(decoded.output.serverInstanceId, "opaque-instance")
-    }
-    db.close()
-  })
-
   it("compare-and-set rejects stale revisions and updates output", () => {
     const db = database()
     const store = new ToolSessionStore(db)
@@ -153,33 +122,6 @@ describe("ToolSessionStore", () => {
     db.close()
   })
 
-  it("persists and pages search results", () => {
-    const db = database()
-    const store = new ToolSessionStore(db)
-    const session = store.listSessions()[0]
-    assert.ok(session)
-    const use = store.createToolUse({
-      sessionId: session.id,
-      kind: "search",
-      title: "Search",
-      position: 0,
-      context: context(),
-      input: { _tag: "SearchToolInput", kind: "search", query: "needle", options: {} },
-      output: {
-        _tag: "SearchToolOutput",
-        kind: "search",
-        resultRevision: 1,
-        resultCount: 2,
-        truncated: false,
-        running: false,
-      },
-    })
-    const rows = [0, 1].map(line => ({ path: `src/${line}.ts`, line, column: 1, preview: "needle", ranges: [] }))
-    store.replaceSearchResults(use.id, 1, rows)
-    assert.deepEqual(store.listSearchResults(use.id, 1, 1, 1).map(result => result.path), ["src/1.ts"])
-    db.close()
-  })
-
   it("migrates legacy project sessions idempotently", () => {
     const db = database()
     db.exec(`
@@ -198,57 +140,4 @@ describe("ToolSessionStore", () => {
     db.close()
   })
 
-  it("migrates project_surface_state search tabs into SearchTool uses", () => {
-    const db = database()
-    db.exec(`
-      CREATE TABLE projects(
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, root_path TEXT NOT NULL UNIQUE,
-        created_at TEXT NOT NULL, updated_at TEXT NOT NULL
-      );
-      CREATE TABLE project_surface_state(
-        project_id TEXT NOT NULL,
-        machine TEXT NOT NULL,
-        surface TEXT NOT NULL,
-        state_json TEXT NOT NULL,
-        revision INTEGER NOT NULL DEFAULT 1,
-        updated_at TEXT NOT NULL,
-        PRIMARY KEY(project_id, machine, surface)
-      );
-    `)
-    db.prepare(
-      "INSERT INTO projects(id,name,root_path,created_at,updated_at) VALUES(?,?,?,?,?)",
-    ).run("proj-1", "Fixture", "/tmp/fixture", "2026-01-01", "2026-01-01")
-    db.prepare(
-      "INSERT INTO project_surface_state(project_id,machine,surface,state_json,revision,updated_at) VALUES(?,?,?,?,?,?)",
-    ).run(
-      "proj-1",
-      "machine-a",
-      "search",
-      JSON.stringify({
-        searchTabs: [{
-          id: "srch-1",
-          query: "needle",
-          options: { caseSensitive: true },
-          checkoutPath: "/tmp/fixture",
-          checkoutKey: "main",
-        }],
-      }),
-      1,
-      "2026-01-01",
-    )
-    const store = new ToolSessionStore(db, "machine-a")
-    const session = store.listSessions()[0]
-    assert.ok(session)
-    const search = store.listToolUses(session.id).find(use => use.kind === "search")
-    assert.ok(search)
-    assert.equal(search.input.kind, "search")
-    if (search.input.kind === "search") {
-      assert.equal(search.input.query, "needle")
-      assert.equal(search.input.options.caseSensitive, true)
-    }
-    assert.equal(search.output.kind, "search")
-    if (search.output.kind === "search") assert.equal(search.output.resultCount, 0)
-    assert.equal((db.prepare("SELECT version FROM schema_migrations WHERE version=16").get() as { version: number }).version, 16)
-    db.close()
-  })
 })

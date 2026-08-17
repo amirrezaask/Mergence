@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
-import type { AgentEvent, AgentProvider } from "@yaade/agents";
+import type { AgentEvent, AgentProvider } from "@yaade/agent-telemetry";
 import { tryDecodeProjectSessionPayload } from "@yaade/rpc";
 import { fileUriToPath } from "@yaade/shared";
 

@@ -23,6 +23,18 @@ test.describe("terminal compatibility", () => {
       await page.waitForSelector('[data-yaade-shell="tool-session"]');
       await page.evaluate(() => window.__yaadeAgent?.waitForReady());
 
+      const missingTerminalError = await page.evaluate(async () => {
+        const terminal = window.yaade?.terminal;
+        if (!terminal) throw new Error("terminal API missing");
+        try {
+          await terminal.write("", "x");
+          return null;
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      });
+      expect(missingTerminalError).toContain("missing id");
+
       const toolUseId = await page.evaluate(async () => {
         const tools = window.yaade?.tools;
         const state = window.__yaadeAgent?.getState();

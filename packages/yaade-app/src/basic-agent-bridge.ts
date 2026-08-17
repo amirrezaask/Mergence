@@ -11,15 +11,6 @@ import {
   readTerminalViewportY,
   scrollTerminalLines,
 } from "@yaade/ui/terminal-registry"
-import {
-  focusRegisteredNeovim,
-  readNeovimCursor,
-  readNeovimDiagnostics,
-  readNeovimRegistryDiagnostics,
-  readNeovimDims,
-  readNeovimText,
-  dispatchNeovimTestInput,
-} from "@yaade/ui/neovim"
 
 export type HqCounts = {
   projects: number
@@ -33,10 +24,6 @@ export function basicAgentBridge(input: {
   workspace: string | null
   hqCounts?: HqCounts
   executeCommand?: (id: string) => void | Promise<void>
-  createProjectSession?: YaadeAgentAPI["createProjectSession"]
-  listProjectSessions?: YaadeAgentAPI["listProjectSessions"]
-  openProjectSession?: YaadeAgentAPI["openProjectSession"]
-  backToProject?: YaadeAgentAPI["backToProject"]
   createSession?: YaadeAgentAPI["createSession"]
   selectSession?: YaadeAgentAPI["selectSession"]
   createTab?: YaadeAgentAPI["createTab"]
@@ -107,19 +94,6 @@ export function basicAgentBridge(input: {
     scrollTerminalLines: (amount, tabId) => scrollTerminalLines(amount, tabId),
     focusTerminal: tabId => focusRegisteredTerminal(tabId),
     findTerminalText: (needle, tabId) => findTerminalBufferMatch(needle, tabId),
-    getNeovimText: toolUseId => readNeovimText(toolUseId),
-    getNeovimCursor: toolUseId => readNeovimCursor(toolUseId),
-    getNeovimDims: toolUseId => readNeovimDims(toolUseId),
-    getNeovimDiagnostics: toolUseId => readNeovimDiagnostics(toolUseId),
-    getNeovimRegistryDiagnostics: () => readNeovimRegistryDiagnostics(),
-    focusNeovim: toolUseId => focusRegisteredNeovim(toolUseId),
-    async dispatchNeovimInput(toolUseId, value) {
-      return dispatchNeovimTestInput(toolUseId, value)
-    },
-    createProjectSession: input.createProjectSession,
-    listProjectSessions: input.listProjectSessions,
-    openProjectSession: input.openProjectSession,
-    backToProject: input.backToProject,
     createSession: input.createSession,
     selectSession: input.selectSession,
     createTab: input.createTab,

@@ -7,25 +7,23 @@
  */
 
 /** Host → client: binary `terminal:data` frame type byte. */
-export const TERMINAL_DATA_FRAME_TYPE = 0x01 as const
+export const TERMINAL_DATA_FRAME_TYPE = 0x01 as const;
 
-type Utf8Encoder = { encode(input: string): Uint8Array }
-type Utf8Decoder = { decode(input: Uint8Array): string }
+type Utf8Encoder = { encode(input: string): Uint8Array };
+type Utf8Decoder = { decode(input: Uint8Array): string };
 
 function utf8Encode(text: string): Uint8Array {
-  const Encoder = (
-    globalThis as { TextEncoder?: new () => Utf8Encoder }
-  ).TextEncoder
-  if (!Encoder) throw new Error("TextEncoder unavailable")
-  return new Encoder().encode(text)
+  const Encoder = (globalThis as { TextEncoder?: new () => Utf8Encoder })
+    .TextEncoder;
+  if (!Encoder) throw new Error("TextEncoder unavailable");
+  return new Encoder().encode(text);
 }
 
 function utf8Decode(bytes: Uint8Array): string {
-  const Decoder = (
-    globalThis as { TextDecoder?: new () => Utf8Decoder }
-  ).TextDecoder
-  if (!Decoder) throw new Error("TextDecoder unavailable")
-  return new Decoder().decode(bytes)
+  const Decoder = (globalThis as { TextDecoder?: new () => Utf8Decoder })
+    .TextDecoder;
+  if (!Decoder) throw new Error("TextDecoder unavailable");
+  return new Decoder().decode(bytes);
 }
 
 /**
@@ -43,28 +41,28 @@ export function encodeTerminalDataFrame(
   id: string,
   data: string,
 ): Uint8Array {
-  const idBytes = utf8Encode(id)
-  const dataBytes = utf8Encode(data)
+  const idBytes = utf8Encode(id);
+  const dataBytes = utf8Encode(data);
   if (idBytes.length > 0xffff) {
-    throw new Error("terminal id too long for binary frame")
+    throw new Error("terminal id too long for binary frame");
   }
-  const out = new Uint8Array(1 + 4 + 4 + 2 + idBytes.length + dataBytes.length)
-  const view = new DataView(out.buffer, out.byteOffset, out.byteLength)
-  out[0] = TERMINAL_DATA_FRAME_TYPE
-  view.setUint32(1, eventSequence >>> 0)
-  view.setUint32(5, terminalSequence >>> 0)
-  view.setUint16(9, idBytes.length)
-  out.set(idBytes, 11)
-  out.set(dataBytes, 11 + idBytes.length)
-  return out
+  const out = new Uint8Array(1 + 4 + 4 + 2 + idBytes.length + dataBytes.length);
+  const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
+  out[0] = TERMINAL_DATA_FRAME_TYPE;
+  view.setUint32(1, eventSequence >>> 0);
+  view.setUint32(5, terminalSequence >>> 0);
+  view.setUint16(9, idBytes.length);
+  out.set(idBytes, 11);
+  out.set(dataBytes, 11 + idBytes.length);
+  return out;
 }
 
 export type DecodedTerminalDataFrame = {
-  eventSequence: number
-  terminalSequence: number
-  id: string
-  data: string
-}
+  eventSequence: number;
+  terminalSequence: number;
+  id: string;
+  data: string;
+};
 
 export function decodeTerminalDataFrame(
   bytes: ArrayBuffer | ArrayBufferView,
@@ -72,16 +70,16 @@ export function decodeTerminalDataFrame(
   const buf =
     bytes instanceof ArrayBuffer
       ? new Uint8Array(bytes)
-      : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength)
-  if (buf.length < 11 || buf[0] !== TERMINAL_DATA_FRAME_TYPE) return null
-  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength)
-  const eventSequence = view.getUint32(1)
-  const terminalSequence = view.getUint32(5)
-  const idLen = view.getUint16(9)
-  if (11 + idLen > buf.length) return null
-  const id = utf8Decode(buf.subarray(11, 11 + idLen))
-  const data = utf8Decode(buf.subarray(11 + idLen))
-  return { eventSequence, terminalSequence, id, data }
+      : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  if (buf.length < 11 || buf[0] !== TERMINAL_DATA_FRAME_TYPE) return null;
+  const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  const eventSequence = view.getUint32(1);
+  const terminalSequence = view.getUint32(5);
+  const idLen = view.getUint16(9);
+  if (11 + idLen > buf.length) return null;
+  const id = utf8Decode(buf.subarray(11, 11 + idLen));
+  const data = utf8Decode(buf.subarray(11 + idLen));
+  return { eventSequence, terminalSequence, id, data };
 }
 
 /** Client → host control ops over the event WebSocket (JSON text frames). */
@@ -91,14 +89,23 @@ export const TERMINAL_WS_HOT_OPS = [
   "terminal:ack",
   "terminal:resize",
   "terminal:ready",
-] as const
+] as const;
 
-export type TerminalWsHotOp = (typeof TERMINAL_WS_HOT_OPS)[number]
+export type TerminalWsHotOp = (typeof TERMINAL_WS_HOT_OPS)[number];
 
 export type TerminalWsCommand = {
-  op: TerminalWsHotOp
-  args: unknown[]
-}
+  requestId: string;
+  op: TerminalWsHotOp;
+  args: unknown[];
+};
+
+export type TerminalWsResult = {
+  type: "terminal:result";
+  requestId: string;
+  ok: boolean;
+  value?: unknown;
+  error?: { message: string; code?: string };
+};
 
 export function isTerminalWsHotOp(value: unknown): value is TerminalWsHotOp {
   return (
@@ -107,17 +114,62 @@ export function isTerminalWsHotOp(value: unknown): value is TerminalWsHotOp {
     value === "terminal:ack" ||
     value === "terminal:resize" ||
     value === "terminal:ready"
+  );
+}
+
+export function encodeTerminalWsCommand(
+  requestId: string,
+  op: TerminalWsHotOp,
+  args: unknown[],
+): string {
+  const cmd: TerminalWsCommand = { requestId, op, args };
+  return JSON.stringify(cmd);
+}
+
+export function tryDecodeTerminalWsCommand(
+  raw: unknown,
+): TerminalWsCommand | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (
+    typeof obj.requestId !== "string" ||
+    obj.requestId.length === 0 ||
+    !isTerminalWsHotOp(obj.op) ||
+    !Array.isArray(obj.args)
   )
+    return null;
+  return { requestId: obj.requestId, op: obj.op, args: obj.args };
 }
 
-export function encodeTerminalWsCommand(op: TerminalWsHotOp, args: unknown[]): string {
-  const cmd: TerminalWsCommand = { op, args }
-  return JSON.stringify(cmd)
-}
-
-export function tryDecodeTerminalWsCommand(raw: unknown): TerminalWsCommand | null {
-  if (raw === null || typeof raw !== "object") return null
-  const obj = raw as Record<string, unknown>
-  if (!isTerminalWsHotOp(obj.op) || !Array.isArray(obj.args)) return null
-  return { op: obj.op, args: obj.args }
+export function tryDecodeTerminalWsResult(
+  raw: unknown,
+): TerminalWsResult | null {
+  if (raw === null || typeof raw !== "object") return null;
+  const obj = raw as Record<string, unknown>;
+  if (
+    obj.type !== "terminal:result" ||
+    typeof obj.requestId !== "string" ||
+    typeof obj.ok !== "boolean"
+  )
+    return null;
+  if (obj.ok)
+    return {
+      type: "terminal:result",
+      requestId: obj.requestId,
+      ok: true,
+      value: obj.value,
+    };
+  const error = obj.error;
+  if (error === null || typeof error !== "object") return null;
+  const record = error as Record<string, unknown>;
+  if (typeof record.message !== "string") return null;
+  return {
+    type: "terminal:result",
+    requestId: obj.requestId,
+    ok: false,
+    error: {
+      message: record.message,
+      ...(typeof record.code === "string" ? { code: record.code } : {}),
+    },
+  };
 }

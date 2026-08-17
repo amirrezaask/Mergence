@@ -1,7 +1,7 @@
 import { lazy, Suspense, type ReactNode } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
-import type { ProjectSearchOptions, YaadeTheme } from "@yaade/shared";
+import type { YaadeTheme } from "@yaade/shared";
 import { pathToFileUri } from "@yaade/shared";
 const TerminalPanel = lazy(() =>
   import("@yaade/ui/terminal").then((module) => ({
@@ -18,15 +18,8 @@ export type ProcessToolViewProps = {
     project: ProjectTarget,
     checkout: CheckoutTarget,
   ) => Promise<void>;
-  readonly onProviderChange?: (provider: string) => Promise<void>;
   readonly visible?: boolean;
   readonly focused?: boolean;
-  readonly results?: unknown;
-  readonly onSearchChange?: (
-    query: string,
-    options: ProjectSearchOptions,
-  ) => Promise<void>;
-  readonly onLoadMore?: () => Promise<void>;
   readonly onTitleChange?: (title: string) => void;
 };
 
@@ -54,7 +47,7 @@ export function ProcessToolView({
           role="status"
         >
           <LoaderCircle className="mr-2 size-4 animate-spin" />
-          Starting {use.kind === "agent" ? "agent" : "terminal"}…
+          Starting terminal…
         </div>
       ) : (
         <Suspense
@@ -82,10 +75,6 @@ export function ProcessToolView({
       )}
     </div>
   );
-}
-
-export function AgentToolView(props: ProcessToolViewProps) {
-  return <ProcessToolView {...props} />;
 }
 
 export function TerminalToolView(props: ProcessToolViewProps) {

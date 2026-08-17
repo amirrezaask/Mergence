@@ -1,4 +1,4 @@
-import { Code2, GitBranch, Search, Terminal, type LucideIcon } from "lucide-react"
+import { GitBranch, Terminal, type LucideIcon } from "lucide-react"
 import type { ToolKind } from "@yaade/rpc"
 import { KeyBindingKbd } from "@yaade/ui"
 import {
@@ -26,25 +26,11 @@ const TOOL_TILES: readonly ToolTile[] = [
     Icon: Terminal,
   },
   {
-    kind: "search",
-    label: "Search",
-    hint: "Project grep",
-    command: "tool.newSearch",
-    Icon: Search,
-  },
-  {
     kind: "git",
     label: "Git",
     hint: "History and diff",
     command: "tool.newGit",
     Icon: GitBranch,
-  },
-  {
-    kind: "neovim",
-    label: "Neovim",
-    hint: "Native editor",
-    command: "tool.newNeovim",
-    Icon: Code2,
   },
 ]
 

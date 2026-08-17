@@ -5,24 +5,6 @@ export type RuntimeToolTitle = {
   readonly source: "prompt" | "terminal";
 };
 
-const GENERIC_PROCESS_TITLES = new Set([
-  "agent",
-  "terminal",
-  "shell",
-  "claude",
-  "claude agent",
-  "codex",
-  "codex agent",
-  "cursor",
-  "cursor agent",
-  "opencode",
-  "opencode agent",
-  "grok",
-  "grok agent",
-  "pi",
-  "pi agent",
-]);
-
 export function compactToolTitle(value: string, maxLength = 72): string {
   const compact = value.replace(/\s+/g, " ").trim();
   if (compact.length <= maxLength) return compact;
@@ -33,21 +15,10 @@ export function toolUseWorkTitle(
   use: ToolUse,
   runtimeTitle?: RuntimeToolTitle,
 ): string {
-  if (use.input.kind === "search") {
-    return compactToolTitle(use.input.query) || "Search";
-  }
   return (
     runtimeTitle?.title ||
     compactToolTitle(use.title) ||
-    (use.kind === "agent"
-      ? "Agent"
-      : use.kind === "editor"
-        ? "Editor"
-        : use.kind === "neovim"
-          ? "Neovim"
-          : use.kind === "git"
-            ? "Git History"
-            : "Terminal")
+    (use.kind === "git" ? "Git History" : "Terminal")
   );
 }
 
@@ -100,12 +71,6 @@ export function nextRuntimeToolTitle(
 
   const normalized = next.toLowerCase();
   const stored = compactToolTitle(use.title).toLowerCase();
-  if (
-    use.kind === "agent" &&
-    (GENERIC_PROCESS_TITLES.has(normalized) || normalized === stored)
-  ) {
-    return current;
-  }
   if (
     use.kind === "terminal" &&
     (normalized === "terminal" || normalized === stored)

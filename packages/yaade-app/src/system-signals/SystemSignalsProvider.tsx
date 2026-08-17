@@ -1,17 +1,9 @@
 import {
   createContext,
   useContext,
-  useEffect,
   type PropsWithChildren,
 } from "react"
 import { NotificationCenter } from "@yaade/ui/notifications"
-import {
-  applyAgentStreamUnknown,
-  listTrackedAgentSessionIds,
-  replaceAgentEvents,
-  setAgentSnapshot,
-} from "../agent-snapshot-store.js"
-import { applySessionTitleFromAgentEvent } from "../agent-session-title-bridge.js"
 import {
   useNotificationCenter,
   type NotificationCenterState,
@@ -21,51 +13,6 @@ const SystemSignalsContext = createContext<NotificationCenterState | null>(null)
 
 export function SystemSignalsProvider({ children }: PropsWithChildren) {
   const notifications = useNotificationCenter()
-
-  useEffect(() => {
-    const api = window.yaade?.agents
-    if (!api?.onEvent) return
-    return api.onEvent(payload => {
-      applyAgentStreamUnknown(payload)
-      window.dispatchEvent(
-        new CustomEvent("yaade:agent-signal", {
-          detail: { sessionId: payload.sessionId },
-        }),
-      )
-    })
-  }, [])
-
-  useEffect(() => {
-    const reconcileAgents = () => {
-      const api = window.yaade?.agents
-      if (!api) return
-      for (const sessionId of listTrackedAgentSessionIds()) {
-        void Promise.all([
-          api.getSnapshot(sessionId),
-          api.listEvents(sessionId, { limit: 500 }),
-        ]).then(([snapshot, events]) => {
-          if (snapshot) setAgentSnapshot(sessionId, snapshot)
-          replaceAgentEvents(sessionId, events)
-          for (const event of events) {
-            applySessionTitleFromAgentEvent({
-              type: "agents.event",
-              sessionId,
-              event,
-            })
-          }
-          window.dispatchEvent(
-            new CustomEvent("yaade:agent-signal", { detail: { sessionId } }),
-          )
-        }).catch(() => {
-          /* The next reconnect or explicit view refresh retries reconciliation. */
-        })
-      }
-    }
-    window.addEventListener("yaade:host-reconnected", reconcileAgents)
-    return () => {
-      window.removeEventListener("yaade:host-reconnected", reconcileAgents)
-    }
-  }, [])
 
   return (
     <SystemSignalsContext.Provider value={notifications}>

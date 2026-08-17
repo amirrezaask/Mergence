@@ -1,19 +1,19 @@
-export type Disposable = { dispose(): void }
+export type Disposable = { dispose(): void };
 
 export class Emitter<T> {
-  private listeners = new Set<(value: T) => void>()
+  private listeners = new Set<(value: T) => void>();
 
   event = (listener: (value: T) => void): Disposable => {
-    this.listeners.add(listener)
-    return { dispose: () => this.listeners.delete(listener) }
-  }
+    this.listeners.add(listener);
+    return { dispose: () => this.listeners.delete(listener) };
+  };
 
   fire(value: T): void {
-    for (const listener of this.listeners) listener(value)
+    for (const listener of this.listeners) listener(value);
   }
 }
 
-import { fileUriToPath } from "./uri.js"
+import { fileUriToPath } from "./uri.js";
 
 export {
   type FileUri,
@@ -22,22 +22,24 @@ export {
   fileUriToPath,
   canonicalizeFileUri,
   normalizeFsPath,
-} from "./uri.js"
+} from "./uri.js";
 
 export function basename(uriOrPath: string): string {
-  const path = uriOrPath.startsWith("file://") ? fileUriToPath(uriOrPath) : uriOrPath
-  const parts = path.split(/[/\\]/)
-  return parts[parts.length - 1] || path
+  const path = uriOrPath.startsWith("file://")
+    ? fileUriToPath(uriOrPath)
+    : uriOrPath;
+  const parts = path.split(/[/\\]/);
+  return parts[parts.length - 1] || path;
 }
 
 export function extname(uriOrPath: string): string {
-  const name = basename(uriOrPath)
-  const dot = name.lastIndexOf(".")
-  return dot >= 0 ? name.slice(dot) : ""
+  const name = basename(uriOrPath);
+  const dot = name.lastIndexOf(".");
+  return dot >= 0 ? name.slice(dot) : "";
 }
 
 interface LanguageMap {
-  [extension: string]: string
+  [extension: string]: string;
 }
 
 const LANGUAGE_BY_EXT: LanguageMap = {
@@ -100,7 +102,7 @@ const LANGUAGE_BY_EXT: LanguageMap = {
   ".scala": "scala",
   ".ex": "elixir",
   ".exs": "elixir",
-}
+};
 
 /** Basename → language when extension alone is ambiguous or missing. */
 const LANGUAGE_BY_BASENAME: LanguageMap = {
@@ -108,14 +110,14 @@ const LANGUAGE_BY_BASENAME: LanguageMap = {
   makefile: "shell",
   gemfile: "ruby",
   rakefile: "ruby",
-}
+};
 
 export function languageIdFromPath(path: string): string {
-  const name = basename(path).toLowerCase()
-  const byName = LANGUAGE_BY_BASENAME[name]
-  if (byName) return byName
-  const ext = extname(path).toLowerCase()
-  return LANGUAGE_BY_EXT[ext] ?? "plaintext"
+  const name = basename(path).toLowerCase();
+  const byName = LANGUAGE_BY_BASENAME[name];
+  if (byName) return byName;
+  const ext = extname(path).toLowerCase();
+  return LANGUAGE_BY_EXT[ext] ?? "plaintext";
 }
 
 /** Map Yaade language ids to LSP `textDocument/languageId` values. */
@@ -124,33 +126,32 @@ export function lspLanguageIdFromJet(languageId: string): string {
     case "tsx":
     case "mts":
     case "cts":
-      return "typescript"
+      return "typescript";
     case "jsx":
-      return "javascript"
+      return "javascript";
     default:
-      return languageId
+      return languageId;
   }
 }
 
-export const UNTITLED_SCHEME = "untitled:"
+export const UNTITLED_SCHEME = "untitled:";
 
 export function isUntitledUri(uri: string): boolean {
-  return uri.startsWith(UNTITLED_SCHEME)
+  return uri.startsWith(UNTITLED_SCHEME);
 }
 
 export function makeUntitledUri(n: number): string {
-  return `${UNTITLED_SCHEME}untitled-${n}`
+  return `${UNTITLED_SCHEME}untitled-${n}`;
 }
 
-export * from "./git.js"
-export * from "./panels.js"
-export * from "./search.js"
-export * from "./diagnostics.js"
-export * from "./notifications.js"
-export * from "./motion.js"
-export * from "./rad-motion.js"
-export * from "./rad-scroll.js"
-export * from "./wheel-delta.js"
+export * from "./git.js";
+export * from "./panels.js";
+export * from "./diagnostics.js";
+export * from "./notifications.js";
+export * from "./motion.js";
+export * from "./rad-motion.js";
+export * from "./rad-scroll.js";
+export * from "./wheel-delta.js";
 export {
   defaultYaadeTheme,
   applyYaadeThemeCss,
@@ -173,4 +174,4 @@ export {
   toSrgbColor,
   applyShadcnTokens,
   applySemanticTokens,
-} from "./theme/theme-types.js"
+} from "./theme/theme-types.js";

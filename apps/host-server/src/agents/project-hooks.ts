@@ -1,7 +1,7 @@
 import fs from "node:fs"
 import path from "node:path"
 import os from "node:os"
-import type { AgentProvider } from "@yaade/agents"
+import type { AgentProvider } from "@yaade/agent-telemetry"
 
 function atomicWrite(file: string, content: string, mode?: number): void {
   const temporary = `${file}.tmp-${process.pid}-${Date.now()}`

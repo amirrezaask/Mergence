@@ -86,14 +86,15 @@ describe("tool session keymap", () => {
     assert.equal(directKeys.has("Mod-Shift-p"), false)
   })
 
-  it("opens non-agent tool kinds with mnemonic letters", () => {
+  it("opens only Terminal and Git with mnemonic letters", () => {
     const byCommand = new Map(
       TOOL_SESSION_PREFIX_BINDINGS.map((binding) => [binding.command, binding]),
     )
     assert.equal(byCommand.get("tool.newAgent"), undefined)
     assert.equal(byCommand.get("tool.newTerminal")?.key, "t")
-    assert.equal(byCommand.get("tool.newSearch")?.key, "s")
+    assert.equal(byCommand.get("tool.newSearch"), undefined)
     assert.equal(byCommand.get("tool.newEditor"), undefined)
+    assert.equal(byCommand.get("tool.newNeovim"), undefined)
     assert.equal(byCommand.get("tool.newGit")?.key, "g")
     assert.equal(byCommand.get("pane.zoom")?.key, "z")
   })

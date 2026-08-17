@@ -34,10 +34,6 @@ export {
   type ProjectWorkspaceSidebarWorktree,
 } from "./shell/ProjectWorkspaceSidebar.js"
 export {
-  ProjectSearchPanel,
-  type ProjectSearchPanelProps,
-} from "./search/ProjectSearchPanel.js"
-export {
   ModalEditorTabBar,
   SessionHeaderChromeProvider,
   SessionHeaderChromePortal,

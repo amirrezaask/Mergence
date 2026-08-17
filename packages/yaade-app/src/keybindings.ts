@@ -47,7 +47,7 @@ export type ToolSessionDirectBinding = {
   readonly desc: string
 }
 
-export type ToolSessionContextKind = "search"
+export type ToolSessionContextKind = never
 
 export type ToolSessionContextBinding = {
   readonly key: string
@@ -70,9 +70,7 @@ export const TOOL_SESSION_PREFIX_GROUPS: readonly {
 export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
   [
     { key: "t", command: "tool.newTerminal", desc: "New Terminal", group: "open" },
-    { key: "s", command: "tool.newSearch", desc: "New Search", group: "open" },
     { key: "g", command: "tool.newGit", desc: "New Git", group: "open" },
-    { key: "e", command: "tool.newNeovim", desc: "New Neovim", group: "open" },
     { key: "j", command: "tool.next", desc: "Next tool", group: "move" },
     { key: "k", command: "tool.previous", desc: "Previous tool", group: "move" },
     { key: "l", command: "tab.next", desc: "Next tab", group: "move" },
@@ -97,7 +95,6 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
 export const TOOL_SESSION_DIRECT_BINDINGS: readonly ToolSessionDirectBinding[] =
   [{ key: "Mod-,", command: "settings.show", desc: "Settings" }]
 
-/** File navigation is handled inside the Neovim terminal. */
 export const TOOL_SESSION_CONTEXT_BINDINGS: readonly ToolSessionContextBinding[] = []
 
 /** Commands allowed both as prefix (HUD) and as a direct chord. */
@@ -157,14 +154,10 @@ export function matchToolSessionDirectBinding(
 }
 
 export function matchToolSessionContextBinding(
-  event: KeyboardEvent,
-  kind: string | undefined,
+  _event: KeyboardEvent,
+  _kind: string | undefined,
 ): ToolSessionContextBinding | undefined {
-  if (kind !== "search") return undefined
-  return TOOL_SESSION_CONTEXT_BINDINGS.find(
-    (item) =>
-      item.when.includes(kind) && keyEventMatchesBinding(event, item.key),
-  )
+  return undefined
 }
 
 /**

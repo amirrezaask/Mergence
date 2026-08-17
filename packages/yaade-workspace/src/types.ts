@@ -7,20 +7,9 @@ import type {
   GitStatusEntry,
   GitWorktree,
   PanelView,
-  FileSearchOptions,
-  ProjectSearchOptions,
-  ProjectSearchResult,
-  SearchPage,
 } from "@yaade/shared";
 import type {
   EmptyTrashResult,
-  LanguageServerDefinition,
-  LspLifecycleEvent,
-  LspLogEntry,
-  LspLogRequest,
-  LspResolveRequest,
-  LspStartResult,
-  ResolvedLanguageServerTarget,
   RestoreTrashResult,
   TextFileReadResult,
   TextFileWriteOptions,
@@ -40,7 +29,6 @@ import type {
   ToolUse,
   SessionId,
   ToolUseId,
-  UpdateToolUseInput,
   UpdateToolUseContext,
   ReorderSessions,
   ReorderToolUses,
@@ -51,13 +39,6 @@ import type {
 
 export type {
   EmptyTrashResult,
-  LanguageServerDefinition,
-  LspLifecycleEvent,
-  LspLogEntry,
-  LspLogRequest,
-  LspResolveRequest,
-  LspStartResult,
-  ResolvedLanguageServerTarget,
   RestoreTrashResult,
   TextFileReadResult,
   TextFileWriteOptions,
@@ -132,25 +113,6 @@ export type JetElectronFS = FileSystemProvider & {
   ): () => void;
 };
 
-export type JetElectronSearch = {
-  project(
-    rootUri: string,
-    query: string,
-    opts?: ProjectSearchOptions,
-    signal?: AbortSignal,
-  ): Promise<SearchPage<ProjectSearchResult>>;
-  listFiles(rootUri: string, signal?: AbortSignal): Promise<SearchPage<string>>;
-  fileSearch(
-    rootUri: string,
-    query: string,
-    opts?: FileSearchOptions,
-    signal?: AbortSignal,
-  ): Promise<SearchPage<string>>;
-  trackFileAccess?(rootUri: string, query: string, path: string): Promise<void>;
-  isScanReady?(rootUri: string): Promise<boolean>;
-  isSupported?(rootUri: string): Promise<boolean>;
-};
-
 export type JetTaskSpawnRequest = {
   id: string;
   command: string;
@@ -184,26 +146,15 @@ export type JetElectronTools = {
   restoreSession(command: RestoreSession): Promise<AppSession>;
   createSession(title?: string): Promise<AppSession>;
   renameSession(sessionId: SessionId, title: string): Promise<AppSession>;
-  getSession(
-    sessionId: SessionId,
-  ): Promise<{ session: AppSession; tabs?: SessionTab[]; toolUses: ToolUse[] } | null>;
+  getSession(sessionId: SessionId): Promise<{
+    session: AppSession;
+    tabs?: SessionTab[];
+    toolUses: ToolUse[];
+  } | null>;
   createUse(command: CreateToolUse): Promise<ToolUse>;
   getUse(toolUseId: ToolUseId): Promise<ToolUse | null>;
   reorderUses(command: ReorderToolUses): Promise<ToolUse[]>;
-  updateUseInput(command: UpdateToolUseInput): Promise<ToolUse>;
   updateUseContext(command: UpdateToolUseContext): Promise<ToolUse>;
-  listSearchResults(
-    toolUseId: ToolUseId,
-    resultRevision: number,
-    cursor?: number,
-    limit?: number,
-  ): Promise<ProjectSearchResult[]>;
-  loadMore(
-    toolUseId: ToolUseId,
-    resultRevision: number,
-    cursor?: number,
-    limit?: number,
-  ): Promise<ProjectSearchResult[]>;
   selectUse(sessionId: SessionId, toolUseId?: ToolUseId): Promise<AppSession>;
   cancelUse(toolUseId: ToolUseId, revision: number): Promise<ToolUse>;
   restartUse(toolUseId: ToolUseId, revision: number): Promise<ToolUse>;
@@ -218,19 +169,6 @@ export type JetElectronTasks = {
   spawn(
     req: JetTaskSpawnRequest,
   ): Promise<{ exitCode: number; output: string }>;
-};
-
-export type JetElectronLSP = {
-  resolve(
-    request: LspResolveRequest,
-  ): Promise<ResolvedLanguageServerTarget | null>;
-  start(target: ResolvedLanguageServerTarget): Promise<LspStartResult>;
-  stop(id: string): Promise<void>;
-  listDefinitions(): Promise<LanguageServerDefinition[]>;
-  logs(request?: LspLogRequest): Promise<LspLogEntry[]>;
-  onLifecycle(cb: (event: LspLifecycleEvent) => void): () => void;
-  /** Compatibility signal for consumers that only need the failed session id. */
-  onCrashed(cb: (id: string) => void): () => void;
 };
 
 export type JetElectronTerminal = {
@@ -369,28 +307,6 @@ export type LaunchConfig = {
   source?: "default" | "explicit" | "external";
 };
 
-/**
- * Identifies one mux session's workspace lease within the current host client.
- * The host combines this with the transport client id so separate browser tabs
- * can retain the same root independently.
- */
-export type WorkspaceLeaseIdentity = {
-  sessionId: string;
-};
-
-export type JetElectronWorkspace = {
-  activate(
-    rootUri: string,
-    owner: WorkspaceLeaseIdentity,
-  ): Promise<{ ok: boolean }>;
-  deactivate?(
-    rootUri: string,
-    owner: WorkspaceLeaseIdentity,
-  ): Promise<{ ok: boolean }>;
-  onFileIndex(callback: (rootUri: string, files: string[]) => void): () => void;
-  onSearchReady?(callback: (rootUri: string) => void): () => void;
-};
-
 export type JetElectronGit = {
   isRepo(rootUri: string): Promise<boolean>;
   status(rootUri: string): Promise<GitStatusEntry[]>;
@@ -513,7 +429,7 @@ export type JetElectronAgents = {
       available: boolean;
       binary: string;
       version: string | null;
-      capabilities: import("@yaade/agents").AgentDriverCapabilities;
+      capabilities: import("@yaade/agent-telemetry").AgentDriverCapabilities;
       error: string | null;
     }>
   >;
@@ -554,11 +470,11 @@ export type JetElectronAgents = {
   }>;
   getSnapshot(
     sessionId: string,
-  ): Promise<import("@yaade/agents").AgentSessionSnapshot | null>;
+  ): Promise<import("@yaade/agent-telemetry").AgentSessionSnapshot | null>;
   listEvents(
     sessionId: string,
     opts?: { limit?: number; before?: string },
-  ): Promise<import("@yaade/agents").AgentEvent[]>;
+  ): Promise<import("@yaade/agent-telemetry").AgentEvent[]>;
   ingestNative(req: {
     provider: string;
     sessionId: string;
@@ -569,7 +485,7 @@ export type JetElectronAgents = {
     appFocused?: boolean;
   }): Promise<{
     eventCount: number;
-    snapshot: import("@yaade/agents").AgentSessionSnapshot | null;
+    snapshot: import("@yaade/agent-telemetry").AgentSessionSnapshot | null;
     nativeSessionId: string | null;
   }>;
   installProjectHooks(req: {
@@ -580,9 +496,9 @@ export type JetElectronAgents = {
     callback: (event: {
       type: "agents.snapshot" | "agents.event" | "agents.run";
       sessionId: string;
-      snapshot?: import("@yaade/agents").AgentSessionSnapshot;
+      snapshot?: import("@yaade/agent-telemetry").AgentSessionSnapshot;
       nativeSessionId?: string;
-      event?: import("@yaade/agents").AgentEvent;
+      event?: import("@yaade/agent-telemetry").AgentEvent;
       kind?: "run.created" | "run.updated" | "run.ended";
       run?: AgentRunInfo;
     }) => void,
@@ -623,11 +539,8 @@ export type AgentRunInfo = {
 
 export type YaadeHostAPI = {
   fs: JetElectronFS;
-  search: JetElectronSearch;
-  lsp: JetElectronLSP;
   terminal?: JetElectronTerminal;
   tasks?: JetElectronTasks;
-  workspace?: JetElectronWorkspace;
   git?: JetElectronGit;
   shell?: JetElectronShell;
   notifications?: JetElectronNotifications;

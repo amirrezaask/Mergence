@@ -1,17 +1,13 @@
-import { Bot, FileCode2, GitBranch, Search, Terminal } from "lucide-react";
+import { GitBranch, Terminal } from "lucide-react";
 import type { AppSession, ToolKind, ToolUse, ToolUseId } from "@yaade/rpc";
 import { formatKeyBinding, PaletteShell, type PaletteShellItem } from "@yaade/ui";
 import { toolUseContextCaption, toolUseWorkTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 
 const toolIcons = {
-  agent: Bot,
-  editor: FileCode2,
-  neovim: FileCode2,
   terminal: Terminal,
-  search: Search,
   git: GitBranch,
-} satisfies Record<ToolKind, typeof Bot>;
+} satisfies Record<ToolKind, typeof Terminal>;
 
 type ToolUseSwitcherEntry = {
   readonly use: ToolUse;

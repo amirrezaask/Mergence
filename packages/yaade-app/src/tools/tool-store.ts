@@ -2,7 +2,6 @@ import { Schema } from "effect"
 import { SessionTab, SessionTabId } from "@yaade/rpc"
 import type {
   AppSession,
-  ProjectSearchResult,
   SessionId,
   ToolEvent,
   ToolUse,
@@ -17,7 +16,6 @@ export type ToolStoreSnapshot = {
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>
   readonly useIdsBySession: ReadonlyMap<SessionId, readonly ToolUseId[]>
   readonly useIdsByTab: ReadonlyMap<SessionTabId, readonly ToolUseId[]>
-  readonly searchResultsByUseId: ReadonlyMap<ToolUseId, readonly ProjectSearchResult[]>
   readonly activeSessionId: SessionId | undefined
   readonly activeTabId: SessionTabId | undefined
   readonly activeToolUseId: ToolUseId | undefined
@@ -27,19 +25,10 @@ export type ToolStoreSnapshot = {
 type Listener = () => void
 
 export type ToolRevisionGap = {
-  readonly entity: "session" | "tab" | "toolUse" | "search"
+  readonly entity: "session" | "tab" | "toolUse"
   readonly id: SessionId | SessionTabId | ToolUseId
   readonly expectedRevision: number
   readonly actualRevision: number
-}
-
-function frame(callback: () => void): void {
-  const raf = globalThis.requestAnimationFrame
-  if (raf) {
-    raf(callback)
-    return
-  }
-  globalThis.setTimeout(callback, 16)
 }
 
 function fallbackTab(session: AppSession): SessionTab {
@@ -63,7 +52,6 @@ export class ToolSessionStore {
   private usesById = new Map<ToolUseId, ToolUse>()
   private useIdsBySession = new Map<SessionId, ToolUseId[]>()
   private useIdsByTab = new Map<SessionTabId, ToolUseId[]>()
-  private searchResultsByUseId = new Map<ToolUseId, readonly ProjectSearchResult[]>()
   private activeSessionId: SessionId | undefined
   private activeTabId: SessionTabId | undefined
   private activeToolUseId: ToolUseId | undefined
@@ -73,11 +61,7 @@ export class ToolSessionStore {
   private readonly sessionListeners = new Map<SessionId, Set<Listener>>()
   private readonly tabListeners = new Map<SessionTabId, Set<Listener>>()
   private readonly useListeners = new Map<ToolUseId, Set<Listener>>()
-  private readonly searchListeners = new Map<ToolUseId, Set<Listener>>()
   private readonly revisions = new Map<string, number>()
-  private readonly searchRevisions = new Map<ToolUseId, number>()
-  private pendingSearch = new Map<ToolUseId, ProjectSearchResult[]>()
-  private searchFlushScheduled = false
   private revisionGapHandler: ((gap: ToolRevisionGap) => void) | undefined
 
   setRevisionGapHandler(handler: ((gap: ToolRevisionGap) => void) | undefined): void {
@@ -101,10 +85,6 @@ export class ToolSessionStore {
 
   subscribeToolUse(id: ToolUseId, listener: Listener): () => void {
     return this.subscribeEntity(this.useListeners, id, listener)
-  }
-
-  subscribeSearchResults(id: ToolUseId, listener: Listener): () => void {
-    return this.subscribeEntity(this.searchListeners, id, listener)
   }
 
   private subscribeEntity<K>(
@@ -145,14 +125,6 @@ export class ToolSessionStore {
     const existingUses = [...this.usesById.values()].filter(candidate => candidate.sessionId !== session.id)
     const existingTabs = [...this.tabsById.values()].filter(candidate => candidate.sessionId !== session.id)
     this.replace([...sessions, session], [...existingUses, ...uses], [...existingTabs, ...tabs])
-  }
-
-  replaceSearchResults(id: ToolUseId, results: readonly ProjectSearchResult[]): void {
-    this.searchResultsByUseId = new Map(this.searchResultsByUseId).set(id, [...results])
-    const use = this.usesById.get(id)
-    if (use?.output.kind === "search") this.searchRevisions.set(id, use.output.resultRevision)
-    this.notify(this.searchListeners, id)
-    this.publish()
   }
 
   setConnection(connection: ToolStoreSnapshot["connection"]): void {
@@ -228,7 +200,6 @@ export class ToolSessionStore {
   }
 
   apply(event: ToolEvent): void {
-    const isSearchEvent = event._tag === "SearchResultsReset" || event._tag === "SearchResultsAppended"
     let entityKey: string | undefined
     let entity: ToolRevisionGap["entity"] | undefined
     let entityId: SessionId | SessionTabId | ToolUseId | undefined
@@ -239,12 +210,12 @@ export class ToolSessionStore {
       entity = "tab"
       entityId = event.tab.id
       entityUpdatedAt = event.tab.updatedAt
-    } else if (!isSearchEvent && "toolUseId" in event) {
+    } else if ("toolUseId" in event) {
       entityKey = `use:${event.toolUseId}`
       entity = "toolUse"
       entityId = event.toolUseId
       entityUpdatedAt = "toolUse" in event ? event.toolUse.updatedAt : event.occurredAt
-    } else if (!isSearchEvent && "session" in event) {
+    } else if ("session" in event) {
       entityKey = `session:${event.session.id}`
       entity = "session"
       entityId = event.session.id
@@ -284,27 +255,6 @@ export class ToolSessionStore {
     }
     if (entityKey) this.revisions.set(entityKey, event.revision)
 
-    if (isSearchEvent) {
-      const previousRevision = this.searchRevisions.get(event.toolUseId)
-      if (previousRevision !== undefined && event.resultRevision < previousRevision) return
-      if (previousRevision !== undefined && event.resultRevision > previousRevision + 1) {
-        this.revisionGapHandler?.({
-          entity: "search",
-          id: event.toolUseId,
-          expectedRevision: previousRevision + 1,
-          actualRevision: event.resultRevision,
-        })
-      }
-      if (event._tag === "SearchResultsReset") {
-        this.searchRevisions.set(event.toolUseId, event.resultRevision)
-        this.searchResultsByUseId = new Map(this.searchResultsByUseId).set(event.toolUseId, [])
-        this.notify(this.searchListeners, event.toolUseId)
-        this.publish()
-        return
-      }
-      if (previousRevision !== event.resultRevision) return
-    }
-
     switch (event._tag) {
       case "SessionCreated":
       case "SessionUpdated":
@@ -336,9 +286,6 @@ export class ToolSessionStore {
         if (use) this.upsertUse({ ...use, output: event.output, revision: event.revision, updatedAt: event.occurredAt })
         break
       }
-      case "SearchResultsAppended":
-        this.queueSearch(event.toolUseId, event.results)
-        break
       case "ToolUseArchived": {
         const use = this.usesById.get(event.toolUseId)
         if (use) this.upsertUse({ ...use, archivedAt: event.occurredAt, revision: event.revision, updatedAt: event.occurredAt })
@@ -450,23 +397,6 @@ export class ToolSessionStore {
     return this.visibleTabIdsBySession.get(use.sessionId)?.[0]
   }
 
-  private queueSearch(id: ToolUseId, results: readonly ProjectSearchResult[]): void {
-    const pending = this.pendingSearch.get(id) ?? []
-    this.pendingSearch.set(id, [...pending, ...results])
-    if (this.searchFlushScheduled) return
-    this.searchFlushScheduled = true
-    frame(() => {
-      this.searchFlushScheduled = false
-      for (const [useId, batch] of this.pendingSearch) {
-        const previous = this.searchResultsByUseId.get(useId) ?? []
-        this.searchResultsByUseId = new Map(this.searchResultsByUseId).set(useId, [...previous, ...batch])
-        this.notify(this.searchListeners, useId)
-      }
-      this.pendingSearch.clear()
-      this.publish()
-    })
-  }
-
   private rebuildVisibleSessions(): void {
     this.visibleSessionIds = [...this.sessionsById.values()]
       .filter(session => !session.archivedAt)
@@ -533,7 +463,6 @@ export class ToolSessionStore {
       usesById: this.usesById,
       useIdsBySession: this.useIdsBySession,
       useIdsByTab: this.useIdsByTab,
-      searchResultsByUseId: this.searchResultsByUseId,
       activeSessionId: this.activeSessionId,
       activeTabId: this.activeTabId,
       activeToolUseId: this.activeToolUseId,

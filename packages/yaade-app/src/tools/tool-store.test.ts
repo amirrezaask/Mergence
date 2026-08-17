@@ -52,50 +52,20 @@ function use(): ToolUse {
 }
 
 describe("smart ToolUse titles", () => {
-  it("uses search queries and promotes agent prompts to live terminal titles", () => {
-    const search: ToolUse = {
-      ...use(),
-      kind: "search",
-      title: "Search",
-      input: {
-        _tag: "SearchToolInput",
-        kind: "search",
-        query: "updateUseContext",
-        options: {},
-      },
-      output: {
-        _tag: "SearchToolOutput",
-        kind: "search",
-        resultRevision: 1,
-        resultCount: 0,
-        truncated: false,
-        running: false,
-      },
-    }
-    assert.equal(toolUseWorkTitle(search), "updateUseContext")
-    assert.equal(toolUseContextCaption(search), "p · Main")
-    assert.equal(toolUseDisplayTitle(search), "p: updateUseContext")
+  it("uses terminal and Git titles with checkout context", () => {
+    const terminal = use()
+    assert.equal(toolUseWorkTitle(terminal), "Shell")
+    assert.equal(toolUseContextCaption(terminal), "p · Main")
+    assert.equal(toolUseDisplayTitle(terminal), "p: Shell")
 
-    const agent: ToolUse = {
-      ...use(),
-      kind: "agent",
-      title: "Agent",
-      input: { _tag: "AgentToolInput", kind: "agent", provider: "codex" },
+    const git: ToolUse = {
+      ...terminal,
+      kind: "git",
+      title: "Git History",
+      input: { _tag: "GitToolInput", kind: "git" },
+      output: { _tag: "GitToolOutput", kind: "git" },
     }
-    const prompt = nextRuntimeToolTitle(
-      agent,
-      undefined,
-      "Fix the unfinished session sidebar",
-      "prompt",
-    )
-    assert.equal(
-      toolUseDisplayTitle(agent, prompt),
-      "p: Fix the unfinished session sidebar",
-    )
-    const generic = nextRuntimeToolTitle(agent, prompt, "Agent", "terminal")
-    assert.equal(generic, prompt)
-    const live = nextRuntimeToolTitle(agent, prompt, "codex · yaade", "terminal")
-    assert.equal(toolUseDisplayTitle(agent, live), "p: codex · yaade")
+    assert.equal(toolUseDisplayTitle(git), "p: Git History")
   })
 
   it("uses a terminal's live title", () => {

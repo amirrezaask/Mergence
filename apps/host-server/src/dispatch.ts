@@ -3,16 +3,11 @@ import {
   createDirectory,
   createFile,
   emptyTrash,
-  fileSearch,
   exists,
-  isSearchSupported,
-  isSearchScanReady,
   listTrash,
-  listProjectFiles,
   loadGlobalYaadercScanRoots,
   openInApp,
   revealInFolder,
-  projectSearch,
   readDir,
   readFile,
   readTextFile,
@@ -20,7 +15,6 @@ import {
   restoreTrash,
   spawnTask,
   stat,
-  trackFileAccess,
   trashPath,
   writeFile,
   writeTextFile,
@@ -42,7 +36,6 @@ import {
   CreateToolUse,
   GetSession,
   GetToolUse,
-  ListSearchResults,
   ListSessions,
   ListCheckoutTargets,
   ReorderSessions,
@@ -65,19 +58,14 @@ import {
   SessionUpdated,
   SessionTabCreated,
   SessionTabUpdated,
-  ToolUseArchived,
   ToolUseUpdated,
-  UpdateToolUseInput,
   UpdateToolUseContext,
   ConflictError,
   OperationFailedError,
   FileChangedError,
-  LspLogRequest,
-  LspResolveRequest,
   NotFoundError,
   PathOutsideRootsError,
   PayloadTooLargeError,
-  ResolvedLanguageServerTarget,
   TextFileWriteOptions,
   UnknownChannelError,
   unknownChannel,
@@ -85,16 +73,14 @@ import {
 } from "@yaade/rpc";
 import type {
   BindNotificationSessionRequest,
-  FileSearchOptions,
   IngestNotificationRequest,
   ListNotificationsRequest,
   MarkAllNotificationsReadRequest,
   NotificationPreferences,
-  ProjectSearchOptions,
 } from "@yaade/shared";
 import { fileUriToPath, pathToFileUri } from "@yaade/shared";
 import { GitServiceLive, GitServiceTag } from "./effect/git.js";
-import { HostRuntimeTag, LspHostTag } from "./effect/tags.js";
+import { HostRuntimeTag } from "./effect/tags.js";
 import type { HostRuntime } from "./host-runtime.js";
 import type { ToolService } from "./tools/service.js";
 import { normalizeHookEventName } from "./notifications/index.js";
@@ -167,24 +153,21 @@ export function mapDispatchError(
   return new OperationFailedError({ message, cause: error });
 }
 
-export type DispatchEnv = HostRuntimeTag | LspHostTag | GitServiceTag;
+export type DispatchEnv = HostRuntimeTag | GitServiceTag;
 
 export function dispatch(
   channel: string,
   args: unknown[],
   clientId: string,
-  signal?: AbortSignal,
+  _signal?: AbortSignal,
 ): Effect.Effect<unknown, HostRpcError, DispatchEnv> {
   return Effect.gen(function* () {
     if (channel.startsWith("git:")) {
       return yield* handleGitEffect(channel, args);
     }
-    if (channel.startsWith("lsp:")) {
-      return yield* handleLspEffect(channel, args);
-    }
     const runtime = yield* HostRuntimeTag;
     return yield* Effect.tryPromise({
-      try: () => dispatchImpl(runtime, channel, args, clientId, signal),
+      try: () => dispatchImpl(runtime, channel, args, clientId),
       catch: (err) => mapDispatchError(channel, err),
     });
   });
@@ -200,7 +183,6 @@ export function dispatchPromise(
   return Effect.runPromise(
     dispatch(channel, args, clientId, signal).pipe(
       Effect.provideService(HostRuntimeTag, runtime),
-      Effect.provideService(LspHostTag, runtime.lsp),
       Effect.provide(GitServiceLive),
     ),
   );
@@ -211,7 +193,6 @@ async function dispatchImpl(
   channel: string,
   args: unknown[],
   clientId: string,
-  signal?: AbortSignal,
 ): Promise<unknown> {
   if (
     channel === "fs:showOpenFolderDialog" ||
@@ -230,14 +211,8 @@ async function dispatchImpl(
   if (channel.startsWith("notifications:")) {
     return handleNotifications(runtime, channel, args);
   }
-  if (channel.startsWith("tools:"))
-    return handleTools(runtime, channel, args);
+  if (channel.startsWith("tools:")) return handleTools(runtime, channel, args);
   if (channel.startsWith("fs:")) return handleFs(runtime, channel, args);
-  if (channel.startsWith("search:"))
-    return handleSearch(runtime, channel, args, signal);
-  if (channel.startsWith("workspace:")) {
-    return handleWorkspace(runtime, channel, args, clientId);
-  }
   if (channel.startsWith("terminal:"))
     return handleTerminal(runtime, channel, args, clientId);
   if (channel.startsWith("shell:")) return handleShell(channel, args);
@@ -312,8 +287,15 @@ async function handleTools(
       return store.reorderSessions(command.sessionIds);
     }
     case "tools:createTab": {
-      const command = decodeToolCommand(CreateSessionTab, args[0], "create tab");
-      const tab = store.createTab(command.sessionId, command.title ?? "New tab");
+      const command = decodeToolCommand(
+        CreateSessionTab,
+        args[0],
+        "create tab",
+      );
+      const tab = store.createTab(
+        command.sessionId,
+        command.title ?? "New tab",
+      );
       runtime.events.emit("tools:event", [
         SessionTabCreated.make({
           eventId: `evt-tab-${Date.now()}-${tab.id}`,
@@ -325,7 +307,11 @@ async function handleTools(
       return tab;
     }
     case "tools:renameTab": {
-      const command = decodeToolCommand(RenameSessionTab, args[0], "rename tab");
+      const command = decodeToolCommand(
+        RenameSessionTab,
+        args[0],
+        "rename tab",
+      );
       const tab = store.renameTab(command.tabId, command.title);
       runtime.events.emit("tools:event", [
         SessionTabUpdated.make({
@@ -355,18 +341,34 @@ async function handleTools(
       return tab;
     }
     case "tools:reorderTabs": {
-      const command = decodeToolCommand(ReorderSessionTabs, args[0], "reorder tabs");
+      const command = decodeToolCommand(
+        ReorderSessionTabs,
+        args[0],
+        "reorder tabs",
+      );
       const tabs = store.reorderTabs(command.sessionId, command.tabIds);
       return tabs;
     }
     case "tools:archiveTab": {
-      const command = decodeToolCommand(ArchiveSessionTab, args[0], "archive tab");
-      const tab = await requiredToolService(runtime).archiveTab(command.tabId, command.mode === "stop-tools");
+      const command = decodeToolCommand(
+        ArchiveSessionTab,
+        args[0],
+        "archive tab",
+      );
+      const tab = await requiredToolService(runtime).archiveTab(
+        command.tabId,
+        command.mode === "stop-tools",
+      );
       return tab;
     }
     case "tools:selectTab": {
-      const command = decodeToolCommand(SelectSessionTab, args[0], "select tab");
-      const tabId = command.tabId ?? store.listTabs(command.sessionId)[0]?.id ?? null;
+      const command = decodeToolCommand(
+        SelectSessionTab,
+        args[0],
+        "select tab",
+      );
+      const tabId =
+        command.tabId ?? store.listTabs(command.sessionId)[0]?.id ?? null;
       const session = store.setActiveTab(command.sessionId, tabId);
       runtime.events.emit("tools:event", [
         SessionUpdated.make({
@@ -456,18 +458,6 @@ async function handleTools(
       );
       return store.getToolUse(command.toolUseId);
     }
-    case "tools:updateUseInput": {
-      const command = decodeToolCommand(
-        UpdateToolUseInput,
-        args[0],
-        "update tool input",
-      );
-      return requiredToolService(runtime).updateInput(
-        command.toolUseId,
-        command.inputRevision,
-        command.input,
-      );
-    }
     case "tools:updateUseContext": {
       const command = decodeToolCommand(
         UpdateToolUseContext,
@@ -492,37 +482,6 @@ async function handleTools(
         },
         current.id,
         command.revision,
-      );
-    }
-    case "tools:listSearchResults": {
-      const command = decodeToolCommand(
-        ListSearchResults,
-        args[0],
-        "list search results",
-      );
-      return store.listSearchResults(
-        command.toolUseId,
-        command.resultRevision,
-        command.cursor ?? 0,
-        command.limit ?? 100,
-      );
-    }
-    case "tools:loadMore": {
-      const command = decodeToolCommand(
-        ListSearchResults,
-        args[0],
-        "load more search results",
-      );
-      await requiredToolService(runtime).loadMore(
-        command.toolUseId,
-        command.resultRevision,
-        command.cursor ?? 0,
-      );
-      return store.listSearchResults(
-        command.toolUseId,
-        command.resultRevision,
-        command.cursor ?? 0,
-        command.limit ?? 100,
       );
     }
     case "tools:reorderUses": {
@@ -618,13 +577,11 @@ async function handleTools(
       return use;
     }
     case "tools:listProjects":
-      return runtime.db
-        .projects()
-        .map((project) => ({
-          projectId: project.id,
-          projectPath: project.rootPath,
-          projectName: project.name,
-        }));
+      return runtime.db.projects().map((project) => ({
+        projectId: project.id,
+        projectPath: project.rootPath,
+        projectName: project.name,
+      }));
     case "tools:listCheckoutTargets": {
       const command = decodeToolCommand(
         ListCheckoutTargets,
@@ -1284,114 +1241,6 @@ function handleGitEffect(
       Effect.fail(new OperationFailedError({ message: e.message, cause: e })),
     ),
   );
-}
-
-async function handleSearch(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-  signal?: AbortSignal,
-): Promise<unknown> {
-  const rootUri = str(args[0], "rootUri");
-  switch (channel) {
-    case "search:listFiles": {
-      // Return via RPC only — do not push tens of thousands of paths into EventHub/WS replay.
-      return listProjectFiles(rootUri, undefined, signal);
-    }
-    case "search:project":
-      return projectSearch(
-        rootUri,
-        String(args[1] ?? ""),
-        args[2] as ProjectSearchOptions | undefined,
-        signal,
-      );
-    case "search:fileSearch":
-      return fileSearch(
-        rootUri,
-        String(args[1] ?? ""),
-        args[2] as FileSearchOptions | undefined,
-        signal,
-      );
-    case "search:trackFileAccess":
-      await trackFileAccess(
-        rootUri,
-        String(args[1] ?? ""),
-        String(args[2] ?? ""),
-      );
-      return null;
-    case "search:isScanReady":
-      return isSearchScanReady(rootUri);
-    case "search:isSupported":
-      return isSearchSupported(rootUri);
-    default:
-      throw new Error(`unknown search channel: ${channel}`);
-  }
-}
-
-function handleWorkspace(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-  clientId: string,
-): unknown {
-  const rootUri = str(args[0], "rootUri");
-  const sessionId = str(args[1], "sessionId");
-  const owner = { clientId, sessionId };
-  if (channel === "workspace:activate") {
-    return runtime.workspace.activate(runtime.events, rootUri, owner);
-  }
-  if (channel === "workspace:deactivate") {
-    return runtime.workspace.deactivate(rootUri, owner);
-  }
-  throw new Error(`unknown workspace channel: ${channel}`);
-}
-
-function decodeLspInput<A, I, R>(
-  schema: Schema.Schema<A, I, R>,
-  input: unknown,
-): Effect.Effect<A, HostRpcError, R> {
-  return Schema.decodeUnknown(schema)(input).pipe(
-    Effect.mapError(
-      (error) =>
-        new OperationFailedError({
-          message: `Invalid LSP request: ${error.message}`,
-          cause: error,
-        }),
-    ),
-  );
-}
-
-function handleLspEffect(
-  channel: string,
-  args: unknown[],
-): Effect.Effect<unknown, HostRpcError, LspHostTag> {
-  return Effect.gen(function* () {
-    const lsp = yield* LspHostTag;
-    switch (channel) {
-      case "lsp:resolve": {
-        const request = yield* decodeLspInput(LspResolveRequest, args[0]);
-        return yield* Effect.promise(() => lsp.resolve(request));
-      }
-      case "lsp:start": {
-        const target = yield* decodeLspInput(
-          ResolvedLanguageServerTarget,
-          args[0],
-        );
-        return yield* Effect.promise(() => lsp.start(target));
-      }
-      case "lsp:stop":
-        yield* Effect.promise(() => lsp.stop(str(args[0], "id")));
-        return null;
-      case "lsp:listDefinitions":
-        return lsp.listDefinitions();
-      case "lsp:logs": {
-        const request = yield* decodeLspInput(LspLogRequest, args[0] ?? {});
-        return lsp.logs(request);
-      }
-      default:
-        return yield* Effect.fail(unknownChannel(channel));
-    }
-  });
 }
 
 async function handleTerminal(

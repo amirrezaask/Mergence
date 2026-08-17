@@ -1,21 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { Data, Schema } from "effect";
 import {
-  AgentToolInput,
   AppSession,
   SessionTab,
   SessionTabId,
-  EditorToolInput,
-  EditorToolOutput,
-  NeovimToolInput,
-  NeovimToolOutput,
   GitToolInput,
   GitToolOutput,
   ProcessToolOutput,
-  ProjectSearchResult,
   type ResolvedToolContext,
-  SearchToolInput,
-  SearchToolOutput,
   SessionId,
   TerminalToolInput,
   ToolUse,
@@ -89,29 +81,12 @@ type ToolUseRow = {
   archived_at: string | null;
 };
 
-type SearchResultRow = {
-  result_json: string;
-};
-
 const now = (): string => new Date().toISOString();
 const sessionId = (): string => `ses-${randomUUID()}`;
 const tabId = (): string => `tab-${randomUUID()}`;
 const toolUseId = (): string => `use-${randomUUID()}`;
-const ToolUseInputSchema = Schema.Union(
-  AgentToolInput,
-  TerminalToolInput,
-  SearchToolInput,
-  GitToolInput,
-  EditorToolInput,
-  NeovimToolInput,
-);
-const ToolUseOutputSchema = Schema.Union(
-  ProcessToolOutput,
-  SearchToolOutput,
-  GitToolOutput,
-  EditorToolOutput,
-  NeovimToolOutput,
-);
+const ToolUseInputSchema = Schema.Union(TerminalToolInput, GitToolInput);
+const ToolUseOutputSchema = Schema.Union(ProcessToolOutput, GitToolOutput);
 
 function decodeJson<A>(
   schema: Schema.Schema<A>,
@@ -245,13 +220,6 @@ export class ToolSessionStore {
         finished_at TEXT,
         archived_at TEXT
       );
-      CREATE TABLE IF NOT EXISTS tool_use_search_results(
-        tool_use_id TEXT NOT NULL REFERENCES tool_uses(id) ON DELETE CASCADE,
-        result_revision INTEGER NOT NULL,
-        ordinal INTEGER NOT NULL,
-        result_json TEXT NOT NULL,
-        PRIMARY KEY(tool_use_id, result_revision, ordinal)
-      );
       CREATE INDEX IF NOT EXISTS app_sessions_visible
         ON app_sessions(machine, archived_at, position);
       CREATE INDEX IF NOT EXISTS app_tabs_visible
@@ -367,8 +335,8 @@ export class ToolSessionStore {
         });
       }
     }
-    this.migrateSearchSurfaceOnce();
     this.migrateSessionTabsOnce();
+    this.removeRetiredToolKindsOnce();
   }
 
   /** Add one tmux-window equivalent to every session and attach legacy tools. */
@@ -407,17 +375,20 @@ export class ToolSessionStore {
     }
   }
 
-  /** Idempotent follow-up for hosts that already applied schema 15 without search tabs. */
-  private migrateSearchSurfaceOnce(): void {
+  /** Retired ToolKinds cannot be decoded by the narrowed terminal/Git schema. */
+  private removeRetiredToolKindsOnce(): void {
     const migration = this.db
-      .prepare("SELECT version FROM schema_migrations WHERE version=16")
+      .prepare("SELECT version FROM schema_migrations WHERE version=18")
       .get();
     if (migration) return;
     this.db.exec("BEGIN IMMEDIATE");
     try {
-      this.migrateSearchSurfaceRows();
+      this.db.exec("DROP TABLE IF EXISTS tool_use_search_results");
       this.db
-        .prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(16)")
+        .prepare("DELETE FROM tool_uses WHERE kind NOT IN ('terminal','git')")
+        .run();
+      this.db
+        .prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(18)")
         .run();
       this.db.exec("COMMIT");
     } catch (cause) {
@@ -427,106 +398,9 @@ export class ToolSessionStore {
         /* preserve the original migration failure */
       }
       throw new ToolSessionStorageError({
-        message: "Search surface migration failed",
+        message: "Retired ToolKind cleanup failed",
         cause,
       });
-    }
-  }
-
-  private migrateSearchSurfaceRows(): void {
-    if (!this.hasTable("project_surface_state") || !this.hasTable("projects"))
-      return;
-    const rows = this.db
-      .prepare(
-        `SELECT p.id AS project_id, p.name AS project_name, p.root_path AS project_path,
-              s.state_json
-         FROM project_surface_state s
-         JOIN projects p ON p.id = s.project_id
-        WHERE s.surface='search'`,
-      )
-      .all() as Array<{
-      project_id: string;
-      project_name: string;
-      project_path: string;
-      state_json: string;
-    }>;
-    if (rows.length === 0) return;
-    const session = this.firstSession();
-    if (!session) return;
-    const insert = this.db.prepare(
-      `INSERT OR IGNORE INTO tool_uses(
-        id,session_id,kind,title,position,status,project_id,project_path,project_name,
-        checkout_key,checkout_path,checkout_label,managed_worktree,input_json,input_revision,
-        output_json,revision,created_at,updated_at
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-    );
-    let position = this.nextUsePosition(session.id);
-    const timestamp = now();
-    for (const row of rows) {
-      let state: Record<string, unknown> = {};
-      try {
-        const parsed = JSON.parse(row.state_json) as unknown;
-        if (parsed && typeof parsed === "object" && !Array.isArray(parsed))
-          state = parsed as Record<string, unknown>;
-      } catch {
-        continue;
-      }
-      const tabs = Array.isArray(state.searchTabs) ? state.searchTabs : [];
-      for (const tab of tabs) {
-        if (!tab || typeof tab !== "object" || Array.isArray(tab)) continue;
-        const record = tab as Record<string, unknown>;
-        const query = typeof record.query === "string" ? record.query : "";
-        const checkoutPath =
-          typeof record.checkoutPath === "string"
-            ? record.checkoutPath
-            : row.project_path;
-        const checkoutKey =
-          typeof record.checkoutKey === "string" ? record.checkoutKey : "main";
-        const options =
-          record.options &&
-          typeof record.options === "object" &&
-          !Array.isArray(record.options)
-            ? record.options
-            : {};
-        const title = query.trim()
-          ? `Search: ${query.trim().slice(0, 48)}`
-          : "Search";
-        const input = {
-          _tag: "SearchToolInput",
-          kind: "search",
-          query,
-          options,
-        };
-        const output = {
-          _tag: "SearchToolOutput",
-          kind: "search",
-          resultRevision: 1,
-          resultCount: 0,
-          truncated: false,
-          running: false,
-        };
-        insert.run(
-          toolUseId(),
-          session.id,
-          "search",
-          title,
-          position++,
-          "succeeded",
-          row.project_id,
-          row.project_path,
-          row.project_name,
-          checkoutKey,
-          checkoutPath,
-          checkoutKey === "main" ? "Main" : checkoutKey,
-          0,
-          JSON.stringify(input),
-          1,
-          JSON.stringify(output),
-          1,
-          timestamp,
-          timestamp,
-        );
-      }
     }
   }
 
@@ -577,10 +451,8 @@ export class ToolSessionStore {
         row.tool_use_id && /^use-[A-Za-z0-9_-]+$/.test(row.tool_use_id)
           ? row.tool_use_id
           : toolUseId();
-      const kind = row.provider ? "agent" : "terminal";
-      const input = row.provider
-        ? { _tag: "AgentToolInput", kind: "agent", provider: row.provider }
-        : { _tag: "TerminalToolInput", kind: "terminal" };
+      const kind = "terminal";
+      const input = { _tag: "TerminalToolInput", kind: "terminal" };
       const output = {
         _tag: "ProcessToolOutput",
         kind: "process",
@@ -1196,27 +1068,6 @@ export class ToolSessionStore {
     return updated;
   }
 
-  updateSearchInput(
-    id: ToolUseId,
-    expectedInputRevision: number,
-    input: Extract<ToolUseInput, { readonly kind: "search" }>,
-  ): ToolUse {
-    const current = this.getToolUse(id);
-    if (!current || current.input.kind !== "search")
-      throw new ToolSessionStorageError({
-        message: `search tool use not found: ${id}`,
-      });
-    if (current.inputRevision !== expectedInputRevision) {
-      throw new ToolUseConflict({
-        toolUseId: id,
-        expectedRevision: expectedInputRevision,
-        actualRevision: current.inputRevision,
-        message: `tool input revision conflict: ${id}`,
-      });
-    }
-    return this.compareAndSetToolUse(id, current.revision, { input });
-  }
-
   compareAndSetToolUse(
     id: ToolUseId,
     expectedRevision: number,
@@ -1297,89 +1148,4 @@ export class ToolSessionStore {
     return result;
   }
 
-  replaceSearchResults(
-    id: ToolUseId,
-    resultRevision: number,
-    results: readonly ProjectSearchResult[],
-  ): void {
-    this.db.exec("BEGIN IMMEDIATE");
-    try {
-      this.db
-        .prepare(
-          "DELETE FROM tool_use_search_results WHERE tool_use_id=? AND result_revision=?",
-        )
-        .run(id, resultRevision);
-      const insert = this.db.prepare(
-        "INSERT INTO tool_use_search_results(tool_use_id,result_revision,ordinal,result_json) VALUES(?,?,?,?)",
-      );
-      for (const [ordinal, result] of results.entries())
-        insert.run(id, resultRevision, ordinal, JSON.stringify(result));
-      this.db.exec("COMMIT");
-    } catch (cause) {
-      try {
-        this.db.exec("ROLLBACK");
-      } catch {
-        /* preserve original */
-      }
-      throw new ToolSessionStorageError({
-        message: "could not replace search results",
-        cause,
-      });
-    }
-  }
-
-  appendSearchResults(
-    id: ToolUseId,
-    resultRevision: number,
-    results: readonly ProjectSearchResult[],
-  ): void {
-    const row = this.db
-      .prepare(
-        "SELECT COALESCE(MAX(ordinal),-1)+1 AS ordinal FROM tool_use_search_results WHERE tool_use_id=? AND result_revision=?",
-      )
-      .get(id, resultRevision) as { ordinal: number };
-    const insert = this.db.prepare(
-      "INSERT INTO tool_use_search_results(tool_use_id,result_revision,ordinal,result_json) VALUES(?,?,?,?)",
-    );
-    for (const [offset, result] of results.entries())
-      insert.run(
-        id,
-        resultRevision,
-        row.ordinal + offset,
-        JSON.stringify(result),
-      );
-  }
-
-  listSearchResults(
-    id: ToolUseId,
-    resultRevision: number,
-    cursor = 0,
-    limit = 100,
-  ): ProjectSearchResult[] {
-    const rows = this.db
-      .prepare(
-        "SELECT result_json FROM tool_use_search_results WHERE tool_use_id=? AND result_revision=? AND ordinal>=? ORDER BY ordinal LIMIT ?",
-      )
-      .all(id, resultRevision, cursor, limit) as SearchResultRow[];
-    return rows.map((row) =>
-      decodeJson(
-        Schema.Struct({
-          path: Schema.String,
-          line: Schema.Number,
-          column: Schema.Number,
-          preview: Schema.String,
-          ranges: Schema.Array(
-            Schema.Struct({
-              startLine: Schema.Number,
-              startColumn: Schema.Number,
-              endLine: Schema.Number,
-              endColumn: Schema.Number,
-            }),
-          ),
-        }),
-        row.result_json,
-        "search result",
-      ),
-    );
-  }
 }

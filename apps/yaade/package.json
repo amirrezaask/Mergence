@@ -10,7 +10,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@yaade/agents": "workspace:*",
+    "@yaade/agent-telemetry": "workspace:*",
     "@yaade/app": "workspace:*",
     "@yaade/host-client": "workspace:*",
     "@yaade/shared": "workspace:*",

@@ -11,7 +11,7 @@ import {
   type AgentProvider,
   type AgentSessionSnapshot,
   type NotificationProjectionContext,
-} from "@yaade/agents"
+} from "@yaade/agent-telemetry"
 import type {
   IngestNotificationRequest,
   NotificationType,

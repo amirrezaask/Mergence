@@ -70,7 +70,6 @@ function makeApi(initial: ToolSessionSnapshot, latest: () => ToolUse): JetElectr
     getUse: async () => latest(),
     reorderUses: async () => [latest()],
     updateUseInput: async () => latest(),
-    listSearchResults: async () => [],
     loadMore: async () => [],
     selectUse: async () => initial.session,
     cancelUse: async () => latest(),

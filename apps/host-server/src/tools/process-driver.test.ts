@@ -5,7 +5,6 @@ import path from "node:path";
 import { describe, it } from "node:test";
 import { Schema } from "effect";
 import {
-  AgentToolInput,
   CreateToolUse,
   MainCheckout,
   ProjectTarget,
@@ -315,101 +314,6 @@ describe("process Tool driver", () => {
     } finally {
       await host.close();
       fs.rmSync(parent, { recursive: true, force: true });
-    }
-  });
-
-  it("changes agent provider even with a stale input revision", async () => {
-    const binDir = makeFakeAgentBinDir();
-    const previousPath = process.env.PATH;
-    process.env.PATH = binDir;
-    const { host, parent, projectRoot } = await hostWithProject();
-    try {
-      const available = host.runtime.agentRuns
-        .listProviders(true)
-        .filter((item) => item.available);
-      assert.deepEqual(
-        available.map((item) => item.provider),
-        ["claude", "codex"],
-      );
-      const project = host.runtime.db
-        .projects()
-        .find((item) => item.rootPath === projectRoot);
-      assert.ok(project);
-      const session = host.runtime.toolSessions.listSessions()[0];
-      assert.ok(session);
-      const created = Schema.decodeUnknownSync(ToolUse)(
-        await dispatchPromise(
-          host.runtime,
-          "tools:createUse",
-          [
-            CreateToolUse.make({
-              sessionId: session.id,
-              kind: "agent",
-              project: ProjectTarget.make({
-                projectId: project.id,
-                projectPath: project.rootPath,
-                projectName: project.name,
-              }),
-              checkout: MainCheckout.make({ kind: "main" }),
-              input: AgentToolInput.make({
-                kind: "agent",
-                provider: available[0]!.provider,
-              }),
-            }),
-          ],
-          "process-provider-test",
-        ),
-      );
-      await waitFor(() => {
-        const status = host.runtime.toolSessions.getToolUse(created.id)?.status;
-        return status === "running" || status === "failed";
-      });
-      const current = host.runtime.toolSessions.getToolUse(created.id);
-      assert.ok(current);
-      const nextProvider =
-        current.input.kind === "agent" && current.input.provider === "claude"
-          ? "codex"
-          : "claude";
-      const updated = Schema.decodeUnknownSync(ToolUse)(
-        await dispatchPromise(
-          host.runtime,
-          "tools:updateUseInput",
-          [
-            {
-              _tag: "UpdateToolUseInput",
-              toolUseId: current.id,
-              inputRevision: 0,
-              input: AgentToolInput.make({
-                kind: "agent",
-                provider: nextProvider,
-              }),
-            },
-          ],
-          "process-provider-test",
-        ),
-      );
-      assert.equal(updated.input.kind, "agent");
-      if (updated.input.kind === "agent")
-        assert.equal(updated.input.provider, nextProvider);
-      const live = host.runtime.toolSessions.getToolUse(updated.id);
-      if (live) {
-        try {
-          await dispatchPromise(
-            host.runtime,
-            "tools:cancelUse",
-            [live.id, live.revision],
-            "process-provider-test",
-          );
-        } catch {
-          /* host teardown still owns remaining PTY exit */
-        }
-      }
-    } finally {
-      await host.close();
-      if (previousPath === undefined) delete process.env.PATH;
-      else process.env.PATH = previousPath;
-      fs.rmSync(parent, { recursive: true, force: true });
-      fs.rmSync(binDir, { recursive: true, force: true });
     }
   });
 

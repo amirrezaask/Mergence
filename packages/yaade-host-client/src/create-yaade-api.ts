@@ -1,6 +1,6 @@
 import type { WorkspaceFileChangeKind, YaadeHostAPI } from "@yaade/workspace";
 import { Schema } from "effect";
-import { type LspLifecycleEvent, ToolEvent } from "@yaade/rpc";
+import { ToolEvent } from "@yaade/rpc";
 import type { YaadeHostTransport } from "./transport.js";
 import {
   readFileWithDiagnostics,
@@ -24,49 +24,15 @@ type TerminalAttachResult = {
   signal?: number;
 };
 
-/** Prefer WS fire-and-forget for hot terminal I/O; fall back to HTTP RPC. */
+/** Prefer acknowledged WS delivery for hot terminal I/O; fall back to HTTP RPC. */
 function invokeTerminalHot(
   transport: YaadeHostTransport,
   channel: string,
   ...args: unknown[]
 ): Promise<void> {
-  if (transport.sendRealtime?.(channel, ...args)) return Promise.resolve();
+  const realtime = transport.invokeRealtime?.<unknown>(channel, ...args);
+  if (realtime) return realtime.then(() => undefined);
   return transport.invoke(channel, ...args).then(() => undefined);
-}
-
-function invokeCancellable<T>(
-  transport: YaadeHostTransport,
-  channel: string,
-  args: unknown[],
-  signal?: AbortSignal,
-): Promise<T> {
-  if (!signal) return transport.invoke(channel, ...args);
-  if (transport.invokeWithSignal)
-    return transport.invokeWithSignal(channel, args, signal);
-  if (signal.aborted) return Promise.reject(clientAbortError(signal));
-  return new Promise<T>((resolve, reject) => {
-    const abort = () => reject(clientAbortError(signal));
-    signal.addEventListener("abort", abort, { once: true });
-    void transport
-      .invoke<T>(channel, ...args)
-      .then(resolve, reject)
-      .finally(() => {
-        signal.removeEventListener("abort", abort);
-      });
-  });
-}
-
-function clientAbortError(signal: AbortSignal): Error {
-  if (signal.reason instanceof Error && signal.reason.name === "AbortError") {
-    return signal.reason;
-  }
-  const error = new Error(
-    signal.reason instanceof Error
-      ? signal.reason.message
-      : "host invoke aborted",
-  );
-  error.name = "AbortError";
-  return error;
 }
 
 export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
@@ -105,9 +71,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       data,
       sequence,
       ...(replay ? { replay: true } : {}),
-      ...(replayNeedsQueryResponses
-        ? { replayNeedsQueryResponses: true }
-        : {}),
+      ...(replayNeedsQueryResponses ? { replayNeedsQueryResponses: true } : {}),
       ...(replayTruncated ? { replayTruncated: true } : {}),
     });
     let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length;
@@ -248,14 +212,6 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     );
   });
 
-  transport.on("lsp:crashed", (...args: unknown[]) => {
-    const id = args[0] as string;
-    for (const cb of lspCrashListeners) cb(id);
-  });
-  transport.on("lsp:lifecycle", (...args: unknown[]) => {
-    const event = args[0] as LspLifecycleEvent;
-    for (const cb of lspLifecycleListeners) cb(event);
-  });
   transport.on("fs:changed", (...args: unknown[]) => {
     const uri = args[0] as string;
     const rawKind = args[1];
@@ -265,14 +221,6 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
   });
   transport.on("yaade:close-tab", () => {
     window.dispatchEvent(new CustomEvent("jet-close-tab"));
-  });
-  transport.on("workspace:fileIndex", (...args: unknown[]) => {
-    const payload = args[0] as { rootUri: string; files: string[] };
-    for (const cb of fileIndexListeners) cb(payload.rootUri, payload.files);
-  });
-  transport.on("workspace:searchReady", (...args: unknown[]) => {
-    const payload = args[0] as { rootUri: string };
-    for (const cb of searchReadyListeners) cb(payload.rootUri);
   });
   transport.on("terminal:data", (...args: unknown[]) => {
     const id = args[0] as string;
@@ -310,9 +258,9 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     const event = args[0] as {
       type: "agents.snapshot" | "agents.event" | "agents.run";
       sessionId: string;
-      snapshot?: import("@yaade/agents").AgentSessionSnapshot;
+      snapshot?: import("@yaade/agent-telemetry").AgentSessionSnapshot;
       nativeSessionId?: string;
-      event?: import("@yaade/agents").AgentEvent;
+      event?: import("@yaade/agent-telemetry").AgentEvent;
     };
     for (const cb of agentEventListeners) cb(event);
   });
@@ -325,15 +273,9 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     }
   });
 
-  const lspCrashListeners = new Set<(id: string) => void>();
-  const lspLifecycleListeners = new Set<(event: LspLifecycleEvent) => void>();
   const fileChangeListeners = new Set<
     (uri: string, kind: WorkspaceFileChangeKind) => void
   >();
-  const fileIndexListeners = new Set<
-    (rootUri: string, files: string[]) => void
-  >();
-  const searchReadyListeners = new Set<(rootUri: string) => void>();
   const terminalExitListeners = new Set<
     (id: string, exitCode: number, signal?: number) => void
   >();
@@ -347,9 +289,9 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     (event: {
       type: "agents.snapshot" | "agents.event" | "agents.run";
       sessionId: string;
-      snapshot?: import("@yaade/agents").AgentSessionSnapshot;
+      snapshot?: import("@yaade/agent-telemetry").AgentSessionSnapshot;
       nativeSessionId?: string;
-      event?: import("@yaade/agents").AgentEvent;
+      event?: import("@yaade/agent-telemetry").AgentEvent;
       kind?: "run.created" | "run.updated" | "run.ended";
       run?: import("@yaade/workspace").AgentRunInfo;
     }) => void
@@ -397,57 +339,6 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       onFileChanged: (callback) => {
         fileChangeListeners.add(callback);
         return () => fileChangeListeners.delete(callback);
-      },
-    },
-    workspace: {
-      activate: (rootUri, owner) =>
-        transport.invoke("workspace:activate", rootUri, owner.sessionId),
-      deactivate: (rootUri, owner) =>
-        transport.invoke("workspace:deactivate", rootUri, owner.sessionId),
-      onFileIndex: (callback) => {
-        fileIndexListeners.add(callback);
-        return () => fileIndexListeners.delete(callback);
-      },
-      onSearchReady: (callback) => {
-        searchReadyListeners.add(callback);
-        return () => searchReadyListeners.delete(callback);
-      },
-    },
-    search: {
-      project: (rootUri, query, opts, signal) =>
-        invokeCancellable(
-          transport,
-          "search:project",
-          [rootUri, query, opts],
-          signal,
-        ),
-      listFiles: (rootUri, signal) =>
-        invokeCancellable(transport, "search:listFiles", [rootUri], signal),
-      fileSearch: (rootUri, query, opts, signal) =>
-        invokeCancellable(
-          transport,
-          "search:fileSearch",
-          [rootUri, query, opts],
-          signal,
-        ),
-      trackFileAccess: (rootUri, query, path) =>
-        transport.invoke("search:trackFileAccess", rootUri, query, path),
-      isScanReady: (rootUri) => transport.invoke("search:isScanReady", rootUri),
-      isSupported: (rootUri) => transport.invoke("search:isSupported", rootUri),
-    },
-    lsp: {
-      resolve: (request) => transport.invoke("lsp:resolve", request),
-      start: (target) => transport.invoke("lsp:start", target),
-      stop: (id) => transport.invoke("lsp:stop", id),
-      listDefinitions: () => transport.invoke("lsp:listDefinitions"),
-      logs: (request) => transport.invoke("lsp:logs", request ?? {}),
-      onLifecycle: (cb) => {
-        lspLifecycleListeners.add(cb);
-        return () => lspLifecycleListeners.delete(cb);
-      },
-      onCrashed: (cb) => {
-        lspCrashListeners.add(cb);
-        return () => lspCrashListeners.delete(cb);
       },
     },
     tasks: {
@@ -535,8 +426,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       renameTab: (command) => transport.invoke("tools:renameTab", command),
       saveTabLayout: (command) =>
         transport.invoke("tools:saveTabLayout", command),
-      reorderTabs: (command) =>
-        transport.invoke("tools:reorderTabs", command),
+      reorderTabs: (command) => transport.invoke("tools:reorderTabs", command),
       archiveTab: (command) => transport.invoke("tools:archiveTab", command),
       selectTab: (command) => transport.invoke("tools:selectTab", command),
       archiveSession: (command) =>
@@ -551,26 +441,8 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       createUse: (command) => transport.invoke("tools:createUse", command),
       getUse: (toolUseId) => transport.invoke("tools:getUse", toolUseId),
       reorderUses: (command) => transport.invoke("tools:reorderUses", command),
-      updateUseInput: (command) =>
-        transport.invoke("tools:updateUseInput", command),
       updateUseContext: (command) =>
         transport.invoke("tools:updateUseContext", command),
-      listSearchResults: (toolUseId, resultRevision, cursor, limit) =>
-        transport.invoke("tools:listSearchResults", {
-          _tag: "ListSearchResults",
-          toolUseId,
-          resultRevision,
-          ...(cursor == null ? {} : { cursor }),
-          ...(limit == null ? {} : { limit }),
-        }),
-      loadMore: (toolUseId, resultRevision, cursor, limit) =>
-        transport.invoke("tools:loadMore", {
-          _tag: "ListSearchResults",
-          toolUseId,
-          resultRevision,
-          ...(cursor == null ? {} : { cursor }),
-          ...(limit == null ? {} : { limit }),
-        }),
       selectUse: (sessionId, toolUseId) =>
         transport.invoke("tools:selectUse", sessionId, toolUseId),
       cancelUse: (toolUseId, revision) =>

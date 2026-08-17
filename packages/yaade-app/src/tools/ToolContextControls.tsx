@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { FolderKanban, GitBranch, LoaderCircle, Sparkles } from "lucide-react";
+import { FolderKanban, GitBranch, LoaderCircle } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import {
   BranchWorktreeCheckout,
@@ -18,20 +18,6 @@ import {
   Input,
 } from "@yaade/ui/primitives";
 
-export type AgentProvider =
-  | "claude"
-  | "codex"
-  | "cursor"
-  | "opencode"
-  | "grok"
-  | "pi";
-
-export type ProviderOption = {
-  readonly provider: AgentProvider;
-  readonly available: boolean;
-  readonly error: string | null;
-};
-
 export type ToolContextSelection = {
   readonly project: ProjectTarget;
   readonly checkout: CheckoutTarget;
@@ -45,7 +31,6 @@ type ToolContextControlsBaseProps = {
     project: ProjectTarget,
     checkout: CheckoutTarget,
   ) => Promise<void>;
-  readonly onProviderChange?: (provider: AgentProvider) => Promise<void>;
 };
 
 export type ToolContextControlsProps =
@@ -72,17 +57,6 @@ function contextSelectionForUse(use: ToolUse): ToolContextSelection {
   };
 }
 
-function isAgentProvider(value: string): value is AgentProvider {
-  return (
-    value === "claude" ||
-    value === "codex" ||
-    value === "cursor" ||
-    value === "opencode" ||
-    value === "grok" ||
-    value === "pi"
-  );
-}
-
 export function ToolContextControls(props: ToolContextControlsProps) {
   const active = props.active !== false;
   const initialContext = useMemo(
@@ -103,7 +77,6 @@ export function ToolContextControls(props: ToolContextControlsProps) {
     initialContext.checkout,
   );
   const [targets, setTargets] = useState<readonly ToolCheckoutTarget[]>([]);
-  const [providers, setProviders] = useState<readonly ProviderOption[]>([]);
   const [creatingBranch, setCreatingBranch] = useState(false);
   const [branch, setBranch] = useState("");
   const [pending, setPending] = useState(false);
@@ -138,18 +111,6 @@ export function ToolContextControls(props: ToolContextControlsProps) {
       : checkout._tag === ExistingWorktreeCheckout._tag
         ? `worktree:${checkout.path}`
         : "new-branch";
-  const agentProvider =
-    props.use?.input.kind === "agent" &&
-    isAgentProvider(props.use.input.provider)
-      ? props.use.input.provider
-      : null;
-  const providerIds = useMemo(() => {
-    const ids = providers.map((item) => item.provider);
-    if (agentProvider && !ids.includes(agentProvider))
-      return [agentProvider, ...ids];
-    return ids;
-  }, [agentProvider, providers]);
-
   useEffect(() => {
     setProject(initialContext.project);
     setCheckout(initialContext.checkout);
@@ -170,33 +131,6 @@ export function ToolContextControls(props: ToolContextControlsProps) {
       cancelled = true;
     };
   }, [project.projectId, selectedWorktreePath]);
-
-  useEffect(() => {
-    if (props.use?.kind !== "agent") return;
-    let cancelled = false;
-    void window.yaade?.agents
-      ?.listProviders?.()
-      .then((next) => {
-        if (cancelled) return;
-        setProviders(
-          next.flatMap((item) =>
-            isAgentProvider(item.provider)
-              ? [
-                  {
-                    provider: item.provider,
-                    available: item.available,
-                    error: item.error,
-                  },
-                ]
-              : [],
-          ),
-        );
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [props.use?.kind]);
 
   const change = async (
     nextProject: ProjectTarget,
@@ -445,56 +379,6 @@ export function ToolContextControls(props: ToolContextControlsProps) {
         </div>
       ) : null}
 
-      {props.use?.kind === "agent" && agentProvider && props.onProviderChange ? (
-        <Combobox
-          items={providerIds}
-          value={agentProvider}
-          disabled={pending}
-          onValueChange={(value) => {
-            const next = String(value);
-            if (!isAgentProvider(next)) return;
-            const option = providers.find((item) => item.provider === next);
-            if (option && !option.available) return;
-            setPending(true);
-            void props
-              .onProviderChange?.(next)
-              .finally(() => setPending(false));
-          }}
-          itemToStringValue={(value) => String(value)}
-        >
-          <ComboboxInput
-            id={active ? "tool-provider" : undefined}
-            aria-label="Agent provider"
-            className={props.presentation === "popover" ? "w-full" : "w-36"}
-            startAddon={<Sparkles />}
-            size="sm"
-          />
-          <ComboboxPopup className="w-(--anchor-width)">
-            <ComboboxEmpty>No providers.</ComboboxEmpty>
-            <ComboboxList>
-              {(id: string) => {
-                const option = providers.find((item) => item.provider === id);
-                return (
-                  <ComboboxItem
-                    key={id}
-                    value={id}
-                    disabled={option ? !option.available : false}
-                  >
-                    <span className="min-w-0">
-                      <span className="block truncate">{id}</span>
-                      {option && !option.available ? (
-                        <span className="block truncate font-mono text-2xs text-muted-foreground">
-                          unavailable
-                        </span>
-                      ) : null}
-                    </span>
-                  </ComboboxItem>
-                );
-              }}
-            </ComboboxList>
-          </ComboboxPopup>
-        </Combobox>
-      ) : null}
       {pending ? (
         <LoaderCircle
           className="ml-auto size-3.5 animate-spin text-primary"

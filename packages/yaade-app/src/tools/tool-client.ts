@@ -1,6 +1,5 @@
 import type {
   AppSession,
-  ProjectSearchResult,
   SessionId,
   SessionTabId,
   ToolUse,
@@ -8,8 +7,6 @@ import type {
 } from "@yaade/rpc"
 import type { JetElectronTools, ToolSessionSnapshot } from "@yaade/workspace"
 import { ToolSessionStore, type ToolRevisionGap } from "./tool-store.js"
-
-const PAGE_SIZE = 100
 
 type ToolApi = JetElectronTools
 
@@ -68,7 +65,6 @@ export class ToolClient {
     try {
       const snapshots = await this.api.listSessions(includeArchived)
       this.replaceSnapshots(snapshots)
-      await this.hydrateSearchResults(snapshots.flatMap(snapshot => snapshot.toolUses))
       this.store.setConnection("connected")
     } catch (error) {
       this.store.setConnection("offline")
@@ -81,7 +77,6 @@ export class ToolClient {
     const snapshot = await this.api.getSession(sessionId)
     if (!snapshot) return
     this.store.replaceSession(snapshot.session, snapshot.toolUses, snapshot.tabs ?? [])
-    await this.hydrateSearchResults(snapshot.toolUses)
   }
 
   async reconcile(): Promise<void> {
@@ -111,7 +106,6 @@ export class ToolClient {
     const use = await this.api.getUse(gap.id as ToolUseId)
     if (!use) return
     this.store.replaceToolUse(use)
-    await this.hydrateSearchResults([use])
   }
 
   private replaceSnapshots(snapshots: readonly ToolSessionSnapshot[]): void {
@@ -119,29 +113,6 @@ export class ToolClient {
       snapshots.map(snapshot => snapshot.session),
       snapshots.flatMap(snapshot => snapshot.toolUses),
       snapshots.flatMap(snapshot => snapshot.tabs ?? []),
-    )
-  }
-
-  private async hydrateSearchResults(uses: readonly ToolUse[]): Promise<void> {
-    await Promise.all(
-      uses.map(async use => {
-        if (use.kind !== "search" || use.output.kind !== "search") return
-        const output = use.output
-        const results: ProjectSearchResult[] = []
-        let cursor = 0
-        while (cursor < output.resultCount) {
-          const page = await this.api.listSearchResults(
-            use.id,
-            output.resultRevision,
-            cursor,
-            PAGE_SIZE,
-          )
-          results.push(...page)
-          if (page.length < PAGE_SIZE) break
-          cursor += page.length
-        }
-        this.store.replaceSearchResults(use.id, results)
-      }),
     )
   }
 }

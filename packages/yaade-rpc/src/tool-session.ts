@@ -20,14 +20,7 @@ export const SessionTabId = Schema.String.pipe(
 );
 export type SessionTabId = Schema.Schema.Type<typeof SessionTabId>;
 
-export const ToolKind = Schema.Literal(
-  "agent",
-  "terminal",
-  "search",
-  "git",
-  "editor",
-  "neovim",
-);
+export const ToolKind = Schema.Literal("terminal", "git");
 export type ToolKind = Schema.Schema.Type<typeof ToolKind>;
 
 export const ToolUseStatus = Schema.Literal(
@@ -92,45 +85,11 @@ export class ResolvedToolContext extends Schema.Class<ResolvedToolContext>(
   managedWorktree: Schema.Boolean,
 }) {}
 
-export class AgentToolInput extends Schema.TaggedClass<AgentToolInput>()(
-  "AgentToolInput",
-  {
-    kind: Schema.Literal("agent"),
-    provider: Schema.String,
-    args: Schema.optional(Schema.Array(Schema.String)),
-  },
-) {}
-
 export class TerminalToolInput extends Schema.TaggedClass<TerminalToolInput>()(
   "TerminalToolInput",
   {
     kind: Schema.Literal("terminal"),
     shellArgs: Schema.optional(Schema.Array(Schema.String)),
-  },
-) {}
-
-export const SearchPathOptions = Schema.Struct({
-  include: Schema.optional(Schema.Array(Schema.String)),
-  exclude: Schema.optional(Schema.Array(Schema.String)),
-});
-
-export const SearchToolOptions = Schema.Struct({
-  ...SearchPathOptions.fields,
-  caseSensitive: Schema.optional(Schema.Boolean),
-  regex: Schema.optional(Schema.Boolean),
-  fuzzy: Schema.optional(Schema.Boolean),
-  wholeWord: Schema.optional(Schema.Boolean),
-  limit: Schema.optional(Schema.Number),
-  cursor: Schema.optional(Schema.String),
-});
-export type SearchToolOptions = Schema.Schema.Type<typeof SearchToolOptions>;
-
-export class SearchToolInput extends Schema.TaggedClass<SearchToolInput>()(
-  "SearchToolInput",
-  {
-    kind: Schema.Literal("search"),
-    query: Schema.String,
-    options: SearchToolOptions,
   },
 ) {}
 
@@ -140,26 +99,7 @@ export class GitToolInput extends Schema.TaggedClass<GitToolInput>()(
   { kind: Schema.Literal("git") },
 ) {}
 
-/** Editor is an interactive workspace surface, not a process. */
-export class EditorToolInput extends Schema.TaggedClass<EditorToolInput>()(
-  "EditorToolInput",
-  { kind: Schema.Literal("editor") },
-) {}
-
-/** Neovim is a host-owned server surfaced through a browser UI lease. */
-export class NeovimToolInput extends Schema.TaggedClass<NeovimToolInput>()(
-  "NeovimToolInput",
-  { kind: Schema.Literal("neovim") },
-) {}
-
-export const ToolUseInput = Schema.Union(
-  AgentToolInput,
-  TerminalToolInput,
-  SearchToolInput,
-  GitToolInput,
-  EditorToolInput,
-  NeovimToolInput,
-);
+export const ToolUseInput = Schema.Union(TerminalToolInput, GitToolInput);
 export type ToolUseInput = Schema.Schema.Type<typeof ToolUseInput>;
 
 export const ProcessState = Schema.Literal(
@@ -194,47 +134,12 @@ export class ProcessToolOutput extends Schema.TaggedClass<ProcessToolOutput>()(
   },
 ) {}
 
-export class SearchToolOutput extends Schema.TaggedClass<SearchToolOutput>()(
-  "SearchToolOutput",
-  {
-    kind: Schema.Literal("search"),
-    resultRevision: Schema.Number,
-    resultCount: Schema.Number,
-    truncated: Schema.Boolean,
-    nextCursor: Schema.optional(Schema.String),
-    running: Schema.Boolean,
-  },
-) {}
-
 export class GitToolOutput extends Schema.TaggedClass<GitToolOutput>()(
   "GitToolOutput",
   { kind: Schema.Literal("git") },
 ) {}
 
-export class EditorToolOutput extends Schema.TaggedClass<EditorToolOutput>()(
-  "EditorToolOutput",
-  { kind: Schema.Literal("editor") },
-) {}
-
-export class NeovimToolOutput extends Schema.TaggedClass<NeovimToolOutput>()(
-  "NeovimToolOutput",
-  {
-    kind: Schema.Literal("neovim"),
-    serverInstanceId: Schema.String,
-    generation: Schema.Number.pipe(Schema.int(), Schema.greaterThan(0)),
-    processState: ProcessState,
-    version: Schema.optional(Schema.String),
-    exitCode: Schema.optional(Schema.Number),
-  },
-) {}
-
-export const ToolUseOutput = Schema.Union(
-  ProcessToolOutput,
-  SearchToolOutput,
-  GitToolOutput,
-  EditorToolOutput,
-  NeovimToolOutput,
-);
+export const ToolUseOutput = Schema.Union(ProcessToolOutput, GitToolOutput);
 export type ToolUseOutput = Schema.Schema.Type<typeof ToolUseOutput>;
 
 export class AppSession extends Schema.Class<AppSession>("AppSession")({
@@ -291,45 +196,16 @@ const ToolUseRecord = Schema.Struct({
 export const ToolUse = ToolUseRecord.pipe(
   Schema.filter(
     (value) =>
-      (value.kind === "search" &&
-        value.input.kind === "search" &&
-        value.output.kind === "search") ||
       (value.kind === "git" &&
         value.input.kind === "git" &&
         value.output.kind === "git") ||
-      (value.kind === "editor" &&
-        value.input.kind === "editor" &&
-        value.output.kind === "editor") ||
-      (value.kind === "neovim" &&
-        value.input.kind === "neovim" &&
-        value.output.kind === "neovim") ||
-      (value.kind !== "search" &&
-        value.kind !== "git" &&
-        value.kind !== "editor" &&
-        value.kind !== "neovim" &&
-        value.input.kind === value.kind &&
+      (value.kind === "terminal" &&
+        value.input.kind === "terminal" &&
         value.output.kind === "process"),
     { message: () => "ToolUse kind does not match its input and output" },
   ),
 );
 export type ToolUse = Schema.Schema.Type<typeof ToolUseRecord>;
-
-export const SearchMatchRange = Schema.Struct({
-  startLine: Schema.Number,
-  startColumn: Schema.Number,
-  endLine: Schema.Number,
-  endColumn: Schema.Number,
-});
-export const ProjectSearchResult = Schema.Struct({
-  path: Schema.String,
-  line: Schema.Number,
-  column: Schema.Number,
-  preview: Schema.String,
-  ranges: Schema.Array(SearchMatchRange),
-});
-export type ProjectSearchResult = Schema.Schema.Type<
-  typeof ProjectSearchResult
->;
 
 export class CreateSession extends Schema.TaggedClass<CreateSession>()(
   "CreateSession",
@@ -418,16 +294,6 @@ export class CreateToolUse extends Schema.TaggedClass<CreateToolUse>()(
     input: ToolUseInput,
   },
 ) {}
-export class UpdateToolUseInput extends Schema.TaggedClass<UpdateToolUseInput>()(
-  "UpdateToolUseInput",
-  {
-    toolUseId: ToolUseId,
-    inputRevision: Schema.Number,
-    // Reuse the fully discriminated input union. The service rejects terminal
-    // updates, while the schema reliably decodes both agent and search members.
-    input: ToolUseInput,
-  },
-) {}
 export class UpdateToolUseContext extends Schema.TaggedClass<UpdateToolUseContext>()(
   "UpdateToolUseContext",
   {
@@ -482,15 +348,6 @@ export class GetSession extends Schema.TaggedClass<GetSession>()("GetSession", {
 export class GetToolUse extends Schema.TaggedClass<GetToolUse>()("GetToolUse", {
   toolUseId: ToolUseId,
 }) {}
-export class ListSearchResults extends Schema.TaggedClass<ListSearchResults>()(
-  "ListSearchResults",
-  {
-    toolUseId: ToolUseId,
-    resultRevision: Schema.Number,
-    cursor: Schema.optional(Schema.Number),
-    limit: Schema.optional(Schema.Number),
-  },
-) {}
 export class ListCheckoutTargets extends Schema.TaggedClass<ListCheckoutTargets>()(
   "ListCheckoutTargets",
   {
@@ -511,7 +368,6 @@ export const ToolCommand = Schema.Union(
   ArchiveSession,
   RestoreSession,
   CreateToolUse,
-  UpdateToolUseInput,
   UpdateToolUseContext,
   ReorderToolUses,
   CancelToolUse,
@@ -521,7 +377,6 @@ export const ToolCommand = Schema.Union(
   ListSessions,
   GetSession,
   GetToolUse,
-  ListSearchResults,
   ListCheckoutTargets,
 );
 export type ToolCommand = Schema.Schema.Type<typeof ToolCommand>;
@@ -601,27 +456,6 @@ export class ToolUseOutputChanged extends Schema.TaggedClass<ToolUseOutputChange
   "ToolUseOutputChanged",
   { ...EventBase, toolUseId: ToolUseId, output: ToolUseOutput },
 ) {}
-export class SearchResultsReset extends Schema.TaggedClass<SearchResultsReset>()(
-  "SearchResultsReset",
-  {
-    ...EventBase,
-    toolUseId: ToolUseId,
-    resultRevision: Schema.Number,
-  },
-) {}
-export class SearchResultsAppended extends Schema.TaggedClass<SearchResultsAppended>()(
-  "SearchResultsAppended",
-  {
-    ...EventBase,
-    toolUseId: ToolUseId,
-    resultRevision: Schema.Number,
-    results: Schema.Array(ProjectSearchResult).pipe(
-      Schema.filter((results) => results.length <= 100, {
-        message: () => "Search result events may contain at most 100 results",
-      }),
-    ),
-  },
-) {}
 export class ToolUseArchived extends Schema.TaggedClass<ToolUseArchived>()(
   "ToolUseArchived",
   {
@@ -641,8 +475,6 @@ export const ToolEvent = Schema.Union(
   ToolUseCreated,
   ToolUseUpdated,
   ToolUseOutputChanged,
-  SearchResultsReset,
-  SearchResultsAppended,
   ToolUseArchived,
 );
 export type ToolEvent = Schema.Schema.Type<typeof ToolEvent>;

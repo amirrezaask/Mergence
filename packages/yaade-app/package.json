@@ -6,14 +6,11 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "test": "tsx --test src/drop-files.test.ts src/agent-cli-launch.test.ts src/hooks/notification-provider-launch.test.ts src/hooks/useAppearanceSettings.test.ts src/tabs/terminal-session.test.ts src/effect/session-machine.test.ts src/build-branding.test.ts src/keybindings.test.ts src/agent-session-title.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-session-keymap.test.ts src/tools/tool-tiling.test.ts"
+    "test": "tsx --test src/hooks/useAppearanceSettings.test.ts src/build-branding.test.ts src/keybindings.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-session-keymap.test.ts src/tools/tool-tiling.test.ts"
   },
   "dependencies": {
-    "@effect-atom/atom": "0.5.3",
-    "@effect/experimental": "0.58.0",
     "@effect/platform": "0.97.1",
-    "@effect/rpc": "0.73.0",
-    "@yaade/agents": "workspace:*",
+    "@yaade/agent-telemetry": "workspace:*",
     "@yaade/host-client": "workspace:*",
     "@yaade/panels": "workspace:*",
     "@yaade/rpc": "workspace:*",

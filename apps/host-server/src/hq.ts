@@ -4,7 +4,7 @@ import {
   describeAgentActivity,
   type AgentProvider,
   type AgentSessionSnapshot,
-} from "@yaade/agents"
+} from "@yaade/agent-telemetry"
 import {
   HqAgentSummary,
   HqProjectSummary,

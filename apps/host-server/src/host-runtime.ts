@@ -1,17 +1,13 @@
-import os from "node:os"
-import {
-  type LspHost,
-  PerfHost,
-  type TerminalHost,
-} from "@yaade/node-host"
-import type { NotificationStreamEvent } from "@yaade/shared"
-import type { AgentProvider } from "@yaade/agents"
-import type { HostConfig } from "./config.js"
-import type { EventHub } from "./events.js"
+import os from "node:os";
+import { PerfHost, type TerminalHost } from "@yaade/node-host";
+import type { NotificationStreamEvent } from "@yaade/shared";
+import type { AgentProvider } from "@yaade/agent-telemetry";
+import type { HostConfig } from "./config.js";
+import type { EventHub } from "./events.js";
 import {
   NotificationService,
   parseOscStreamChunk,
-} from "./notifications/index.js"
+} from "./notifications/index.js";
 import {
   AgentTelemetryService,
   AgentRunService,
@@ -20,37 +16,34 @@ import {
   consumeHookQueueDiscardCount,
   removeQueuedHook,
   type AgentSnapshotStreamEvent,
-} from "./agents/index.js"
-import type { ProjectDatabase } from "./persistence.js"
-import { TerminalInstanceService } from "./terminal-instances.js"
-import { ToolSessionStore } from "./tool-session-store.js"
-import { WorkspaceHost } from "./workspace.js"
-import { ToolService } from "./tools/service.js"
-import { NeovimHost } from "./neovim/host.js"
+} from "./agents/index.js";
+import type { ProjectDatabase } from "./persistence.js";
+import { TerminalInstanceService } from "./terminal-instances.js";
+import { ToolSessionStore } from "./tool-session-store.js";
+import { ToolService } from "./tools/service.js";
 
 export type HostRuntime = {
-  config: HostConfig
-  events: EventHub
-  db: ProjectDatabase
-  terminal: TerminalHost
-  workspace: WorkspaceHost
-  perf: PerfHost
-  lsp: LspHost
-  homeDir: string
+  config: HostConfig;
+  events: EventHub;
+  db: ProjectDatabase;
+  terminal: TerminalHost;
+  perf: PerfHost;
+  homeDir: string;
   /** `os.hostname()` — workspace session identity with root path. */
-  machineHostname: string
-  notifications: NotificationService
-  agents: AgentTelemetryService
-  agentRuns: AgentRunService
-  terminalInstances: TerminalInstanceService
-  toolSessions: ToolSessionStore
-  neovim: NeovimHost
-  toolService: ToolService | null
-  hookQueueTimer: ReturnType<typeof setInterval>
-  pendingHookQueueDrain: () => Promise<void> | null
-}
+  machineHostname: string;
+  notifications: NotificationService;
+  agents: AgentTelemetryService;
+  agentRuns: AgentRunService;
+  terminalInstances: TerminalInstanceService;
+  toolSessions: ToolSessionStore;
+  toolService: ToolService | null;
+  hookQueueTimer: ReturnType<typeof setInterval>;
+  pendingHookQueueDrain: () => Promise<void> | null;
+};
 
-function asAgentProvider(value: string | null | undefined): AgentProvider | null {
+function asAgentProvider(
+  value: string | null | undefined,
+): AgentProvider | null {
   if (
     value === "claude" ||
     value === "codex" ||
@@ -59,9 +52,9 @@ function asAgentProvider(value: string | null | undefined): AgentProvider | null
     value === "grok" ||
     value === "pi"
   ) {
-    return value
+    return value;
   }
-  return null
+  return null;
 }
 
 export function createRuntime(
@@ -69,101 +62,110 @@ export function createRuntime(
   events: EventHub,
   db: ProjectDatabase,
   terminal: TerminalHost,
-  lsp: LspHost,
   options?: {
     /** When set, notification stream events go here (e.g. PubSub → EventHub bridge). */
-    emitNotification?: (event: NotificationStreamEvent) => void
+    emitNotification?: (event: NotificationStreamEvent) => void;
   },
 ): HostRuntime {
-  const terminalOscBuffers = new Map<string, string>()
+  const terminalOscBuffers = new Map<string, string>();
   const emitNotification =
     options?.emitNotification ??
     ((streamEvent: NotificationStreamEvent) => {
-      events.emit("notifications:event", [streamEvent])
-    })
-  const notifications = new NotificationService(db.raw(), emitNotification)
+      events.emit("notifications:event", [streamEvent]);
+    });
+  const notifications = new NotificationService(db.raw(), emitNotification);
 
   const emitAgent = (streamEvent: AgentSnapshotStreamEvent) => {
-    events.emit("agents:event", [streamEvent])
-  }
-  let agentRuns: AgentRunService | null = null
-  let terminalInstances: TerminalInstanceService | null = null
+    events.emit("agents:event", [streamEvent]);
+  };
+  let agentRuns: AgentRunService | null = null;
+  let terminalInstances: TerminalInstanceService | null = null;
   const agents = new AgentTelemetryService(
     db.raw(),
     notifications,
     emitAgent,
-    event => {
-      const instance = terminalInstances?.onTelemetry(event)
+    (event) => {
+      const instance = terminalInstances?.onTelemetry(event);
       if (instance) {
-        return instance.processState === "starting" || instance.processState === "running"
+        return (
+          instance.processState === "starting" ||
+          instance.processState === "running"
+        );
       }
-      const run = agentRuns?.onTelemetry(event)
-      return !run || run.processState === "starting" || run.processState === "running"
+      const run = agentRuns?.onTelemetry(event);
+      return (
+        !run ||
+        run.processState === "starting" ||
+        run.processState === "running"
+      );
     },
-  )
-  const runService = new AgentRunService(db.raw(), streamEvent => {
-    events.emit("agents:event", [streamEvent])
-  })
-  agentRuns = runService
-  const processInstances = new TerminalInstanceService(db.raw(), streamEvent => {
-    events.emit("terminal-instances:event", [streamEvent])
-  })
-  terminalInstances = processInstances
+  );
+  const runService = new AgentRunService(db.raw(), (streamEvent) => {
+    events.emit("agents:event", [streamEvent]);
+  });
+  agentRuns = runService;
+  const processInstances = new TerminalInstanceService(
+    db.raw(),
+    (streamEvent) => {
+      events.emit("terminal-instances:event", [streamEvent]);
+    },
+  );
+  terminalInstances = processInstances;
   // Construct after terminal persistence so migration 15 can correlate existing PTYs.
-  const toolSessions = new ToolSessionStore(db.raw(), os.hostname())
-  let runtimeRef: HostRuntime | null = null
-  const neovim = new NeovimHost({
-    onExit: event => runtimeRef?.toolService?.onNeovimExit(event),
-  })
-
+  const toolSessions = new ToolSessionStore(db.raw(), os.hostname());
   terminal.setEmit((channel, args) => {
-    events.emit(channel, args)
+    events.emit(channel, args);
     if (channel === "terminal:data") {
-      const ptyId = String(args[0] ?? "")
-      const data = String(args[1] ?? "")
-      handleTerminalOsc(notifications, agents, terminalOscBuffers, ptyId, data)
+      const ptyId = String(args[0] ?? "");
+      const data = String(args[1] ?? "");
+      handleTerminalOsc(notifications, agents, terminalOscBuffers, ptyId, data);
     } else if (channel === "terminal:exit") {
-      const ptyId = String(args[0] ?? "")
-      terminalOscBuffers.delete(ptyId)
-      const exitCode = typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0)
-      const replay = terminal.readOutput(ptyId)
+      const ptyId = String(args[0] ?? "");
+      terminalOscBuffers.delete(ptyId);
+      const exitCode =
+        typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0);
+      const replay = terminal.readOutput(ptyId);
       processInstances.onPtyExit(
         ptyId,
         exitCode,
         replay?.output ?? "",
         replay?.truncated ?? false,
-      )
+      );
       runService.storeTranscript(
         ptyId,
         replay?.output ?? "",
         replay?.truncated ?? false,
-      )
-      handleTerminalExit(notifications, agents, processInstances, agentRuns, ptyId, exitCode)
-      runtime.toolService?.onProcessExit(ptyId)
+      );
+      handleTerminalExit(
+        notifications,
+        agents,
+        processInstances,
+        agentRuns,
+        ptyId,
+        exitCode,
+      );
+      runtime.toolService?.onProcessExit(ptyId);
     }
-  })
+  });
 
-  const workspace = new WorkspaceHost()
-  const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? ""
-  let hookQueueDrain: Promise<void> | null = null
+  const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? "";
+  let hookQueueDrain: Promise<void> | null = null;
   const requestHookQueueDrain = () => {
-    if (hookQueueDrain) return
+    if (hookQueueDrain) return;
     hookQueueDrain = drainHookQueue(agents, notifications, config.dataDir)
-      .catch(error => console.warn("Failed to drain agent hook queue", error))
+      .catch((error) => console.warn("Failed to drain agent hook queue", error))
       .finally(() => {
-        hookQueueDrain = null
-      })
-  }
-  const hookQueueTimer = setInterval(requestHookQueueDrain, 5_000)
-  hookQueueTimer.unref?.()
+        hookQueueDrain = null;
+      });
+  };
+  const hookQueueTimer = setInterval(requestHookQueueDrain, 5_000);
+  hookQueueTimer.unref?.();
   const runtime: HostRuntime = {
     config,
     events,
     db,
     terminal,
-    workspace,
     perf: new PerfHost(homeDir, Date.now()),
-    lsp,
     homeDir,
     machineHostname: os.hostname(),
     notifications,
@@ -171,23 +173,21 @@ export function createRuntime(
     agentRuns: runService,
     terminalInstances: processInstances,
     toolSessions,
-    neovim,
     toolService: null,
     hookQueueTimer,
     pendingHookQueueDrain: () => hookQueueDrain,
-  }
-  runtimeRef = runtime
-  runtime.toolService = new ToolService(runtime)
-  runtime.toolService.reconcile()
+  };
+  runtime.toolService = new ToolService(runtime);
+  runtime.toolService.reconcile();
   try {
-    db.addProject(config.launchConfig.workspacePath)
+    db.addProject(config.launchConfig.workspacePath);
   } catch {
     /* Launch target validation remains authoritative; HQ can still load. */
   }
   // Drain offline hook queue from previous host downtime without blocking boot.
-  requestHookQueueDrain()
+  requestHookQueueDrain();
 
-  return runtime
+  return runtime;
 }
 
 async function drainHookQueue(
@@ -196,22 +196,22 @@ async function drainHookQueue(
   dataDir: string,
 ): Promise<void> {
   for (const item of await listQueuedHooks(dataDir)) {
-    const provider = asAgentProvider(item.meta.provider)
+    const provider = asAgentProvider(item.meta.provider);
     if (!provider || !item.meta.sessionId) {
-      await removeQueuedHook(item.file)
-      continue
+      await removeQueuedHook(item.file);
+      continue;
     }
     try {
       agents.ingestNative(item.payload, {
         provider,
         sessionId: item.meta.sessionId,
-      })
-      await removeQueuedHook(item.file)
+      });
+      await removeQueuedHook(item.file);
     } catch (error) {
-      await markQueuedHookRetry(item.file, error)
+      await markQueuedHookRetry(item.file, error);
     }
   }
-  const discarded = consumeHookQueueDiscardCount()
+  const discarded = consumeHookQueueDiscardCount();
   if (discarded > 0) {
     notifications.ingest({
       source: "system",
@@ -220,7 +220,7 @@ async function drainHookQueue(
       title: "Discarded invalid agent hook events",
       message: `${discarded} corrupt, expired, or over-limit queued event${discarded === 1 ? " was" : "s were"} removed.`,
       eventId: `hook-queue-discard:${new Date().toISOString().slice(0, 10)}`,
-    })
+    });
   }
 }
 
@@ -231,19 +231,21 @@ function handleTerminalOsc(
   ptyId: string,
   data: string,
 ): void {
-  const buffered = buffers.get(ptyId) ?? ""
+  const buffered = buffers.get(ptyId) ?? "";
   // Hot path: almost all PTY frames are screen paint with no OSC. Skip the
   // stream parser entirely when nothing is buffered and this chunk cannot start
   // an OSC sequence.
-  if (buffered.length === 0 && !data.includes("\x1b]")) return
-  const result = parseOscStreamChunk(buffered, data)
-  if (result.buffered) buffers.set(ptyId, result.buffered)
-  else buffers.delete(ptyId)
-  const parsed = result.notifications
-  if (parsed.length === 0) return
-  const binding = notifications.bindingForPty(ptyId)
+  if (buffered.length === 0 && !data.includes("\x1b]")) return;
+  const result = parseOscStreamChunk(buffered, data);
+  if (result.buffered) buffers.set(ptyId, result.buffered);
+  else buffers.delete(ptyId);
+  const parsed = result.notifications;
+  if (parsed.length === 0) return;
+  const binding = notifications.bindingForPty(ptyId);
   for (const item of parsed) {
-    const provider = asAgentProvider(binding?.provider ?? item.provider ?? null)
+    const provider = asAgentProvider(
+      binding?.provider ?? item.provider ?? null,
+    );
     if (provider && binding?.sessionId) {
       agents.ingestNative(
         {
@@ -261,8 +263,8 @@ function handleTerminalOsc(
           projectName: binding.projectName ?? undefined,
           sessionTitle: binding.sessionTitle ?? undefined,
         },
-      )
-      continue
+      );
+      continue;
     }
     notifications.ingest({
       ...item,
@@ -271,7 +273,7 @@ function handleTerminalOsc(
       projectName: binding?.projectName ?? null,
       sessionTitle: binding?.sessionTitle ?? null,
       provider: binding?.provider ?? item.provider ?? null,
-    })
+    });
   }
 }
 
@@ -283,7 +285,7 @@ function handleTerminalExit(
   ptyId: string,
   exitCode: number,
 ): void {
-  const durableInstance = terminalInstances?.byPtyId(ptyId)
+  const durableInstance = terminalInstances?.byPtyId(ptyId);
   if (durableInstance?.provider) {
     agents.onProcessExited({
       provider: durableInstance.provider,
@@ -292,10 +294,10 @@ function handleTerminalExit(
       exitCode,
       expectedExit: exitCode === 0,
       projectId: durableInstance.projectId,
-    })
-    return
+    });
+    return;
   }
-  const durableRun = agentRuns?.onPtyExit(ptyId, exitCode, exitCode === 0)
+  const durableRun = agentRuns?.onPtyExit(ptyId, exitCode, exitCode === 0);
   if (durableRun) {
     agents.onProcessExited({
       provider: durableRun.provider,
@@ -304,11 +306,11 @@ function handleTerminalExit(
       exitCode,
       expectedExit: exitCode === 0,
       projectId: durableRun.projectId,
-    })
-    return
+    });
+    return;
   }
-  const binding = notifications.bindingForPty(ptyId)
-  const provider = asAgentProvider(binding?.provider ?? null)
+  const binding = notifications.bindingForPty(ptyId);
+  const provider = asAgentProvider(binding?.provider ?? null);
   if (provider && binding?.sessionId) {
     agents.onProcessExited({
       provider,
@@ -317,13 +319,13 @@ function handleTerminalExit(
       exitCode,
       expectedExit: exitCode === 0,
       projectId: binding.projectId ?? undefined,
-    })
-    return
+    });
+    return;
   }
-  if (exitCode === 0) return
+  if (exitCode === 0) return;
   const providerLabel = binding?.provider
     ? binding.provider.charAt(0).toUpperCase() + binding.provider.slice(1)
-    : "Process"
+    : "Process";
   notifications.ingest({
     source: "process",
     type: exitCode > 0 ? "failed" : "process-exited",
@@ -338,15 +340,13 @@ function handleTerminalExit(
     provider: binding?.provider ?? null,
     eventId: `exit:${ptyId}:${exitCode}`,
     metadata: { exitCode, ptyId },
-  })
+  });
 }
 
 export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
-  runtime.events.emit("server:shuttingDown", [])
-  runtime.workspace.stopAll()
-  clearInterval(runtime.hookQueueTimer)
-  await runtime.pendingHookQueueDrain()
-  await runtime.toolService?.close()
-  await runtime.neovim.closeAll()
-  runtime.terminal.stopAll()
+  runtime.events.emit("server:shuttingDown", []);
+  clearInterval(runtime.hookQueueTimer);
+  await runtime.pendingHookQueueDrain();
+  await runtime.toolService?.close();
+  runtime.terminal.stopAll();
 }

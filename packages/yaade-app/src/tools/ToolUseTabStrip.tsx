@@ -10,13 +10,10 @@ import { AnimatePresence } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
 import {
   ArrowRight,
-  Bot,
-  FileCode2,
   GitBranch,
   PanelLeftClose,
   PanelRightClose,
   Plus,
-  Search,
   Terminal as TerminalIcon,
   X,
 } from "lucide-react";
@@ -45,7 +42,6 @@ import {
 } from "@yaade/ui/primitives";
 import {
   ToolContextControls,
-  type AgentProvider,
   type ToolContextSelection,
 } from "./ToolContextControls.js";
 import {
@@ -76,13 +72,9 @@ function toolStatusClass(status: ToolUse["status"]): string {
 }
 
 const toolIcon = {
-  agent: Bot,
-  editor: FileCode2,
-  neovim: FileCode2,
   terminal: TerminalIcon,
-  search: Search,
   git: GitBranch,
-} satisfies Record<ToolKind, typeof Bot>;
+} satisfies Record<ToolKind, typeof TerminalIcon>;
 
 function checkoutTargetForUse(use: ToolUse): CheckoutTarget {
   if (use.context.checkoutKey === "main") {
@@ -135,20 +127,7 @@ function handleToolTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
 }
 
 function toolKindLabel(kind: ToolKind): string {
-  switch (kind) {
-    case "agent":
-      return "Agent";
-    case "terminal":
-      return "Terminal";
-    case "search":
-      return "Search";
-    case "editor":
-      return "Editor";
-    case "neovim":
-      return "Neovim";
-    case "git":
-      return "Git";
-  }
+  return kind === "terminal" ? "Terminal" : "Git";
 }
 
 export type ToolUseNavigationLayout =
@@ -168,10 +147,6 @@ export type ToolUseTabStripProps = {
     use: ToolUse,
     project: ProjectTarget,
     checkout: CheckoutTarget,
-  ) => Promise<void>;
-  readonly onProviderChange: (
-    use: ToolUse,
-    provider: AgentProvider,
   ) => Promise<void>;
   readonly onAddKind: (kind: ToolKind) => void;
   readonly onAddWithContext: (
@@ -490,9 +465,6 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             onChange={(project, checkout) =>
               props.onContextChange(use, project, checkout)
             }
-            onProviderChange={(provider) =>
-              props.onProviderChange(use, provider)
-            }
           />
           <div className="border-t border-border p-3">
             <Button
@@ -575,12 +547,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     );
   };
 
-  const contextLaunchKinds: readonly ToolKind[] = [
-    "terminal",
-    "search",
-    "git",
-    "neovim",
-  ];
+  const contextLaunchKinds: readonly ToolKind[] = ["terminal", "git"];
 
   const newToolActions = (
     <div
@@ -596,13 +563,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         const Icon = toolIcon[kind];
         const label = `New ${toolKindLabel(kind)}`;
         const shortcut = toolSessionShortcutFor(
-          kind === "terminal"
-            ? "tool.newTerminal"
-            : kind === "search"
-              ? "tool.newSearch"
-              : kind === "neovim"
-                ? "tool.newNeovim"
-                : "tool.newGit",
+          kind === "terminal" ? "tool.newTerminal" : "tool.newGit",
         );
         return (
           <Popover

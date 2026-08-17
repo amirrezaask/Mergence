@@ -1,12 +1,11 @@
 import fs from "node:fs"
 import path from "node:path"
 import { Effect, Stream } from "effect"
-import { getCliAgentDriver } from "@yaade/agents"
+import { getCliAgentDriver } from "@yaade/agent-telemetry"
 import { pathToFileUri } from "@yaade/shared"
-import type { AgentProvider } from "@yaade/agents"
+import type { AgentProvider } from "@yaade/agent-telemetry"
 import {
   ProcessToolOutput,
-  type ToolKind,
   type ToolUse,
   type ToolUseInput,
 } from "@yaade/rpc"
@@ -60,16 +59,10 @@ function driverFailure(toolUse: ToolUse, operation: string, cause: unknown): Too
   })
 }
 
-function processRequest(kind: ToolKind, input: ToolUseInput): {
-  readonly provider?: AgentProvider
+function processRequest(input: ToolUseInput): {
   readonly args: readonly string[]
 } {
-  if (kind === "agent" && input._tag === "AgentToolInput") {
-    const provider = parseProcessProvider(input.provider)
-    if (!provider) throw new Error(`agent provider is unavailable: ${input.provider}`)
-    return { provider, args: input.args ?? [] }
-  }
-  if (kind === "terminal" && input._tag === "TerminalToolInput") {
+  if (input._tag === "TerminalToolInput") {
     return { args: input.shellArgs ?? [] }
   }
   throw new Error("process driver received mismatched input")
@@ -239,21 +232,16 @@ export function parseProcessProvider(value: string): AgentProvider | null {
   return parseAgentProvider(value)
 }
 
-/** Runtime adapter for either of the two process-backed public tools. */
+/** Runtime adapter for the terminal ToolUse. */
 export class ProcessToolDriver implements ToolDriver {
-  readonly kind: "agent" | "terminal"
+  readonly kind = "terminal" as const
 
-  constructor(
-    private readonly runtime: HostRuntime,
-    kind: "agent" | "terminal",
-  ) {
-    this.kind = kind
-  }
+  constructor(private readonly runtime: HostRuntime) {}
 
   create(toolUse: ToolUse, input: ToolUseInput): Effect.Effect<ProcessToolOutput, ToolDriverFailure> {
     return Effect.tryPromise({
       try: async () => {
-        const request = processRequest(this.kind, input)
+        const request = processRequest(input)
         const instance = await createTerminalInstance(this.runtime, {
           projectId: toolUse.context.project.projectId,
           checkoutKey: toolUse.context.checkoutKey,
@@ -276,12 +264,12 @@ export class ProcessToolDriver implements ToolDriver {
         const instance = toolUse.output.kind === "process"
           ? this.runtime.terminalInstances.get(toolUse.output.terminalInstanceId)
           : null
-        const request = processRequest(this.kind, toolUse.input)
+        const request = processRequest(toolUse.input)
         const sameHome = Boolean(
           instance &&
           instance.projectId === toolUse.context.project.projectId &&
           instance.checkoutPath === toolUse.context.checkoutPath &&
-          (instance.provider ?? undefined) === request.provider,
+          instance.provider == null,
         )
         if (instance && sameHome) {
           const restarted = await restartTerminalInstance(

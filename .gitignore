@@ -20,3 +20,6 @@ apps/yaade/src-tauri/generated
 apps/jet-tauri/src-tauri/capabilities/e2e.json
 .yaade
 .yaade/**
+
+# Optional local dependency source checkouts
+.repos/

@@ -8,7 +8,7 @@ import {
   listCliAgentDrivers,
   type AgentEvent,
   type AgentProvider,
-} from "@yaade/agents"
+} from "@yaade/agent-telemetry"
 import { ensureAgentTelemetrySchema } from "./schema.js"
 
 export type AgentRunProcessState =

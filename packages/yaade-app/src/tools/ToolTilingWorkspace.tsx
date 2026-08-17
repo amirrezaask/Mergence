@@ -1,10 +1,8 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
-  FileCode2,
   GitBranch,
   PanelTopOpen,
   Plus,
-  Search,
   Terminal as TerminalIcon,
 } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
@@ -31,10 +29,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@yaade/ui/primitives";
-import {
-  ToolContextControls,
-  type AgentProvider,
-} from "./ToolContextControls.js";
+import { ToolContextControls } from "./ToolContextControls.js";
 import { toolUsePaneTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 import type { ToolPaneView, ToolWorkspace } from "./tool-tiling.js";
@@ -49,10 +44,6 @@ export type ToolTilingWorkspaceProps = {
     use: ToolUse,
     project: ProjectTarget,
     checkout: CheckoutTarget,
-  ) => Promise<void>;
-  readonly onProviderChange: (
-    use: ToolUse,
-    provider: AgentProvider,
   ) => Promise<void>;
   readonly tabDnd: TabDndHandlers;
   readonly empty: ReactNode;
@@ -101,7 +92,7 @@ function EmptyTile(props: {
 }
 
 type PaneTool = {
-  kind: Exclude<ToolKind, "agent" | "editor">;
+  kind: ToolKind;
   label: string;
   icon: typeof TerminalIcon;
   command: string;
@@ -119,18 +110,6 @@ const paneToolKinds: readonly PaneTool[] = [
     label: "Git",
     icon: GitBranch,
     command: "tool.newGit",
-  },
-  {
-    kind: "neovim",
-    label: "Neovim",
-    icon: FileCode2,
-    command: "tool.newNeovim",
-  },
-  {
-    kind: "search",
-    label: "Search",
-    icon: Search,
-    command: "tool.newSearch",
   },
 ];
 
@@ -317,9 +296,6 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
               presentation="popover"
               onChange={(project, checkout) =>
                 props.onContextChange(activeUse, project, checkout)
-              }
-              onProviderChange={provider =>
-                props.onProviderChange(activeUse, provider)
               }
             />
           </PopoverContent>
