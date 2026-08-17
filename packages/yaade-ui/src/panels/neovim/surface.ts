@@ -468,7 +468,11 @@ export class NeovimSurface {
     const rpc = this.rpc
     if (!this.connected || !rpc) throw new Error("Neovim UI is not connected")
     if (!this.apiInfo.methods.has("nvim_cmd")) throw new Error("Neovim does not support structured commands")
-    await rpc.request("nvim_cmd", [{ cmd: "edit", args: [path], range: [], bang: false }, { output: false }])
+    // `range: []` is not a valid nvim_cmd range. Neovim expects either a
+    // count or a two-element range, and rejects the whole command otherwise.
+    // Keep the file path in the structured args array so spaces and special
+    // characters are not interpreted as Ex syntax.
+    await rpc.request("nvim_cmd", [{ cmd: "edit", args: [path], bang: false }, { output: false }])
     let byteColumn = column - 1
     if (this.apiInfo.methods.has("nvim_buf_get_lines")) {
       const rawLines = await rpc.request("nvim_buf_get_lines", [0, line - 1, line, false])

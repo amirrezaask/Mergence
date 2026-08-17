@@ -2,41 +2,22 @@ import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import {
   normalizeColorSchemeMode,
-  normalizeInterfaceMaterial,
   normalizeSessionLayout,
   normalizeThemeId,
   themeIdForColorSchemeMode,
 } from "./useAppearanceSettings.js"
 
 describe("normalizeThemeId", () => {
-  it("keeps every bundled palette family", () => {
-    for (const id of [
-      "catppuccin-latte",
-      "catppuccin-mocha",
-      "tokyonight-day",
-      "tokyonight-night",
-      "tokyonight-moon",
-      "rose-pine",
-      "rose-pine-dawn",
-      "ayu-dark",
-      "ayu-light",
-    ]) {
-      assert.equal(normalizeThemeId(id), id)
-    }
+  it("keeps only the default light and dark palettes", () => {
+    assert.equal(normalizeThemeId("default-dark"), "default-dark")
+    assert.equal(normalizeThemeId("default-light"), "default-light")
+    assert.equal(normalizeThemeId("catppuccin-mocha"), "default-dark")
+    assert.equal(normalizeThemeId("tokyonight-day", "light"), "default-light")
   })
 
   it("uses the stored scheme for unknown ids", () => {
     assert.equal(normalizeThemeId("removed-theme", "light"), "default-light")
     assert.equal(normalizeThemeId("removed-theme", "dark"), "default-dark")
-  })
-})
-
-describe("interface material", () => {
-  it("accepts the named material modes and falls back safely", () => {
-    assert.equal(normalizeInterfaceMaterial("liquid-glass"), "liquid-glass")
-    assert.equal(normalizeInterfaceMaterial("classic"), "classic")
-    assert.equal(normalizeInterfaceMaterial("removed"), "liquid-glass")
-    assert.equal(normalizeInterfaceMaterial("removed", "classic"), "classic")
   })
 })
 

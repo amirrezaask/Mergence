@@ -30,6 +30,7 @@ compatibility; the primary product surface is the Session shell.
 - Closing a ToolUse archives it and stops its process. Closing a Window archives its ToolUses; closing a Session with live tools offers Keep running / Stop tools / Cancel.
 - Project and worktree settings belong to each ToolUse. ToolUse titles stay live: Search uses its query and Terminal follows its terminal title. Agent CLIs run inside TerminalTool rather than as a separate tool.
 - Archived Sessions restore from the Session switcher.
+- On narrow screens, Window and pane chrome disappear. The shell lists mobile-supported Terminal and Git ToolUses under each Session; selecting one opens its full-screen surface, and Back returns to the grouped list. Each Session row creates its own tools, a long press opens Session actions, and New session lives after the groups.
 
 ### Tools (v1)
 
@@ -68,6 +69,22 @@ renderer. PTYs start independently of font/WASM setup, all panes in the visible
 Window remain mounted across focus and retiling, host PTYs survive Window or
 browser switches, and buffer inspection never suppresses a pending repaint. Rebuild the vendored Ghostty assets with
 `pnpm --filter @yaade/ui build:ghostty-wasm`.
+
+### Mobile and installable app
+
+The narrow-screen shell intentionally exposes Terminal and Git. Terminal
+surfaces stay mounted in a bounded six-surface LRU when returning to the Session
+list. One-finger drag scrolls scrollback (or sends arrows to alternate-screen
+apps), long press selects text, and the accessory row provides Escape, Tab,
+one-shot Ctrl/Alt, arrows, and paste. Git uses a list-first drill-down: commits
+→ changed files → file diff, with a Back action at each detail level.
+
+YAADE ships a web app manifest, 192/512px and maskable icons, safe-area metadata,
+and a bounded service-worker cache, so a supported browser can add it to the
+home screen from a secure origin. The cached shell can reopen without a network,
+but tools still require the YAADE host. The host remains loopback-only because
+HTTP and WebSocket authentication plus TLS are prerequisites for exposing a
+shell to a phone, LAN, or remote network.
 
 ### Checkout isolation
 
@@ -120,18 +137,15 @@ Direct and context-local:
 ### Appearance
 
 Settings applies one palette consistently to the app shell, Git states,
-terminals, and every ToolUse. The default appearance uses rounded, translucent
-materials with adaptive blur, luminous edges, and reduced-transparency
-fallbacks. Appearance settings can switch between the default Liquid glass
-chrome and a classic opaque treatment without changing layout or keyboard
-behavior. A reduced-transparency option keeps the same geometry while removing
-blur and translucent fills. Bundled families also include all four Catppuccin flavors, Tokyo
-Night (Night, Storm, Moon, Day), Rosé Pine (main, Moon, Dawn), and Ayu (Dark,
-Mirage, Light). Geist Mono is the bundled default; the font picker can select
-another installed monospace face for terminals and code UI text. Tool pane
-headers use a compact monospace process glyph and title with split and close
-controls. File navigation from Search opens the standalone Neovim ToolUse in the active
-Window; browser-based Monaco editing remains unavailable.
+terminals, and every ToolUse. The only bundled palettes are Default Dark and
+Default Light; Auto follows the operating system's appearance. The shell uses
+rounded, translucent materials with adaptive blur and luminous edges, while the
+reduced-transparency option keeps the same geometry with opaque surfaces. Geist
+Mono is the bundled default; the font picker can select another installed
+monospace face for terminals and code UI text. Tool pane headers use a compact
+monospace process glyph and title with split and close controls. File navigation
+from Search opens the standalone Neovim ToolUse in the active Window;
+browser-based Monaco editing remains unavailable.
 
 ---
 

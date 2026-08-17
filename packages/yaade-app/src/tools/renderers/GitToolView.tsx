@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import { pathToFileUri, type YaadeTheme } from "@yaade/shared";
 import { GitWorkspace } from "@yaade/ui/git";
+import { useIsMobile } from "@yaade/ui";
 
 export type GitToolViewProps = {
   readonly use: ToolUse;
@@ -17,6 +18,7 @@ export type GitToolViewProps = {
 
 /** The session-shell Git tool starts on the repository history surface. */
 export function GitToolView(props: GitToolViewProps) {
+  const mobile = useIsMobile();
   if (props.use.output.kind !== "git") return null;
 
   return (
@@ -28,6 +30,7 @@ export function GitToolView(props: GitToolViewProps) {
           theme={props.theme}
           initialView="history"
           unifiedHistory
+          mobile={mobile}
           active={props.visible}
           onOpenFile={() => undefined}
         />

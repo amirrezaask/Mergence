@@ -9,5 +9,8 @@ export {
   registerTerminalInstance,
   scrollTerminalLines,
   focusRegisteredTerminal,
+  pasteIntoRegisteredTerminal,
+  sendTerminalVirtualKey,
+  setTerminalVirtualModifier,
   unregisterTerminalInstance,
 } from "./panels/terminal-instance-registry.js"

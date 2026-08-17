@@ -1,4 +1,4 @@
-import { useCallback, useState, type ReactNode } from "react";
+import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
   FileCode2,
   GitBranch,
@@ -20,6 +20,7 @@ import {
   KeyBindingKbd,
   MuxPaneChrome,
   PanelDock,
+  SessionHeaderChromeProvider,
   type PanelSlotMeta,
   type TabDndHandlers,
 } from "@yaade/ui";
@@ -198,6 +199,28 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
     readonly panelId: number;
     readonly toolUseId: ToolUseId;
   } | null>(null);
+  // Mode-specific chrome is owned by the tool renderer but lives in its pane header.
+  const [headerTargets, setHeaderTargets] = useState<ReadonlyMap<number, HTMLElement>>(
+    () => new Map(),
+  );
+  const headerTargetRefs = useRef(
+    new Map<number, (element: HTMLElement | null) => void>(),
+  );
+  const headerContextRef = useCallback((panelId: number) => {
+    const existing = headerTargetRefs.current.get(panelId);
+    if (existing) return existing;
+    const ref = (element: HTMLElement | null) => {
+      setHeaderTargets(current => {
+        if (current.get(panelId) === element) return current;
+        const next = new Map(current);
+        if (element) next.set(panelId, element);
+        else next.delete(panelId);
+        return next;
+      });
+    };
+    headerTargetRefs.current.set(panelId, ref);
+    return ref;
+  }, []);
 
   const renderHeader = useCallback(
     (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
@@ -226,6 +249,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           canZoom={canZoom}
           processName={activeUse?.kind}
           splitControlsOnly
+          contextRef={headerContextRef(panelId.id)}
           trailing={
             <PaneNewToolMenu
               panelId={panelId}
@@ -302,17 +326,17 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
         </Popover>
       );
     },
-    [canZoom, contextTarget, paneCount, props, zoomedPanelId],
+    [canZoom, contextTarget, headerContextRef, paneCount, props, zoomedPanelId],
   );
 
   const renderContent = useCallback(
-    (view: ToolPaneView, _panelId: PanelId, meta: PanelSlotMeta) => {
+    (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
       if (view.kind === "empty") {
         return openToolIds.length === 0 ? (
           props.empty
         ) : (
           <EmptyTile
-            onAddKind={(kind) => props.onAddTool(_panelId, kind)}
+            onAddKind={(kind) => props.onAddTool(panelId, kind)}
           />
         );
       }
@@ -320,21 +344,25 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
       if (!use) {
         return (
           <EmptyTile
-            onAddKind={(kind) => props.onAddTool(_panelId, kind)}
+            onAddKind={(kind) => props.onAddTool(panelId, kind)}
           />
         );
       }
       return (
-        <div
-          className="flex h-full min-h-0 min-w-0 flex-col"
-          data-yaade-tool-tile={use.id}
-          data-focused={meta.focused ? "" : undefined}
+        <SessionHeaderChromeProvider
+          target={headerTargets.get(panelId.id) ?? null}
         >
-          {props.renderTool(use, meta.focused)}
-        </div>
+          <div
+            className="flex h-full min-h-0 min-w-0 flex-col"
+            data-yaade-tool-tile={use.id}
+            data-focused={meta.focused ? "" : undefined}
+          >
+            {props.renderTool(use, meta.focused)}
+          </div>
+        </SessionHeaderChromeProvider>
       );
     },
-    [openToolIds.length, props],
+    [headerTargets, openToolIds.length, props],
   );
 
   const zoomedView = zoomedPanelId

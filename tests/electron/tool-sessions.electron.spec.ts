@@ -42,7 +42,9 @@ async function openToolSessionShell(page: ShellDriver): Promise<void> {
 async function openToolContext(page: ShellDriver): Promise<void> {
   await page
     .locator('[data-yaade-tool-pane-tab][data-active]')
-    .click({ button: "right" });
+    .evaluate(element => {
+      element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
   await expectSelectorVisible(page, "[data-yaade-tool-context-popover]");
 }
 
@@ -148,6 +150,7 @@ async function createTerminalViaApi(
   page: ShellDriver,
   title?: string,
   projectPathNeedle?: string,
+  waitForSurface = true,
 ): Promise<string> {
   const id = await page.evaluate(
     async ({ nextTitle, needle }) => {
@@ -194,7 +197,48 @@ async function createTerminalViaApi(
   await page.evaluate(async (toolUseId) => {
     await window.__yaadeAgent!.selectToolUse?.(toolUseId);
   }, id);
-  await waitForVisibleTerminalSurface(page);
+  if (waitForSurface) await waitForVisibleTerminalSurface(page);
+  return id;
+}
+
+async function createSearchViaApi(
+  page: ShellDriver,
+  title: string,
+  query: string,
+): Promise<string> {
+  const id = await page.evaluate(
+    async ({ nextTitle, nextQuery }) => {
+      const tools = window.yaade?.tools;
+      const sessionId = window.__yaadeAgent!.getState().activeSessionId;
+      if (!tools || !sessionId) throw new Error("tools API or session missing");
+      const project = (await tools.listProjects())[0];
+      if (!project) throw new Error("no project");
+      const created = await tools.createUse({
+        _tag: "CreateToolUse",
+        sessionId,
+        title: nextTitle,
+        kind: "search",
+        project,
+        checkout: { _tag: "MainCheckout", kind: "main" },
+        input: {
+          _tag: "SearchToolInput",
+          kind: "search",
+          query: nextQuery,
+          options: {},
+        },
+      });
+      return created.id;
+    },
+    { nextTitle: title, nextQuery: query },
+  );
+  await page.waitForFunction(
+    (toolUseId) =>
+      (window.__yaadeAgent?.getState().toolUses ?? []).some(
+        (use: { id: string }) => use.id === toolUseId,
+      ),
+    id,
+    { timeout: 20_000 },
+  );
   return id;
 }
 
@@ -448,7 +492,13 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
   try {
     const page = app.page;
     await openToolSessionShell(page);
-    await page.getByRole("button", { name: "New session" }).click();
+    await page
+      .getByRole("button", { name: /Switch session/i })
+      .click();
+    await page
+      .locator("[data-yaade-session-switcher-popover]")
+      .getByRole("button", { name: "New session" })
+      .click();
     await page.waitForFunction(
       () => (window.__yaadeAgent?.getState().sessions?.length ?? 0) >= 2,
     );
@@ -564,7 +614,13 @@ test.skip("Mod-P opens Editor Quick Open before and after a file is open", async
     if (!first.sessionId || !first.toolUseId || !first.projectName) {
       throw new Error("first session tool metadata missing");
     }
-    await page.getByRole("button", { name: "New session" }).click();
+    await page
+      .getByRole("button", { name: /Switch session/i })
+      .click();
+    await page
+      .locator("[data-yaade-session-switcher-popover]")
+      .getByRole("button", { name: "New session" })
+      .click();
     await page.waitForFunction(
       () => (window.__yaadeAgent?.getState().sessions?.length ?? 0) >= 2,
     );
@@ -1203,27 +1259,144 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
   }
 });
 
-/** 17 */ test("mobile pane tabs keep the selected ToolUse visible", async () => {
+/** 17 */ test("mobile sessions expose Terminal and Git with retained terminal surfaces", async () => {
   const app = await launchWeb({});
   try {
     const page = app.page;
     await page.setViewportSize({ width: 390, height: 844 });
     await openToolSessionShell(page);
-    await createTerminalViaApi(page, "mobile-term");
+
+    const terminalId = await createTerminalViaApi(
+      page,
+      "mobile-term",
+      undefined,
+      false,
+    );
+    await expectSelectorVisible(page, "[data-yaade-mobile-tool-detail]");
+    await waitForVisibleTerminalSurface(page);
+    await expectSelectorVisible(page, "[data-yaade-mobile-terminal-keys]");
+    await page.evaluate((id) => {
+      const panel = document.querySelector(
+        `[data-yaade-terminal-panel][data-yaade-terminal-tab-id="${id}"]`,
+      );
+      panel?.setAttribute("data-retained-token", "same-surface");
+    }, terminalId);
+
+    await page.locator("[data-yaade-mobile-tool-back]").click();
+    await expectSelectorVisible(page, "[data-yaade-mobile-tool-list]");
+    expect(await page.locator("[data-yaade-mobile-tool-header]").count()).toBe(0);
+    expect(
+      await page.locator(
+        `[data-yaade-terminal-panel][data-yaade-terminal-tab-id="${terminalId}"][data-retained-token="same-surface"]`,
+      ).count(),
+    ).toBe(1);
+    await test.info().attach("mobile-session-list", {
+      body: Buffer.from(await page.screenshot(), "base64"),
+      contentType: "image/png",
+    });
+
+    const searchId = await createSearchViaApi(page, "mobile-search", "export");
+    expect(await page.locator(`[data-yaade-mobile-tool="${searchId}"]`).count()).toBe(0);
     await expectSelectorVisible(
       page,
-      '[data-yaade-tool-pane-tab][data-active]',
+      `[data-yaade-mobile-tool="${terminalId}"][data-tool-kind="terminal"]`,
     );
-    const activeTabBox = await page
-      .locator('[data-yaade-tool-pane-tab][data-active]')
-      .boundingBox();
-    const viewportWidth = await page.evaluate(() => window.innerWidth);
-    expect(activeTabBox).not.toBeNull();
-    expect(activeTabBox?.x ?? -1).toBeGreaterThanOrEqual(0);
-    expect((activeTabBox?.x ?? 0) + (activeTabBox?.width ?? 0)).toBeLessThanOrEqual(
-      viewportWidth,
+
+    const firstSession = page.locator("[data-yaade-mobile-session-group]").first();
+    await firstSession.locator("[data-yaade-mobile-new-tool]").click();
+    await expectSelectorVisible(page, "[data-yaade-mobile-new-tool-kind=terminal]");
+    await expectSelectorVisible(page, "[data-yaade-mobile-new-tool-kind=git]");
+    expect(await page.locator("[data-yaade-mobile-new-tool-kind=search]").count()).toBe(0);
+    expect(await page.locator("[data-yaade-mobile-new-tool-kind=neovim]").count()).toBe(0);
+    await page.keyboard.press("Escape");
+
+    const order = await page.evaluate(() => {
+      const group = document.querySelector("[data-yaade-mobile-session-group]");
+      const add = document.querySelector("[data-yaade-mobile-new-session]");
+      return Boolean(
+        group &&
+        add &&
+        (group.compareDocumentPosition(add) & Node.DOCUMENT_POSITION_FOLLOWING),
+      );
+    });
+    expect(order).toBe(true);
+
+    await firstSession.locator("h2").evaluate(element => {
+      element.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true }));
+    });
+    await expectSelectorVisible(page, "[data-yaade-mobile-session-actions]");
+    await expectSelectorVisible(page, "[data-yaade-mobile-session-actions] button");
+    await page.keyboard.press("Escape");
+
+    await page.locator(`[data-yaade-mobile-tool="${terminalId}"]`).click();
+    await expectSelectorVisible(page, "[data-yaade-mobile-tool-detail]");
+    await expectSelectorVisible(
+      page,
+      `[data-yaade-terminal-panel][data-yaade-terminal-tab-id="${terminalId}"][data-retained-token="same-surface"]`,
     );
-    await waitForVisibleTerminalSurface(page);
+    expect(await page.locator("[data-yaade-mobile-tool-list]").count()).toBe(0);
+    const touchTargets = await page.evaluate(() =>
+      [...document.querySelectorAll<HTMLElement>(
+        "[data-yaade-mobile-tool-detail] button, [data-yaade-mobile-terminal-keys] button",
+      )].map(button => button.getBoundingClientRect().height),
+    );
+    expect(touchTargets.length).toBeGreaterThan(0);
+    expect(Math.min(...touchTargets)).toBeGreaterThanOrEqual(40);
+    const ctrlKey = page
+      .locator("[data-yaade-mobile-terminal-keys] button")
+      .filter({ hasText: "Ctrl" });
+    await ctrlKey.click();
+    expect(await ctrlKey.getAttribute("aria-pressed")).toBe("true");
+    await page.keyboard.type("c");
+    await page.waitForFunction(
+      () =>
+        document
+          .querySelector('[data-yaade-mobile-terminal-keys] button[aria-pressed="true"]')
+          ?.textContent?.trim() !== "Ctrl",
+    );
+    await test.info().attach("mobile-terminal", {
+      body: Buffer.from(await page.screenshot(), "base64"),
+      contentType: "image/png",
+    });
+
+    const layout = await page.evaluate(() => ({
+      viewportWidth: window.innerWidth,
+      documentWidth: document.documentElement.scrollWidth,
+      windowChromeCount: document.querySelectorAll("[data-yaade-window-tabs]").length,
+    }));
+    expect(layout.windowChromeCount).toBe(0);
+    expect(layout.documentWidth).toBeLessThanOrEqual(layout.viewportWidth);
+
+    await page.waitForFunction(async () =>
+      Boolean(await navigator.serviceWorker?.getRegistration("/")),
+    );
+    const pwa = await page.evaluate(async () => {
+      const manifestLink = document.querySelector<HTMLLinkElement>('link[rel="manifest"]');
+      const viewport = document.querySelector<HTMLMetaElement>('meta[name="viewport"]');
+      const [manifestResponse, workerResponse] = await Promise.all([
+        fetch(manifestLink?.href ?? "/manifest.webmanifest"),
+        fetch("/sw.js"),
+      ]);
+      return {
+        manifest: await manifestResponse.json(),
+        manifestStatus: manifestResponse.status,
+        viewport: viewport?.content ?? "",
+        workerStatus: workerResponse.status,
+        worker: await workerResponse.text(),
+      };
+    });
+    expect(pwa.manifestStatus).toBe(200);
+    expect(pwa.workerStatus).toBe(200);
+    expect(pwa.viewport).toContain("viewport-fit=cover");
+    expect(pwa.manifest.display).toBe("standalone");
+    expect(pwa.manifest.icons).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ sizes: "192x192" }),
+        expect.objectContaining({ sizes: "512x512" }),
+        expect.objectContaining({ purpose: "maskable" }),
+      ]),
+    );
+    expect(pwa.worker).toContain('url.pathname.startsWith("/api/")');
   } finally {
     await app.app.close();
   }
@@ -1301,13 +1474,13 @@ test("prefix-launched tools split instead of replacing the focused pane", async 
 
     await page.locator("[data-yaade-session-settings]").click();
     await expectLocatorVisible(page.locator("[data-yaade-settings-overlay]"));
-    await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 16);
+    await expectLocatorCount(page.locator("[data-yaade-theme-option]"), 2);
     await expectLocatorVisible(page.locator("[data-yaade-mono-font-picker]"));
 
-    await page.locator('[data-yaade-theme-option="tokyonight-night"]').click();
+    await page.locator('[data-yaade-theme-option="default-light"]').click();
     await expect
       .poll(() => page.evaluate(() => localStorage.getItem("jet-theme-id")))
-      .toBe("tokyonight-night");
+      .toBe("default-light");
     await testInfo.attach("tool-session-settings.png", {
       body: Buffer.from(await page.screenshot(), "base64"),
       contentType: "image/png",

@@ -103,20 +103,22 @@ export const shadcnDefaultLight: YaadeSemanticTokens = {
 }
 
 export const shadcnDefaultDark: YaadeSemanticTokens = {
-  // Deep blue graphite lets the glass catch cool light without becoming black.
-  background: "oklch(0.135 0.02 252)",
+  // Near-black graphite keeps the original cool surface hierarchy while
+  // lowering its neutral lightness by roughly 22%. Interaction and status
+  // colors stay vivid, so the dark palette keeps the same visual relationships.
+  background: "oklch(0.105 0.02 252)",
   foreground: "oklch(0.95 0.01 248)",
-  card: "oklch(0.185 0.022 252)",
+  card: "oklch(0.145 0.022 252)",
   cardForeground: "oklch(0.95 0.01 248)",
-  popover: "oklch(0.225 0.025 252)",
+  popover: "oklch(0.176 0.025 252)",
   popoverForeground: "oklch(0.95 0.01 248)",
   primary: "oklch(0.55 0.21 255)",
   primaryForeground: "oklch(0.99 0 255)",
-  secondary: "oklch(0.235 0.026 252)",
+  secondary: "oklch(0.184 0.026 252)",
   secondaryForeground: "oklch(0.95 0.01 248)",
-  muted: "oklch(0.215 0.022 252)",
+  muted: "oklch(0.168 0.022 252)",
   mutedForeground: "oklch(0.69 0.025 248)",
-  accent: "oklch(0.29 0.065 252)",
+  accent: "oklch(0.226 0.065 252)",
   accentForeground: "oklch(0.97 0.012 248)",
   destructive: "oklch(0.55 0.22 24)",
   destructiveForeground: "oklch(0.99 0 255)",
@@ -126,7 +128,7 @@ export const shadcnDefaultDark: YaadeSemanticTokens = {
   warningForeground: "oklch(0.2 0.055 55)",
   info: "oklch(0.72 0.16 252)",
   infoForeground: "oklch(0.14 0.035 252)",
-  backdrop: "rgba(3, 8, 20, 0.62)",
+  backdrop: "rgba(1, 3, 10, 0.62)",
   gitAdded: "oklch(0.72 0.14 158)",
   gitAddedForeground: "oklch(0.15 0.045 158)",
   gitModified: "oklch(0.72 0.16 252)",
@@ -135,16 +137,17 @@ export const shadcnDefaultDark: YaadeSemanticTokens = {
   gitDeletedForeground: "oklch(0.99 0 255)",
   gitConflict: "oklch(0.8 0.14 72)",
   gitConflictForeground: "oklch(0.2 0.055 55)",
-  border: "oklch(0.34 0.03 252)",
-  input: "oklch(0.54 0.035 252)",
+  border: "oklch(0.265 0.03 252)",
+  // Keep the control boundary above the scaled surface stack for 3:1 focus-area contrast.
+  input: "oklch(0.48 0.035 252)",
   ring: "oklch(0.55 0.21 255)",
-  sidebar: "oklch(0.165 0.022 252)",
+  sidebar: "oklch(0.129 0.022 252)",
   sidebarForeground: "oklch(0.95 0.01 248)",
   sidebarPrimary: "oklch(0.55 0.21 255)",
   sidebarPrimaryForeground: "oklch(0.99 0 255)",
-  sidebarAccent: "oklch(0.285 0.06 252)",
+  sidebarAccent: "oklch(0.222 0.06 252)",
   sidebarAccentForeground: "oklch(0.97 0.012 248)",
-  sidebarBorder: "oklch(0.31 0.028 252)",
+  sidebarBorder: "oklch(0.242 0.028 252)",
   sidebarRing: "oklch(0.55 0.21 255)",
 }
 

@@ -58,7 +58,7 @@ test("material gallery exposes named chrome and matte content surfaces", async (
   }
 })
 
-test("interface material setting swaps chrome without changing the shell", async () => {
+test("settings keep the default material treatment without a material switch", async () => {
   const launched = await launchWeb()
   try {
     const { page } = launched
@@ -68,11 +68,9 @@ test("interface material setting swaps chrome without changing the shell", async
     )
     await page.waitForSelector("[data-yaade-settings-overlay]")
 
-    await page.locator('[data-yaade-interface-material-option="classic"]').click()
     expect(
-      await page.evaluate(() => document.documentElement.dataset.yaadeInterfaceMaterial),
-    ).toBe("classic")
-    await page.locator('[data-yaade-interface-material-option="liquid-glass"]').click()
+      await page.locator('[data-yaade-interface-material-option]').count(),
+    ).toBe(0)
     expect(
       await page.evaluate(() => document.documentElement.dataset.yaadeInterfaceMaterial),
     ).toBe("liquid-glass")

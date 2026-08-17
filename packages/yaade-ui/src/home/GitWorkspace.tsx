@@ -121,6 +121,8 @@ type GitWorkspaceProps = {
   unifiedHistory?: boolean
   /** Whether this workspace is active and should poll Git state. */
   active?: boolean
+  /** Force the narrow list-first flow before ResizeObserver's first sample. */
+  mobile?: boolean
 }
 
 type DiffContents = {
@@ -154,6 +156,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     initialView = "changes",
     unifiedHistory = false,
     active = true,
+    mobile = false,
   } = props
   const api = window.yaade?.git
   const fsApi = window.yaade?.fs
@@ -191,7 +194,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const historyRequest = useRef(0)
   const refreshInFlight = useRef(false)
   const pollFingerprint = useRef<string | null>(null)
-  const narrow = containerWidth > 0 && containerWidth < 560
+  const narrow = mobile || (containerWidth > 0 && containerWidth < 560)
 
   const loadHistoryPage = useCallback(async (cursor: string | null, reset = false) => {
     if (!rootUri || !api) return
@@ -281,6 +284,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
             if (sameFile.staged) return { path: sameFile.path, staged: true }
           }
         }
+        if (mobile) return null
         const first = nextEntries.find(entry => entry.unstaged) ?? nextEntries.find(entry => entry.staged)
         return first ? { path: first.path, staged: !first.unstaged && first.staged } : null
       })
@@ -293,7 +297,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       refreshInFlight.current = false
       setLoading(false)
     }
-  }, [api, loadHistoryPage, onBranchChange, rootUri])
+  }, [api, loadHistoryPage, mobile, onBranchChange, rootUri])
 
   useEffect(() => {
     void refresh()
@@ -427,12 +431,12 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const selectedEntry = selected ? entries.find(entry => entry.path === selected.path) : undefined
 
   useEffect(() => {
-    if (view === "history") return
+    if (view === "history" || mobile) return
     const files = navigationRows.filter((row): row is Extract<NavigationRow, { kind: "file" }> => row.kind === "file")
     if (selected && files.some(row => row.entry.path === selected.path && row.staged === selected.staged)) return
     const first = files[0]
     setSelected(first ? { path: first.entry.path, staged: first.staged } : null)
-  }, [navigationRows, selected, view])
+  }, [mobile, navigationRows, selected, view])
 
   useEffect(() => {
     if (!focusPath) return
@@ -659,43 +663,66 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       </ResizablePanelGroup>
     )
 
+  const gitToolbar = (
+    <GitToolbar
+      repositoryKey={rootUri}
+      summary={summary}
+      stagedCount={stagedCount}
+      pendingAction={pendingAction}
+      commitDialogOpen={commitDialogOpen}
+      onCommitDialogOpenChange={setCommitDialogOpen}
+      onCommit={commit}
+      onRemoteAction={action => {
+        if (!rootUri || !api) return
+        const task = action === "fetch" ? api.fetch : action === "pull" ? api.pull : api.push
+        void runAction(capitalize(action), () => task.call(api, rootUri), `${capitalize(action)} complete`)
+      }}
+      onRefresh={() => void refresh()}
+      mobile={narrow}
+      inHeader
+    />
+  )
+
   return (
     <section
       ref={rootRef}
       data-yaade-git-workspace=""
       data-yaade-git-root={rootUri ? fileUriToPath(rootUri) : undefined}
+      data-yaade-git-mobile={mobile ? "true" : undefined}
       className="flex h-full min-h-0 min-w-0 flex-col overflow-hidden bg-transparent"
       aria-label="Git workspace"
     >
       <PierreDiffPool>
-      <SessionHeaderChromePortal active>
-        <GitPaneHeaderControls
-          view={view}
-          stagedCount={stagedCount}
-          onViewChange={setView}
-          summary={summary}
-          branches={branches}
-          pending={pendingAction !== null}
-          onCheckout={onCheckout}
-          hideViewTabs={unifiedHistory}
-        />
-      </SessionHeaderChromePortal>
-
-      <GitToolbar
-        repositoryKey={rootUri}
-        summary={summary}
-        stagedCount={stagedCount}
-        pendingAction={pendingAction}
-        commitDialogOpen={commitDialogOpen}
-        onCommitDialogOpenChange={setCommitDialogOpen}
-        onCommit={commit}
-        onRemoteAction={action => {
-          if (!rootUri || !api) return
-          const task = action === "fetch" ? api.fetch : action === "pull" ? api.pull : api.push
-          void runAction(capitalize(action), () => task.call(api, rootUri), `${capitalize(action)} complete`)
-        }}
-        onRefresh={() => void refresh()}
-      />
+      {narrow ? (
+        <div className="flex min-h-11 shrink-0 items-center border-b border-border/60 px-2">
+          <GitPaneHeaderControls
+            view={view}
+            stagedCount={stagedCount}
+            onViewChange={setView}
+            summary={summary}
+            branches={branches}
+            pending={pendingAction !== null}
+            onCheckout={onCheckout}
+            hideViewTabs={unifiedHistory}
+            mobile
+          />
+          {gitToolbar}
+        </div>
+      ) : (
+        <SessionHeaderChromePortal active>
+          <GitPaneHeaderControls
+            view={view}
+            stagedCount={stagedCount}
+            onViewChange={setView}
+            summary={summary}
+            branches={branches}
+            pending={pendingAction !== null}
+            onCheckout={onCheckout}
+            hideViewTabs={unifiedHistory}
+          />
+          {gitToolbar}
+        </SessionHeaderChromePortal>
+      )}
 
       {body}
 
@@ -748,6 +775,7 @@ function GitPaneHeaderControls(props: {
   pending: boolean
   onCheckout: (branch: string) => void
   hideViewTabs?: boolean
+  mobile?: boolean
 }) {
   const {
     view,
@@ -758,6 +786,7 @@ function GitPaneHeaderControls(props: {
     pending,
     onCheckout,
     hideViewTabs,
+    mobile = false,
   } = props
   const branchOptions =
     summary.branch && !branches.includes(summary.branch)
@@ -766,6 +795,7 @@ function GitPaneHeaderControls(props: {
   return (
     <div
       data-yaade-session-header-tabs="git"
+      data-yaade-git-mobile-header={mobile ? "true" : undefined}
       className="flex min-w-0 flex-1 items-center gap-2 overflow-hidden"
     >
       {hideViewTabs ? null : (
@@ -834,6 +864,8 @@ function GitToolbar(props: {
   onCommit: (summary: string, body: string) => Promise<boolean>
   onRemoteAction: (action: "fetch" | "pull" | "push") => void
   onRefresh: () => void
+  mobile?: boolean
+  inHeader?: boolean
 }) {
   const {
     repositoryKey,
@@ -846,59 +878,81 @@ function GitToolbar(props: {
     onCommit,
     onRemoteAction,
     onRefresh,
+    mobile = false,
+    inHeader = false,
   } = props
   const busy = pendingAction !== null
+  const controls = (
+    <div className="flex shrink-0 items-center gap-1">
+      {hideCommit ? null : (
+        <GitCommitDialog
+          key={repositoryKey}
+          open={commitDialogOpen}
+          onOpenChange={onCommitDialogOpenChange}
+          branch={summary.branch}
+          stagedCount={stagedCount}
+          busy={busy}
+          committing={pendingAction === "Commit"}
+          onCommit={onCommit}
+        />
+      )}
+      {pendingAction ? (
+        <span role="status" className="hidden items-center gap-1.5 text-2xs text-muted-foreground sm:flex">
+          <Spinner />
+          {pendingAction}…
+        </span>
+      ) : null}
+      <Button type="button" variant="ghost" size="icon-sm" disabled={busy} aria-label="Refresh Git" onClick={onRefresh}>
+        <RefreshCwIcon className={cn(busy && "animate-spin")} />
+      </Button>
+      <DropdownMenu>
+        <DropdownMenuTrigger asChild>
+          <Button type="button" variant="ghost" size="icon-sm" disabled={busy} aria-label="Repository actions">
+            <MoreHorizontalIcon />
+          </Button>
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="w-48">
+          <DropdownMenuGroup>
+            <DropdownMenuItem onSelect={() => onRemoteAction("fetch")}>
+              <ArrowDownIcon />
+              Fetch from remote
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onRemoteAction("pull")}>
+              <ArrowDownIcon />
+              Pull from remote
+            </DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => onRemoteAction("push")}>
+              <UploadIcon />
+              Push to remote
+            </DropdownMenuItem>
+          </DropdownMenuGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
+  )
+
+  if (inHeader) {
+    return (
+      <div
+        data-yaade-git-toolbar=""
+        data-mobile={mobile ? "true" : undefined}
+        className="flex shrink-0 items-center"
+      >
+        {controls}
+      </div>
+    )
+  }
+
   return (
     <header
       data-yaade-git-toolbar=""
-      className="flex h-7 shrink-0 items-center justify-end gap-2 border-b border-border/60 bg-background px-2"
+      data-mobile={mobile ? "true" : undefined}
+      className={cn(
+        "flex shrink-0 items-center justify-end gap-2 border-b border-border/60 bg-background px-2",
+        mobile ? "h-11" : "h-7",
+      )}
     >
-      <div className="flex shrink-0 items-center gap-1">
-        {hideCommit ? null : (
-          <GitCommitDialog
-            key={repositoryKey}
-            open={commitDialogOpen}
-            onOpenChange={onCommitDialogOpenChange}
-            branch={summary.branch}
-            stagedCount={stagedCount}
-            busy={busy}
-            committing={pendingAction === "Commit"}
-            onCommit={onCommit}
-          />
-        )}
-        {pendingAction ? (
-          <span role="status" className="hidden items-center gap-1.5 text-2xs text-muted-foreground sm:flex">
-            <Spinner />
-            {pendingAction}…
-          </span>
-        ) : null}
-        <Button type="button" variant="ghost" size="icon-sm" disabled={busy} aria-label="Refresh Git" onClick={onRefresh}>
-          <RefreshCwIcon className={cn(busy && "animate-spin")} />
-        </Button>
-        <DropdownMenu>
-          <DropdownMenuTrigger asChild>
-            <Button type="button" variant="ghost" size="icon-sm" disabled={busy} aria-label="Repository actions">
-              <MoreHorizontalIcon />
-            </Button>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuGroup>
-              <DropdownMenuItem onSelect={() => onRemoteAction("fetch")}>
-                <ArrowDownIcon />
-                Fetch from remote
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onRemoteAction("pull")}>
-                <ArrowDownIcon />
-                Pull from remote
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onRemoteAction("push")}>
-                <UploadIcon />
-                Push to remote
-              </DropdownMenuItem>
-            </DropdownMenuGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-      </div>
+      {controls}
     </header>
   )
 }
@@ -1190,7 +1244,7 @@ function FileNavigator(props: {
         "aria-label": "Changed files list",
         onKeyDown: handleKeyDown,
       }}
-      contentClassName="outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
+      contentClassName="touch-pan-y overscroll-contain outline-none [-webkit-overflow-scrolling:touch] focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/40"
     >
         {rows.length === 0 ? (
           <Empty className="h-full rounded-none border-0 p-3">
@@ -1578,7 +1632,7 @@ function HistoryList(props: {
   }, [hasNextPage, lastVisibleIndex, loading, onLoadMore, rowCount])
 
   return (
-    <div ref={scrollRef} data-yaade-list-panel="git-history" className="min-h-0 flex-1 overflow-auto px-1.5 py-1.5">
+    <div ref={scrollRef} data-yaade-list-panel="git-history" className="min-h-0 flex-1 touch-pan-y overflow-auto overscroll-contain px-1.5 py-1.5 [-webkit-overflow-scrolling:touch]">
       {rowCount === 0 && loading ? (
         <CenteredStatus label="Loading commit history…" />
       ) : rowCount === 0 ? (

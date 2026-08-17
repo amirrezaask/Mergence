@@ -357,7 +357,7 @@ test("shows process exit, restarts with a new generation, and cleans up on close
   }
 })
 
-test("repaints across light, dark, and mobile appearance without restarting Neovim", async () => {
+test("repaints across appearance changes and keeps Neovim alive while mobile hides unsupported tools", async () => {
   const app = await launchJet({ withTerminal: false, env: MOCK_ENV })
   try {
     const page = app.page
@@ -390,11 +390,18 @@ test("repaints across light, dark, and mobile appearance without restarting Neov
     })
 
     await page.setViewportSize({ width: 390, height: 844 })
-    await waitForNeovim(page, toolUseId)
-    await test.info().attach("neovim-dark-mobile", {
-      body: Buffer.from(await page.screenshot(), "base64"),
-      contentType: "image/png",
+    await page.waitForSelector("[data-yaade-mobile-tool-list]", {
+      state: "visible",
+      timeout: 30_000,
     })
+    expect(await page.locator(`[data-yaade-neovim-tool-use="${toolUseId}"]`).count()).toBe(0)
+    const whileMobile = await readTool(page, toolUseId)
+    expect(whileMobile.output.serverInstanceId).toBe(before.output.serverInstanceId)
+    expect(whileMobile.output.generation).toBe(before.output.generation)
+
+    await page.setViewportSize({ width: 1280, height: 800 })
+    await page.evaluate(id => window.__yaadeAgent!.selectToolUse?.(id), toolUseId)
+    await waitForNeovim(page, toolUseId)
     const after = await readTool(page, toolUseId)
     expect(after.output.serverInstanceId).toBe(before.output.serverInstanceId)
     expect(after.output.generation).toBe(before.output.generation)

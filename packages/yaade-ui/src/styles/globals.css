@@ -99,6 +99,8 @@
   --yaade-control-radius: 0.75rem;
   --yaade-pill-radius: 999rem;
   --yaade-app-header-height: 2.75rem;
+  /* Touch targets stay 44 CSS px even when the compact UI font scales rem units. */
+  --yaade-touch-target: 44px;
 
   /* Compact editor scale: dense, but never sub-10px for ordinary metadata. */
   --yaade-fs-4xs: 0.769rem;
@@ -449,6 +451,56 @@ body {
 /* Tool Session shell: floating controls and panes over an atmospheric canvas. */
 [data-yaade-shell="tool-session"] {
   background: var(--yaade-canvas-background);
+}
+
+.yaade-pwa-update {
+  opacity: 1;
+  transform: translateY(0);
+  transition:
+    opacity var(--yaade-motion-menu) var(--yaade-ease-out),
+    transform var(--yaade-motion-menu) var(--yaade-ease-out);
+
+  @starting-style {
+    opacity: 0;
+    transform: translateY(0.5rem);
+  }
+}
+
+/* Mobile has no window layer: sessions directly group every ToolUse, and a
+ * selected ToolUse replaces the list. Keep both views clear of device cutouts
+ * without changing the desktop shell's geometry. */
+@media (max-width: 767px) {
+  [data-yaade-mobile-shell] {
+    padding-top: env(safe-area-inset-top);
+    padding-inline-start: env(safe-area-inset-left);
+    padding-inline-end: env(safe-area-inset-right);
+  }
+
+  [data-yaade-mobile-tool-detail] [data-yaade-glass-surface] {
+    border-radius: 0;
+  }
+
+  [data-yaade-mobile-tool-list] main {
+    padding-bottom: max(0.75rem, env(safe-area-inset-bottom));
+  }
+
+  [data-yaade-mobile-tool-detail] > [data-yaade-glass-surface] button,
+  [data-yaade-mobile-terminal-keys] button,
+  [data-yaade-mobile-session-group] [data-yaade-mobile-new-tool],
+  [data-yaade-mobile-new-session] {
+    min-width: var(--yaade-touch-target);
+    min-height: var(--yaade-touch-target);
+  }
+
+  [data-yaade-git-mobile="true"] [data-yaade-git-mobile-header="true"] button,
+  [data-yaade-git-mobile="true"] [data-yaade-git-toolbar] button,
+  [data-yaade-git-mobile="true"] [data-yaade-sidebar-shell] > :first-child button {
+    min-height: 2.75rem;
+  }
+
+  [data-yaade-git-mobile="true"] [data-yaade-list-panel="git-history"] {
+    padding-bottom: max(0.375rem, env(safe-area-inset-bottom));
+  }
 }
 
 .yaade-tool-session-grid {

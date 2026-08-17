@@ -6,31 +6,15 @@ import {
   shadcnThemeList,
   shadcnThemes,
 } from "./shadcn.js"
-import { catppuccinThemeList, catppuccinThemes } from "./catppuccin.js"
-import { tokyoNightThemeList, tokyoNightThemes } from "./tokyonight.js"
-import { rosePineThemeList, rosePineThemes } from "./rose-pine.js"
-import { ayuThemeList, ayuThemes } from "./ayu.js"
 
 export type { ColorScheme } from "./theme-palette.js"
 export { defaultDark, defaultLight } from "./shadcn.js"
 
 export const defaultThemeId = defaultDark.id
 
-export const bundledThemes = {
-  ...shadcnThemes,
-  ...catppuccinThemes,
-  ...tokyoNightThemes,
-  ...rosePineThemes,
-  ...ayuThemes,
-} satisfies Record<string, YaadeTheme>
+export const bundledThemes = shadcnThemes satisfies Record<string, YaadeTheme>
 
-export const bundledThemeList: YaadeTheme[] = [
-  ...shadcnThemeList,
-  ...catppuccinThemeList,
-  ...tokyoNightThemeList,
-  ...rosePineThemeList,
-  ...ayuThemeList,
-]
+export const bundledThemeList: YaadeTheme[] = shadcnThemeList
 
 export function getThemeById(id: string | null | undefined): YaadeTheme {
   if (!id) return defaultDark

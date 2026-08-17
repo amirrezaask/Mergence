@@ -35,7 +35,11 @@ test("session-switch chrome updates within budget", async () => {
   try {
     const page = app.page
     await openShell(page)
-    await page.getByRole("button", { name: "New session" }).click()
+    await page.getByRole("button", { name: /Switch session/i }).click()
+    await page
+      .locator("[data-yaade-session-switcher-popover]")
+      .getByRole("button", { name: "New session" })
+      .click()
     await page.waitForFunction(() => (window.__yaadeAgent?.getState().sessions?.length ?? 0) >= 2)
     const ids = await page.evaluate(() => (window.__yaadeAgent!.getState().sessions ?? []).map((session: { id: string }) => session.id))
     const result = await runBench({

@@ -79,7 +79,7 @@ export function SessionEmptyState(props: {
       aria-label="Available tools"
     >
       <EmptyContent className="max-w-3xl gap-6">
-        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3">
+        <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-4">
           {TOOL_TILES.map(tile => {
             const shortcut = toolSessionShortcutFor(tile.command)
             const Icon = tile.Icon

@@ -585,6 +585,17 @@ export class GhosttyTerminalSurface {
   private copyShortcutToken = 0;
   private clearSelectionAfterCopy = false;
   private wheelRemainder = 0;
+  private touchGesture: {
+    pointerId: number;
+    startX: number;
+    startY: number;
+    lastY: number;
+    rowRemainder: number;
+    selecting: boolean;
+  } | null = null;
+  private touchHoldTimer: number | null = null;
+  private virtualCtrl = false;
+  private virtualAlt = false;
   private dprMedia: MediaQueryList | null = null;
   // Read live on every blink decision, and watched so that dropping the
   // preference restarts a blink cycle that has no timer left to notice it.
@@ -632,7 +643,7 @@ export class GhosttyTerminalSurface {
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
     const canvas = document.createElement("canvas");
-    canvas.className = "yaade-ghostty-canvas block size-full cursor-text";
+    canvas.className = "yaade-ghostty-canvas block size-full touch-none cursor-text";
     canvas.setAttribute("data-yaade-terminal-canvas", "");
     canvas.dataset.yaadeTerminalPadding = String(CONTENT_PADDING);
     canvas.setAttribute("aria-hidden", "true");
@@ -1016,6 +1027,48 @@ export class GhosttyTerminalSurface {
     this.scrollViewport(amount);
   }
 
+  setVirtualModifier(modifier: "ctrl" | "alt", active: boolean): void {
+    if (modifier === "ctrl") this.virtualCtrl = active;
+    else this.virtualAlt = active;
+    this.focus();
+  }
+
+  sendVirtualKey(key: string, code: string): void {
+    const event = new KeyboardEvent("keydown", {
+      key,
+      code,
+      ctrlKey: this.virtualCtrl,
+      altKey: this.virtualAlt,
+    });
+    const data = this.core.encodeKey(event);
+    this.consumeVirtualModifiers();
+    if (data.length > 0) this.options.onData(data);
+    this.focus();
+  }
+
+  pasteText(text: string): void {
+    if (text.length === 0) return;
+    this.options.onData(this.core.encodePaste(text));
+    this.focus();
+  }
+
+  private consumeVirtualModifiers(): void {
+    this.virtualCtrl = false;
+    this.virtualAlt = false;
+  }
+
+  private applyVirtualModifiers(data: string): string {
+    if (!this.virtualCtrl && !this.virtualAlt) return data;
+    let next = data;
+    if (this.virtualCtrl && data.length === 1) {
+      const code = data.codePointAt(0) ?? 0;
+      if (code >= 0x40 && code <= 0x7f) next = String.fromCodePoint(code & 0x1f);
+    }
+    if (this.virtualAlt) next = `\x1b${next}`;
+    this.consumeVirtualModifiers();
+    return next;
+  }
+
   private syncTitle(): void {
     const title = this.core.title().trim();
     if (!title || title === this.lastTitle) return;
@@ -1032,6 +1085,7 @@ export class GhosttyTerminalSurface {
     this.dprMedia = null;
     this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
+    if (this.touchHoldTimer !== null) window.clearTimeout(this.touchHoldTimer);
     if (this.resizeNotifyTimer !== null) {
       window.clearTimeout(this.resizeNotifyTimer);
       this.resizeNotifyTimer = null;
@@ -1157,8 +1211,22 @@ export class GhosttyTerminalSurface {
     if (event.isComposing || this.composing || event.key === "Process" || event.keyCode === 229) {
       return;
     }
-    const data = this.core.encodeKey(event);
+    const encodedEvent =
+      this.virtualCtrl || this.virtualAlt
+        ? new KeyboardEvent("keydown", {
+            key: event.key,
+            code: event.code,
+            location: event.location,
+            repeat: event.repeat,
+            ctrlKey: event.ctrlKey || this.virtualCtrl,
+            altKey: event.altKey || this.virtualAlt,
+            shiftKey: event.shiftKey,
+            metaKey: event.metaKey,
+          })
+        : event;
+    const data = this.core.encodeKey(encodedEvent);
     if (data.length === 0) return;
+    this.consumeVirtualModifiers();
     this.suppressedKeyCodes.delete(event.code);
     event.preventDefault();
     event.stopPropagation();
@@ -1245,7 +1313,7 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.options.onData(this.applyVirtualModifiers(data));
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1264,7 +1332,7 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.options.onData(this.applyVirtualModifiers(data));
     this.input.value = "";
   };
 
@@ -1276,8 +1344,73 @@ export class GhosttyTerminalSurface {
     this.compositionInputToSuppress = null;
   }
 
+  private clearTouchHold(): void {
+    if (this.touchHoldTimer === null) return;
+    window.clearTimeout(this.touchHoldTimer);
+    this.touchHoldTimer = null;
+  }
+
+  private beginTouchSelection(clientX: number, clientY: number): void {
+    const gesture = this.touchGesture;
+    if (!gesture) return;
+    const cell = this.cellAt(clientX, clientY);
+    const range = this.core.selectWord(cell.x, cell.y);
+    gesture.selecting = true;
+    this.selectionMoved = false;
+    this.selectionMode = "word";
+    this.selectionPointer = { x: clientX, y: clientY };
+    if (range) {
+      this.selectionBase = range.screen;
+      this.selectionEnd = range.viewport.end;
+      this.selectionAnchorScreen = range.screen.start;
+      this.selectionEndScreen = range.screen.end;
+    } else {
+      const screen = this.core.viewportPointToScreen(cell.x, cell.y);
+      this.selectionMode = "cell";
+      this.selectionBase = null;
+      this.selectionEnd = cell;
+      this.selectionAnchorScreen = screen;
+      this.selectionEndScreen = screen;
+      if (screen) this.core.setSelection({ ...screen, tag: 2 }, { ...screen, tag: 2 });
+    }
+    navigator.vibrate?.(8);
+    this.options.onSelectionChange();
+    this.forceFullRender = true;
+    this.requestRender();
+  }
+
+  private scrollFromTouch(rows: number): void {
+    if (rows === 0) return;
+    if (this.core.isAlternateScreen()) {
+      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
+      return;
+    }
+    this.scrollViewport(rows);
+  }
+
   private readonly onPointerDown = (event: PointerEvent) => {
     this.focus();
+    if (event.pointerType === "touch") {
+      if (event.button !== 0 || this.touchGesture !== null) return;
+      event.preventDefault();
+      event.stopPropagation();
+      this.clearHoveredLink("default");
+      this.clearSelection();
+      this.touchGesture = {
+        pointerId: event.pointerId,
+        startX: event.clientX,
+        startY: event.clientY,
+        lastY: event.clientY,
+        rowRemainder: 0,
+        selecting: false,
+      };
+      this.canvas.setPointerCapture(event.pointerId);
+      this.touchHoldTimer = window.setTimeout(() => {
+        this.touchHoldTimer = null;
+        this.beginTouchSelection(event.clientX, event.clientY);
+      }, 450);
+      return;
+    }
     if (shouldReportTerminalMouse(this.core.isMouseTracking(), event)) {
       const button = ghosttyMouseButton(event.button);
       if (button === null) return;
@@ -1338,6 +1471,27 @@ export class GhosttyTerminalSurface {
   };
 
   private readonly onPointerMove = (event: PointerEvent) => {
+    const touch = this.touchGesture;
+    if (touch?.pointerId === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+      if (touch.selecting) {
+        this.selectionPointer = { x: event.clientX, y: event.clientY };
+        this.extendSelectionTo(event.clientX, event.clientY);
+        return;
+      }
+      const distance = Math.hypot(
+        event.clientX - touch.startX,
+        event.clientY - touch.startY,
+      );
+      if (distance >= 8) this.clearTouchHold();
+      const rows = (touch.lastY - event.clientY) / this.metrics.height + touch.rowRemainder;
+      const wholeRows = Math.trunc(rows);
+      touch.lastY = event.clientY;
+      touch.rowRemainder = rows - wholeRows;
+      this.scrollFromTouch(wholeRows);
+      return;
+    }
     if (this.linkActivationPointerId === event.pointerId) return;
     // Hover motion is only reportable in any-event tracking (DEC 1003); normal and
     // button-event tracking never report motion without a captured pressed button.
@@ -1468,6 +1622,18 @@ export class GhosttyTerminalSurface {
 
   private readonly onPointerUp = (event: PointerEvent) => {
     this.setSelectionAutoscroll(0);
+    const touch = this.touchGesture;
+    if (touch?.pointerId === event.pointerId) {
+      event.preventDefault();
+      event.stopPropagation();
+      this.clearTouchHold();
+      this.touchGesture = null;
+      if (this.canvas.hasPointerCapture(event.pointerId)) {
+        this.canvas.releasePointerCapture(event.pointerId);
+      }
+      if (touch.selecting) this.options.onSelectionChange();
+      return;
+    }
     if (this.linkActivationPointerId === event.pointerId) {
       event.preventDefault();
       event.stopPropagation();

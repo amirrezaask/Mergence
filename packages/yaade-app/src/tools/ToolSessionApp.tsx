@@ -126,6 +126,11 @@ import {
 } from "../keybindings.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
+const MobileToolView = lazy(() =>
+  import("./MobileToolView.js").then(({ MobileToolView: View }) => ({
+    default: View,
+  })),
+);
 const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
 const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
@@ -217,6 +222,7 @@ export function ToolSessionApp() {
   >(() => new Map());
   const prefixPendingRef = useRef(false);
   const toolUsesRef = useRef(snapshot.usesById);
+  const isMobile = useIsMobile();
   toolUsesRef.current = snapshot.usesById;
 
   useEffect(() => {
@@ -266,7 +272,10 @@ export function ToolSessionApp() {
       tabs.map(id => snapshot.tabsById.get(id)).filter((value): value is SessionTab => Boolean(value)),
     );
     const ids = tab ? snapshot.useIdsByTab.get(tab.id) ?? [] : EMPTY_TOOL_USE_IDS;
-    const useId = chooseToolUse(route.toolUseId, tab, ids);
+    const mobileListRoute = isMobile && !route.toolUseId;
+    const useId = mobileListRoute
+      ? undefined
+      : chooseToolUse(route.toolUseId, tab, ids);
     if (snapshot.activeSessionId !== session.id)
       client.store.selectSession(session.id);
     if (tab && snapshot.activeTabId !== tab.id)
@@ -286,6 +295,7 @@ export function ToolSessionApp() {
     snapshot.visibleTabIdsBySession,
     snapshot.useIdsByTab,
     routeRevision,
+    isMobile,
   ]);
 
   const visibleSessions = snapshot.visibleSessionIds
@@ -328,7 +338,7 @@ export function ToolSessionApp() {
   const sidebarLayout = twoSidebarLayout || singleSidebarLayout;
   const sidebarsCollapsed =
     sidebarLayout && appearanceSettings.sidebarCollapsed;
-  const sidebarOrientation = useIsMobile() ? "horizontal" : "vertical";
+  const sidebarOrientation = isMobile ? "horizontal" : "vertical";
 
   const toggleSidebars = useCallback(() => {
     if (!sidebarLayout) return;
@@ -454,8 +464,12 @@ export function ToolSessionApp() {
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
       const request = window.yaade?.tools?.selectUse?.(use.sessionId, use.id);
       if (request) void request.catch(error => setActionError(errorMessage(error)));
-      if (current !== use.id) {
-        history.pushState(null, "", toolSessionUrl(use.sessionId, tabId, use.id));
+      const nextUrl = toolSessionUrl(use.sessionId, tabId, use.id);
+      if (
+        current !== use.id ||
+        location.href !== new URL(nextUrl, location.origin).href
+      ) {
+        history.pushState({ yaadeMobileTool: use.id }, "", nextUrl);
       }
     },
     [client, openToolInWorkspace],
@@ -483,8 +497,22 @@ export function ToolSessionApp() {
       nextKind: ToolKind = "terminal",
       requestedProvider?: AgentProvider,
       launchContext?: ToolContextSelection,
+      targetSessionId?: SessionId,
     ): Promise<ToolUse | undefined> => {
-      if (!activeSession || !activeTab) return undefined;
+      const currentSnapshot = client.store.getSnapshot();
+      const targetSession = targetSessionId
+        ? currentSnapshot.sessionsById.get(targetSessionId)
+        : activeSession;
+      const targetTabIds = targetSession
+        ? currentSnapshot.visibleTabIdsBySession.get(targetSession.id) ?? EMPTY_TAB_IDS
+        : EMPTY_TAB_IDS;
+      const preferredTabId = targetSession?.activeTabId ?? targetTabIds[0];
+      const targetTab = preferredTabId
+        ? currentSnapshot.tabsById.get(preferredTabId)
+        : undefined;
+      if (!targetSession || !targetTab) return undefined;
+      const targetUseIds =
+        currentSnapshot.useIdsByTab.get(targetTab.id) ?? EMPTY_TOOL_USE_IDS;
       if (nextKind === "editor") {
         setActionError("The in-browser editor is temporarily disabled.");
         return undefined;
@@ -535,13 +563,13 @@ export function ToolSessionApp() {
                   ? { _tag: "NeovimToolInput", kind: "neovim" }
                   : { _tag: "TerminalToolInput", kind: "terminal" };
         const currentWorkspace =
-          toolWorkspaces.get(activeTab.id) ??
-          restoreToolWorkspace(activeTab.layoutJson, useIds);
+          toolWorkspaces.get(targetTab.id) ??
+          restoreToolWorkspace(targetTab.layoutJson, targetUseIds);
         let hasEmptyPane = false;
         currentWorkspace.tree.visitLeaves(leaf => {
           if (leaf.view.kind === "empty") hasEmptyPane = true;
         });
-        let destinationTab = activeTab;
+        let destinationTab = targetTab;
         let rollbackTab: SessionTab | undefined;
         if (
           toolPaneCount(currentWorkspace) >= MAX_TOOL_TILES &&
@@ -549,8 +577,8 @@ export function ToolSessionApp() {
         ) {
           const createdTab = await window.yaade?.tools?.createTab?.({
             _tag: "CreateSessionTab",
-            sessionId: activeSession.id,
-            title: `Window ${visibleTabs.length + 1}`,
+            sessionId: targetSession.id,
+            title: `Window ${targetTabIds.length + 1}`,
           });
           if (!createdTab) throw new Error("Could not create another Window.");
           destinationTab = createdTab;
@@ -558,7 +586,7 @@ export function ToolSessionApp() {
         }
         const command: CreateToolUse = {
           _tag: "CreateToolUse",
-          sessionId: activeSession.id,
+          sessionId: targetSession.id,
           tabId: destinationTab.id,
           kind: nextKind,
           project: nextProject,
@@ -569,7 +597,7 @@ export function ToolSessionApp() {
         try {
           const created = await window.yaade?.tools?.createUse?.(command);
           if (created) client.store.replaceToolUse(created);
-          await client.reconcileSession(activeSession.id);
+          await client.reconcileSession(targetSession.id);
           if (created) selectTool(created);
           return created;
         } catch (error) {
@@ -588,16 +616,7 @@ export function ToolSessionApp() {
         return undefined;
       }
     },
-    [
-      activeSession,
-      activeTab,
-      client,
-      projects,
-      selectTool,
-      toolWorkspaces,
-      useIds,
-      visibleTabs.length,
-    ],
+    [activeSession, client, projects, selectTool, toolWorkspaces],
   );
 
   const openLocationInNeovim = useCallback(
@@ -1317,6 +1336,78 @@ export function ToolSessionApp() {
     [activeTab, activateDockedTool, updateToolWorkspace],
   );
 
+  const renderTool = (
+    use: ToolUse,
+    focused: boolean,
+    visible = true,
+  ) => (
+    <SelectedToolUse
+      key={use.id}
+      use={use}
+      theme={activeTheme}
+      fontSize={fontSize}
+      projects={projects}
+      results={snapshot.searchResultsByUseId.get(use.id) ?? []}
+      onContextChange={(project, checkout) =>
+        updateToolContext(use, project, checkout)
+      }
+      onProviderChange={(provider) => updateToolProvider(use, provider)}
+      visible={visible}
+      focused={focused}
+      onAction={(action) => void runToolAction(action, use)}
+      onOpenLocation={(location) => openLocationInNeovim(use, location)}
+      onSearchChange={async (next, options) => {
+        const latest = client.store.getSnapshot().usesById.get(use.id) ?? use;
+        if (latest.input.kind !== "search") return;
+        try {
+          const updated = await window.yaade?.tools?.updateUseInput?.({
+            _tag: "UpdateToolUseInput",
+            toolUseId: latest.id,
+            inputRevision: latest.inputRevision,
+            input: {
+              _tag: "SearchToolInput",
+              kind: "search",
+              query: next,
+              options,
+            },
+          });
+          if (updated) {
+            client.store.replaceToolUse(updated);
+            await client.reconcileSession(use.sessionId);
+          }
+        } catch (error) {
+          setActionError(errorMessage(error));
+        }
+      }}
+      onLoadMore={async () => {
+        if (use.output.kind !== "search" || !use.output.nextCursor) return;
+        try {
+          await window.yaade?.tools?.loadMore?.(
+            use.id,
+            use.output.resultRevision,
+            Number(use.output.nextCursor),
+            100,
+          );
+          await client.reconcileSession(use.sessionId);
+        } catch (error) {
+          setActionError(errorMessage(error));
+        }
+      }}
+      onTitleChange={(title) => updateRuntimeTitle(use, title, "terminal")}
+    />
+  );
+
+  const showMobileToolList = (use: ToolUse) => {
+    const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
+    const listUrl = toolSessionUrl(use.sessionId, tabId);
+    if (history.state?.yaadeMobileTool === use.id) {
+      history.back();
+      return;
+    }
+    history.replaceState(null, "", listUrl);
+    setRouteRevision(revision => revision + 1);
+  };
+
   const renderPrefixHud = () =>
     prefixPending ? (
       <div className="pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-2">
@@ -1363,6 +1454,30 @@ export function ToolSessionApp() {
       >
         <Suspense fallback={<SessionBootState />}>
           <ToolDndRoot handlers={toolTabDnd}>
+            {isMobile ? (
+              <MobileToolView
+                sessions={visibleSessions}
+                usesById={snapshot.usesById}
+                useIdsBySession={snapshot.useIdsBySession}
+                routeToolUseId={parseToolSessionRoute(location.href).toolUseId}
+                runtimeTitles={runtimeTitles}
+                projects={projects}
+                onSelect={selectTool}
+                onShowToolList={showMobileToolList}
+                onCreateTool={(sessionId, kind) =>
+                  createTool(kind, undefined, undefined, sessionId)
+                }
+                onCreateSession={createSession}
+                onCloseSession={requestCloseSession}
+                actionError={actionError}
+                onCloseTool={use => runToolAction("archive", use)}
+                onContextChange={updateToolContext}
+                renderTool={(use, visible, focused) =>
+                  renderTool(use, focused, visible)
+                }
+              />
+            ) : (
+              <>
             {!sidebarLayout ? (
               <GlassSurface material="shell" asChild>
               <header
@@ -1392,6 +1507,7 @@ export function ToolSessionApp() {
                   sessions={visibleSessions}
                   activeSessionId={snapshot.activeSessionId}
                   onSelect={(session) => selectSession(session.id)}
+                  onCreate={() => void createSession()}
                   onClose={requestCloseSession}
                   onRename={(id, title) => void renameSession(id, title)}
                   toolCounts={toolCounts}
@@ -1581,12 +1697,13 @@ export function ToolSessionApp() {
                     onToggle={toggleSidebars}
                   />
                 ) : null}
-                {snapshot.connection === "connecting" &&
-                visibleSessions.length === 0 ? (
-                  <SessionBootState />
-                ) : activeSession && activeTab ? (
-                  <ToolTilingWorkspace
-                    workspace={activeToolWorkspace}
+                <div className="min-h-0 flex-1">
+                  {snapshot.connection === "connecting" &&
+                  visibleSessions.length === 0 ? (
+                    <SessionBootState />
+                  ) : activeSession && activeTab ? (
+                    <ToolTilingWorkspace
+                      workspace={activeToolWorkspace}
                     usesById={snapshot.usesById}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
@@ -1615,81 +1732,14 @@ export function ToolSessionApp() {
                         onAddKind={(kind) => void createTool(kind)}
                       />
                     }
-                    renderTool={(use, focused) => (
-                      <SelectedToolUse
-                        key={use.id}
-                        use={use}
-                        theme={activeTheme}
-                        fontSize={fontSize}
-                        projects={projects}
-                        results={
-                          snapshot.searchResultsByUseId.get(use.id) ?? []
-                        }
-                        onContextChange={(project, checkout) =>
-                          updateToolContext(use, project, checkout)
-                        }
-                        onProviderChange={(provider) =>
-                          updateToolProvider(use, provider)
-                        }
-                        visible
-                        focused={focused}
-                        onAction={(action) => void runToolAction(action, use)}
-                        onOpenLocation={(location) => openLocationInNeovim(use, location)}
-                        onSearchChange={async (next, options) => {
-                          const latest =
-                            client.store.getSnapshot().usesById.get(use.id) ??
-                            use;
-                          if (latest.input.kind !== "search") return;
-                          try {
-                            const updated =
-                              await window.yaade?.tools?.updateUseInput?.({
-                                _tag: "UpdateToolUseInput",
-                                toolUseId: latest.id,
-                                inputRevision: latest.inputRevision,
-                                input: {
-                                  _tag: "SearchToolInput",
-                                  kind: "search",
-                                  query: next,
-                                  options,
-                                },
-                              });
-                            if (updated) {
-                              client.store.replaceToolUse(updated);
-                              await client.reconcileSession(use.sessionId);
-                            }
-                          } catch (error) {
-                            setActionError(errorMessage(error));
-                          }
-                        }}
-                        onLoadMore={async () => {
-                          if (
-                            use.output.kind !== "search" ||
-                            !use.output.nextCursor
-                          )
-                            return;
-                          try {
-                            await window.yaade?.tools?.loadMore?.(
-                              use.id,
-                              use.output.resultRevision,
-                              Number(use.output.nextCursor),
-                              100,
-                            );
-                            await client.reconcileSession(use.sessionId);
-                          } catch (error) {
-                            setActionError(errorMessage(error));
-                          }
-                        }}
-                        onTitleChange={(title) =>
-                          updateRuntimeTitle(use, title, "terminal")
-                        }
-                      />
-                    )}
+                    renderTool={renderTool}
                   />
-                ) : (
-                  <SessionEmptyState
-                    onAddKind={(kind) => void createTool(kind)}
-                  />
-                )}
+                  ) : (
+                    <SessionEmptyState
+                      onAddKind={(kind) => void createTool(kind)}
+                    />
+                  )}
+                </div>
                 {renderPrefixHud()}
               </main>
               {twoSidebarLayout ? (
@@ -1740,6 +1790,8 @@ export function ToolSessionApp() {
                 />
               ) : null}
             </div>
+              </>
+            )}
           </ToolDndRoot>
         </Suspense>
         <ToolUseSwitcher

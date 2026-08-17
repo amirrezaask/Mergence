@@ -7,7 +7,7 @@ import type {
   YaadeTheme,
 } from "@yaade/shared"
 import { fileUriToPath, pathToFileUri } from "@yaade/shared"
-import { CircleDotIcon, FileDiffIcon, HistoryIcon } from "lucide-react"
+import { ArrowLeftIcon, CircleDotIcon, FileDiffIcon, HistoryIcon } from "lucide-react"
 
 import {
   Dialog,
@@ -122,7 +122,10 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
   const [diffStyle, setDiffStyle] = useState<DiffStyle>(storedDiffStyle)
-  const [compactLayout, setCompactLayout] = useState(false)
+  const [compactLayout, setCompactLayout] = useState(
+    () => window.matchMedia("(max-width: 767px)").matches,
+  )
+  const [compactShowDiff, setCompactShowDiff] = useState(false)
   const detailRequest = useRef(0)
   const diffRequest = useRef(0)
 
@@ -151,6 +154,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       setDetailError(null)
       setDiffError(null)
       setWorkingTreeEntries([])
+      setCompactShowDiff(false)
       return
     }
     const request = ++detailRequest.current
@@ -160,6 +164,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     setSelectedPath(null)
     setDiffContents(null)
     setDiffError(null)
+    setCompactShowDiff(false)
     const detailPromise = workingTree
       ? loadWorkingTreeSnapshot(api, rootUri).then(snapshot => {
           setWorkingTreeEntries(snapshot.entries)
@@ -170,7 +175,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       .then(next => {
         if (request !== detailRequest.current) return
         setDetail(next)
-        setSelectedPath(next.files[0]?.path ?? null)
+        setSelectedPath(compactLayout ? null : next.files[0]?.path ?? null)
       })
       .catch(err => {
         if (request !== detailRequest.current) return
@@ -179,7 +184,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       .finally(() => {
         if (request === detailRequest.current) setDetailLoading(false)
       })
-  }, [open, api, rootUri, hash, workingTree])
+  }, [open, api, compactLayout, rootUri, hash, workingTree])
 
   const toggleWorkingTreeStage = async (file: GitCommitFile) => {
     if (!api || !workingTree) return
@@ -226,7 +231,8 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   }
 
   const selectedFile =
-    detail?.files.find(file => file.path === selectedPath) ?? detail?.files[0] ?? null
+    detail?.files.find(file => file.path === selectedPath) ??
+    (compactLayout ? null : detail?.files[0] ?? null)
 
   useEffect(() => {
     if (!open || !api || !hash || !selectedFile) {
@@ -369,7 +375,10 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
           files={detail.files}
           workingTreeEntries={workingTreeEntries}
           selectedPath={selectedFile?.path ?? null}
-          onSelectPath={setSelectedPath}
+          onSelectPath={path => {
+            setSelectedPath(path)
+            if (compactLayout) setCompactShowDiff(true)
+          }}
           workingTree={workingTree}
           pendingPath={workingTreePendingPath}
           onToggleStage={file => void toggleWorkingTreeStage(file)}
@@ -383,9 +392,24 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       {selectedFile ? (
         <>
           <div
-            className="flex h-9 shrink-0 items-center gap-2 border-b border-border/70 bg-muted/25 px-3"
+            className="flex min-h-11 shrink-0 items-center gap-2 border-b border-border/70 bg-muted/25 px-2"
           >
-            <FileDiffIcon className="size-4 text-muted-foreground" aria-hidden />
+            {compactLayout ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-lg"
+                aria-label="Back to changed files"
+                onClick={() => {
+                  setCompactShowDiff(false)
+                  setSelectedPath(null)
+                }}
+              >
+                <ArrowLeftIcon />
+              </Button>
+            ) : (
+              <FileDiffIcon className="size-4 text-muted-foreground" aria-hidden />
+            )}
             <span className="min-w-0 flex-1 truncate font-mono text-xs font-medium">
               {selectedFile.path}
             </span>
@@ -484,7 +508,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
             value={effectiveDiffStyle}
             variant="outline"
             size="sm"
-            className="shrink-0 bg-background"
+            className={cn("shrink-0 bg-background", compactLayout && "hidden")}
             aria-label="Diff layout"
             onValueChange={value => {
               if (value === "unified" || value === "split") changeDiffStyle(value)
@@ -523,24 +547,24 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
                     : "Could not load this commit’s changes."
                 }
               />
+            ) : compactLayout ? (
+              <div className="min-h-0 flex-1 overflow-hidden">
+                {compactShowDiff && selectedFile ? diffPane : fileList}
+              </div>
             ) : (
               <ResizablePanelGroup
-                key={compactLayout ? "compact" : "wide"}
-                orientation={compactLayout ? "vertical" : "horizontal"}
+                orientation="horizontal"
                 className="min-h-0 flex-1 bg-transparent"
               >
                 <ResizablePanel
-                  defaultSize={compactLayout ? "34%" : "24%"}
-                  minSize={compactLayout ? "128px" : "180px"}
-                  maxSize={compactLayout ? "45%" : "38%"}
+                  defaultSize="24%"
+                  minSize="180px"
+                  maxSize="38%"
                 >
                   {fileList}
                 </ResizablePanel>
                 <ResizableHandle />
-                <ResizablePanel
-                  defaultSize={compactLayout ? "66%" : "76%"}
-                  minSize={compactLayout ? "220px" : "320px"}
-                >
+                <ResizablePanel defaultSize="76%" minSize="320px">
                   {diffPane}
                 </ResizablePanel>
               </ResizablePanelGroup>

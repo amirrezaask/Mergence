@@ -6,6 +6,7 @@ import { AppErrorBoundary } from "./AppErrorBoundary.js"
 import { createYaadeApi, createWebTransport } from "@yaade/host-client"
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
 import { SystemSignalsProvider } from "./system-signals/SystemSignalsProvider.js"
+import { registerPwa } from "./pwa.js"
 
 const startupWindow = window as Window & { __yaadeStartupBootstrapAt?: number }
 startupWindow.__yaadeStartupBootstrapAt ??= performance.now()
@@ -24,3 +25,5 @@ createRoot(document.getElementById("root")!).render(
     </AppErrorBoundary>
   </StrictMode>,
 )
+
+registerPwa()

@@ -107,7 +107,6 @@ export { ProjectSwitcherOverlay } from "./components/ProjectSwitcherOverlay.js"
 export {
   SettingsOverlay,
   type ColorSchemeMode,
-  type InterfaceMaterial,
   type JetAppearanceSettings,
   type SessionLayout,
 } from "./components/SettingsOverlay.js"

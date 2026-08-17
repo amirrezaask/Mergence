@@ -485,6 +485,15 @@ export async function clickNewSession(page: ShellDriver): Promise<void> {
     await sidebarNew.first().click()
     return
   }
+  const sessionSwitcher = page.getByRole("button", { name: /Switch session/i })
+  if ((await sessionSwitcher.count()) > 0 && (await sessionSwitcher.first().isVisible())) {
+    await sessionSwitcher.first().click()
+    await page
+      .locator("[data-yaade-session-switcher-popover]")
+      .getByRole("button", { name: "New session" })
+      .click()
+    return
+  }
   await page.getByRole("button", { name: /New session/i }).first().click()
 }
 

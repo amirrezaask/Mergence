@@ -10,12 +10,7 @@ import { toSrgbColor } from "@yaade/shared"
 
 export type ColorScheme = "dark" | "light"
 
-type ThemeFamily =
-  | "Default"
-  | "Catppuccin"
-  | "Tokyo Night"
-  | "Rosé Pine"
-  | "Ayu"
+type ThemeFamily = "Default"
 
 export type PaletteThemeInput = {
   id: string

@@ -79,6 +79,41 @@ export function focusRegisteredTerminal(tabId?: string): boolean {
   return true
 }
 
+/** Apply a one-shot modifier to the next accessory or software-keyboard key. */
+export function setTerminalVirtualModifier(
+  modifier: "ctrl" | "alt",
+  active: boolean,
+  tabId?: string,
+): boolean {
+  const terminal = resolveTerminal(tabId)
+  if (!terminal) return false
+  terminal.setVirtualModifier(modifier, active)
+  return true
+}
+
+/** Send a named key through Ghostty's active keyboard protocol encoder. */
+export function sendTerminalVirtualKey(
+  key: string,
+  code: string,
+  tabId?: string,
+): boolean {
+  const terminal = resolveTerminal(tabId)
+  if (!terminal) return false
+  terminal.sendVirtualKey(key, code)
+  return true
+}
+
+/** Paste clipboard text with bracketed-paste encoding when enabled by the PTY. */
+export async function pasteIntoRegisteredTerminal(tabId?: string): Promise<boolean> {
+  const terminal = resolveTerminal(tabId)
+  const clipboard = navigator.clipboard
+  if (!terminal || !clipboard?.readText) return false
+  const text = await clipboard.readText()
+  if (text.length === 0) return false
+  terminal.pasteText(text)
+  return true
+}
+
 export function readTerminalCursor(
   tabId?: string,
 ): { x: number; y: number; hidden: boolean } | null {

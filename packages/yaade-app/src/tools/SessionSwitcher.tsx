@@ -3,6 +3,7 @@ import {
   Check,
   ChevronsUpDownIcon,
   FolderKanban,
+  Plus,
   X,
 } from "lucide-react"
 import type { AppSession, SessionId } from "@yaade/rpc"
@@ -22,6 +23,7 @@ export type SessionSwitcherProps = {
   readonly sessions: readonly AppSession[]
   readonly activeSessionId?: AppSession["id"]
   readonly onSelect: (session: AppSession) => void
+  readonly onCreate: () => void
   readonly onClose?: (id: SessionId) => void
   readonly onRename?: (id: SessionId, title: string) => void
   readonly toolCounts?: ReadonlyMap<SessionId, number>
@@ -45,6 +47,12 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
     setEditingId(null)
     props.onSelect(session)
     props.onOpenChange(false)
+  }
+
+  const createSession = () => {
+    setEditingId(null)
+    props.onOpenChange(false)
+    props.onCreate()
   }
 
   return (
@@ -174,7 +182,20 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
           )}
 
         </div>
-
+        <div className="mt-1.5 border-t border-border/70 pt-1.5">
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            className="w-full justify-start gap-2"
+            aria-label="New session"
+            data-yaade-new-session=""
+            onClick={createSession}
+          >
+            <Plus />
+            New session
+          </Button>
+        </div>
       </PopoverContent>
     </Popover>
   )

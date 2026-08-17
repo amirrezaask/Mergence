@@ -50,7 +50,7 @@ const lightHighlights = paletteHighlights({
 })
 
 const darkAnsi = paletteAnsi({
-  black: "oklch(0.155 0.004 264)",
+  black: "oklch(0.125 0.004 264)",
   red: "oklch(0.72 0.17 25)",
   green: "oklch(0.72 0.13 162)",
   yellow: "oklch(0.8 0.14 84)",
