@@ -6,7 +6,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "vite build",
-    "test": "tsx --test src/hooks/useAppearanceSettings.test.ts src/hooks/useRunningAgents.test.ts src/build-branding.test.ts src/keybindings.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-session-keymap.test.ts src/tools/tool-tiling.test.ts"
+    "test": "tsx --test src/hooks/useAppearanceSettings.test.ts src/hooks/useRunningAgents.test.ts src/build-branding.test.ts src/appearance-zoom.test.ts src/keybindings.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-session-keymap.test.ts src/tools/tool-tiling.test.ts"
   },
   "dependencies": {
     "@effect/platform": "0.97.1",

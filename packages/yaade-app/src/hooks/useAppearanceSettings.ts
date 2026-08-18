@@ -14,6 +14,14 @@ import {
   type SessionLayout,
   applyColorScheme,
 } from "@yaade/ui/appearance"
+import {
+  adjustFontSize,
+  clampFontSize,
+  DEFAULT_FONT_SIZE,
+  MAX_FONT_SIZE,
+  MIN_FONT_SIZE,
+} from "../appearance-zoom.js"
+import { resolveAppearanceZoomAction } from "../keybindings.js"
 
 type ColorScheme = "dark" | "light"
 type PersistedAppearanceValue = string | number | boolean | null | undefined
@@ -30,8 +38,6 @@ const THEME_ID_STORAGE_KEY = "jet-theme-id"
 const COLOR_SCHEME_KEY = "jet-color-scheme"
 const FONT_SIZE_STORAGE_KEY = "jet-font-size"
 const APPEARANCE_STORAGE_KEY = "jet-appearance-settings"
-const DEFAULT_FONT_SIZE = 13
-const FONT_SIZE_STEP = 2
 export const DEFAULT_SIDEBAR_WIDTH = 300
 export const MIN_SIDEBAR_WIDTH = 240
 export const MAX_SIDEBAR_WIDTH = 480
@@ -121,7 +127,7 @@ function loadStoredFontSize(): number {
     if (!raw) return DEFAULT_FONT_SIZE
     const n = parseFloat(raw)
     if (!Number.isFinite(n) || n <= 0) return DEFAULT_FONT_SIZE
-    return n
+    return clampFontSize(n)
   } catch {
     return DEFAULT_FONT_SIZE
   }
@@ -235,7 +241,12 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         parsed.reducedTransparency === false
           ? parsed.reducedTransparency
           : base.reducedTransparency,
-      fontSize: clampNumber(parsed.fontSize, base.fontSize, 10, 24),
+      fontSize: clampNumber(
+        parsed.fontSize,
+        base.fontSize,
+        MIN_FONT_SIZE,
+        MAX_FONT_SIZE,
+      ),
       monoFontFamily: normalizeMonoFontFamily(
         parsed.monoFontFamily ?? base.monoFontFamily,
       ),
@@ -361,18 +372,36 @@ export function useAppearanceSettings() {
   }, [appearanceSettings])
 
   const handleZoom = useCallback((delta: number) => {
-    setAppearanceSettings(prev => ({
-      ...prev,
-      fontSize: Math.max(10, Math.min(24, prev.fontSize + delta * FONT_SIZE_STEP)),
-    }))
+    setAppearanceSettings(prev => {
+      const fontSize = adjustFontSize(prev.fontSize, delta)
+      return fontSize === prev.fontSize ? prev : { ...prev, fontSize }
+    })
   }, [])
 
   const setFontSize = useCallback((px: number) => {
-    setAppearanceSettings(prev => ({
-      ...prev,
-      fontSize: Math.max(10, Math.min(24, px)),
-    }))
+    setAppearanceSettings(prev => {
+      const fontSize = clampFontSize(px)
+      return fontSize === prev.fontSize ? prev : { ...prev, fontSize }
+    })
   }, [])
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.defaultPrevented) return
+      const action = resolveAppearanceZoomAction(event)
+      if (action === null) return
+
+      // Capture before Ghostty's terminal textarea. Otherwise its key encoder
+      // can consume Ctrl/Command +/- and the appearance never updates.
+      event.preventDefault()
+      event.stopPropagation()
+      if (action === "in") handleZoom(1)
+      else if (action === "out") handleZoom(-1)
+      else setFontSize(DEFAULT_FONT_SIZE)
+    }
+    window.addEventListener("keydown", onKeyDown, true)
+    return () => window.removeEventListener("keydown", onKeyDown, true)
+  }, [handleZoom, setFontSize])
 
   const resetAppearanceSettings = useCallback(() => {
     setAppearanceSettings({

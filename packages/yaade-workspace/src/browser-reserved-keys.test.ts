@@ -19,7 +19,9 @@ describe("isBrowserReservedChord", () => {
       "Mod-Alt-ArrowLeft",
       "Mod-Alt-ArrowRight",
       "Mod-=",
+      "Mod-Shift-=",
       "Mod--",
+      "Mod-Shift--",
       "F12",
     ]) {
       assert.equal(isBrowserReservedChord(key), true, key)

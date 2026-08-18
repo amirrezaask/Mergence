@@ -43,9 +43,12 @@ export const BROWSER_RESERVED_CHORDS: readonly string[] = [
   "Ctrl-Shift-Tab",
   "Mod-Alt-ArrowLeft",
   "Mod-Alt-ArrowRight",
-  // Browser zoom (keyboard zoom is not cancellable)
+  // Browser zoom (keyboard zoom is not cancellable). Include shifted forms
+  // because the physical Equal/Minus keys produce + and _ on US layouts.
   "Mod-=",
+  "Mod-Shift-=",
   "Mod--",
+  "Mod-Shift--",
   "Mod-0",
   // DevTools
   "F11",

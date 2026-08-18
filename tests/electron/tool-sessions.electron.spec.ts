@@ -207,6 +207,52 @@ test("split shortcuts split the focused pane in both directions", async ({ launc
   await expect(page.locator("[data-yaade-mux-pane-chrome]")).toHaveCount(3)
 })
 
+test("appearance zoom works while the terminal input owns focus", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  await focusTerminal(page)
+  await expect(
+    page.locator("[data-yaade-terminal-panel] [data-ghostty-terminal-input]").first(),
+  ).toBeFocused()
+
+  const initial = await page.evaluate(() => ({
+    fontSize: document.documentElement.style.fontSize,
+    cellHeight: window.__yaadeAgent?.getTerminalCellHeight() ?? 0,
+  }))
+  expect(initial.fontSize).toBe("13px")
+  expect(initial.cellHeight).toBeGreaterThan(0)
+
+  const modifier = process.platform === "darwin" ? "Meta" : "Control"
+  await page.keyboard.press(`${modifier}+Equal`)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
+    .toBe("15px")
+  await expect
+    .poll(() => page.evaluate(() => window.__yaadeAgent?.getTerminalCellHeight() ?? 0))
+    .toBeGreaterThan(initial.cellHeight)
+
+  await page.keyboard.press(`${modifier}+Shift+Equal`)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
+    .toBe("17px")
+
+  await page.keyboard.press(`${modifier}+Minus`)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
+    .toBe("15px")
+
+  await page.keyboard.press(`${modifier}+Shift+Minus`)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
+    .toBe("13px")
+
+  await page.keyboard.press(`${modifier}+Digit0`)
+  await expect
+    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
+    .toBe("13px")
+})
+
 test("split controls open Terminal by default and the picker with a modifier", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
