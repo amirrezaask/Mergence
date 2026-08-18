@@ -3,8 +3,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-UI_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VENDOR_DIR="${UI_DIR}/src/panels/ghostty/vendor"
+PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
+VENDOR_DIR="${PACKAGE_DIR}/src/vendor"
 REVISION_FILE="${VENDOR_DIR}/VERSION"
 GHOSTTY_REVISION="$(tr -d '[:space:]' < "${REVISION_FILE}")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/yaade/ghostty-${GHOSTTY_REVISION:0:8}}"

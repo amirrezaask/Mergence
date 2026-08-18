@@ -170,6 +170,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           variant="ghost"
           size="icon-xs"
           aria-label={zoomed ? "Restore pane" : "Zoom pane"}
+          aria-pressed={zoomed}
           title={
             zoomShortcut
               ? `${zoomed ? "Restore" : "Zoom"} (${zoomShortcut})`
@@ -382,6 +383,27 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             >
               <Rows2 />
             </Button>
+            {splitControlsOnly && canZoom ? (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon-xs"
+                aria-label={zoomed ? "Restore pane" : "Zoom pane"}
+                aria-pressed={zoomed}
+                title={
+                  zoomShortcut
+                    ? `${zoomed ? "Restore" : "Zoom"} (${zoomShortcut})`
+                    : zoomed
+                      ? "Restore pane"
+                      : "Zoom pane"
+                }
+                data-yaade-mux-zoom=""
+                className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
+                onClick={onZoom}
+              >
+                {zoomed ? <Minimize2 /> : <Maximize2 />}
+              </Button>
+            ) : null}
             {splitControlsOnly ? (
               <Button
                 type="button"

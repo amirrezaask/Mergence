@@ -3,16 +3,9 @@
 @import "@fontsource-variable/geist-mono/wght-italic.css";
 @import "tailwindcss";
 @import "tw-animate-css";
+@import "@yaade/ghostty-react/styles.css";
+@import "@yaade/ghostty-react/fonts.css";
 @import "./materials.css";
-
-/* Symbols-only Nerd Font — PUA/icon fallback for terminals (p10k, starship, eza). */
-@font-face {
-  font-family: "Symbols Nerd Font Mono";
-  src: url("./fonts/SymbolsNerdFontMono-Regular.woff2") format("woff2");
-  font-weight: 100 900;
-  font-style: normal;
-  font-display: block;
-}
 
 @custom-variant dark (&:is(.dark *));
 
@@ -1191,8 +1184,7 @@ body {
 /* Ghostty owns the cell grid; its canvas and hidden IME input fill the slot. */
 [data-yaade-terminal-panel] .yaade-terminal-surface,
 [data-yaade-terminal-panel] .jet-terminal-surface,
-[data-yaade-terminal-panel] [data-yaade-terminal-fit],
-[data-yaade-terminal-panel] [data-yaade-terminal-canvas] {
+[data-yaade-terminal-panel] [data-yaade-terminal-fit] {
   height: 100%;
   width: 100%;
 }
@@ -1201,24 +1193,6 @@ body {
 [data-yaade-terminal-panel] .jet-terminal-surface {
   position: relative;
   background: var(--yaade-bg, var(--background));
-}
-
-[data-yaade-terminal-panel] [data-yaade-terminal-canvas] {
-  position: absolute;
-  inset: 0;
-  display: block;
-  background: transparent;
-}
-
-[data-yaade-terminal-panel] [data-yaade-terminal-input] {
-  caret-color: transparent;
-  color: transparent;
-  outline: none;
-  user-select: none;
-}
-
-[data-yaade-terminal-panel] .yaade-ghostty-scrollbar {
-  background: transparent;
 }
 
 /* Mux shell — terminal/editor panes are islands on a persistent canvas. */

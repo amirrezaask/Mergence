@@ -731,7 +731,7 @@ function MobileTerminalAccessory(props: { readonly use: ToolUse }) {
     if (!ctrl && !alt) return
     const consume = (event: Event) => {
       if (!(event.target instanceof HTMLElement)) return
-      if (!event.target.matches("[data-yaade-terminal-input]")) return
+      if (!event.target.matches("[data-ghostty-terminal-input]")) return
       queueMicrotask(() => {
         setCtrl(false)
         setAlt(false)

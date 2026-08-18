@@ -1,3 +1,5 @@
+/// <reference path="./vite-env.d.ts" />
+
 import {
   collectWrappedTerminalLinkLine,
   matchTerminalUrls,
@@ -57,6 +59,19 @@ let symbolsFontLoad: Promise<void> | null = null;
 
 function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
+}
+
+function shouldSuppressMacMetaKey(
+  event: Pick<KeyboardEvent, "altKey" | "ctrlKey" | "key" | "metaKey">,
+  platform: string,
+): boolean {
+  return (
+    isMacPlatform(platform) &&
+    event.metaKey &&
+    !event.altKey &&
+    !event.ctrlKey &&
+    event.key !== "Meta"
+  );
 }
 
 function isMonospaceFamily(family: string): boolean {
@@ -311,6 +326,7 @@ export function terminalLinkAtPositionWithRange(
   rows: GhosttySnapshot["rowData"],
   rowIndex: number,
   column: number,
+  linkMatcher: GhosttyTerminalLinkMatcher = matchTerminalUrls,
 ): TerminalLinkWithRange | null {
   const wrappedLine = collectWrappedTerminalLinkLine(rowIndex + 1, (index) => {
     const row = rows[index];
@@ -336,7 +352,8 @@ export function terminalLinkAtPositionWithRange(
   // still wraps onward, its continuation is outside the viewport.
   const continuesBelowViewport = lastRow !== undefined && lastRow.wrapsToNext;
   const offset = segment.startIndex + terminalColumnOffset(row, column);
-  for (const match of extractTerminalLinks(wrappedLine.text)) {
+  const matches = linkMatcher(wrappedLine.text);
+  for (const match of matches) {
     if (offset >= match.start && offset < match.end) {
       // A truncated tail must not activate as a complete link.
       if (match.end === wrappedLine.text.length && continuesBelowViewport) return null;
@@ -644,15 +661,17 @@ export class GhosttyTerminalSurface {
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
+    mount.classList.add("ghostty-terminal");
+    mount.setAttribute("data-ghostty-terminal", "");
     const canvas = document.createElement("canvas");
-    canvas.className = "yaade-ghostty-canvas block size-full touch-none cursor-text";
-    canvas.setAttribute("data-yaade-terminal-canvas", "");
-    canvas.dataset.yaadeTerminalPadding = String(CONTENT_PADDING);
+    canvas.className = "ghostty-terminal__canvas";
+    canvas.setAttribute("data-ghostty-terminal-canvas", "");
+    canvas.dataset.ghosttyTerminalPadding = String(CONTENT_PADDING);
     canvas.setAttribute("aria-hidden", "true");
 
     const input = document.createElement("textarea");
-    input.className = "yaade-ghostty-input";
-    input.setAttribute("data-yaade-terminal-input", "");
+    input.className = "ghostty-terminal__input";
+    input.setAttribute("data-ghostty-terminal-input", "");
     input.setAttribute("aria-label", "Terminal input");
     input.autocapitalize = "off";
     input.autocomplete = "off";
@@ -661,16 +680,14 @@ export class GhosttyTerminalSurface {
       "position:absolute;left:4px;top:4px;width:1px;height:1px;opacity:0;padding:0;border:0;resize:none;pointer-events:none;";
 
     const scrollbar = document.createElement("div");
-    scrollbar.className =
-      "yaade-ghostty-scrollbar group absolute top-1 right-px bottom-1 z-1 w-[var(--app-scrollbar-width)] cursor-default touch-none";
+    scrollbar.className = "ghostty-terminal__scrollbar";
     scrollbar.setAttribute("role", "scrollbar");
     scrollbar.setAttribute("aria-label", "Terminal scrollback");
     scrollbar.setAttribute("aria-orientation", "vertical");
     scrollbar.tabIndex = 0;
     scrollbar.hidden = true;
     const scrollbarThumb = document.createElement("div");
-    scrollbarThumb.className =
-      "absolute inset-x-px top-0 rounded-[3px] bg-[var(--app-scrollbar-thumb)] transition-[background-color] duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)] group-hover:bg-[var(--app-scrollbar-thumb-hover)] group-focus-visible:bg-[var(--app-scrollbar-thumb-hover)]";
+    scrollbarThumb.className = "ghostty-terminal__scrollbar-thumb";
     scrollbar.append(scrollbarThumb);
     mount.replaceChildren(canvas, input, scrollbar);
 
@@ -931,7 +948,7 @@ export class GhosttyTerminalSurface {
     if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
     this.resizeNotifyTimer = window.setTimeout(() => {
       this.resizeNotifyTimer = null;
-      if (!this.disposed) this.options.onResize(this.cols, this.rows);
+      if (!this.disposed) this.options.onResize?.(this.cols, this.rows);
     }, 150);
   }
 
@@ -979,7 +996,7 @@ export class GhosttyTerminalSurface {
     this.selectionMode = "cell";
     this.selectionBase = null;
     this.setSelectionAutoscroll(0);
-    this.options.onSelectionChange();
+    this.options.onSelectionChange?.();
     // Selection highlights span rows Ghostty may not mark dirty for this change.
     this.forceFullRender = true;
     this.requestRender();
@@ -1044,13 +1061,13 @@ export class GhosttyTerminalSurface {
     });
     const data = this.core.encodeKey(event);
     this.consumeVirtualModifiers();
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.options.onData?.(data);
     this.focus();
   }
 
   pasteText(text: string): void {
     if (text.length === 0) return;
-    this.options.onData(this.core.encodePaste(text));
+    this.options.onData?.(this.core.encodePaste(text));
     this.focus();
   }
 
@@ -1093,7 +1110,7 @@ export class GhosttyTerminalSurface {
       this.resizeNotifyTimer = null;
       // Flush the settled dimensions so the PTY keeps the final size even when
       // the surface unmounts inside the debounce window.
-      this.options.onResize(this.cols, this.rows);
+      this.options.onResize?.(this.cols, this.rows);
     }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.fitRetryFrame !== 0) window.cancelAnimationFrame(this.fitRetryFrame);
@@ -1120,7 +1137,7 @@ export class GhosttyTerminalSurface {
     // beforeKey runs side effects (keybindings, navigation sends), so it cannot
     // be consulted again on keyup, and Kitty report-event-types sessions would
     // otherwise receive a release for a press the shell never saw.
-    if (isTerminalAltGraphText(event) || !this.options.beforeKey(event)) {
+    if (isTerminalAltGraphText(event) || this.options.beforeKey?.(event) === false) {
       this.suppressedKeyCodes.add(event.code);
       return;
     }
@@ -1193,7 +1210,7 @@ export class GhosttyTerminalSurface {
           (text) => {
             if (this.disposed || this.pasteShortcutToken !== token) return;
             this.pasteShortcutToken += 1;
-            if (text.length > 0) this.options.onData(this.core.encodePaste(text));
+            if (text.length > 0) this.options.onData?.(this.core.encodePaste(text));
           },
           () => {
             // Clipboard read denied; the native paste event remains the path.
@@ -1232,7 +1249,7 @@ export class GhosttyTerminalSurface {
     this.suppressedKeyCodes.delete(event.code);
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    this.options.onData?.(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
@@ -1247,7 +1264,7 @@ export class GhosttyTerminalSurface {
     if (data.length === 0) return;
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData(data);
+    this.options.onData?.(data);
   };
 
   private readonly onFocus = () => {
@@ -1304,7 +1321,7 @@ export class GhosttyTerminalSurface {
     // The native paste won the race with actual text; a pending clipboard read
     // must not double. An empty native paste leaves the read as the only path.
     this.pasteShortcutToken += 1;
-    this.options.onData(this.core.encodePaste(data));
+    this.options.onData?.(this.core.encodePaste(data));
   };
 
   private readonly onCompositionStart = () => {
@@ -1315,7 +1332,7 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData(this.applyVirtualModifiers(data));
+    if (data.length > 0) this.options.onData?.(this.applyVirtualModifiers(data));
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1334,7 +1351,7 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData(this.applyVirtualModifiers(data));
+    if (data.length > 0) this.options.onData?.(this.applyVirtualModifiers(data));
     this.input.value = "";
   };
 
@@ -1376,7 +1393,7 @@ export class GhosttyTerminalSurface {
       if (screen) this.core.setSelection({ ...screen, tag: 2 }, { ...screen, tag: 2 });
     }
     navigator.vibrate?.(8);
-    this.options.onSelectionChange();
+    this.options.onSelectionChange?.();
     this.forceFullRender = true;
     this.requestRender();
   }
@@ -1384,7 +1401,7 @@ export class GhosttyTerminalSurface {
   private scrollFromTouch(rows: number): void {
     if (rows === 0) return;
     if (this.core.isAlternateScreen()) {
-      this.options.onData(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
+      this.options.onData?.(terminalWheelArrowData(rows, this.core.isApplicationCursorKeys()));
       return;
     }
     this.scrollViewport(rows);
@@ -1453,7 +1470,7 @@ export class GhosttyTerminalSurface {
       this.selectionEnd = range.viewport.end;
       this.selectionAnchorScreen = range.screen.start;
       this.selectionEndScreen = range.screen.end;
-      this.options.onSelectionChange();
+      this.options.onSelectionChange?.();
     } else {
       this.selectionMode = "cell";
       this.selectionBase = null;
@@ -1550,7 +1567,7 @@ export class GhosttyTerminalSurface {
     this.selectionAnchorScreen = anchor;
     this.selectionEndScreen = end;
     this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 });
-    this.options.onSelectionChange();
+    this.options.onSelectionChange?.();
     this.forceFullRender = true;
     this.requestRender();
   }
@@ -1633,7 +1650,7 @@ export class GhosttyTerminalSurface {
       if (this.canvas.hasPointerCapture(event.pointerId)) {
         this.canvas.releasePointerCapture(event.pointerId);
       }
-      if (touch.selecting) this.options.onSelectionChange();
+      if (touch.selecting) this.options.onSelectionChange?.();
       return;
     }
     if (this.linkActivationPointerId === event.pointerId) {
@@ -1645,7 +1662,7 @@ export class GhosttyTerminalSurface {
       }
       if (event.type !== "pointercancel") {
         const link = this.linkAt(event.clientX, event.clientY);
-        if (link) this.options.onLinkActivate(link.text, event);
+        if (link) this.options.onLinkActivate?.(link.text, event);
       }
       return;
     }
@@ -1674,9 +1691,8 @@ export class GhosttyTerminalSurface {
     if (!this.selectionMoved && this.selectionMode === "cell") {
       this.clearSelection();
     }
-    this.options.onSelectionChange();
+    this.options.onSelectionChange?.();
   };
-
   private readonly onWheel = (event: WheelEvent) => {
     if (event.deltaY === 0) return;
     event.preventDefault();
@@ -1699,7 +1715,7 @@ export class GhosttyTerminalSurface {
     if (this.core.isAlternateScreen()) {
       // The alternate screen has no scrollback: translate wheel motion into
       // arrow keys so full-screen apps like vim and less scroll naturally.
-      this.options.onData(terminalWheelArrowData(delta.rows, this.core.isApplicationCursorKeys()));
+      this.options.onData?.(terminalWheelArrowData(delta.rows, this.core.isApplicationCursorKeys()));
       return;
     }
     this.scrollViewport(delta.rows);
@@ -2055,7 +2071,12 @@ export class GhosttyTerminalSurface {
         range: { start, end },
       };
     }
-    return terminalLinkAtPositionWithRange(this.snapshot.rowData, cell.y, cell.x);
+    return terminalLinkAtPositionWithRange(
+      this.snapshot.rowData,
+      cell.y,
+      cell.x,
+      this.options.linkMatcher,
+    );
   }
 
   private sendMouse(
@@ -2099,7 +2120,7 @@ export class GhosttyTerminalSurface {
       paddingBottom: Math.max(0, Math.round(paddingBottom * yScale)),
       anyButtonPressed: event.buttons !== 0,
     });
-    if (data.length > 0) this.options.onData(data);
+    if (data.length > 0) this.options.onData?.(data);
   }
 
   private buttonFromButtons(buttons: number): number | null {

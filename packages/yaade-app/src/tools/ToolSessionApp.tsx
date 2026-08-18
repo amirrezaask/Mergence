@@ -934,7 +934,7 @@ export function ToolSessionApp() {
       );
       const inTerminal = Boolean(
         target?.closest(
-          "[data-yaade-terminal-input], [data-yaade-terminal-canvas]",
+          "[data-ghostty-terminal-input], [data-ghostty-terminal-canvas]",
         ),
       );
       const activeWorkspaceZoomed = Boolean(

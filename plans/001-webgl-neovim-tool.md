@@ -152,7 +152,7 @@ surface.
 
 ### Renderer and design patterns
 
-- `packages/yaade-ui/src/panels/ghostty/surface.ts` is the best lifecycle
+- `packages/ghostty-react/src/surface.ts` is the best lifecycle
   exemplar: imperative surface, hidden textarea, font loading, ResizeObserver,
   DPR tracking, input/IME handling, explicit disposal, dirty rendering, and an
   E2E registry outside React state.
@@ -496,8 +496,8 @@ Generalize the Tool Session's terminal-only focus check around
 `ToolSessionApp.tsx:1095` to a native input-surface check that includes:
 
 ```text
-[data-yaade-terminal-input]
-[data-yaade-terminal-canvas]
+[data-ghostty-terminal-input]
+[data-ghostty-terminal-canvas]
 [data-yaade-neovim-input]
 [data-yaade-neovim-canvas]
 ```

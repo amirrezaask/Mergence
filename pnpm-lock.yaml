@@ -122,6 +122,21 @@ importers:
         specifier: ^6.3.5
         version: 6.4.3(@types/node@22.20.0)(jiti@2.7.0)(lightningcss@1.32.0)(tsx@4.23.0)(yaml@2.9.0)
 
+  packages/ghostty-react:
+    devDependencies:
+      '@types/react':
+        specifier: ^19.1.8
+        version: 19.2.17
+      react:
+        specifier: ^19.1.0
+        version: 19.2.7
+      tsx:
+        specifier: ^4.19.4
+        version: 4.23.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/yaade-agent-telemetry:
     dependencies:
       '@yaade/shared':
@@ -329,6 +344,9 @@ importers:
       '@tanstack/react-virtual':
         specifier: ^3.13.6
         version: 3.14.5(react-dom@19.2.7(react@19.2.7))(react@19.2.7)
+      '@yaade/ghostty-react':
+        specifier: workspace:*
+        version: link:../ghostty-react
       '@yaade/panels':
         specifier: workspace:*
         version: link:../yaade-panels

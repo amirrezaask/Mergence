@@ -1,4 +1,4 @@
-import type { GhosttyTerminalSurface } from "./ghostty/surface.js"
+import type { GhosttyTerminalSurface } from "@yaade/ghostty-react"
 
 const instances = new Map<string, GhosttyTerminalSurface>()
 

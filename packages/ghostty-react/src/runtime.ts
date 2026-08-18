@@ -1,3 +1,5 @@
+/// <reference path="./vite-env.d.ts" />
+
 import ghosttyWasmUrl from "./vendor/ghostty-vt.wasm?url";
 import ghosttyWritePtyWasmUrl from "./vendor/ghostty-write-pty.wasm?url&no-inline";
 

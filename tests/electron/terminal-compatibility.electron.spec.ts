@@ -55,7 +55,7 @@ test.describe("terminal compatibility", () => {
         return created.id;
       });
 
-      await page.waitForSelector("[data-yaade-terminal-canvas]", {
+      await page.waitForSelector("[data-ghostty-terminal-canvas]", {
         timeout: 30_000,
       });
       await expect

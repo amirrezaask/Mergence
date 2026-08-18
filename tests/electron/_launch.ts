@@ -94,7 +94,7 @@ export async function focusTerminal(page: ShellDriver): Promise<void> {
   })
   // Best-effort DOM focus — the registry focus path above is authoritative.
   await page
-    .locator("[data-yaade-terminal-panel] [data-yaade-terminal-input]")
+    .locator("[data-yaade-terminal-panel] [data-ghostty-terminal-input]")
     .first()
     .focus({ timeout: 5_000 })
     .catch(() => undefined)
@@ -102,7 +102,7 @@ export async function focusTerminal(page: ShellDriver): Promise<void> {
 
 export async function showTerminal(page: ShellDriver): Promise<void> {
   await waitForMux(page)
-  await page.waitForSelector("[data-yaade-terminal-panel] [data-yaade-terminal-canvas]", {
+  await page.waitForSelector("[data-yaade-terminal-panel] [data-ghostty-terminal-canvas]", {
     timeout: 30_000,
   })
 }

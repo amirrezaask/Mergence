@@ -296,7 +296,7 @@ test("bench terminal-typing-under-flood", async () => {
           const ptyId = panel?.dataset.yaadeTerminalPtyId
           const terminal = window.yaade?.terminal
           const textarea = panel?.querySelector<HTMLTextAreaElement>(
-            "[data-yaade-terminal-input]",
+            "[data-ghostty-terminal-input]",
           )
           if (!ptyId || !terminal || !textarea) {
             throw new Error("running terminal input unavailable")

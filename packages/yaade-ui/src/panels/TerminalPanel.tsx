@@ -1,11 +1,14 @@
 import { useEffect, useRef, useState } from "react"
 import { RotateCcw, Terminal as TerminalIcon, X } from "lucide-react"
 import type { YaadeTheme } from "@yaade/shared"
+import {
+  GhosttyTerminalSurface,
+  type GhosttyColor,
+  type GhosttyTheme,
+} from "@yaade/ghostty-react"
 import { subscribeRootStyle } from "./root-style-observer.js"
 import { Button } from "../components/ui/button.js"
 import { Spinner } from "../components/ui/spinner.js"
-import { GhosttyTerminalSurface } from "./ghostty/surface.js"
-import type { GhosttyColor, GhosttyTheme } from "./ghostty/core.js"
 import { shouldWaitForExistingPty } from "./terminal-attach.js"
 import { stripDa1Responses } from "./terminal-da.js"
 import { createTerminalInputWriter } from "./terminal-input-writer.js"
@@ -17,6 +20,7 @@ import {
   unregisterTerminalInstance,
 } from "./terminal-instance-registry.js"
 import {
+  extractTerminalLinks,
   isTerminalLinkModifier,
   openTerminalUrl,
   scanTerminalPathLinks,
@@ -204,7 +208,7 @@ function focusTerminalInput(tabId: string): void {
     "[data-yaade-terminal-panel][data-yaade-terminal-tab-id]",
   )].find(panel => panel.dataset.yaadeTerminalTabId === tabId)
   ;(docked ?? sessionTerminal)
-    ?.querySelector<HTMLTextAreaElement>("[data-yaade-terminal-input]")
+    ?.querySelector<HTMLTextAreaElement>("[data-ghostty-terminal-input]")
     ?.focus({ preventScroll: true })
 }
 
@@ -644,6 +648,7 @@ export function TerminalPanel({
             resizePty(session)
           },
           onSelectionChange: () => undefined,
+          linkMatcher: extractTerminalLinks,
           beforeKey: event => {
             const data = terminalKeybindingData(event, navigator.platform)
             if (data === null) return true
