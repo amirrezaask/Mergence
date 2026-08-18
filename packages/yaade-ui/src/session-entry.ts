@@ -22,7 +22,14 @@ export {
   type RunningAgentsSidebarProps,
 } from "./shell/RunningAgentsSidebar.js"
 export { useIsMobile } from "./hooks/use-mobile.js"
-export { MuxPaneChrome, type MuxPaneChromeProps } from "./mux/index.js"
+export { AgentProviderIcon } from "./home/AgentProviderIcon.js"
+export {
+  MuxPaneChrome,
+  type MuxPaneChromeProps,
+  processIdentity,
+  deckTileStyle,
+  type ProcessIdentity,
+} from "./mux/index.js"
 export { SessionHeaderChromeProvider } from "./home/session-header-chrome.js"
 export { WhichKeyPanel, type WhichKeyEntry, type WhichKeyGroup } from "./components/WhichKeyPanel.js"
 export { KeyBindingKbd } from "./components/KeyBindingKbd.js"

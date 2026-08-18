@@ -20,6 +20,7 @@
 - **Depends on**: none
 - **Category**: direction
 - **Planned at**: commit `b3b2219c`, 2026-08-18
+- **Status note**: Implemented 2026-08-18. Desktop top bar is search → Session → pill Windows → + → Settings. Empty Agents sidebar no longer occupies width.
 
 ## Why this matters
 

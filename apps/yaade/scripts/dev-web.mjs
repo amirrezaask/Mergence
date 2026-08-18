@@ -56,7 +56,7 @@ const preferredVitePort = Number(process.env.JET_WEB_PORT ?? DEFAULT_VITE_PORT)
 const hostPort = await findAvailablePort(host, preferredHostPort)
 const vitePort = await findAvailablePort(host, preferredVitePort)
 
-if (hostPort !== preferredHostPort) {
+if (hostPort !== preferredHostPort && preferredHostPort !== 0) {
   console.warn(
     `[dev-web] host port ${preferredHostPort} busy → using ${hostPort}`,
   )

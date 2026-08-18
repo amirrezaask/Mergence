@@ -2,45 +2,31 @@ import fs from "node:fs"
 import path from "node:path"
 import { expect } from "@playwright/test"
 import { test } from "../fixtures/e2e.js"
-import { focusTerminal, pressMuxPrefix, pressShellPrefix } from "./_launch.js"
+import { focusTerminal, pressShellPrefix } from "./_launch.js"
 
 test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) => {
   const { page } = await launchApp()
   await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
   await expect(page.locator('[data-yaade-running-agent-count]')).toHaveCount(0)
+  const topBar = page.locator('[data-yaade-top-tabbar]')
+  await expect(topBar).toBeVisible()
+  await expect(topBar.getByRole("button", { name: "Switch tool" })).toHaveCount(0)
+  await expect(
+    topBar.getByRole("button", { name: /Switch session/ }),
+  ).toBeVisible()
+  await expect(topBar.locator('[data-yaade-session-settings=""]')).toBeVisible()
+  await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible()
+
   const runningAgentsSidebar = page.getByRole("complementary", {
     name: "Running agents",
   })
-  await expect(runningAgentsSidebar).toBeVisible()
-  await expect(
-    page.locator('[data-yaade-top-tabbar]').getByRole("button", {
-      name: /Switch session/,
-    }),
-  ).toBeVisible()
-  await expect(runningAgentsSidebar).not.toContainText("Agents")
-  const agentSidebarResize = page.getByRole("separator", { name: "Resize agent sidebar" })
-  await expect(agentSidebarResize).toHaveAttribute("aria-valuenow", "256")
-  await agentSidebarResize.press("ArrowRight")
-  await expect(agentSidebarResize).toHaveAttribute("aria-valuenow", "266")
-
-  const sidebarToggle = page.getByRole("button", { name: "Hide sidebar" })
-  await expect(sidebarToggle).toBeVisible()
-  await sidebarToggle.click()
-  await expect(page.getByRole("button", { name: "Show sidebar" })).toBeVisible()
-  await expect(runningAgentsSidebar).toBeHidden()
-  await page.getByRole("button", { name: "Show sidebar" }).click()
-  await expect(runningAgentsSidebar).toBeVisible()
-
-  await pressMuxPrefix(page, "b")
-  await expect(runningAgentsSidebar).toBeHidden()
-  await pressMuxPrefix(page, "b")
-  await expect(runningAgentsSidebar).toBeVisible()
+  await expect(runningAgentsSidebar).toHaveCount(0)
 
   await pressShellPrefix(page)
   const hud = page.locator("[data-yaade-which-key]")
   await expect(hud).toContainText("New Terminal")
   await expect(hud).toContainText("New Git")
-  await expect(hud).toContainText("Toggle sidebar")
+  await expect(hud).not.toContainText("Toggle sidebar")
   await expect(hud).not.toContainText("Search")
   await expect(hud).not.toContainText("Neovim")
 })
@@ -196,7 +182,32 @@ test("agent sidebar selection focuses its tool pane", async ({ launchApp }) => {
   ).toBeVisible()
 })
 
-test("split controls open the tool picker and place the selected tool", async ({ launchApp }) => {
+test("split shortcuts split the focused pane in both directions", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  await page.locator('[data-yaade-empty-tool="terminal"]').click()
+  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(1, {
+    timeout: 30_000,
+  })
+
+  await expect(
+    page.locator('[data-yaade-mux-split="right"]').first(),
+  ).toHaveAttribute("title", /Split right \(.*D\)/)
+  await expect(
+    page.locator('[data-yaade-mux-split="down"]').first(),
+  ).toHaveAttribute("title", /Split down \(.*D\)/)
+
+  await focusTerminal(page)
+  const modifier = process.platform === "darwin" ? "Meta" : "Control"
+  await page.keyboard.press(`${modifier}+d`)
+  await expect(page.locator("[data-yaade-mux-pane-chrome]")).toHaveCount(2)
+
+  await page.keyboard.press(`${modifier}+Shift+d`)
+  await expect(page.locator("[data-yaade-mux-pane-chrome]")).toHaveCount(3)
+})
+
+test("split controls open Terminal by default and the picker with a modifier", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
   })
@@ -207,14 +218,33 @@ test("split controls open the tool picker and place the selected tool", async ({
     timeout: 30_000,
   })
 
-  await page.locator('[data-yaade-mux-split="right"]').click()
+  const paneChrome = page.locator("[data-yaade-mux-pane-chrome]").first()
+  await expect(paneChrome.locator('[data-yaade-mux-split="right"]')).toBeVisible()
+  await expect(paneChrome.locator('[data-yaade-mux-split="down"]')).toBeVisible()
+  await expect(paneChrome.locator('[data-yaade-mux-close-pane=""]')).toBeVisible()
+
+  await paneChrome.locator('[data-yaade-mux-split="right"]').click()
+  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(2, {
+    timeout: 30_000,
+  })
+  await expect(page.locator('[data-yaade-empty-tool-tile]')).toHaveCount(0)
+  await expect(page.locator("[data-yaade-pane-tool-menu]")).toBeHidden()
+
+  const modifier = process.platform === "darwin" ? "Meta" : "Control"
+  await paneChrome
+    .locator('[data-yaade-mux-split="down"]')
+    .click({ modifiers: [modifier] })
   const picker = page.locator("[data-yaade-pane-tool-menu]")
   await expect(picker).toBeVisible()
   await expect(picker).not.toContainText("New tool")
 
   await picker.locator('[data-yaade-pane-new-tool-kind="terminal"]').click({ force: true })
-  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(2, {
+  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(3, {
     timeout: 30_000,
   })
   await expect(page.locator('[data-yaade-empty-tool-tile]')).toHaveCount(0)
+  await expect(page.locator('[data-yaade-mux-zoom=""]').first()).toBeVisible()
+  await expect(page.locator('[data-yaade-mux-close-pane=""]').first()).toBeVisible()
+  await expect(page.locator('[data-yaade-mux-split="right"]').first()).toBeVisible()
+  await expect(page.locator('[data-yaade-mux-split="down"]').first()).toBeVisible()
 })

@@ -10,11 +10,13 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 export const DEFAULT_HOST = "127.0.0.1"
-export const DEFAULT_HOST_PORT = 4747
+/** 0 lets the OS assign an ephemeral high port so concurrent instances do not collide. */
+export const DEFAULT_HOST_PORT = 0
 export const DEFAULT_VITE_PORT = 5174
 
 /**
  * Prefer `startPort` when free; otherwise scan upward.
+ * `startPort` 0 asks the OS for an ephemeral port and does not scan 1, 2, …
  * @param {string} host
  * @param {number} startPort
  * @param {{ maxAttempts?: number }} [opts]
@@ -47,6 +49,8 @@ export function findAvailablePort(host, startPort, opts = {}) {
   }
 
   return (async () => {
+    if (preferred === 0) return await tryListen(0)
+
     for (let i = 0; i < maxAttempts; i++) {
       const port = preferred + i
       try {

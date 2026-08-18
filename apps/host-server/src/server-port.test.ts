@@ -48,6 +48,31 @@ describe("startHostServer port fallback", () => {
     }
   })
 
+  it("binds an OS-assigned high port when the preferred port is 0", async () => {
+    const host = "127.0.0.1"
+    const dataDir = path.join(
+      os.tmpdir(),
+      `yaade-host-ephemeral-port-${process.pid}-${Date.now()}`,
+    )
+    const config = await loadConfig([
+      "--host",
+      host,
+      "--port",
+      "0",
+      "--data-dir",
+      dataDir,
+    ])
+    const started = await startHostServer(config)
+    cleanups.push(() => started.close())
+
+    assert.notEqual(started.port, 0)
+    assert.ok(started.port >= 1024)
+    assert.equal(config.port, started.port)
+
+    const health = await fetch(`http://${host}:${started.port}/health`)
+    assert.equal(health.ok, true)
+  })
+
   it("binds the next port when the preferred port is taken", async () => {
     const host = "127.0.0.1"
     const preferred = await freePort(host)

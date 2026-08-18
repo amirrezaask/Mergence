@@ -200,6 +200,14 @@ async function closeServerQuietly(
   });
 }
 
+function boundListenPort(
+  server: ReturnType<typeof createServer>,
+  fallback: number,
+): number {
+  const address = server.address();
+  return address && typeof address === "object" ? address.port : fallback;
+}
+
 /** Bind `preferredPort`, or the next free ports, instead of failing on EADDRINUSE. */
 async function listenPreferringPort(
   server: ReturnType<typeof createServer>,
@@ -207,13 +215,20 @@ async function listenPreferringPort(
   preferredPort: number,
   maxAttempts = PORT_FALLBACK_ATTEMPTS,
 ): Promise<number> {
+  if (preferredPort === 0) {
+    await listenOnPort(server, 0, host);
+    const bound = boundListenPort(server, 0);
+    if (bound === 0) {
+      throw new Error("Could not determine bound host-server port");
+    }
+    return bound;
+  }
+
   let port = preferredPort;
   for (let attempt = 0; attempt < maxAttempts; attempt++) {
     try {
       await listenOnPort(server, port, host);
-      const address = server.address();
-      const bound =
-        address && typeof address === "object" ? address.port : port;
+      const bound = boundListenPort(server, port);
       if (bound !== preferredPort) {
         console.warn(
           `[host-server] port ${preferredPort} busy; listening on ${bound}`,

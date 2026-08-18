@@ -55,7 +55,6 @@ import {
 } from "lucide-react";
 import {
   AmbientCanvas,
-  GlassSurface,
   RunningAgentsSidebar,
   WhichKeyPanel,
   cn,
@@ -64,12 +63,7 @@ import {
   type RunningAgentSidebarItem,
   type TabDndHandlers,
 } from "@yaade/ui/session";
-import {
-  CHORD_TIMEOUT_MS,
-  isPathUnderRoot,
-  keyEventMatchesBinding,
-  keyEventMatchesChordSecond,
-} from "@yaade/workspace";
+import { CHORD_TIMEOUT_MS, isPathUnderRoot } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
 import {
@@ -91,7 +85,10 @@ import {
 } from "./tool-session-routing.js";
 import type { ToolContextSelection } from "./ToolContextControls.js";
 import { SessionTabStrip } from "./SessionTabStrip.js";
-import { SessionWindowTabStrip } from "./SessionWindowTabStrip.js";
+import {
+  SessionWindowTabStrip,
+  type WindowTabMeta,
+} from "./SessionWindowTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
@@ -124,13 +121,14 @@ import {
 import {
   TOOL_SESSION_PREFIX,
   TOOL_SESSION_PREFIX_GROUPS,
+  clearToolSessionKeymapState,
+  createToolSessionKeymapState,
   isToolSessionJumpKey,
-  matchToolSessionContextBinding,
-  matchToolSessionDirectBinding,
   matchToolSessionPrefixBinding,
-  prefixLiteralByte,
-  serializeToolSessionPrefixKey,
+  resolveToolSessionKeydown,
   toolSessionHudBindings,
+  type ToolSessionKeydownContext,
+  type ToolSessionCommand,
 } from "../keybindings.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
@@ -201,6 +199,47 @@ function isLive(use: ToolUse): boolean {
     use.status === "running" ||
     use.status === "waiting"
   );
+}
+
+function processNameForWindowTab(
+  use: ToolUse,
+  runtimeTitle?: RuntimeToolTitle,
+): string {
+  if (use.kind === "git") return "git";
+  const raw = runtimeTitle?.title?.trim() ?? "";
+  const token = raw.split(/[\s/\\·]+/).find(part => part.length > 0);
+  return token ?? "terminal";
+}
+
+function windowTabMetaForTabs(
+  tabs: readonly SessionTab[],
+  workspaces: ReadonlyMap<SessionTabId, ReturnType<typeof createToolWorkspace>>,
+  usesById: ReadonlyMap<ToolUseId, ToolUse>,
+  runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>,
+  agentProvidersByToolUseId: ReadonlyMap<string, string>,
+  useIdsByTab: ReadonlyMap<SessionTabId, readonly ToolUseId[]>,
+): ReadonlyMap<SessionTabId, WindowTabMeta> {
+  const meta = new Map<SessionTabId, WindowTabMeta>();
+  for (const tab of tabs) {
+    const ids = useIdsByTab.get(tab.id) ?? EMPTY_TOOL_USE_IDS;
+    const workspace =
+      workspaces.get(tab.id) ?? restoreToolWorkspace(tab.layoutJson, ids);
+    const view = workspace.tree.getView(workspace.focusedPanelId);
+    const use = view?.kind === "tool" ? usesById.get(view.toolUseId) : undefined;
+    if (!use) {
+      meta.set(tab.id, { kind: "terminal", agentProvider: "terminal" });
+      continue;
+    }
+    meta.set(tab.id, {
+      kind: use.kind,
+      processName: processNameForWindowTab(use, runtimeTitles.get(use.id)),
+      agentProvider:
+        use.kind === "terminal"
+          ? agentProvidersByToolUseId.get(use.id) ?? "terminal"
+          : undefined,
+    });
+  }
+  return meta;
 }
 
 function isKnownProjectPath(
@@ -283,23 +322,12 @@ export function ToolSessionApp() {
     new Map<SessionTabId, { revision: number; layoutJson?: string }>(),
   );
   const dismissedProjectCandidatesRef = useRef(new Set<string>());
-  const prefixPendingRef = useRef(false);
+  const keymapStateRef = useRef(createToolSessionKeymapState());
+  const prefixTimerRef = useRef<number | undefined>(undefined);
   const toolUsesRef = useRef(snapshot.usesById);
   const isMobile = useIsMobile();
+  const desktopPlatform = window.yaadeDesktop?.platform;
   toolUsesRef.current = snapshot.usesById;
-
-  useEffect(() => {
-    prefixPendingRef.current = prefixPending;
-  }, [prefixPending]);
-
-  useEffect(() => {
-    if (!prefixPending) return;
-    const timeout = window.setTimeout(() => {
-      prefixPendingRef.current = false;
-      setPrefixPending(false);
-    }, CHORD_TIMEOUT_MS);
-    return () => window.clearTimeout(timeout);
-  }, [prefixPending]);
 
   useEffect(() => {
     client.start();
@@ -507,6 +535,16 @@ export function ToolSessionApp() {
       ),
     [projectNamesById, runningAgents.agents, toolUseIdByPty],
   );
+  const agentProvidersByToolUseId = useMemo(() => {
+    const providers = new Map<string, string>();
+    for (const agent of runningAgentItems) {
+      if (agent.toolUseId) providers.set(agent.toolUseId, agent.provider);
+    }
+    return providers;
+  }, [runningAgentItems]);
+  const hasRunningAgents = runningAgentItems.length > 0;
+  const showAgentSidebar =
+    !isMobile && hasRunningAgents && !agentSidebarCollapsed;
 
   const toggleSidebars = useCallback(() => {
     setAppearanceSettings((previous) => ({
@@ -625,6 +663,16 @@ export function ToolSessionApp() {
       });
     },
     [],
+  );
+
+  const splitFocusedToolPanel = useCallback(
+    (edge: "right" | "bottom") => {
+      if (!activeTab) return;
+      updateToolWorkspace(activeTab.id, workspace =>
+        splitToolPanel(workspace, workspace.focusedPanelId, edge),
+      );
+    },
+    [activeTab?.id, updateToolWorkspace],
   );
 
   const openToolInWorkspace = useCallback(
@@ -1121,53 +1169,104 @@ export function ToolSessionApp() {
   ]);
 
   const clearPrefix = useCallback(() => {
-    prefixPendingRef.current = false;
+    clearToolSessionKeymapState(keymapStateRef.current);
+    if (prefixTimerRef.current !== undefined) {
+      window.clearTimeout(prefixTimerRef.current);
+      prefixTimerRef.current = undefined;
+    }
     setPrefixPending(false);
   }, []);
 
-  const runPrefixCommand = useCallback(
-    (command: string, jumpIndex = 0) => {
-      if (command === "session.new") void createSession();
-      if (command === "tab.new") void createTab();
-      if (command === "tab.next" || command === "tab.previous") {
-        if (!activeTab || tabIds.length === 0) return;
-        const index = tabIds.indexOf(activeTab.id);
-        const nextIndex = command === "tab.next"
-          ? (index + 1) % tabIds.length
-          : (index - 1 + tabIds.length) % tabIds.length;
-        const next = snapshot.tabsById.get(tabIds[nextIndex]!);
-        if (next) selectTab(next);
+  const showPrefix = useCallback(() => {
+    if (prefixTimerRef.current !== undefined) {
+      window.clearTimeout(prefixTimerRef.current);
+    }
+    setPrefixPending(true);
+    prefixTimerRef.current = window.setTimeout(() => {
+      clearToolSessionKeymapState(keymapStateRef.current);
+      prefixTimerRef.current = undefined;
+      setPrefixPending(false);
+    }, CHORD_TIMEOUT_MS);
+  }, []);
+
+  const runToolSessionCommand = useCallback(
+    (command: ToolSessionCommand, jumpIndex = 0) => {
+      switch (command) {
+        case "session.new":
+          void createSession();
+          return;
+        case "tab.new":
+          void createTab();
+          return;
+        case "tab.next":
+        case "tab.previous": {
+          if (!activeTab || tabIds.length === 0) return;
+          const index = tabIds.indexOf(activeTab.id);
+          const nextIndex =
+            command === "tab.next"
+              ? (index + 1) % tabIds.length
+              : (index - 1 + tabIds.length) % tabIds.length;
+          const next = snapshot.tabsById.get(tabIds[nextIndex]!);
+          if (next) selectTab(next);
+          return;
+        }
+        case "tool.newTerminal":
+          void createTool("terminal");
+          return;
+        case "tool.newGit":
+          void createTool("git");
+          return;
+        case "session.switch":
+          setSwitcherOpen(true);
+          return;
+        case "tool.switch":
+          setToolUseSwitcherOpen(true);
+          return;
+        case "tool.next":
+        case "tool.previous": {
+          if (!selected || useIds.length === 0) return;
+          const index = useIds.indexOf(selected.id);
+          const nextIndex =
+            command === "tool.next"
+              ? (index + 1) % useIds.length
+              : (index - 1 + useIds.length) % useIds.length;
+          const next = snapshot.usesById.get(useIds[nextIndex]!);
+          if (next) selectTool(next);
+          return;
+        }
+        case "tool.jump": {
+          const id = useIds[jumpIndex];
+          if (!id) return;
+          const next = snapshot.usesById.get(id);
+          if (next) selectTool(next);
+          return;
+        }
+        case "tool.close":
+          if (selected) void runToolAction("archive", selected);
+          return;
+        case "session.close":
+          if (activeSession) requestCloseSession(activeSession.id);
+          return;
+        case "pane.zoom":
+          if (activeTab) {
+            updateToolWorkspace(activeTab.id, workspace =>
+              toggleToolPanelZoom(workspace, workspace.focusedPanelId),
+            );
+          }
+          return;
+        case "pane.splitRight":
+          splitFocusedToolPanel("right");
+          return;
+        case "pane.splitDown":
+          splitFocusedToolPanel("bottom");
+          return;
+        case "sidebar.toggle":
+          toggleSidebars();
+          return;
+        case "settings.show":
+          setSettingsOpen(true);
+          return;
       }
-      if (command === "tool.newTerminal") void createTool("terminal");
-      if (command === "tool.newGit") void createTool("git");
-      if (command === "session.switch") setSwitcherOpen(true);
-      if (command === "tool.switch") setToolUseSwitcherOpen(true);
-      if (command === "tool.next" || command === "tool.previous") {
-        if (!selected || useIds.length === 0) return;
-        const index = useIds.indexOf(selected.id);
-        const nextIndex =
-          command === "tool.next"
-            ? (index + 1) % useIds.length
-            : (index - 1 + useIds.length) % useIds.length;
-        const next = snapshot.usesById.get(useIds[nextIndex]!);
-        if (next) selectTool(next);
-      }
-      if (command === "tool.jump") {
-        const id = useIds[jumpIndex];
-        if (!id) return;
-        const next = snapshot.usesById.get(id);
-        if (next) selectTool(next);
-      }
-      if (command === "tool.close" && selected)
-        void runToolAction("archive", selected);
-      if (command === "session.close" && activeSession)
-        requestCloseSession(activeSession.id);
-      if (command === "pane.zoom" && activeTab)
-        updateToolWorkspace(activeTab.id, workspace =>
-          toggleToolPanelZoom(workspace, workspace.focusedPanelId),
-        );
-      if (command === "sidebar.toggle") toggleSidebars();
-      if (command === "settings.show") setSettingsOpen(true);
     },
     [
       activeSession,
@@ -1182,33 +1281,33 @@ export function ToolSessionApp() {
       selected,
       snapshot.tabsById,
       snapshot.usesById,
+      splitFocusedToolPanel,
       toggleSidebars,
       updateToolWorkspace,
       useIds,
     ],
   );
 
+  const runToolSessionCommandRef = useRef(runToolSessionCommand);
+  runToolSessionCommandRef.current = runToolSessionCommand;
+  const selectedToolRef = useRef(selected);
+  selectedToolRef.current = selected;
+  const keybindingContextRef = useRef<
+    Pick<ToolSessionKeydownContext, "overlayOpen" | "zoomed" | "contextKind">
+  >({ overlayOpen: false, zoomed: false });
+  keybindingContextRef.current = {
+    overlayOpen: Boolean(switcherOpen || toolUseSwitcherOpen || settingsOpen || closeChoice),
+    zoomed: Boolean(
+      activeSession &&
+        activeTab &&
+        toolWorkspaces.get(activeTab.id)?.zoomedPanelId,
+    ),
+    contextKind: selected?.kind,
+  };
+
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
-      if (switcherOpen || toolUseSwitcherOpen || settingsOpen || closeChoice)
-        return;
-      if (!prefixPendingRef.current) {
-        const direct = matchToolSessionDirectBinding(event);
-        if (direct) {
-          event.preventDefault();
-          event.stopPropagation();
-          runPrefixCommand(direct.command);
-          return;
-        }
-        const context = matchToolSessionContextBinding(event, selected?.kind);
-        if (context) {
-          event.preventDefault();
-          event.stopPropagation();
-          runPrefixCommand(context.command);
-          return;
-        }
-      }
-
+      if (event.defaultPrevented) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
       const inEditable = Boolean(
         target?.closest("input, textarea, [contenteditable=true]"),
@@ -1218,93 +1317,53 @@ export function ToolSessionApp() {
           "[data-ghostty-terminal-input], [data-ghostty-terminal-canvas]",
         ),
       );
-      const activeWorkspaceZoomed = Boolean(
-        activeSession &&
-          activeTab ? toolWorkspaces.get(activeTab.id)?.zoomedPanelId : undefined,
+      const result = resolveToolSessionKeydown(
+        event,
+        keymapStateRef.current,
+        {
+          ...keybindingContextRef.current,
+          inEditable,
+          inTerminal,
+          inPrefixButton: Boolean(
+            target?.closest("[data-yaade-which-key-item]"),
+          ),
+        },
       );
-      if (
-        event.key === "Escape" &&
-        activeWorkspaceZoomed &&
-        !inEditable &&
-        !inTerminal
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        runPrefixCommand("pane.zoom");
-        return;
-      }
-      const inPrefixButton = Boolean(
-        target?.closest("[data-yaade-which-key-item]"),
-      );
-      if (
-        prefixPendingRef.current &&
-        (event.key === "Tab" ||
-          (inPrefixButton && (event.key === "Enter" || event.key === " ")))
-      ) {
-        return;
-      }
-      if (!prefixPendingRef.current && inEditable && !inTerminal) return;
+      if (!result) return;
 
-      if (
-        !prefixPendingRef.current &&
-        keyEventMatchesBinding(event, TOOL_SESSION_PREFIX)
-      ) {
-        event.preventDefault();
-        event.stopPropagation();
-        prefixPendingRef.current = true;
-        setPrefixPending(true);
-        return;
-      }
-
-      if (!prefixPendingRef.current) return;
       event.preventDefault();
       event.stopPropagation();
+      if (result.type === "prefix-started") {
+        showPrefix();
+        return;
+      }
+      if (result.type === "prefix-literal") {
+        clearPrefix();
+        const selectedTool = selectedToolRef.current;
+        const ptyId =
+          selectedTool?.output.kind === "process"
+            ? selectedTool.output.ptyId
+            : undefined;
+        if (ptyId) void window.yaade?.terminal?.write?.(ptyId, result.byte);
+        return;
+      }
+      if (result.type === "command") {
+        clearPrefix();
+        runToolSessionCommandRef.current(result.command, result.jumpIndex);
+        return;
+      }
       clearPrefix();
-      if (event.key === "Escape") return;
-      if (
-        keyEventMatchesChordSecond(
-          event,
-          `${TOOL_SESSION_PREFIX} k`,
-          TOOL_SESSION_PREFIX,
-        ) &&
-        inTerminal
-      ) {
-        const byte = prefixLiteralByte(TOOL_SESSION_PREFIX);
-        if (byte) {
-          void window.yaade?.terminal?.write?.(
-            selected?.output.kind === "process"
-              ? (selected.output.ptyId ?? "")
-              : "",
-            byte,
-          );
-        }
-        return;
-      }
-      const key = serializeToolSessionPrefixKey(event);
-      if (isToolSessionJumpKey(key)) {
-        runPrefixCommand("tool.jump", Number(key) - 1);
-        return;
-      }
-      const binding = matchToolSessionPrefixBinding(key);
-      if (!binding) return;
-      runPrefixCommand(binding.command);
     };
     window.addEventListener("keydown", onKeyDown, true);
-    return () => window.removeEventListener("keydown", onKeyDown, true);
-  }, [
-    clearPrefix,
-    closeChoice,
-    runPrefixCommand,
-    activeSession,
-    clearPrefix,
-    closeChoice,
-    runPrefixCommand,
-    selected,
-    settingsOpen,
-    switcherOpen,
-    toolUseSwitcherOpen,
-    toolWorkspaces,
-  ]);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown, true);
+      if (prefixTimerRef.current !== undefined) {
+        window.clearTimeout(prefixTimerRef.current);
+        prefixTimerRef.current = undefined;
+      }
+      clearToolSessionKeymapState(keymapStateRef.current);
+    };
+  }, [clearPrefix, showPrefix]);
 
   const updateToolContext = useCallback(
     async (
@@ -1337,6 +1396,26 @@ export function ToolSessionApp() {
     return toolWorkspaces.get(activeTab.id) ??
       restoreToolWorkspace(activeTab.layoutJson, useIds);
   }, [activeTab, toolWorkspaces, useIds]);
+
+  const windowTabMeta = useMemo(
+    () =>
+      windowTabMetaForTabs(
+        visibleTabs,
+        toolWorkspaces,
+        snapshot.usesById,
+        runtimeTitles,
+        agentProvidersByToolUseId,
+        snapshot.useIdsByTab,
+      ),
+    [
+      agentProvidersByToolUseId,
+      runtimeTitles,
+      snapshot.useIdsByTab,
+      snapshot.usesById,
+      toolWorkspaces,
+      visibleTabs,
+    ],
+  );
 
   const activeTabForLayoutRef = useRef(activeTab);
   activeTabForLayoutRef.current = activeTab;
@@ -1597,11 +1676,11 @@ export function ToolSessionApp() {
   const onPrefixHudSelect = (key: string) => {
     clearPrefix();
     if (isToolSessionJumpKey(key)) {
-      runPrefixCommand("tool.jump", Number(key) - 1);
+      runToolSessionCommand("tool.jump", Number(key) - 1);
       return;
     }
     const binding = matchToolSessionPrefixBinding(key);
-    if (binding) runPrefixCommand(binding.command);
+    if (binding) runToolSessionCommand(binding.command);
   };
 
   return (
@@ -1616,25 +1695,25 @@ export function ToolSessionApp() {
         data-yaade-session-layout={appearanceSettings.sessionLayout}
         data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
         data-yaade-agent-sidebar-state={
-          agentSidebarCollapsed ? "collapsed" : "expanded"
+          showAgentSidebar ? "expanded" : "collapsed"
         }
       >
-        {!isMobile ? (
+        {!isMobile && hasRunningAgents ? (
           <MotionDiv
             initial={false}
             animate={{
-              width: agentSidebarCollapsed ? 0 : agentSidebarWidth,
-              opacity: agentSidebarCollapsed ? 0 : 1,
+              width: showAgentSidebar ? agentSidebarWidth : 0,
+              opacity: showAgentSidebar ? 1 : 0,
             }}
             transition={yaadeMotion.sidebarTransition}
             className={cn(
               "relative h-full shrink-0 overflow-hidden",
-              agentSidebarCollapsed && "pointer-events-none",
+              !showAgentSidebar && "pointer-events-none",
             )}
-            aria-hidden={agentSidebarCollapsed || undefined}
-            inert={agentSidebarCollapsed || undefined}
+            aria-hidden={!showAgentSidebar || undefined}
+            inert={!showAgentSidebar || undefined}
             data-yaade-running-agent-sidebar-state={
-              agentSidebarCollapsed ? "collapsed" : "expanded"
+              showAgentSidebar ? "expanded" : "collapsed"
             }
           >
             <RunningAgentsSidebar
@@ -1644,7 +1723,7 @@ export function ToolSessionApp() {
               onSelectAgent={focusRunningAgent}
               className="w-full"
             />
-            {!agentSidebarCollapsed ? (
+            {showAgentSidebar ? (
               <SidebarResizeHandle
                 value={agentSidebarWidth}
                 min={AGENT_SIDEBAR_MIN_WIDTH}
@@ -1683,13 +1762,14 @@ export function ToolSessionApp() {
             ) : (
               <>
             {!sidebarLayout ? (
-              <GlassSurface material="shell" asChild>
               <header
-                className="flex h-10 shrink-0 items-center gap-0 border-b border-border/80 bg-transparent px-1.5"
+                className="flex h-[var(--yaade-tab-bar-height)] shrink-0 items-center gap-2 border-b border-border/60 bg-muted px-3"
                 data-yaade-session-tabs=""
                 data-yaade-top-tabbar=""
+                data-yaade-electron-titlebar={desktopPlatform ? "" : undefined}
+                data-yaade-electron-platform={desktopPlatform}
               >
-                <div className="flex h-full min-w-0 shrink-0 items-center gap-0.5">
+                {hasRunningAgents ? (
                   <ShortcutTooltip
                     label={
                       agentSidebarCollapsed ? "Show sidebar" : "Hide sidebar"
@@ -1716,46 +1796,48 @@ export function ToolSessionApp() {
                       )}
                     </Button>
                   </ShortcutTooltip>
-                  <ShortcutTooltip
-                    label="Settings"
-                    shortcut={toolSessionDirectShortcutFor("settings.show")}
-                    side="bottom"
-                  >
-                    <Button
-                      type="button"
-                      size="icon-xs"
-                      variant="ghost"
-                      aria-label="Open settings"
-                      onClick={() => setSettingsOpen(true)}
-                      data-yaade-session-settings=""
-                    >
-                      <Settings />
-                    </Button>
-                  </ShortcutTooltip>
-                  <SessionSwitcher
-                    open={switcherOpen}
-                    onOpenChange={setSwitcherOpen}
-                    sessions={visibleSessions}
-                    activeSessionId={snapshot.activeSessionId}
-                    onSelect={session => selectSession(session.id)}
-                    onCreate={() => void createSession()}
-                    onClose={requestCloseSession}
-                    onRename={(id, title) => void renameSession(id, title)}
-                    toolCounts={toolCounts}
-                    className="max-w-52"
-                  />
-                </div>
+                ) : null}
+                <SessionSwitcher
+                  open={switcherOpen}
+                  onOpenChange={setSwitcherOpen}
+                  sessions={visibleSessions}
+                  activeSessionId={snapshot.activeSessionId}
+                  onSelect={session => selectSession(session.id)}
+                  onCreate={() => void createSession()}
+                  onClose={requestCloseSession}
+                  onRename={(id, title) => void renameSession(id, title)}
+                  toolCounts={toolCounts}
+                  className="max-w-52"
+                />
                 <SessionWindowTabStrip
                   tabs={visibleTabs}
                   activeTabId={activeTab?.id}
+                  tabMeta={windowTabMeta}
                   onSelect={selectTab}
                   onCreate={() => void createTab()}
                   onClose={closeTab}
                   onRename={(id, title) => void renameTab(id, title)}
                   onReorder={ids => void reorderTabs(ids)}
                 />
+                <ShortcutTooltip
+                  label="Settings"
+                  shortcut={toolSessionDirectShortcutFor("settings.show")}
+                  side="bottom"
+                >
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Settings"
+                    onClick={() => setSettingsOpen(true)}
+                    data-yaade-session-settings=""
+                    className="h-[var(--yaade-tab-pill-height)] shrink-0 gap-1.5 px-2 text-xs"
+                  >
+                    Settings
+                    <Settings />
+                  </Button>
+                </ShortcutTooltip>
               </header>
-              </GlassSurface>
             ) : null}
             <div
               className={cn(
@@ -1835,6 +1917,7 @@ export function ToolSessionApp() {
                     activeToolUseId={snapshot.activeToolUseId}
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
+                    agentProvidersByToolUseId={agentProvidersByToolUseId}
                     projects={projects}
                     onAddProject={addKnownProject}
                     sessionTitlesById={sessionTitlesById}
@@ -1888,6 +1971,7 @@ export function ToolSessionApp() {
                   <SessionWindowTabStrip
                     tabs={visibleTabs}
                     activeTabId={activeTab?.id}
+                    tabMeta={windowTabMeta}
                     onSelect={selectTab}
                     onCreate={() => void createTab()}
                     onClose={closeTab}
@@ -1939,6 +2023,7 @@ export function ToolSessionApp() {
                       workspace={activeToolWorkspace}
                     usesById={snapshot.usesById}
                     runtimeTitles={runtimeTitles}
+                    agentProvidersByToolUseId={agentProvidersByToolUseId}
                     projects={projects}
                     onAddProject={addKnownProject}
                     onContextChange={updateToolContext}
@@ -1958,7 +2043,7 @@ export function ToolSessionApp() {
                 </div>
                 {prefixPending ? (
                   <PrefixHud
-                    showSidebarToggle={!isMobile}
+                    showSidebarToggle={!isMobile && hasRunningAgents}
                     onSelect={onPrefixHudSelect}
                   />
                 ) : null}
@@ -1977,6 +2062,7 @@ export function ToolSessionApp() {
                     activeToolUseId={snapshot.activeToolUseId}
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
+                    agentProvidersByToolUseId={agentProvidersByToolUseId}
                     projects={projects}
                     onAddProject={addKnownProject}
                     sessionTitlesById={sessionTitlesById}

@@ -78,6 +78,15 @@
   --yaade-material-control-radius: var(--yaade-control-radius);
   --yaade-material-menu-radius: 1rem;
 
+  /* Window tab pills (reference multiplexer top chrome). Opaque by design. */
+  --yaade-tab-bar-height: 3.5rem;
+  --yaade-tab-pill-height: 2.25rem;
+  --yaade-tab-pill-inactive-fill: transparent;
+  --yaade-tab-pill-active-fill: var(--background);
+  --yaade-tab-pill-active-shadow:
+    0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent),
+    0 6px 14px -8px color-mix(in srgb, var(--foreground) 22%, transparent);
+
   /* Motion */
   --yaade-material-hover-duration: var(--yaade-motion-hot);
   --yaade-material-selection-duration: 200ms;
@@ -95,6 +104,11 @@
   --yaade-material-fill-soft: color-mix(in srgb, var(--card) 52%, transparent);
   --yaade-material-stroke: var(--yaade-material-light-edge);
   --yaade-material-highlight: var(--yaade-material-specular);
+}
+
+:root:not(.dark) {
+  --yaade-canvas-background: var(--background);
+  --yaade-canvas-noise-opacity: 0;
 }
 
 .dark {
@@ -347,4 +361,20 @@
 
 :root[data-yaade-reduced-motion="true"] [data-yaade-glass-surface] {
   transition-duration: 0ms;
+}
+
+[data-yaade-session-tab] {
+  border-radius: var(--yaade-pill-radius);
+  background-color: var(--yaade-tab-pill-inactive-fill);
+}
+
+[data-yaade-session-tab][data-active="true"] {
+  background-color: transparent;
+  box-shadow: none;
+}
+
+[data-yaade-window-tab-pill] {
+  border-radius: var(--yaade-pill-radius);
+  background-color: var(--yaade-tab-pill-active-fill);
+  box-shadow: var(--yaade-tab-pill-active-shadow);
 }

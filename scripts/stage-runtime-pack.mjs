@@ -3,7 +3,7 @@
  * Stage self-contained YAADE runtime (SPA + bundled host + Node).
  *
  * Default output: dist/runtime/
- *   yaade                  launcher → host-server on :4747 + static SPA
+ *   yaade                  launcher → host-server on an ephemeral port + static SPA
  *   web/                   Vite SPA dist
  *   backend/               esbuild bundles + native deps (node-pty, fff, ripgrep)
  *   node/                  official Node binary (ABI-matched for natives)
@@ -228,7 +228,7 @@ function copyWebDist(webDest) {
 function writeLauncherScripts(packDir) {
   const nodeRel = nodeBinRelative()
   const hostLauncher = `#!/bin/sh
-# YAADE — self-contained server (release SPA + host API, default :4747)
+# YAADE — self-contained server (release SPA + host API, ephemeral loopback port)
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 exec "$ROOT/node/${nodeRel}" "$ROOT/backend/host-server.mjs" \\

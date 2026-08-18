@@ -1,5 +1,10 @@
 import type { JetKeyBinding } from "./keymaps.js"
 
+export type KeyEventLike = Pick<
+  KeyboardEvent,
+  "key" | "code" | "metaKey" | "ctrlKey" | "altKey" | "shiftKey"
+>
+
 export type KeymapContext = {
   editorFocus: boolean
   paletteOpen: boolean
@@ -91,18 +96,50 @@ function normalizeBindingKey(key: string): string {
   return key.length === 1 ? key.toLowerCase() : key
 }
 
-function eventKeyMatches(expected: string, e: KeyboardEvent): boolean {
+function keyFromCode(code: string): string | null {
+  const letter = /^Key([A-Z])$/.exec(code)
+  if (letter) return letter[1]!.toLowerCase()
+  const digit = /^Digit([0-9])$/.exec(code)
+  if (digit) return digit[1]!
+  switch (code) {
+    case "Backquote":
+      return "`"
+    case "Minus":
+      return "-"
+    case "Equal":
+      return "="
+    case "BracketLeft":
+      return "["
+    case "BracketRight":
+      return "]"
+    case "Backslash":
+      return "\\"
+    case "Semicolon":
+      return ";"
+    case "Quote":
+      return "'"
+    case "Comma":
+      return ","
+    case "Period":
+      return "."
+    case "Slash":
+      return "/"
+    default:
+      return null
+  }
+}
+
+function eventKeyMatches(expected: string, e: KeyEventLike): boolean {
   const want = normalizeBindingKey(expected)
   const fromKey = normalizeBindingKey(e.key)
   if (fromKey === want) return true
-  if (want === "`" && (e.code === "Backquote" || e.key === "`")) return true
-  if (want === "-" && (e.key === "-" || e.key === "Minus" || e.code === "Minus")) return true
-  if (want === "\\" && (e.key === "\\" || e.code === "Backslash")) return true
+  const fromCode = e.code ? keyFromCode(e.code) : null
+  if (fromCode != null && normalizeBindingKey(fromCode) === want) return true
   return false
 }
 
 export function keyEventMatchesBindingPart(
-  e: KeyboardEvent,
+  e: KeyEventLike,
   part: string,
   opts?: { ignoreHeldMod?: boolean },
 ): boolean {
@@ -145,13 +182,13 @@ export function keyEventMatchesBindingPart(
   return eventKeyMatches(key, e)
 }
 
-export function keyEventMatchesBinding(e: KeyboardEvent, key: string): boolean {
+export function keyEventMatchesBinding(e: KeyEventLike, key: string): boolean {
   const parts = parseBindingKey(key)
   if (parts.length !== 1) return false
   return keyEventMatchesBindingPart(e, parts[0]!)
 }
 
-export function keyEventMatchesChordSecond(e: KeyboardEvent, key: string, prefix: string): boolean {
+export function keyEventMatchesChordSecond(e: KeyEventLike, key: string, prefix: string): boolean {
   const parts = parseBindingKey(key)
   if (parts.length < 2 || parts[0] !== prefix) return false
   return keyEventMatchesBindingPart(e, parts[1]!, { ignoreHeldMod: true })
@@ -203,7 +240,7 @@ export function clearChord(state: ChordState): void {
 }
 
 export function resolveKeydownBinding(
-  e: KeyboardEvent,
+  e: KeyEventLike,
   bindings: JetKeyBinding[],
   ctx: KeymapContext,
   chordState: ChordState,

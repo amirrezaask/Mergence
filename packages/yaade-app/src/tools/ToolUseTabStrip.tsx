@@ -26,7 +26,12 @@ import type {
   ToolUseId,
 } from "@yaade/rpc";
 import { ExistingWorktreeCheckout, MainCheckout } from "@yaade/rpc";
-import { SidebarShell, cn, yaadeMotion } from "@yaade/ui/session";
+import {
+  AgentProviderIcon,
+  SidebarShell,
+  cn,
+  yaadeMotion,
+} from "@yaade/ui/session";
 import {
   Button,
   DropdownMenu,
@@ -141,6 +146,7 @@ export type ToolUseTabStripProps = {
   readonly activeToolUseId?: ToolUseId;
   readonly openToolUseIds?: ReadonlySet<ToolUseId>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
+  readonly agentProvidersByToolUseId: ReadonlyMap<string, string>;
   readonly projects: readonly ProjectTarget[];
   readonly onAddProject: (rootPath: string) => Promise<ProjectTarget | undefined>;
   readonly onSelect: (use: ToolUse) => void;
@@ -235,6 +241,10 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     const use = props.usesById.get(id);
     if (!use) return null;
     const Icon = toolIcon[use.kind];
+    const terminalProvider =
+      use.kind === "terminal"
+        ? props.agentProvidersByToolUseId.get(id) ?? "terminal"
+        : undefined;
     const active = id === props.activeToolUseId;
     const openInWorkspace = props.openToolUseIds?.has(id) ?? active;
     const dockable =
@@ -351,10 +361,17 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
                   "size-6 text-sidebar-foreground/65 group-data-[active=true]:text-sidebar-accent-foreground",
               )}
             >
-              <Icon
-                className={cn("size-3.5", isSidebar && "size-5")}
-                aria-hidden
-              />
+              {terminalProvider ? (
+                <AgentProviderIcon
+                  agent={terminalProvider}
+                  className={cn("size-3.5", isSidebar && "size-5")}
+                />
+              ) : (
+                <Icon
+                  className={cn("size-3.5", isSidebar && "size-5")}
+                  aria-hidden
+                />
+              )}
               <span
                 className={cn(
                   "absolute -right-0.5 -bottom-0.5 size-1.5 rounded-full ring-2",

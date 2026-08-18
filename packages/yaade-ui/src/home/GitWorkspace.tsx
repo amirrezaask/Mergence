@@ -898,7 +898,7 @@ function GitToolbar(props: {
   } = props
   const busy = pendingAction !== null
   const controls = (
-    <div className="flex shrink-0 items-center gap-1">
+    <div className="flex shrink-0 items-center gap-2">
       {hideCommit ? null : (
         <GitCommitDialog
           key={repositoryKey}

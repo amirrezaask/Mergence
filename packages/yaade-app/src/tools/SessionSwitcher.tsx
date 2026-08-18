@@ -1,8 +1,7 @@
 import { useState } from "react"
 import {
   Check,
-  ChevronsUpDownIcon,
-  FolderKanban,
+  ChevronDown,
   Plus,
   X,
 } from "lucide-react"
@@ -72,20 +71,14 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
           data-yaade-active-session={activeSession?.id}
           title={switchShortcut ? `Switch session (${formatKeyBinding(switchShortcut)})` : "Switch session"}
           className={cn(
-            "h-8 min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-md px-1.5 text-left hover:bg-accent/70",
+            "h-[var(--yaade-tab-pill-height)] min-w-0 max-w-44 shrink-0 justify-start gap-1 rounded-md px-2 text-left hover:bg-accent/70",
             props.className,
           )}
         >
-          <span
-            className="grid size-5 shrink-0 place-items-center rounded border border-border/70 bg-secondary/80 text-muted-foreground"
-            aria-hidden
-          >
-            <FolderKanban className="size-3" />
-          </span>
-          <span className="min-w-0 flex-1 truncate text-xs font-semibold tracking-[-0.01em]">
+          <span className="min-w-0 flex-1 truncate text-xs font-medium tracking-[-0.01em]">
             {activeSession?.title ?? "Choose session"}
           </span>
-          <ChevronsUpDownIcon
+          <ChevronDown
             className="size-3.5 shrink-0 text-muted-foreground"
             aria-hidden
           />

@@ -28,7 +28,10 @@ import {
 } from "@yaade/ui/primitives";
 import { ToolContextControls } from "./ToolContextControls.js";
 import { toolUsePaneTitle, type RuntimeToolTitle } from "./tool-title.js";
-import { toolSessionShortcutFor } from "./tool-session-keymap.js";
+import {
+  toolSessionDirectShortcutFor,
+  toolSessionShortcutFor,
+} from "./tool-session-keymap.js";
 import type { ToolPaneView, ToolWorkspace } from "./tool-tiling.js";
 import { toolIdsInWorkspace, toolPaneCount } from "./tool-tiling.js";
 
@@ -36,6 +39,7 @@ export type ToolTilingWorkspaceProps = {
   readonly workspace: ToolWorkspace;
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
+  readonly agentProvidersByToolUseId: ReadonlyMap<string, string>;
   readonly projects: readonly ProjectTarget[];
   readonly onAddProject: (rootPath: string) => Promise<ProjectTarget | undefined>;
   readonly onContextChange: (
@@ -168,6 +172,7 @@ export default function ToolTilingWorkspace({
   workspace,
   usesById,
   runtimeTitles,
+  agentProvidersByToolUseId,
   projects,
   onAddProject,
   onContextChange,
@@ -243,13 +248,22 @@ export default function ToolTilingWorkspace({
           zoomed={zoomedPanelId?.id === panelId.id}
           canZoom={canZoom}
           processName={activeUse?.kind}
+          terminalProvider={
+            activeUse?.kind === "terminal"
+              ? agentProvidersByToolUseId.get(activeUse.id) ?? "terminal"
+              : undefined
+          }
           contextRef={headerContextRef(panelId.id)}
-          onSplitButton={direction => {
+          onSplitButton={(direction, event) => {
             setContextTarget(null);
-            setSplitToolTarget({
-              panelId: panelId.id,
-              edge: direction === "right" ? "right" : "bottom",
-            });
+            const edge = direction === "right" ? "right" : "bottom";
+            if (event.metaKey || event.ctrlKey) {
+              event.preventDefault();
+              setSplitToolTarget({ panelId: panelId.id, edge });
+              return;
+            }
+            setSplitToolTarget(null);
+            onAddSplitTool(panelId, edge, "terminal");
           }}
           wrapSplitButton={(direction, button) => {
             const edge = direction === "right" ? "right" : "bottom";
@@ -289,11 +303,18 @@ export default function ToolTilingWorkspace({
           }
           contextOpen={contextOpen}
           onZoom={() => onZoom(panelId)}
-          shortcutFor={command =>
-            command === "mux.zoomPane"
-              ? toolSessionShortcutFor("pane.zoom")
-              : undefined
-          }
+          shortcutFor={command => {
+            if (command === "mux.zoomPane") {
+              return toolSessionShortcutFor("pane.zoom");
+            }
+            if (command === "mux.splitRight") {
+              return toolSessionDirectShortcutFor("pane.splitRight");
+            }
+            if (command === "mux.splitDown") {
+              return toolSessionDirectShortcutFor("pane.splitDown");
+            }
+            return undefined;
+          }}
           onClose={() => onCloseView(panelId)}
         />
       );
@@ -345,6 +366,7 @@ export default function ToolTilingWorkspace({
       );
     },
     [
+      agentProvidersByToolUseId,
       canZoom,
       contextTarget,
       headerContextRef,

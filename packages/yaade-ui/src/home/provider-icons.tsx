@@ -61,18 +61,16 @@ export const OpenCodeIcon: Icon = (props) => (
   </svg>
 );
 
-/** Pi coding agent mark. */
+/** Pi website favicon from https://pi.dev/favicon.svg. */
 export const PiIcon: Icon = ({ className, ...props }) => (
-  <svg
-    {...props}
-    viewBox="0 0 800 800"
-    className={cn("fill-black dark:fill-white", className)}
-  >
+  <svg {...props} viewBox="0 0 800 800" className={className}>
+    <rect width="800" height="800" rx="120" fill="#09090b" />
     <path
+      fill="#fff"
       fillRule="evenodd"
       d="M165.29 165.29h352.07V400H400v117.36H282.65v117.36H165.29V165.29Zm117.36 117.36v117.36H400V282.65H282.65Z"
     />
-    <path d="M517.36 400h117.36v234.72H517.36z" />
+    <path fill="#fff" d="M517.36 400h117.36v234.72H517.36z" />
   </svg>
 );
 

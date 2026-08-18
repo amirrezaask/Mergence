@@ -6,6 +6,18 @@ import { describe, it } from "node:test"
 import { loadConfig } from "./config.js"
 
 describe("loadConfig launch workspace", () => {
+  it("defaults to an ephemeral port when none is configured", async () => {
+    const previous = process.env.JET_PORT
+    delete process.env.JET_PORT
+    try {
+      const config = await loadConfig(["--host", "127.0.0.1"])
+      assert.equal(config.port, 0)
+    } finally {
+      if (previous === undefined) delete process.env.JET_PORT
+      else process.env.JET_PORT = previous
+    }
+  })
+
   it("accepts an explicit non-loopback host for LAN mode", async () => {
     const config = await loadConfig(["--host", "0.0.0.0", "--port", "0"])
     assert.equal(config.host, "0.0.0.0")

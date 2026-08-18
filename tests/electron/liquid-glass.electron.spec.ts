@@ -78,9 +78,20 @@ test("settings keep the default material treatment without a material switch", a
   )
 })
 
-test("top Window tabs use a transparent strip with a rounded active surface", async ({ launchApp }) => {
+test("top Window tabs use disconnected pills with a raised active surface", async ({ launchApp }) => {
   const { page } = await launchApp()
-  await expect(page.locator('[data-yaade-top-tabbar]')).toBeVisible()
+  const topBar = page.locator('[data-yaade-top-tabbar]')
+  await expect(topBar).toBeVisible()
+  const tabBarHeight = await topBar.evaluate(element => element.getBoundingClientRect().height)
+  expect(tabBarHeight).toBeGreaterThan(40)
+  const pillHeight = await page
+    .locator('[data-yaade-window-tabs] [data-yaade-session-tab]')
+    .first()
+    .evaluate(element => element.getBoundingClientRect().height)
+  expect(pillHeight).toBeGreaterThan(24)
+  expect(pillHeight).toBeLessThan(tabBarHeight - 8)
+  await expect(topBar.getByRole("button", { name: "Switch tool" })).toHaveCount(0)
+  await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible()
 
   const newTab = page.locator('[data-yaade-new-session-tab=""]')
   await expect(newTab).toBeVisible()
@@ -95,18 +106,60 @@ test("top Window tabs use a transparent strip with a rounded active surface", as
     '[data-yaade-window-tabs] [data-yaade-session-tab]:not([data-active="true"])',
   )
   await expect(activeTab).toBeVisible()
-  await expect(inactiveTab).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
-  const active = await activeTab.evaluate(element => {
+  const inactiveBackground = await inactiveTab.evaluate(
+    element => getComputedStyle(element).backgroundColor,
+  )
+  expect(["transparent", "rgba(0, 0, 0, 0)"]).toContain(inactiveBackground)
+  const activeTabFill = await activeTab.evaluate(
+    element => getComputedStyle(element).backgroundColor,
+  )
+  expect(["transparent", "rgba(0, 0, 0, 0)"]).toContain(activeTabFill)
+
+  const activePill = page.locator('[data-yaade-window-tab-pill=""]')
+  await expect(activePill).toHaveCount(1)
+  const pill = await activePill.evaluate(element => {
     const style = getComputedStyle(element)
     return {
       backgroundColor: style.backgroundColor,
-      borderRadius: style.borderRadius,
+      borderRadius: Number.parseFloat(style.borderRadius),
       boxShadow: style.boxShadow,
     }
   })
-  expect(active.backgroundColor).not.toBe("rgba(0, 0, 0, 0)")
-  expect(active.borderRadius).not.toBe("0px")
-  expect(active.boxShadow).toBe("none")
+  expect(["transparent", "rgba(0, 0, 0, 0)"]).not.toContain(pill.backgroundColor)
+  expect(pill.borderRadius).toBeGreaterThan(8)
+  expect(pill.boxShadow).not.toBe("none")
+
+  const inactiveId = await inactiveTab.getAttribute("data-yaade-session-tab")
+  expect(inactiveId).toBeTruthy()
+  await inactiveTab.click()
+  const switched = page.locator(
+    `[data-yaade-window-tabs] [data-yaade-session-tab="${inactiveId}"]`,
+  )
+  await expect(switched).toHaveAttribute("data-active", "true")
+  await expect(switched.locator('[data-yaade-window-tab-pill=""]')).toBeVisible()
 
   await expect(page.locator('[data-yaade-top-tabbar] > span')).toHaveCount(0)
+})
+
+test("window tabs close with the x button and have no overflow menu", async ({ launchApp }) => {
+  const { page } = await launchApp()
+  const tabBar = page.locator('[data-yaade-window-tabs]')
+  const tabs = tabBar.locator('[data-yaade-session-tab]')
+  await expect(tabs).toHaveCount(1)
+  await expect(tabs.first()).toContainText("Window 1")
+  await expect(tabs.first().getByRole("button", { name: "Close Window 1" })).toBeVisible()
+  await expect(tabBar.getByRole("button", { name: /Window actions/ })).toHaveCount(0)
+  await expect(page.locator('[data-yaade-window-tab-menu]')).toHaveCount(0)
+  await expect(tabBar.locator('[data-slot="dropdown-menu-trigger"]')).toHaveCount(0)
+
+  await page.locator('[data-yaade-new-session-tab=""]').click()
+  await expect(tabs).toHaveCount(2)
+  await expect(tabs.nth(1)).toContainText("New tab")
+  await expect(tabs.nth(1).getByRole("button", { name: "Close New tab" })).toBeVisible()
+  await expect(tabs.nth(1)).toBeVisible()
+
+  await tabs.nth(1).getByRole("button", { name: "Close New tab" }).click()
+  await expect(tabs).toHaveCount(1)
+  await expect(tabs.first()).toContainText("Window 1")
+  await expect(tabs.first()).toBeVisible()
 })

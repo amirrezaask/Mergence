@@ -79,6 +79,16 @@ describe("keyEventMatchesBindingPart", () => {
     )
   })
 
+  it("falls back to the physical code when a modifier changes event.key", () => {
+    assert.equal(
+      keyEventMatchesBindingPart(
+        keyEvent({ key: "∂", code: "KeyD", metaKey: true }),
+        "Cmd-d",
+      ),
+      true,
+    )
+  })
+
   it("matches Ctrl-backquote", () => {
     assert.equal(
       keyEventMatchesBindingPart(keyEvent({ key: "`", ctrlKey: true, code: "Backquote" }), "Ctrl-`"),

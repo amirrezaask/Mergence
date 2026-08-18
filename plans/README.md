@@ -9,8 +9,8 @@ scope, exact code surfaces, verification gates, risks, and stop conditions.
 | --- | --- | --- | --- | --- | --- |
 | [001](001-webgl-neovim-tool.md) | Add a standalone WebGL2 Neovim ToolUse backed by one host process per tool | P1 | XL | — | SUPERSEDED |
 | [002](002-production-webgl-neovim-client.md) | Finish, harden, and optimize the WebGL2 Neovim client for production use | P1 | XL | 001 baseline | TODO |
-| [003](003-warp-top-chrome.md) | Match the reference multiplexer’s top chrome (search, session, pill Window tabs, Settings) | P1 | L | — | TODO |
-| [004](004-warp-pane-canvas.md) | Match the reference multiplexer’s pane chrome and light canvas | P1 | M | 003 | TODO |
+| [003](003-warp-top-chrome.md) | Match the reference multiplexer’s top chrome (search, session, pill Window tabs, Settings) | P1 | L | — | DONE |
+| [004](004-warp-pane-canvas.md) | Match the reference multiplexer’s pane chrome and light canvas | P1 | M | 003 | DONE |
 
 Status values: TODO | IN PROGRESS | DONE | BLOCKED | REJECTED | SUPERSEDED
 

@@ -73,6 +73,7 @@ export const BROWSER_RISKY_CHORDS: readonly string[] = [
   "Mod-p",
   "Mod-f",
   "Mod-d",
+  "Mod-Shift-d",
   "Mod-o",
   "Mod-r",
   "Mod-g",

@@ -52,6 +52,8 @@ describe("isBrowserReservedChord", () => {
 describe("isBrowserRiskyChord", () => {
   it("separates cross-browser collisions from hard reservations", () => {
     assert.equal(isBrowserRiskyChord("Mod-k"), true)
+    assert.equal(isBrowserRiskyChord("Mod-d"), true)
+    assert.equal(isBrowserRiskyChord("Mod-Shift-d"), true)
     assert.equal(isBrowserReservedChord("Mod-k"), false)
   })
 })

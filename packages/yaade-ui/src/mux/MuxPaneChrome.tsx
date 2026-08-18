@@ -7,7 +7,7 @@ import {
   X,
 } from "lucide-react"
 import { useDraggable } from "@dnd-kit/core"
-import type { ReactNode, RefCallback } from "react"
+import type { MouseEvent, ReactNode, RefCallback } from "react"
 import type { PanelId } from "@yaade/shared"
 import { Button } from "@/components/ui/button.js"
 import {
@@ -18,8 +18,9 @@ import {
   ContextMenuShortcut,
   ContextMenuTrigger,
 } from "@/components/ui/context-menu.js"
+import { formatKeyBinding } from "@/lib/format-key.js"
 import { cn } from "@/lib/utils.js"
-import { GlassControlGroup } from "../components/glass.js"
+import { AgentProviderIcon } from "../home/AgentProviderIcon.js"
 import { tabDndId, type TabDragData } from "../dock/tab-dnd-types.js"
 import { processIdentity } from "./process-identity.js"
 
@@ -32,7 +33,12 @@ export type MuxPaneChromeProps = {
   canZoom: boolean
   /** Foreground process basename for the identity glyph. */
   processName?: string | null
-  onSplitButton?: (direction: "right" | "down") => void
+  /** Provider running in a terminal (`terminal` for a shell). */
+  terminalProvider?: string | null
+  onSplitButton?: (
+    direction: "right" | "down",
+    event: MouseEvent<HTMLButtonElement>,
+  ) => void
   /** Wrap a split control, for example with a tool picker popover. */
   wrapSplitButton?: (
     direction: "right" | "down",
@@ -59,24 +65,40 @@ export type MuxPaneChromeProps = {
 function SplitControl(props: {
   direction: "right" | "down"
   icon: ReactNode
+  shortcut?: string
   onSplit: () => void
-  onSplitButton?: (direction: "right" | "down") => void
+  onSplitButton?: (
+    direction: "right" | "down",
+    event: MouseEvent<HTMLButtonElement>,
+  ) => void
   wrapSplitButton?: (
     direction: "right" | "down",
     button: ReactNode,
   ) => ReactNode
 }) {
+  const handleSplit = (event: MouseEvent<HTMLButtonElement>) => {
+    if (props.onSplitButton) props.onSplitButton(props.direction, event)
+    else props.onSplit()
+  }
   const button = (
     <Button
       type="button"
       variant="ghost"
       size="icon-xs"
       aria-label={props.direction === "right" ? "Split right" : "Split down"}
+      title={
+        props.shortcut
+          ? `${props.direction === "right" ? "Split right" : "Split down"} (${formatKeyBinding(props.shortcut)})`
+          : undefined
+      }
       data-yaade-mux-split={props.direction}
-      className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
-      onClick={() => {
-        if (props.onSplitButton) props.onSplitButton(props.direction)
-        else props.onSplit()
+      className="text-muted-foreground/55 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
+      onClick={handleSplit}
+      onContextMenu={event => {
+        if (!props.onSplitButton || (!event.metaKey && !event.ctrlKey)) return
+        event.preventDefault()
+        event.stopPropagation()
+        handleSplit(event)
       }}
     >
       {props.icon}
@@ -94,6 +116,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     zoomed,
     canZoom,
     processName,
+    terminalProvider,
     onSplitButton,
     wrapSplitButton,
     onSplitRight,
@@ -125,9 +148,36 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
   })
 
   const identity = processIdentity(processName)
+  const splitRightShortcut = shortcutFor?.("mux.splitRight")
+  const splitDownShortcut = shortcutFor?.("mux.splitDown")
   const zoomShortcut = shortcutFor?.("mux.zoomPane")
   const zoomLabel = zoomed ? "Restore pane" : "Zoom pane"
-  const zoomTitle = zoomShortcut ? `${zoomed ? "Restore" : "Zoom"} (${zoomShortcut})` : zoomLabel
+  const zoomTitle = zoomShortcut
+    ? `${zoomed ? "Restore" : "Zoom"} (${formatKeyBinding(zoomShortcut)})`
+    : zoomLabel
+  const contextTrigger = onOpenContext ? (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-xs"
+      aria-label="Set tool context"
+      aria-haspopup="dialog"
+      aria-expanded={contextOpen}
+      data-yaade-mux-context-trigger=""
+      className="size-5 text-muted-foreground/55 opacity-70 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100"
+      onPointerDown={event => event.stopPropagation()}
+      onClick={event => {
+        event.stopPropagation()
+        onOpenContext()
+      }}
+    >
+      {terminalProvider ? (
+        <AgentProviderIcon agent={terminalProvider} className="size-3.5" />
+      ) : (
+        <ChevronDown />
+      )}
+    </Button>
+  ) : null
 
   return (
     <ContextMenu>
@@ -140,8 +190,8 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           data-zoomed={zoomed ? "" : undefined}
           data-dragging={isDragging ? "" : undefined}
           className={cn(
-            "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 border-b px-1.5",
-            "border-border/50 bg-transparent",
+            "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 px-1.5",
+            "bg-transparent",
             draggable && "cursor-grab touch-none active:cursor-grabbing",
             isDragging && "opacity-45",
             className,
@@ -168,37 +218,36 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             )}
             {...(draggable ? attributes : {})}
           >
-            <span
-              aria-hidden
-              data-yaade-mux-pane-process={processName ?? ""}
-              className="shrink-0 font-mono text-xs font-semibold text-muted-foreground"
-            >
-              {identity.glyph}
-            </span>
-            {onOpenContext ? (
-              <Button
-                type="button"
-                variant="ghost"
-                size="icon-xs"
-                aria-label="Set tool context"
-                aria-haspopup="dialog"
-                aria-expanded={contextOpen}
-                data-yaade-mux-context-trigger=""
-                className="size-5 text-muted-foreground/70 hover:text-foreground"
-                onPointerDown={event => event.stopPropagation()}
-                onClick={event => {
-                  event.stopPropagation()
-                  onOpenContext()
-                }}
-              >
-                <ChevronDown />
-              </Button>
-            ) : null}
+            {terminalProvider ? (
+              contextTrigger ?? (
+                <span
+                  aria-hidden
+                  data-yaade-mux-pane-process={processName ?? ""}
+                  className="grid size-5 shrink-0 place-items-center"
+                >
+                  <AgentProviderIcon
+                    agent={terminalProvider}
+                    className="size-3.5"
+                  />
+                </span>
+              )
+            ) : (
+              <>
+                <span
+                  aria-hidden
+                  data-yaade-mux-pane-process={processName ?? ""}
+                  className="shrink-0 font-mono text-xs font-medium text-muted-foreground/55"
+                >
+                  {identity.glyph}
+                </span>
+                {contextTrigger}
+              </>
+            )}
             <span
               data-yaade-mux-pane-title=""
               className={cn(
-                "min-w-0 truncate font-mono text-xs font-semibold tracking-[-0.015em]",
-                focused ? "text-foreground" : "text-muted-foreground",
+                "min-w-0 truncate font-sans text-xs font-medium tracking-[-0.015em]",
+                focused ? "text-foreground/65" : "text-muted-foreground/55",
               )}
             >
               {title || "Pane"}
@@ -218,13 +267,14 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
               }
             }}
           />
-          <GlassControlGroup
-            className="shrink-0 rounded-full"
+          <div
+            className="flex shrink-0 items-center gap-0.5"
             onPointerDown={event => event.stopPropagation()}
           >
             <SplitControl
               direction="right"
               icon={<Columns2 />}
+              shortcut={splitRightShortcut}
               onSplit={onSplitRight}
               onSplitButton={onSplitButton}
               wrapSplitButton={wrapSplitButton}
@@ -232,6 +282,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             <SplitControl
               direction="down"
               icon={<Rows2 />}
+              shortcut={splitDownShortcut}
               onSplit={onSplitDown}
               onSplitButton={onSplitButton}
               wrapSplitButton={wrapSplitButton}
@@ -245,7 +296,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
                 aria-pressed={zoomed}
                 title={zoomTitle}
                 data-yaade-mux-zoom=""
-                className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
+                className="text-muted-foreground/55 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
                 onClick={onZoom}
               >
                 {zoomed ? <Minimize2 /> : <Maximize2 />}
@@ -258,21 +309,33 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
               aria-label="Close pane"
               title="Close pane"
               data-yaade-mux-close-pane=""
-              className="text-muted-foreground/70 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
+              className="text-muted-foreground/55 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
               onClick={onClose}
             >
               <X />
             </Button>
-          </GlassControlGroup>
+          </div>
         </div>
       </ContextMenuTrigger>
       <ContextMenuContent data-yaade-mux-pane-context-menu="">
-        <ContextMenuItem onSelect={onSplitRight}>Split Right</ContextMenuItem>
-        <ContextMenuItem onSelect={onSplitDown}>Split Down</ContextMenuItem>
+        <ContextMenuItem onSelect={onSplitRight}>
+          Split Right
+          {splitRightShortcut ? (
+            <ContextMenuShortcut>{formatKeyBinding(splitRightShortcut)}</ContextMenuShortcut>
+          ) : null}
+        </ContextMenuItem>
+        <ContextMenuItem onSelect={onSplitDown}>
+          Split Down
+          {splitDownShortcut ? (
+            <ContextMenuShortcut>{formatKeyBinding(splitDownShortcut)}</ContextMenuShortcut>
+          ) : null}
+        </ContextMenuItem>
         {canZoom ? (
           <ContextMenuItem onSelect={onZoom}>
             {zoomed ? "Restore Pane" : "Zoom Pane"}
-            {zoomShortcut ? <ContextMenuShortcut>{zoomShortcut}</ContextMenuShortcut> : null}
+            {zoomShortcut ? (
+              <ContextMenuShortcut>{formatKeyBinding(zoomShortcut)}</ContextMenuShortcut>
+            ) : null}
           </ContextMenuItem>
         ) : null}
         <ContextMenuSeparator />

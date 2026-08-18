@@ -35,9 +35,11 @@ describe("tool session keymap", () => {
     }
   })
 
-  it("keeps direct chords off the risky list", () => {
+  it("documents deliberate browser-risky direct chords", () => {
     for (const binding of TOOL_SESSION_DIRECT_BINDINGS) {
-      assert.equal(isBrowserRiskyChord(binding.key), false, binding.key)
+      if (isBrowserRiskyChord(binding.key)) {
+        assert.ok(binding.riskyReason, binding.key)
+      }
     }
   })
 
@@ -126,6 +128,11 @@ describe("tool session keymap", () => {
       `${TOOL_SESSION_PREFIX} z`,
     )
     assert.equal(toolSessionDirectShortcutFor("pane.zoom"), undefined)
+    assert.equal(toolSessionDirectShortcutFor("pane.splitRight"), "Mod-d")
+    assert.equal(
+      toolSessionDirectShortcutFor("pane.splitDown"),
+      "Mod-Shift-d",
+    )
     assert.equal(toolSessionDirectShortcutFor("settings.show"), "Mod-,")
   })
 

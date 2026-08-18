@@ -50,7 +50,8 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
       `[host-server] WARNING: binding to ${host} exposes the unauthenticated host API on the network`,
     )
   }
-  const port = Number(args.port ?? process.env.JET_PORT ?? 4747)
+  // 0 = OS-assigned ephemeral port so concurrent instances do not share 4747.
+  const port = Number(args.port ?? process.env.JET_PORT ?? 0)
   const dataDir = path.resolve(
     String(args["data-dir"] ?? process.env.JET_DATA_DIR ?? path.join(home, ".local", "share", "jet")),
   )

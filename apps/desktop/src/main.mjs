@@ -24,6 +24,12 @@ const VITE_ENTRY = path.join("apps", "yaade", "node_modules", "vite", "bin", "vi
 const HOISTED_VITE_ENTRY = path.join("node_modules", "vite", "bin", "vite.js")
 const TSX_ENTRY = path.join("node_modules", "tsx", "dist", "cli.mjs")
 const CHILD_READY_TIMEOUT_MS = 45_000
+// Keep the native overlay aligned with --yaade-tab-bar-height (3.5rem at the
+// app's 13px root font size). The renderer owns the visual titlebar; Electron
+// only supplies the platform window controls.
+const TITLE_BAR_HEIGHT = 46
+/** @type {"hidden"} */
+const TITLE_BAR_STYLE = "hidden"
 
 /** @typedef {import("node:child_process").ChildProcess} ChildProcess */
 /** @typedef {import("electron").WebContents} WebContents */
@@ -207,6 +213,7 @@ function stopChild(child) {
  * @param {string | null} workspace
  */
 async function launchHost(repoRoot, workspace) {
+  // 0 = OS-assigned ephemeral port; the bound value is parsed from stdout.
   const port = 0
   const runtimeRoot = resolveRuntimeRoot()
   const dataDir = path.join(app.getPath("userData"), "host")
@@ -433,9 +440,21 @@ function installWebContentsPolicy(contents, trustedOrigins) {
 
 /** @param {string} url */
 function createMainWindow(url) {
+  const titleBarOptions =
+    process.platform === "darwin"
+      ? {
+          titleBarStyle: TITLE_BAR_STYLE,
+          trafficLightPosition: { x: 16, y: 17 },
+        }
+      : {
+          titleBarStyle: TITLE_BAR_STYLE,
+          titleBarOverlay: { height: TITLE_BAR_HEIGHT },
+        }
+
   const window = new BrowserWindow({
     show: false,
     backgroundColor: "#01040a",
+    ...titleBarOptions,
     webPreferences: {
       preload: path.join(app.getAppPath(), "src", "preload.cjs"),
       contextIsolation: true,
