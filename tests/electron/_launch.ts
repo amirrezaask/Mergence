@@ -13,7 +13,7 @@ export type LaunchJetOptions = {
   homeDir?: string
   /** Return after rendering an intentional boot error instead of waiting for the agent bridge. */
   expectBootError?: boolean
-  /** Open a Terminal ToolUse after the Session shell mounts. Defaults to true. */
+  /** Ensure a Terminal ToolUse after the Session shell mounts. Defaults to true. */
   withTerminal?: boolean
   /** Narrow allowlist for a test that intentionally requests an HTTP error. */
   expectedHttpErrors?: Array<{
@@ -74,21 +74,14 @@ export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise
   await page.evaluate(() => window.__yaadeAgent!.waitForReady())
 }
 
-/** Open a Terminal ToolUse from the empty-session launcher. */
+/** Wait for the default Terminal ToolUse. */
 async function openMuxTerminal(
   page: ShellDriver,
   timeoutMs = 15_000,
 ): Promise<void> {
-  const terminal = page.locator("[data-yaade-terminal-panel]")
-  if ((await terminal.count()) > 0) {
-    await expect(terminal).toBeVisible({ timeout: timeoutMs })
-    return
-  }
-
-  const launcher = page.locator('[data-yaade-empty-tool="terminal"]')
-  await expect(launcher).toBeVisible({ timeout: timeoutMs })
-  await launcher.click()
-  await expect(terminal).toBeVisible({ timeout: timeoutMs })
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible({
+    timeout: timeoutMs,
+  })
 }
 
 export async function focusTerminal(page: ShellDriver): Promise<void> {

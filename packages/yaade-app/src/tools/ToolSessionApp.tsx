@@ -94,7 +94,7 @@ import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
-import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
+import { SessionBootState } from "./SessionEmptyState.js";
 import {
   MAX_TOOL_TILES,
   closeToolPanel,
@@ -251,6 +251,16 @@ function isKnownProjectPath(
   );
 }
 
+function firstEmptyToolPanel(workspace: ToolWorkspace): PanelId | undefined {
+  let emptyPanel: PanelId | undefined;
+  workspace.tree.visitLeaves(leaf => {
+    if (!emptyPanel && leaf.view.kind === "empty") {
+      emptyPanel = leaf.panelId;
+    }
+  });
+  return emptyPanel;
+}
+
 function errorMessage<T>(error: T): string {
   return error instanceof Error
     ? error.message
@@ -324,6 +334,7 @@ export function ToolSessionApp() {
   const dismissedProjectCandidatesRef = useRef(new Set<string>());
   const keymapStateRef = useRef(createToolSessionKeymapState());
   const prefixTimerRef = useRef<number | undefined>(undefined);
+  const pendingToolPanelRequestsRef = useRef(new Set<string>());
   const toolUsesRef = useRef(snapshot.usesById);
   const isMobile = useIsMobile();
   const desktopPlatform = window.yaadeDesktop?.platform;
@@ -1397,6 +1408,38 @@ export function ToolSessionApp() {
       restoreToolWorkspace(activeTab.layoutJson, useIds);
   }, [activeTab, toolWorkspaces, useIds]);
 
+  useEffect(() => {
+    if (!activeSession || !activeTab || snapshot.connection !== "connected") {
+      return;
+    }
+    const emptyPanel = firstEmptyToolPanel(activeToolWorkspace);
+    if (!emptyPanel) return;
+
+    // A tool may exist remotely while its restored view is still being placed.
+    // Let the restore effect finish before treating the pane as unconfigured.
+    if (useIds.length > 0 && toolIdsInWorkspace(activeToolWorkspace).length === 0) {
+      return;
+    }
+
+    const requestKey = `${activeTab.id}:${emptyPanel.id}`;
+    if (pendingToolPanelRequestsRef.current.has(requestKey)) return;
+    pendingToolPanelRequestsRef.current.add(requestKey);
+    void createTool("terminal", undefined, activeSession.id, {
+      sessionId: activeSession.id,
+      tabId: activeTab.id,
+      panelId: emptyPanel,
+    }).finally(() => {
+      pendingToolPanelRequestsRef.current.delete(requestKey);
+    });
+  }, [
+    activeSession,
+    activeTab,
+    activeToolWorkspace,
+    createTool,
+    snapshot.connection,
+    useIds,
+  ]);
+
   const windowTabMeta = useMemo(
     () =>
       windowTabMetaForTabs(
@@ -1572,14 +1615,6 @@ export function ToolSessionApp() {
     [activeTab, activateDockedTool, updateToolWorkspace],
   );
 
-  const addToolToPanel = useCallback(
-    (panelId: PanelId, kind: ToolKind) => {
-      focusWorkspacePanel(panelId);
-      void createTool(kind);
-    },
-    [createTool, focusWorkspacePanel],
-  );
-
   const addToolToSplitPanel = useCallback(
     (panelId: PanelId, edge: "right" | "bottom", kind: ToolKind) => {
       if (!activeSession || !activeTab) return;
@@ -1596,7 +1631,11 @@ export function ToolSessionApp() {
       updateToolWorkspace(tabId, workspace =>
         splitToolPanel(workspace, panelId, edge),
       );
-      void createTool(kind, undefined, activeSession.id, target);
+      const requestKey = `${tabId}:${target.panelId.id}`;
+      pendingToolPanelRequestsRef.current.add(requestKey);
+      void createTool(kind, undefined, activeSession.id, target).finally(() => {
+        pendingToolPanelRequestsRef.current.delete(requestKey);
+      });
     },
     [
       activeSession,
@@ -1655,11 +1694,6 @@ export function ToolSessionApp() {
       updateRuntimeTitle,
       updateToolContext,
     ],
-  );
-
-  const emptyToolState = useMemo(
-    () => <SessionEmptyState onAddKind={kind => void createTool(kind)} />,
-    [createTool],
   );
 
   const showMobileToolList = (use: ToolUse) => {
@@ -1763,7 +1797,7 @@ export function ToolSessionApp() {
               <>
             {!sidebarLayout ? (
               <header
-                className="flex h-[var(--yaade-tab-bar-height)] shrink-0 items-center gap-2 border-b border-border/60 bg-muted px-3"
+                className="flex h-[var(--yaade-tab-bar-height)] shrink-0 items-center gap-2 px-3"
                 data-yaade-session-tabs=""
                 data-yaade-top-tabbar=""
                 data-yaade-electron-titlebar={desktopPlatform ? "" : undefined}
@@ -2029,17 +2063,13 @@ export function ToolSessionApp() {
                     onContextChange={updateToolContext}
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
-                    onAddTool={addToolToPanel}
                     onAddSplitTool={addToolToSplitPanel}
                     onSplit={splitToolPanelAt}
                     onZoom={zoomToolPanel}
                     onCloseView={closeWorkspacePane}
-                    empty={emptyToolState}
                     renderTool={renderTool}
                   />
-                  ) : (
-                    emptyToolState
-                  )}
+                  ) : null}
                 </div>
                 {prefixPending ? (
                   <PrefixHud
@@ -2256,7 +2286,8 @@ function rendererFor(
 ): ComponentType<import("./tool-registry.js").ToolRendererProps> | null {
   const existing = lazyRenderers.get(kind);
   if (existing) return existing;
-  const entry = toolRegistry.get(kind);
+  // Unknown tool kinds should keep a usable pane instead of rendering blank.
+  const entry = toolRegistry.get(kind) ?? toolRegistry.get("terminal");
   if (!entry) return null;
   const Lazy = lazy(entry.loadRenderer);
   lazyRenderers.set(kind, Lazy);

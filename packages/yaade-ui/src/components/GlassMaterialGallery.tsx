@@ -43,12 +43,12 @@ export function GlassMaterialGallery() {
               YAADE / material lab
             </p>
             <h1 className="mt-2 text-xl font-semibold tracking-[-0.03em]">
-              Dark liquid glass
+              Liquid glass
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-              Navigation is refractive frost: white film, saturated blur, and a
-              bright rim. The work surface stays matte so the terminal does not
-              sit behind glass.
+              The same milk-glass language in both schemes: a white frost film,
+              saturated blur, and a bright refractive rim. The work surface
+              stays matte so the terminal does not sit behind glass.
             </p>
           </div>
           <GlassSurface material="chrome" interactive asChild>

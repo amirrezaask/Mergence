@@ -6,6 +6,7 @@ import type { ShellDriver } from "../shell/driver.js"
 import { test } from "../fixtures/e2e.js"
 import { expectContainsText } from "../shell/assert.js"
 import { expectListRows } from "../helpers/list.js"
+import { pressShellPrefix } from "./_launch.js"
 
 async function openToolSessionShell(page: ShellDriver): Promise<void> {
   await page.evaluate(() => {
@@ -46,8 +47,12 @@ test("Git History is available as a Session tool", async ({ launchApp }) => {
   const existingGit = page
     .locator("[data-yaade-tool-tabs] [data-yaade-tool-use]")
     .filter({ hasText: "Git History" })
-  if ((await existingGit.count()) > 0) await existingGit.click()
-  else await page.locator('[data-yaade-empty-tool="git"]').click()
+  if ((await existingGit.count()) > 0) {
+    await existingGit.click()
+  } else {
+    await pressShellPrefix(page)
+    await page.keyboard.press("g")
+  }
 
   await expect(page.locator('[data-yaade-list-panel="git-history"]')).toBeVisible({
     timeout: 30_000,

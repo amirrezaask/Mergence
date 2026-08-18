@@ -1,9 +1,5 @@
 import { useCallback, useRef, useState, type ReactNode } from "react";
-import {
-  GitBranch,
-  PanelTopOpen,
-  Terminal as TerminalIcon,
-} from "lucide-react";
+import { GitBranch, Terminal as TerminalIcon } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
 import type {
   CheckoutTarget,
@@ -47,10 +43,8 @@ export type ToolTilingWorkspaceProps = {
     project: ProjectTarget,
     checkout: CheckoutTarget,
   ) => Promise<void>;
-  readonly empty: ReactNode;
   readonly onPanelEvent: (event: PanelEvent) => void;
   readonly onFocusPanel: (panelId: PanelId, use?: ToolUse) => void;
-  readonly onAddTool: (panelId: PanelId, kind: ToolKind) => void;
   readonly onAddSplitTool: (
     panelId: PanelId,
     edge: "right" | "bottom",
@@ -61,41 +55,6 @@ export type ToolTilingWorkspaceProps = {
   readonly onCloseView: (panelId: PanelId) => void;
   readonly renderTool: (use: ToolUse, focused: boolean) => ReactNode;
 };
-
-function EmptyTile(props: {
-  readonly onAddKind: (kind: ToolKind) => void;
-}) {
-  return (
-    <div
-      className="flex h-full min-h-40 flex-col items-center justify-center gap-3 px-6 text-center text-muted-foreground"
-      data-yaade-empty-tool-tile=""
-    >
-      <PanelTopOpen className="size-5" aria-hidden />
-      <p className="text-xs font-medium text-foreground">Open a tool here</p>
-      <p className="max-w-56 text-2xs leading-relaxed">
-        Pick a tool for this pane, or drag one onto it.
-      </p>
-      <div className="flex flex-wrap items-center justify-center gap-1.5">
-        {paneToolKinds.map((item) => {
-          const Icon = item.icon;
-          return (
-            <Button
-              key={item.kind}
-              type="button"
-              variant="outline"
-              size="sm"
-              data-yaade-empty-tile-tool={item.kind}
-              onClick={() => props.onAddKind(item.kind)}
-            >
-              <Icon data-icon="inline-start" />
-              {item.label}
-            </Button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
 
 type PaneTool = {
   kind: ToolKind;
@@ -176,10 +135,8 @@ export default function ToolTilingWorkspace({
   projects,
   onAddProject,
   onContextChange,
-  empty,
   onPanelEvent,
   onFocusPanel,
-  onAddTool,
   onAddSplitTool,
   onSplit,
   onZoom,
@@ -187,7 +144,6 @@ export default function ToolTilingWorkspace({
   renderTool,
 }: ToolTilingWorkspaceProps) {
   const openToolIds = toolIdsInWorkspace(workspace);
-  const hasOpenTools = openToolIds.length > 0;
   const paneCount = toolPaneCount(workspace);
   const canZoom = paneCount > 1;
   const zoomedPanelId = workspace.zoomedPanelId;
@@ -387,19 +343,19 @@ export default function ToolTilingWorkspace({
   const renderContent = useCallback(
     (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
       if (view.kind === "empty") {
-        return !hasOpenTools ? (
-          empty
-        ) : (
-          <EmptyTile
-            onAddKind={(kind) => onAddTool(panelId, kind)}
+        return (
+          <div
+            className="h-full min-h-0"
+            data-yaade-empty-tool-pending=""
           />
         );
       }
       const use = usesById.get(view.toolUseId);
       if (!use) {
         return (
-          <EmptyTile
-            onAddKind={(kind) => onAddTool(panelId, kind)}
+          <div
+            className="h-full min-h-0"
+            data-yaade-empty-tool-pending=""
           />
         );
       }
@@ -417,14 +373,7 @@ export default function ToolTilingWorkspace({
         </SessionHeaderChromeProvider>
       );
     },
-    [
-      empty,
-      hasOpenTools,
-      headerTargets,
-      onAddTool,
-      renderTool,
-      usesById,
-    ],
+    [headerTargets, renderTool, usesById],
   );
 
   const zoomedView = zoomedPanelId

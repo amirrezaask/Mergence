@@ -178,7 +178,10 @@ describe("bundled Yaade themes", () => {
       const sidebarL = parseLightness(tokens.sidebar)
       const cardL = parseLightness(tokens.card)
       if (themeId === "default-dark") {
-        assert.ok(bgL < 0.12, `default-dark background should be near black (got ${bgL})`)
+        assert.ok(
+          bgL > 0.14 && bgL < 0.22,
+          `default-dark background should be dark milk, not a void (got ${bgL})`,
+        )
         assert.ok(
           bgL < sidebarL && sidebarL < cardL,
           "default-dark surface lightness must preserve the canvas → sidebar → card hierarchy",

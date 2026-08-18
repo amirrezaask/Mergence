@@ -21,6 +21,7 @@ Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. 
 ## Sessions
 
 - Sessions contain Windows; Windows contain tiled Terminal and Git ToolUses.
+- Empty Windows open a Terminal automatically; empty panes use the same Terminal fallback.
 - Layout, project, checkout, and ToolUse metadata persist across reloads.
 - PTYs survive browser reloads and tab switches while the host remains running.
 - Closing a Terminal ToolUse stops its PTY.

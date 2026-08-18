@@ -7,6 +7,8 @@ import { focusTerminal, pressShellPrefix } from "./_launch.js"
 test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) => {
   const { page } = await launchApp()
   await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
+  await expect(page.locator('[data-yaade-session-empty=""]')).toHaveCount(0)
   await expect(page.locator('[data-yaade-running-agent-count]')).toHaveCount(0)
   const topBar = page.locator('[data-yaade-top-tabbar]')
   await expect(topBar).toBeVisible()
@@ -43,7 +45,6 @@ test("tool context adds a project with folder-path completion", async ({ launchA
   const addedPath = path.join(projectPath, "nested-project")
   fs.mkdirSync(addedPath)
 
-  await page.locator('[data-yaade-empty-tool="terminal"]').click()
   await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
   await page.locator('[data-yaade-mux-context-trigger=""]').click()
   const context = page.locator("[data-yaade-tool-context-popover]").last()
@@ -79,7 +80,6 @@ test("terminal cwd offers to remember an unknown project", async ({ launchApp })
   const addedPath = path.join(path.dirname(projectPath), "terminal-project")
   fs.mkdirSync(addedPath)
 
-  await page.locator('[data-yaade-empty-tool="terminal"]').click()
   await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
   await focusTerminal(page)
   await page.keyboard.type(`cd "${addedPath}"`)
@@ -186,7 +186,7 @@ test("split shortcuts split the focused pane in both directions", async ({ launc
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
   })
-  await page.locator('[data-yaade-empty-tool="terminal"]').click()
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
   await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(1, {
     timeout: 30_000,
   })
@@ -213,7 +213,7 @@ test("split controls open Terminal by default and the picker with a modifier", a
   })
   await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
 
-  await page.locator('[data-yaade-empty-tool="terminal"]').click()
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
   await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(1, {
     timeout: 30_000,
   })

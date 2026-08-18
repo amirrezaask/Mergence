@@ -1397,13 +1397,13 @@ body {
 }
 
 .dark .chat-composer-glass-shell {
-  --chat-composer-glass-surface: color-mix(in srgb, var(--background) 96%, var(--color-white));
-  --chat-composer-outline: color-mix(in srgb, var(--color-white) 5%, transparent);
-  --chat-composer-highlight: rgb(255 255 255 / 3%);
+  --chat-composer-glass-surface: var(--yaade-material-floating-fill);
+  --chat-composer-outline: var(--yaade-material-light-edge);
+  --chat-composer-highlight: var(--yaade-material-specular);
 }
 
 .dark .chat-composer-glass-host {
-  box-shadow: none;
+  box-shadow: var(--yaade-material-floating-shadow);
 }
 
 .dark .chat-composer-glass-host::after {
@@ -1411,16 +1411,16 @@ body {
 }
 
 .dark .chat-composer-context-strip::before {
-  border-color: rgb(255 255 255 / 7%);
+  border-color: var(--yaade-material-light-edge);
   background:
     linear-gradient(
       to bottom,
       transparent 0 1rem,
-      rgb(0 0 0 / 18%) 1rem,
+      color-mix(in srgb, black 14%, transparent) 1rem,
       transparent calc(1rem + 10px)
     ),
-    rgb(255 255 255 / 2%);
-  box-shadow: 0 14px 32px -18px rgb(0 0 0 / 75%);
+    var(--yaade-material-floating-fill);
+  box-shadow: var(--yaade-material-floating-shadow);
 }
 
 @supports not (clip-path: shape(from 0 0, line to 1px 1px)) {
@@ -1441,10 +1441,9 @@ body {
       linear-gradient(
         to bottom,
         transparent 0 1rem,
-        rgb(0 0 0 / 18%) 1rem,
+        color-mix(in srgb, black 14%, transparent) 1rem,
         transparent calc(1rem + 10px)
       ),
-      linear-gradient(rgb(255 255 255 / 2%), rgb(255 255 255 / 2%)),
-      color-mix(in srgb, var(--chat-composer-glass-surface) var(--glass-opacity), transparent);
+      var(--yaade-material-floating-fill);
   }
 }

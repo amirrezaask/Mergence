@@ -191,7 +191,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           data-dragging={isDragging ? "" : undefined}
           className={cn(
             "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 px-1.5",
-            "bg-transparent",
             draggable && "cursor-grab touch-none active:cursor-grabbing",
             isDragging && "opacity-45",
             className,
