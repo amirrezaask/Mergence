@@ -77,6 +77,7 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
     { key: "h", command: "tab.previous", desc: "Previous tab", group: "move" },
     { key: "z", command: "pane.zoom", desc: "Zoom pane", group: "move" },
     { key: "u", command: "tool.switch", desc: "Switch tool", group: "move" },
+    { key: "b", command: "sidebar.toggle", desc: "Toggle sidebar", group: "move" },
     { key: "w", command: "session.switch", desc: "Switch session", group: "move" },
     { key: "1", command: "tool.jump", desc: "Jump tool 1–9", group: "move" },
     { key: "c", command: "session.new", desc: "New session", group: "session" },

@@ -1,5 +1,6 @@
 import path from "node:path"
 import { fileURLToPath } from "node:url"
+import { MakerDMG } from "@electron-forge/maker-dmg"
 import { MakerZIP } from "@electron-forge/maker-zip"
 import { FusesPlugin } from "@electron-forge/plugin-fuses"
 import { FuseV1Options, FuseVersion } from "@electron/fuses"
@@ -15,7 +16,10 @@ export default {
     appBundleId: "dev.yaade.desktop",
     extraResource: [runtimeDir],
   },
-  makers: [new MakerZIP({}, [process.platform])],
+  makers: [
+    new MakerDMG({}, ["darwin"]),
+    new MakerZIP({}, [process.platform]),
+  ],
   plugins: [
     new FusesPlugin({
       version: FuseVersion.V1,

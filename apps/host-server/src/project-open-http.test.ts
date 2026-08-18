@@ -26,6 +26,23 @@ describe("project open HTTP API", () => {
     fs.rmSync(dir, { recursive: true, force: true })
   })
 
+  it("adds a project through the ToolUse RPC", async () => {
+    const root = path.join(dir, "rpc-project")
+    fs.mkdirSync(root)
+    const response = await fetch(`${origin}/api/v1/rpc`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ channel: "tools:addProject", args: [root] }),
+    })
+    assert.equal(response.status, 200)
+    const body = await response.json() as {
+      value: { projectId: string; projectPath: string; projectName: string }
+    }
+    assert.equal(body.value.projectPath, fs.realpathSync(root))
+    assert.equal(body.value.projectName, "rpc-project")
+    assert.ok(body.value.projectId)
+  })
+
   it("opens an existing directory once and returns actionable path errors", async () => {
     const root = path.join(dir, "project")
     const file = path.join(dir, "not-a-directory")

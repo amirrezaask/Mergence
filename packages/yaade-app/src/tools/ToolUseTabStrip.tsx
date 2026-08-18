@@ -142,6 +142,7 @@ export type ToolUseTabStripProps = {
   readonly openToolUseIds?: ReadonlySet<ToolUseId>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
   readonly projects: readonly ProjectTarget[];
+  readonly onAddProject: (rootPath: string) => Promise<ProjectTarget | undefined>;
   readonly onSelect: (use: ToolUse) => void;
   readonly onContextChange: (
     use: ToolUse,
@@ -460,6 +461,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
           <ToolContextControls
             use={use}
             projects={props.projects}
+            onAddProject={props.onAddProject}
             active={active}
             presentation="popover"
             onChange={(project, checkout) =>
@@ -515,6 +517,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
             key={`launch-context-${kind}`}
             initialContext={launchContext}
             projects={props.projects}
+            onAddProject={props.onAddProject}
             presentation="popover"
             onChange={async (project, checkout) => {
               setLaunchContext({ project, checkout });

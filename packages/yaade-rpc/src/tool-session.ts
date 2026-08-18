@@ -296,6 +296,12 @@ export class CreateToolUse extends Schema.TaggedClass<CreateToolUse>()(
     input: ToolUseInput,
   },
 ) {}
+export class AddProject extends Schema.TaggedClass<AddProject>()(
+  "AddProject",
+  {
+    rootPath: Schema.String,
+  },
+) {}
 export class UpdateToolUseContext extends Schema.TaggedClass<UpdateToolUseContext>()(
   "UpdateToolUseContext",
   {
@@ -370,6 +376,7 @@ export const ToolCommand = Schema.Union(
   ArchiveSession,
   RestoreSession,
   CreateToolUse,
+  AddProject,
   UpdateToolUseContext,
   ReorderToolUses,
   CancelToolUse,

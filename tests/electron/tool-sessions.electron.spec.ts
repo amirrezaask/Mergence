@@ -1,6 +1,8 @@
+import fs from "node:fs"
+import path from "node:path"
 import { expect } from "@playwright/test"
 import { test } from "../fixtures/e2e.js"
-import { pressShellPrefix } from "./_launch.js"
+import { focusTerminal, pressMuxPrefix, pressShellPrefix } from "./_launch.js"
 
 test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) => {
   const { page } = await launchApp()
@@ -9,8 +11,11 @@ test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) 
   const runningAgentsSidebar = page.getByRole("complementary", {
     name: "Running agents",
   })
+  await expect(runningAgentsSidebar).toBeVisible()
   await expect(
-    runningAgentsSidebar.getByRole("button", { name: /Switch session/ }),
+    page.locator('[data-yaade-top-tabbar]').getByRole("button", {
+      name: /Switch session/,
+    }),
   ).toBeVisible()
   await expect(runningAgentsSidebar).not.toContainText("Agents")
   const agentSidebarResize = page.getByRole("separator", { name: "Resize agent sidebar" })
@@ -18,12 +23,94 @@ test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) 
   await agentSidebarResize.press("ArrowRight")
   await expect(agentSidebarResize).toHaveAttribute("aria-valuenow", "266")
 
+  const sidebarToggle = page.getByRole("button", { name: "Hide sidebar" })
+  await expect(sidebarToggle).toBeVisible()
+  await sidebarToggle.click()
+  await expect(page.getByRole("button", { name: "Show sidebar" })).toBeVisible()
+  await expect(runningAgentsSidebar).toBeHidden()
+  await page.getByRole("button", { name: "Show sidebar" }).click()
+  await expect(runningAgentsSidebar).toBeVisible()
+
+  await pressMuxPrefix(page, "b")
+  await expect(runningAgentsSidebar).toBeHidden()
+  await pressMuxPrefix(page, "b")
+  await expect(runningAgentsSidebar).toBeVisible()
+
   await pressShellPrefix(page)
   const hud = page.locator("[data-yaade-which-key]")
   await expect(hud).toContainText("New Terminal")
   await expect(hud).toContainText("New Git")
+  await expect(hud).toContainText("Toggle sidebar")
   await expect(hud).not.toContainText("Search")
   await expect(hud).not.toContainText("Neovim")
+})
+
+test("tool context adds a project with folder-path completion", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  const projectPath = await page.evaluate(async () => {
+    const project = (await window.yaade?.tools?.listProjects?.())?.[0]
+    if (!project) throw new Error("no project available")
+    return project.projectPath
+  })
+  const addedPath = path.join(projectPath, "nested-project")
+  fs.mkdirSync(addedPath)
+
+  await page.locator('[data-yaade-empty-tool="terminal"]').click()
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
+  await page.locator('[data-yaade-mux-context-trigger=""]').click()
+  const context = page.locator("[data-yaade-tool-context-popover]").last()
+  await expect(context).toBeVisible()
+  await context.locator("[data-yaade-add-project]").click()
+
+  const pathPicker = page.locator('[data-yaade-file-lister=""]')
+  const pathInput = pathPicker.getByPlaceholder("Path to folder…")
+  await expect(pathInput).toBeVisible()
+  await expect(pathPicker).toContainText("Add project")
+  await pathInput.fill(addedPath)
+  await pathPicker.getByRole("button", { name: /Add project/ }).click()
+  await expect(pathInput).toBeHidden()
+  await expect
+    .poll(async () =>
+      page.evaluate(async target => {
+        const projects = (await window.yaade?.tools?.listProjects?.()) ?? []
+        return projects.some(project => project.projectPath === target)
+      }, addedPath),
+    )
+    .toBe(true)
+})
+
+test("terminal cwd offers to remember an unknown project", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  const projectPath = await page.evaluate(async () => {
+    const project = (await window.yaade?.tools?.listProjects?.())?.[0]
+    if (!project) throw new Error("no project available")
+    return project.projectPath
+  })
+  const addedPath = path.join(path.dirname(projectPath), "terminal-project")
+  fs.mkdirSync(addedPath)
+
+  await page.locator('[data-yaade-empty-tool="terminal"]').click()
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
+  await focusTerminal(page)
+  await page.keyboard.type(`cd "${addedPath}"`)
+  await page.keyboard.press("Enter")
+
+  const prompt = page.locator("[data-yaade-project-discovery-prompt]")
+  await expect(prompt).toBeVisible()
+  await prompt.locator("[data-yaade-add-discovered-project]").click()
+  await expect(prompt).toBeHidden()
+  await expect
+    .poll(async () =>
+      page.evaluate(async target => {
+        const projects = (await window.yaade?.tools?.listProjects?.()) ?? []
+        return projects.some(project => project.projectPath === target)
+      }, addedPath),
+    )
+    .toBe(true)
 })
 
 test("agent sidebar selection focuses its tool pane", async ({ launchApp }) => {
@@ -49,7 +136,7 @@ test("agent sidebar selection focuses its tool pane", async ({ launchApp }) => {
       checkout,
       input,
     })
-    const second = await tools.createUse({
+    const _second = await tools.createUse({
       _tag: "CreateToolUse",
       sessionId: state.activeSessionId,
       kind: "terminal",
@@ -125,7 +212,7 @@ test("split controls open the tool picker and place the selected tool", async ({
   await expect(picker).toBeVisible()
   await expect(picker).not.toContainText("New tool")
 
-  await picker.locator('[data-yaade-pane-new-tool-kind="terminal"]').click()
+  await picker.locator('[data-yaade-pane-new-tool-kind="terminal"]').click({ force: true })
   await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(2, {
     timeout: 30_000,
   })

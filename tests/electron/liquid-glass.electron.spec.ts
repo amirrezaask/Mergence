@@ -78,23 +78,35 @@ test("settings keep the default material treatment without a material switch", a
   )
 })
 
-test("top Window tabs stay on the shared tab-bar surface", async ({ launchApp }) => {
+test("top Window tabs use a transparent strip with a rounded active surface", async ({ launchApp }) => {
   const { page } = await launchApp()
   await expect(page.locator('[data-yaade-top-tabbar]')).toBeVisible()
 
+  const newTab = page.locator('[data-yaade-new-session-tab=""]')
+  await expect(newTab).toBeVisible()
+  await newTab.click()
+
+  const tabs = page.locator('[data-yaade-window-tabs] [data-yaade-session-tab]')
+  await expect(tabs).toHaveCount(2)
   const activeTab = page.locator(
     '[data-yaade-window-tabs] [data-yaade-session-tab][data-active="true"]',
   )
+  const inactiveTab = page.locator(
+    '[data-yaade-window-tabs] [data-yaade-session-tab]:not([data-active="true"])',
+  )
   await expect(activeTab).toBeVisible()
-  const computed = await activeTab.evaluate(element => {
+  await expect(inactiveTab).toHaveCSS("background-color", "rgba(0, 0, 0, 0)")
+  const active = await activeTab.evaluate(element => {
     const style = getComputedStyle(element)
     return {
       backgroundColor: style.backgroundColor,
+      borderRadius: style.borderRadius,
       boxShadow: style.boxShadow,
     }
   })
-  expect(computed.backgroundColor).toBe("rgba(0, 0, 0, 0)")
-  expect(computed.boxShadow).toBe("none")
+  expect(active.backgroundColor).not.toBe("rgba(0, 0, 0, 0)")
+  expect(active.borderRadius).not.toBe("0px")
+  expect(active.boxShadow).toBe("none")
 
   await expect(page.locator('[data-yaade-top-tabbar] > span')).toHaveCount(0)
 })

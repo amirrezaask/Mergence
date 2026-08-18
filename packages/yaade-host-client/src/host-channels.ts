@@ -65,6 +65,7 @@ export const HOST_CHANNELS = new Set([
   "tools:archiveUse",
   "tools:renameUse",
   "tools:listProjects",
+  "tools:addProject",
   "tools:listCheckoutTargets",
   "terminal:create",
   "terminal:write",

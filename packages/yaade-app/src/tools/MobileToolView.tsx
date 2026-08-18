@@ -157,6 +157,7 @@ export type MobileToolViewProps = {
   readonly onCloseSession: (sessionId: SessionId) => void
   readonly actionError?: string
   readonly onCloseTool: (use: ToolUse) => Promise<void>
+  readonly onAddProject: (rootPath: string) => Promise<ProjectTarget | undefined>
   readonly onContextChange: (
     use: ToolUse,
     project: ProjectTarget,
@@ -348,6 +349,7 @@ export function MobileToolView(props: MobileToolViewProps) {
             <ToolContextControls
               use={contextUse}
               projects={props.projects}
+              onAddProject={props.onAddProject}
               presentation="popover"
               onChange={(project, checkout) =>
                 props.onContextChange(contextUse, project, checkout)

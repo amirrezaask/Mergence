@@ -112,7 +112,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                     }
                   }}
                   className={cn(
-                    "group relative flex h-full min-w-20 max-w-48 cursor-pointer items-center gap-1 rounded-md px-1.5 outline-none transition-[color,background-color,border-color,box-shadow,transform] duration-[var(--yaade-motion-hot)] hover:bg-accent/45 focus-visible:ring-2 focus-visible:ring-ring/50",
+                    "group relative flex h-full min-w-20 max-w-48 cursor-pointer items-center gap-1 rounded-md px-1.5 outline-none transition-[color,background-color,border-color,box-shadow,transform] duration-[var(--yaade-motion-hot)] focus-visible:ring-2 focus-visible:ring-ring/50",
                     active && "text-foreground",
                   )}
                 >

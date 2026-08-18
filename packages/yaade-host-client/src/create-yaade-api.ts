@@ -1,6 +1,6 @@
 import type { WorkspaceFileChangeKind, YaadeHostAPI } from "@yaade/workspace";
 import { Schema } from "effect";
-import { ToolEvent } from "@yaade/rpc";
+import { ToolEvent, type ProjectTarget } from "@yaade/rpc";
 import type { YaadeHostTransport } from "./transport.js";
 import {
   readFileWithDiagnostics,
@@ -457,6 +457,11 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
           _tag: "ListCheckoutTargets",
           projectId,
         }),
+      addProject: (rootPath) =>
+        transport.invoke<ProjectTarget>(
+          "tools:addProject",
+          rootPath,
+        ),
       onEvent: (callback) => {
         toolEventListeners.add(callback);
         return () => toolEventListeners.delete(callback);

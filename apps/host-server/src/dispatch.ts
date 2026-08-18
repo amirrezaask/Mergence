@@ -25,6 +25,7 @@ import {
 import {
   ArchiveSession,
   ArchiveToolUse,
+  AddProject,
   CancelToolUse,
   CreateSession,
   CreateSessionTab,
@@ -625,6 +626,39 @@ async function handleTools(
         projectPath: project.rootPath,
         projectName: project.name,
       }));
+    case "tools:addProject": {
+      const command = decodeToolCommand(
+        AddProject,
+        {
+          _tag: "AddProject",
+          rootPath: args[0],
+        },
+        "add project",
+      );
+      const rootPath = command.rootPath.trim();
+      if (!rootPath) {
+        throw new InvalidToolCommand({
+          message: "project path is required",
+        });
+      }
+      const canonicalPath = await assertAllowedUri(
+        pathToFileUri(rootPath),
+        runtime.config.allowedRoots,
+        fileUriToPath,
+      );
+      const details = await stat(pathToFileUri(canonicalPath));
+      if (!details.isDirectory) {
+        throw new InvalidToolCommand({
+          message: "project path must be a directory",
+        });
+      }
+      const project = runtime.db.addProject(canonicalPath);
+      return {
+        projectId: project.id,
+        projectPath: project.rootPath,
+        projectName: project.name,
+      };
+    }
     case "tools:listCheckoutTargets": {
       const command = decodeToolCommand(
         ListCheckoutTargets,

@@ -9,8 +9,13 @@ import {
   lazy,
   type ComponentType,
 } from "react";
-import { LayoutGroup, LazyMotion, MotionConfig } from "motion/react";
-import { aside as MotionAside } from "motion/react-m";
+import {
+  AnimatePresence,
+  LayoutGroup,
+  LazyMotion,
+  MotionConfig,
+} from "motion/react";
+import { aside as MotionAside, div as MotionDiv } from "motion/react-m";
 import type {
   CheckoutTarget,
   CreateToolUse,
@@ -45,6 +50,7 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   PanelRightOpen,
+  FolderPlus,
   Settings,
 } from "lucide-react";
 import {
@@ -60,6 +66,7 @@ import {
 } from "@yaade/ui/session";
 import {
   CHORD_TIMEOUT_MS,
+  isPathUnderRoot,
   keyEventMatchesBinding,
   keyEventMatchesChordSecond,
 } from "@yaade/workspace";
@@ -110,7 +117,10 @@ import {
   toolPaneCount,
   type ToolWorkspace,
 } from "./tool-tiling.js";
-import { toolSessionDirectShortcutFor } from "./tool-session-keymap.js";
+import {
+  toolSessionDirectShortcutFor,
+  toolSessionShortcutFor,
+} from "./tool-session-keymap.js";
 import {
   TOOL_SESSION_PREFIX,
   TOOL_SESSION_PREFIX_GROUPS,
@@ -144,6 +154,11 @@ const AGENT_SIDEBAR_MIN_WIDTH = 220;
 const AGENT_SIDEBAR_MAX_WIDTH = 420;
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
+
+type ProjectCandidate = {
+  readonly useId: ToolUseId;
+  readonly path: string;
+};
 
 type ToolOpenTarget = {
   readonly sessionId: SessionId;
@@ -185,6 +200,15 @@ function isLive(use: ToolUse): boolean {
     use.status === "starting" ||
     use.status === "running" ||
     use.status === "waiting"
+  );
+}
+
+function isKnownProjectPath(
+  candidatePath: string,
+  projects: readonly ProjectTarget[],
+): boolean {
+  return projects.some((project) =>
+    isPathUnderRoot(candidatePath, project.projectPath),
   );
 }
 
@@ -232,6 +256,12 @@ export function ToolSessionApp() {
     client.store.getSnapshot,
   );
   const [projects, setProjects] = useState<readonly ProjectTarget[]>([]);
+  const [projectsLoaded, setProjectsLoaded] = useState(false);
+  const [projectCandidate, setProjectCandidate] =
+    useState<ProjectCandidate | null>(null);
+  const [addingProjectPath, setAddingProjectPath] = useState<string | null>(
+    null,
+  );
   const [closeChoice, setCloseChoice] = useState<CloseChoice>();
   const [actionError, setActionError] = useState<string | undefined>();
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -252,6 +282,7 @@ export function ToolSessionApp() {
   const layoutServerStateRef = useRef(
     new Map<SessionTabId, { revision: number; layoutJson?: string }>(),
   );
+  const dismissedProjectCandidatesRef = useRef(new Set<string>());
   const prefixPendingRef = useRef(false);
   const toolUsesRef = useRef(snapshot.usesById);
   const isMobile = useIsMobile();
@@ -281,9 +312,75 @@ export function ToolSessionApp() {
       ?.listProjects?.()
       .then((next) => {
         setProjects(next);
+        setProjectsLoaded(true);
       })
       .catch(() => undefined);
   }, []);
+
+  const addKnownProject = useCallback(async (rootPath: string) => {
+    try {
+      const addProject = window.yaade?.tools?.addProject;
+      if (!addProject) throw new Error("Project management is unavailable.");
+      const project = await addProject(rootPath);
+      setProjects((previous) => [
+        project,
+        ...previous.filter((item) => item.projectId !== project.projectId),
+      ]);
+      setProjectsLoaded(true);
+      setActionError(undefined);
+      return project;
+    } catch (error) {
+      setActionError(errorMessage(error));
+      return undefined;
+    }
+  }, []);
+
+  const observeTerminalCwd = useCallback(
+    (useId: ToolUseId, cwdPath: string) => {
+      if (!projectsLoaded) return;
+      const candidate = cwdPath.trim();
+      if (!candidate) return;
+      if (isKnownProjectPath(candidate, projects)) {
+        if (projectCandidate?.useId === useId) setProjectCandidate(null);
+        return;
+      }
+      if (dismissedProjectCandidatesRef.current.has(candidate)) return;
+      if (projectCandidate && projectCandidate.useId !== useId) return;
+      if (projectCandidate?.path === candidate) return;
+      setProjectCandidate({ useId, path: candidate });
+    },
+    [projectCandidate, projects, projectsLoaded],
+  );
+
+  useEffect(() => {
+    if (
+      projectCandidate &&
+      isKnownProjectPath(projectCandidate.path, projects)
+    ) {
+      setProjectCandidate(null);
+    }
+  }, [projectCandidate, projects]);
+
+  const dismissProjectCandidate = useCallback(() => {
+    if (!projectCandidate) return;
+    dismissedProjectCandidatesRef.current.add(projectCandidate.path);
+    setProjectCandidate(null);
+  }, [projectCandidate]);
+
+  const addProjectCandidate = useCallback(async () => {
+    if (!projectCandidate || addingProjectPath) return;
+    const candidate = projectCandidate.path;
+    setAddingProjectPath(candidate);
+    try {
+      const project = await addKnownProject(candidate);
+      if (project) {
+        dismissedProjectCandidatesRef.current.add(candidate);
+        setProjectCandidate(null);
+      }
+    } finally {
+      setAddingProjectPath(null);
+    }
+  }, [addKnownProject, addingProjectPath, projectCandidate]);
 
   useEffect(() => {
     const onPopState = () => setRouteRevision(revision => revision + 1);
@@ -385,6 +482,7 @@ export function ToolSessionApp() {
   const sidebarLayout = twoSidebarLayout || singleSidebarLayout;
   const sidebarsCollapsed =
     sidebarLayout && appearanceSettings.sidebarCollapsed;
+  const agentSidebarCollapsed = appearanceSettings.sidebarCollapsed;
   const sidebarOrientation = isMobile ? "horizontal" : "vertical";
   const runningAgents = useRunningAgents();
   const toolUseIdByPty = useMemo(() => {
@@ -411,12 +509,11 @@ export function ToolSessionApp() {
   );
 
   const toggleSidebars = useCallback(() => {
-    if (!sidebarLayout) return;
     setAppearanceSettings((previous) => ({
       ...previous,
       sidebarCollapsed: !previous.sidebarCollapsed,
     }));
-  }, [setAppearanceSettings, sidebarLayout]);
+  }, [setAppearanceSettings]);
 
   const resizeSidebar = useCallback(
     (width: number) => {
@@ -650,6 +747,7 @@ export function ToolSessionApp() {
         if (nextProjects.length === 0) {
           nextProjects = (await window.yaade?.tools?.listProjects?.()) ?? [];
           setProjects(nextProjects);
+          setProjectsLoaded(true);
         }
         const nextProject = launchContext?.project ?? nextProjects[0];
         if (!nextProject) {
@@ -1068,6 +1166,7 @@ export function ToolSessionApp() {
         updateToolWorkspace(activeTab.id, workspace =>
           toggleToolPanelZoom(workspace, workspace.focusedPanelId),
         );
+      if (command === "sidebar.toggle") toggleSidebars();
       if (command === "settings.show") setSettingsOpen(true);
     },
     [
@@ -1464,12 +1563,14 @@ export function ToolSessionApp() {
         visible={visible}
         focused={focused}
         onAction={(action) => void runToolAction(action, use)}
+        onCwdChange={(cwdPath) => observeTerminalCwd(use.id, cwdPath)}
         onTitleChange={(title) => updateRuntimeTitle(use, title, "terminal")}
       />
     ),
     [
       activeTheme,
       fontSize,
+      observeTerminalCwd,
       projects,
       runToolAction,
       updateRuntimeTitle,
@@ -1514,42 +1615,46 @@ export function ToolSessionApp() {
         data-yaade-shell="tool-session"
         data-yaade-session-layout={appearanceSettings.sessionLayout}
         data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
+        data-yaade-agent-sidebar-state={
+          agentSidebarCollapsed ? "collapsed" : "expanded"
+        }
       >
         {!isMobile ? (
-          <div
-            className="relative h-full shrink-0"
-            style={{ width: `${agentSidebarWidth}px` }}
+          <MotionDiv
+            initial={false}
+            animate={{
+              width: agentSidebarCollapsed ? 0 : agentSidebarWidth,
+              opacity: agentSidebarCollapsed ? 0 : 1,
+            }}
+            transition={yaadeMotion.sidebarTransition}
+            className={cn(
+              "relative h-full shrink-0 overflow-hidden",
+              agentSidebarCollapsed && "pointer-events-none",
+            )}
+            aria-hidden={agentSidebarCollapsed || undefined}
+            inert={agentSidebarCollapsed || undefined}
+            data-yaade-running-agent-sidebar-state={
+              agentSidebarCollapsed ? "collapsed" : "expanded"
+            }
           >
             <RunningAgentsSidebar
-              header={
-                <SessionSwitcher
-                  open={switcherOpen}
-                  onOpenChange={setSwitcherOpen}
-                  sessions={visibleSessions}
-                  activeSessionId={snapshot.activeSessionId}
-                  onSelect={session => selectSession(session.id)}
-                  onCreate={() => void createSession()}
-                  onClose={requestCloseSession}
-                  onRename={(id, title) => void renameSession(id, title)}
-                  toolCounts={toolCounts}
-                  className="w-full max-w-none"
-                />
-              }
               agents={runningAgentItems}
               loading={runningAgents.loading}
               error={runningAgents.error}
               onSelectAgent={focusRunningAgent}
               className="w-full"
             />
-            <SidebarResizeHandle
-              value={agentSidebarWidth}
-              min={AGENT_SIDEBAR_MIN_WIDTH}
-              max={AGENT_SIDEBAR_MAX_WIDTH}
-              side="left"
-              label="Resize agent sidebar"
-              onChange={setAgentSidebarWidth}
-            />
-          </div>
+            {!agentSidebarCollapsed ? (
+              <SidebarResizeHandle
+                value={agentSidebarWidth}
+                min={AGENT_SIDEBAR_MIN_WIDTH}
+                max={AGENT_SIDEBAR_MAX_WIDTH}
+                side="left"
+                label="Resize agent sidebar"
+                onChange={setAgentSidebarWidth}
+              />
+            ) : null}
+          </MotionDiv>
         ) : null}
         <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Suspense fallback={<SessionBootState />}>
@@ -1562,6 +1667,7 @@ export function ToolSessionApp() {
                 routeToolUseId={parseToolSessionRoute(location.href).toolUseId}
                 runtimeTitles={runtimeTitles}
                 projects={projects}
+                onAddProject={addKnownProject}
                 onSelect={selectTool}
                 onShowToolList={showMobileToolList}
                 onCreateTool={(sessionId, kind) =>
@@ -1583,22 +1689,62 @@ export function ToolSessionApp() {
                 data-yaade-session-tabs=""
                 data-yaade-top-tabbar=""
               >
-                <ShortcutTooltip
-                  label="Settings"
-                  shortcut={toolSessionDirectShortcutFor("settings.show")}
-                  side="bottom"
-                >
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label="Open settings"
-                    onClick={() => setSettingsOpen(true)}
-                    data-yaade-session-settings=""
+                <div className="flex h-full min-w-0 shrink-0 items-center gap-0.5">
+                  <ShortcutTooltip
+                    label={
+                      agentSidebarCollapsed ? "Show sidebar" : "Hide sidebar"
+                    }
+                    shortcut={toolSessionShortcutFor("sidebar.toggle")}
+                    side="bottom"
                   >
-                    <Settings />
-                  </Button>
-                </ShortcutTooltip>
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label={
+                        agentSidebarCollapsed ? "Show sidebar" : "Hide sidebar"
+                      }
+                      aria-pressed={!agentSidebarCollapsed}
+                      onClick={toggleSidebars}
+                      data-yaade-sidebar-toggle=""
+                      data-yaade-agent-sidebar-toggle=""
+                    >
+                      {agentSidebarCollapsed ? (
+                        <PanelLeftOpen />
+                      ) : (
+                        <PanelLeftClose />
+                      )}
+                    </Button>
+                  </ShortcutTooltip>
+                  <ShortcutTooltip
+                    label="Settings"
+                    shortcut={toolSessionDirectShortcutFor("settings.show")}
+                    side="bottom"
+                  >
+                    <Button
+                      type="button"
+                      size="icon-xs"
+                      variant="ghost"
+                      aria-label="Open settings"
+                      onClick={() => setSettingsOpen(true)}
+                      data-yaade-session-settings=""
+                    >
+                      <Settings />
+                    </Button>
+                  </ShortcutTooltip>
+                  <SessionSwitcher
+                    open={switcherOpen}
+                    onOpenChange={setSwitcherOpen}
+                    sessions={visibleSessions}
+                    activeSessionId={snapshot.activeSessionId}
+                    onSelect={session => selectSession(session.id)}
+                    onCreate={() => void createSession()}
+                    onClose={requestCloseSession}
+                    onRename={(id, title) => void renameSession(id, title)}
+                    toolCounts={toolCounts}
+                    className="max-w-52"
+                  />
+                </div>
                 <SessionWindowTabStrip
                   tabs={visibleTabs}
                   activeTabId={activeTab?.id}
@@ -1690,6 +1836,7 @@ export function ToolSessionApp() {
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
+                    onAddProject={addKnownProject}
                     sessionTitlesById={sessionTitlesById}
                     sectionLabel="Tools"
                     emptyLabel="No tools yet"
@@ -1793,6 +1940,7 @@ export function ToolSessionApp() {
                     usesById={snapshot.usesById}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
+                    onAddProject={addKnownProject}
                     onContextChange={updateToolContext}
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
@@ -1810,7 +1958,7 @@ export function ToolSessionApp() {
                 </div>
                 {prefixPending ? (
                   <PrefixHud
-                    showSidebarToggle={sidebarLayout}
+                    showSidebarToggle={!isMobile}
                     onSelect={onPrefixHudSelect}
                   />
                 ) : null}
@@ -1830,6 +1978,7 @@ export function ToolSessionApp() {
                     openToolUseIds={openToolUseIds}
                     runtimeTitles={runtimeTitles}
                     projects={projects}
+                    onAddProject={addKnownProject}
                     sessionTitlesById={sessionTitlesById}
                     sectionLabel="Tools"
                     emptyLabel="No tools yet"
@@ -1900,6 +2049,12 @@ export function ToolSessionApp() {
               : undefined
           }
         />
+        <ProjectDiscoveryPrompt
+          path={projectCandidate?.path ?? null}
+          pending={addingProjectPath === projectCandidate?.path}
+          onAdd={() => void addProjectCandidate()}
+          onDismiss={dismissProjectCandidate}
+        />
         </div>
       </div>
       </AmbientCanvas>
@@ -1907,6 +2062,63 @@ export function ToolSessionApp() {
       </TooltipProvider>
       </LazyMotion>
     </MotionConfig>
+  );
+}
+
+function ProjectDiscoveryPrompt(props: {
+  readonly path: string | null;
+  readonly pending: boolean;
+  readonly onAdd: () => void;
+  readonly onDismiss: () => void;
+}) {
+  return (
+    <AnimatePresence initial={false}>
+      {props.path ? (
+        <MotionDiv
+          key={props.path}
+          initial={{ opacity: 0, y: 8, scale: 0.98 }}
+          animate={{ opacity: 1, y: 0, scale: 1 }}
+          exit={{ opacity: 0, y: 6, scale: 0.98 }}
+          transition={yaadeMotion.overlayTransition}
+          className="pointer-events-none fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 flex justify-center"
+          aria-live="polite"
+          data-yaade-project-discovery-prompt=""
+        >
+          <div className="pointer-events-auto flex w-full max-w-xl items-center gap-3 rounded-[var(--yaade-island-radius)] border border-border bg-popover/95 px-3 py-2 text-popover-foreground shadow-xl backdrop-blur-xl">
+            <FolderPlus className="size-4 shrink-0 text-primary" aria-hidden />
+            <div className="min-w-0 flex-1">
+              <p className="text-xs font-medium">Remember this folder?</p>
+              <p className="truncate font-mono text-2xs text-muted-foreground">
+                {props.path}
+              </p>
+            </div>
+            <Button
+              type="button"
+              size="sm"
+              variant="ghost"
+              onClick={props.onDismiss}
+              disabled={props.pending}
+            >
+              Not now
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              onClick={props.onAdd}
+              disabled={props.pending}
+              data-yaade-add-discovered-project=""
+            >
+              {props.pending ? (
+                <Spinner />
+              ) : (
+                <FolderPlus data-icon="inline-start" />
+              )}
+              {props.pending ? "Adding…" : "Add project"}
+            </Button>
+          </div>
+        </MotionDiv>
+      ) : null}
+    </AnimatePresence>
   );
 }
 
@@ -1973,6 +2185,7 @@ function SelectedToolUse(props: {
   visible?: boolean;
   focused?: boolean;
   onAction: (action: "cancel" | "restart" | "archive") => void;
+  onCwdChange: (cwdPath: string) => void;
   onContextChange: (
     project: ProjectTarget,
     checkout: CheckoutTarget,
@@ -1997,6 +2210,7 @@ function SelectedToolUse(props: {
         fontSize={props.fontSize}
         projects={props.projects}
         onContextChange={props.onContextChange}
+        onCwdChange={props.onCwdChange}
         onTitleChange={props.onTitleChange}
         onAction={props.onAction}
         visible={props.visible}

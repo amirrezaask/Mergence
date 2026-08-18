@@ -16,7 +16,7 @@ http://localhost:5174/?s=ses-…&t=tab-…&u=use-… Deep link
 | **Terminal** | Persistent PTY with replay, flow control, mobile accessory keys, and support for running shell or agent CLIs directly. |
 | **Git History** | Virtualized commit history, changed files, and diffs for the selected checkout. |
 
-Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. A resizable **Agents** sidebar shows live agent CLIs and focuses their session, window, and pane when selected; its header is the session switcher.
+Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. A resizable **Agents** sidebar shows live agent CLIs and focuses their session, window, and pane when selected. The sidebar can be hidden from the top tab bar, which also contains the session switcher.
 
 ## Sessions
 
@@ -24,6 +24,7 @@ Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. 
 - Layout, project, checkout, and ToolUse metadata persist across reloads.
 - PTYs survive browser reloads and tab switches while the host remains running.
 - Closing a Terminal ToolUse stops its PTY.
+- Add projects from any ToolUse context with folder-path autocomplete; terminals offer to remember a newly visited folder after `cd`.
 - Mobile uses a list-first Terminal/Git shell with retained terminal surfaces.
 
 ## Keyboard
@@ -37,6 +38,7 @@ Prefix: **`Mod-k`** (`⌘K` on macOS, `Ctrl+K` elsewhere). Press it twice in a t
 | `Mod-k j` / `k` | Next / previous tool |
 | `Mod-k h` / `l` | Previous / next Window |
 | `Mod-k u` | Switch tool |
+| `Mod-k b` | Toggle sidebar |
 | `Mod-k w` | Switch Session |
 | `Mod-k 1`–`9` | Jump to tool |
 | `Mod-k c` | New Session |
@@ -57,9 +59,12 @@ pnpm dev:desktop
 Build a packaged desktop app after the normal runtime build:
 
 ```bash
+pnpm build            # on macOS, also creates a DMG
 pnpm package:desktop  # package for the current platform
-pnpm make:desktop     # create a ZIP artifact for the current platform
+pnpm make:desktop     # create ZIP and DMG artifacts for the current platform
 ```
+
+The macOS DMG is written under `apps/desktop/out/make/`.
 
 Pass a workspace explicitly with `--workspace /path/to/project`. Desktop builds keep host data under Electron's `userData` directory and do not register the browser PWA service worker. Forge packaging uses Node 22 LTS; set `YAADE_PACKAGER_NODE` when it is not discoverable locally.
 

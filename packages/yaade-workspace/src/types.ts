@@ -161,6 +161,7 @@ export type JetElectronTools = {
   archiveUse(command: ArchiveToolUse): Promise<ToolUse>;
   renameUse(toolUseId: ToolUseId, title: string): Promise<ToolUse>;
   listCheckoutTargets(projectId: string): Promise<ToolCheckoutTarget[]>;
+  addProject(rootPath: string): Promise<ProjectTarget>;
   onEvent(callback: (event: ToolEvent) => void): () => void;
   listProjects(): Promise<ProjectTarget[]>;
 };

@@ -6,9 +6,10 @@
  *   apps/yaade/dist                 SPA (intermediate)
  *   dist/runtime/                   unpacked runtime (SEF source)
  *   dist/yaade                      self-extracting server binary
+ *   apps/desktop/out/make/*.dmg       macOS DMG (on macOS)
  *
  * Flags:
- *   --server-only   same as default (kept for script compatibility)
+ *   --server-only   skip the desktop artifact (used by the desktop packaging scripts)
  */
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
@@ -23,10 +24,7 @@ const runtimeDir = path.join(repoRoot, "dist/runtime")
 const sefOut = path.join(repoRoot, "dist/yaade")
 
 const args = new Set(process.argv.slice(2))
-if (args.has("--dmg-only")) {
-  console.error("DMG / Electron packaging was removed; use `pnpm build` for the server binary")
-  process.exit(1)
-}
+const serverOnly = args.has("--server-only")
 
 function run(command, argsList, cwd = repoRoot, env = process.env) {
   const result = spawnSync(command, argsList, {
@@ -58,3 +56,8 @@ console.log(`  ${sefOut}              # serve SPA + API on http://127.0.0.1:4747
 console.log(`  ${sefOut} --host 0.0.0.0 # expose the unauthenticated app on the LAN`)
 console.log(`  ${sefOut} /path/to/repo  # open workspace at path`)
 console.log(`  ${sefOut} --open         # also open the default browser`)
+
+if (process.platform === "darwin" && !serverOnly) {
+  console.log("Creating macOS DMG…")
+  run("pnpm", ["--filter", "@yaade/desktop", "make:dmg:prepared"])
+}

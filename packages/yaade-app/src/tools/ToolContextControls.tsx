@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from "react";
-import { FolderKanban, GitBranch, LoaderCircle } from "lucide-react";
+import { useCallback, useEffect, useMemo, useState } from "react";
+import { FolderKanban, FolderPlus, GitBranch, LoaderCircle } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import {
   BranchWorktreeCheckout,
@@ -7,6 +7,7 @@ import {
   MainCheckout,
 } from "@yaade/rpc";
 import type { ToolCheckoutTarget } from "@yaade/workspace";
+import { CdOverlay } from "@yaade/ui";
 import {
   Combobox,
   ComboboxEmpty,
@@ -27,6 +28,9 @@ type ToolContextControlsBaseProps = {
   readonly projects: readonly ProjectTarget[];
   readonly active?: boolean;
   readonly presentation?: "pane" | "popover";
+  readonly onAddProject: (
+    rootPath: string,
+  ) => Promise<ProjectTarget | undefined>;
   readonly onChange: (
     project: ProjectTarget,
     checkout: CheckoutTarget,
@@ -80,6 +84,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
   const [creatingBranch, setCreatingBranch] = useState(false);
   const [branch, setBranch] = useState("");
   const [pending, setPending] = useState(false);
+  const [addProjectOpen, setAddProjectOpen] = useState(false);
   const worktrees = useMemo(
     () => targets.filter((item) => item.kind === "worktree"),
     [targets],
@@ -148,6 +153,22 @@ export function ToolContextControls(props: ToolContextControlsProps) {
     }
   };
 
+  const resolveHomeDir = useCallback(
+    () => window.yaade?.getHomeDir?.() ?? Promise.resolve(""),
+    [],
+  );
+
+  const handleAddProject = async (rootPath: string) => {
+    const nextProject = await props.onAddProject(rootPath);
+    if (!nextProject) return;
+    const nextCheckout = MainCheckout.make({ kind: "main" });
+    setProject(nextProject);
+    setCheckout(nextCheckout);
+    setCreatingBranch(false);
+    setBranch("");
+    await change(nextProject, nextCheckout);
+  };
+
   const submitBranch = () => {
     const next = branch.trim();
     if (!next) return;
@@ -170,6 +191,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
       }
       data-yaade-tool-context
     >
+      <div className="flex min-w-0 items-center gap-1">
       <Combobox
         items={projectIds}
         value={project.projectId}
@@ -223,6 +245,19 @@ export function ToolContextControls(props: ToolContextControlsProps) {
           </ComboboxList>
         </ComboboxPopup>
       </Combobox>
+      <Button
+        type="button"
+        size="icon-sm"
+        variant="outline"
+        aria-label="Add project"
+        title="Add project"
+        disabled={pending}
+        onClick={() => setAddProjectOpen(true)}
+        data-yaade-add-project=""
+      >
+        <FolderPlus />
+      </Button>
+      </div>
 
       <Combobox
         items={checkoutIds}
@@ -385,6 +420,16 @@ export function ToolContextControls(props: ToolContextControlsProps) {
           aria-label="Restarting tool"
         />
       ) : null}
+      <CdOverlay
+        open={addProjectOpen}
+        onOpenChange={setAddProjectOpen}
+        initialPath={project.projectPath}
+        resolveHomeDir={resolveHomeDir}
+        title="Add project"
+        description="Choose a folder to remember as a project"
+        primaryHint="Add project"
+        onSelectFolder={handleAddProject}
+      />
     </div>
   );
 }

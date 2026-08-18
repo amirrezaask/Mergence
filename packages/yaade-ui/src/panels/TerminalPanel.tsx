@@ -52,7 +52,7 @@ export type TerminalPanelProps = {
   /** Override for the starting overlay copy. */
   startingMessage?: string
   onPtyId?: (tabId: string, ptyId: string | null) => void
-  onInput?: (tabId: string) => void
+  onInput?: (tabId: string, data?: string) => void
   onOutput?: (tabId: string, data?: string) => void
   onTitleChange?: (tabId: string, title: string) => void
   onRestart?: () => void
@@ -638,7 +638,7 @@ export function TerminalPanel({
           font: { family: readTerminalFontFamily(), size: readRootFontSize() },
           visible,
           onData: data => {
-            onInputRef.current?.(tabId)
+            onInputRef.current?.(tabId, data)
             enqueueTerminalInput(data)
           },
           onResize: (cols, rows) => {
@@ -654,7 +654,7 @@ export function TerminalPanel({
             if (data === null) return true
             event.preventDefault()
             event.stopPropagation()
-            onInputRef.current?.(tabId)
+            onInputRef.current?.(tabId, data)
             enqueueTerminalInput(data)
             return false
           },

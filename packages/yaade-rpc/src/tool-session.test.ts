@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { Schema } from "effect";
 import {
+  AddProject,
   GitToolInput,
   GitToolOutput,
   ProcessToolOutput,
@@ -32,6 +33,17 @@ describe("terminal/Git ToolUse schemas", () => {
     assert.equal(
       decode(ToolUseInput, GitToolInput.make({ kind: "git" })).kind,
       "git",
+    );
+  });
+
+  it("validates project paths as add-project commands", () => {
+    const command = decode(AddProject, {
+      _tag: "AddProject",
+      rootPath: "/tmp/project",
+    });
+    assert.equal(command.rootPath, "/tmp/project");
+    assert.throws(() =>
+      decode(AddProject, { _tag: "AddProject", rootPath: 42 }),
     );
   });
 

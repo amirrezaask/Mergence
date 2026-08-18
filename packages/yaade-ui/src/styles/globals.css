@@ -608,11 +608,13 @@ body {
 }
 
 [data-yaade-shell="tool-session"] [data-yaade-tool-tabs][data-yaade-tool-tabs-layout="header"]
-  [data-yaade-tool-pane-tab],
-[data-yaade-shell="tool-session"] [data-yaade-tool-tabs][data-yaade-tool-tabs-layout="header"]
-  [data-yaade-tool-pane-tab][data-active="true"] {
-  height: 100%;
-  border-radius: var(--yaade-material-shell-radius);
+  [data-yaade-tool-pane-tab] {
+  height: calc(100% - 0.5rem);
+  margin-block: 0.25rem;
+  border: 0;
+  border-radius: var(--yaade-material-tab-radius);
+  background: transparent;
+  box-shadow: none;
   transform: none;
 }
 
@@ -668,18 +670,30 @@ body {
   transform: none;
 }
 
-/* The top layout already provides one shared chrome surface. Keep the active
- * Window tab on that surface instead of layering a second fill over it. */
+/* Window tabs float directly on the shared strip. Inactive tabs stay
+ * transparent; only the selected tab gets the compact rounded active area. */
 [data-yaade-shell="tool-session"][data-yaade-session-layout="tabs"]
-  [data-yaade-window-tabs] [data-yaade-session-tab][data-active="true"] {
+  [data-yaade-window-tabs] [data-yaade-session-tab] {
+  height: calc(100% - 0.5rem);
+  margin-block: 0.25rem;
+  border: 0;
+  border-radius: var(--yaade-material-tab-radius);
   background: transparent;
   box-shadow: none;
   transform: none;
 }
 
+[data-yaade-shell="tool-session"][data-yaade-session-layout="tabs"]
+  [data-yaade-window-tabs] [data-yaade-session-tab][data-active="true"] {
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+}
+
 [data-yaade-shell="tool-session"] [data-yaade-tool-tabs][data-yaade-tool-tabs-layout="header"]
   [data-yaade-tool-pane-tab][data-active="true"] {
-  border-radius: var(--yaade-material-shell-radius);
+  border: 0;
+  border-radius: var(--yaade-material-tab-radius);
+  background: color-mix(in srgb, var(--foreground) 4%, transparent);
+  box-shadow: none;
   transform: none;
 }
 

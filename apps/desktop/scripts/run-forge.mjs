@@ -3,6 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { spawnSync } from "node:child_process"
+import { createRequire } from "node:module"
 import { fileURLToPath } from "node:url"
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -52,6 +53,54 @@ function resolveNode22() {
   return commonCandidates.find(candidate => fs.existsSync(candidate)) ?? null
 }
 
+function rebuildMacosAlias(packagerNode) {
+  if (process.platform !== "darwin" || process.argv[2] !== "make") return
+
+  const makerDmgDir = fs.realpathSync(
+    path.join(appDir, "node_modules", "@electron-forge", "maker-dmg"),
+  )
+  const makerRequire = createRequire(path.join(makerDmgDir, "package.json"))
+  const installerPackage = makerRequire.resolve("electron-installer-dmg/package.json")
+  const aliasPackage = createRequire(installerPackage).resolve("macos-alias/package.json")
+  const aliasDir = path.dirname(aliasPackage)
+  const compatibilityProbe = spawnSync(
+    packagerNode,
+    ["-e", `require(${JSON.stringify(aliasDir)})`],
+    { stdio: "ignore" },
+  )
+  if (compatibilityProbe.status === 0) return
+
+  const nodeGyp = path.resolve(
+    path.dirname(packagerNode),
+    "..",
+    "lib",
+    "node_modules",
+    "npm",
+    "node_modules",
+    "node-gyp",
+    "bin",
+    "node-gyp.js",
+  )
+
+  if (!fs.existsSync(nodeGyp)) {
+    throw new Error(
+      `Node 22's node-gyp is missing at ${nodeGyp}; install a complete Node 22 LTS distribution.`,
+    )
+  }
+
+  console.log("Rebuilding macOS DMG native dependencies for Node 22…")
+  const result = spawnSync(packagerNode, [nodeGyp, "rebuild"], {
+    cwd: aliasDir,
+    env: {
+      ...process.env,
+      NODE: packagerNode,
+      npm_node_execpath: packagerNode,
+    },
+    stdio: "inherit",
+  })
+  if (result.status !== 0) process.exit(result.status ?? 1)
+}
+
 if (!fs.existsSync(forgeCli)) {
   console.error(`Electron Forge CLI is missing at ${forgeCli}; run pnpm install first.`)
   process.exit(1)
@@ -65,6 +114,8 @@ if (!packagerNode) {
   )
   process.exit(1)
 }
+
+rebuildMacosAlias(packagerNode)
 
 const result = spawnSync(packagerNode, [forgeCli, ...process.argv.slice(2)], {
   cwd: appDir,

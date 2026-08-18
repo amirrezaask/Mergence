@@ -37,6 +37,7 @@ export type ToolTilingWorkspaceProps = {
   readonly usesById: ReadonlyMap<ToolUseId, ToolUse>;
   readonly runtimeTitles: ReadonlyMap<ToolUseId, RuntimeToolTitle>;
   readonly projects: readonly ProjectTarget[];
+  readonly onAddProject: (rootPath: string) => Promise<ProjectTarget | undefined>;
   readonly onContextChange: (
     use: ToolUse,
     project: ProjectTarget,
@@ -168,6 +169,7 @@ export default function ToolTilingWorkspace({
   usesById,
   runtimeTitles,
   projects,
+  onAddProject,
   onContextChange,
   empty,
   onPanelEvent,
@@ -331,6 +333,7 @@ export default function ToolTilingWorkspace({
             <ToolContextControls
               use={activeUse}
               projects={projects}
+              onAddProject={onAddProject}
               active={meta.focused}
               presentation="popover"
               onChange={(project, checkout) =>
@@ -350,6 +353,7 @@ export default function ToolTilingWorkspace({
       onContextChange,
       onSplit,
       onZoom,
+      onAddProject,
       projects,
       runtimeTitles,
       splitToolTarget,

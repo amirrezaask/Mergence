@@ -40,6 +40,7 @@ describe("keybinding catalog", () => {
       "toolSession prefix Mod-k h → tab.previous",
       "toolSession prefix Mod-k z → pane.zoom",
       "toolSession prefix Mod-k u → tool.switch",
+      "toolSession prefix Mod-k b → sidebar.toggle",
       "toolSession prefix Mod-k w → session.switch",
       "toolSession prefix Mod-k 1 → tool.jump",
       "toolSession prefix Mod-k c → session.new",

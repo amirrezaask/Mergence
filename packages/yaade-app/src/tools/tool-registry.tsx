@@ -19,6 +19,7 @@ export type ToolRendererProps = {
     checkout: CheckoutTarget,
   ) => Promise<void>;
   readonly onTitleChange?: (title: string) => void;
+  readonly onCwdChange?: (cwdPath: string) => void;
   readonly onAction?: (action: "cancel" | "restart" | "archive") => void;
   readonly visible?: boolean;
   readonly focused?: boolean;

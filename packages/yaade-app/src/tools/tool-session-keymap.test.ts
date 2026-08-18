@@ -118,6 +118,10 @@ describe("tool session keymap", () => {
       `${TOOL_SESSION_PREFIX} u`,
     )
     assert.equal(
+      toolSessionShortcutFor("sidebar.toggle"),
+      `${TOOL_SESSION_PREFIX} b`,
+    )
+    assert.equal(
       toolSessionShortcutFor("pane.zoom"),
       `${TOOL_SESSION_PREFIX} z`,
     )

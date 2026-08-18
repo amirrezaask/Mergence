@@ -1,8 +1,8 @@
-import { lazy, Suspense } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import type { YaadeTheme } from "@yaade/shared";
-import { pathToFileUri } from "@yaade/shared";
+import { fileUriToPath, pathToFileUri } from "@yaade/shared";
 const TerminalPanel = lazy(() =>
   import("@yaade/ui/terminal").then((module) => ({
     default: module.TerminalPanel,
@@ -17,6 +17,7 @@ export type ProcessToolViewProps = {
     project: ProjectTarget,
     checkout: CheckoutTarget,
   ) => Promise<void>;
+  readonly onCwdChange?: (cwdPath: string) => void;
   readonly visible?: boolean;
   readonly focused?: boolean;
   readonly onTitleChange?: (title: string) => void;
@@ -25,10 +26,74 @@ export type ProcessToolViewProps = {
 export function ProcessToolView({
   use,
   theme,
+  onCwdChange,
   onTitleChange,
   visible = true,
   focused = visible,
 }: ProcessToolViewProps) {
+  const ptyId = use.output.kind === "process" ? use.output.ptyId : undefined;
+  const probeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const probeInFlightRef = useRef(false);
+  const cwdProbeArmedRef = useRef(false);
+  const handleInput = useCallback(
+    (_tabId: string, data?: string) => {
+      if (!visible || !data) return;
+      if (data.includes("\r") || data.includes("\n")) {
+        cwdProbeArmedRef.current = true;
+      }
+    },
+    [visible],
+  );
+  const probeCwd = useCallback(() => {
+    if (
+      !ptyId ||
+      !onCwdChange ||
+      !cwdProbeArmedRef.current ||
+      probeInFlightRef.current
+    ) return;
+    const getCwd = window.yaade?.terminal?.getCwd;
+    if (!getCwd) return;
+    probeInFlightRef.current = true;
+    void getCwd(ptyId)
+      .then((uri) => {
+        if (!uri) return;
+        try {
+          onCwdChange(fileUriToPath(uri));
+        } catch {
+          // Ignore malformed terminal URIs; the next prompt boundary retries.
+        }
+      })
+      .catch(() => undefined)
+      .finally(() => {
+        probeInFlightRef.current = false;
+        cwdProbeArmedRef.current = false;
+      });
+  }, [onCwdChange, ptyId]);
+  const scheduleCwdProbe = useCallback(() => {
+    if (
+      !visible ||
+      !ptyId ||
+      !onCwdChange ||
+      !cwdProbeArmedRef.current
+    ) return;
+    if (probeTimerRef.current !== null) {
+      clearTimeout(probeTimerRef.current);
+    }
+    probeTimerRef.current = setTimeout(() => {
+      probeTimerRef.current = null;
+      probeCwd();
+    }, 120);
+  }, [onCwdChange, ptyId, probeCwd, visible]);
+
+  useEffect(() => {
+    return () => {
+      cwdProbeArmedRef.current = false;
+      if (probeTimerRef.current !== null) {
+        clearTimeout(probeTimerRef.current);
+      }
+    };
+  }, [ptyId, visible]);
+
   if (use.output.kind !== "process") return null;
   const status =
     use.output.processState === "disconnected"
@@ -66,7 +131,9 @@ export function ProcessToolView({
             status={status}
             attachOnly
             visible={visible}
+            onInput={handleInput}
             onTitleChange={(_id, title) => onTitleChange?.(title)}
+            onOutput={scheduleCwdProbe}
           />
         </Suspense>
       )}
