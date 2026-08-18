@@ -5,6 +5,7 @@ import {
   GitToolInput,
   GitToolOutput,
   ProcessToolOutput,
+  SaveSessionTabLayout,
   TerminalToolInput,
   ToolKind,
   ToolUse,
@@ -32,6 +33,15 @@ describe("terminal/Git ToolUse schemas", () => {
       decode(ToolUseInput, GitToolInput.make({ kind: "git" })).kind,
       "git",
     );
+  });
+
+  it("keeps tab layout revision optional for older clients", () => {
+    const command = decode(SaveSessionTabLayout, {
+      _tag: "SaveSessionTabLayout",
+      tabId: "tab-main",
+      layoutJson: "{}",
+    });
+    assert.equal(command.revision, undefined);
   });
 
   it("enforces matching input and output kinds", () => {

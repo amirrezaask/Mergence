@@ -21,17 +21,7 @@ export async function expectListRows(page: ShellDriver, opts: ListRowsOpts): Pro
   await expectNotContainsText(page, panelSel, noResultsText)
 
   if (needle) {
-    await expect
-      .poll(() =>
-        page.evaluate(
-          ({ selector, expected }) =>
-            [...document.querySelectorAll<HTMLElement>(selector)].some(row =>
-              (row.textContent ?? "").includes(expected),
-            ),
-          { selector: itemSel, expected: needle },
-        ),
-      )
-      .toBe(true)
+    await expect(page.locator(itemSel).filter({ hasText: needle }).first()).toBeVisible()
   }
 
   await expectLayout(page, {

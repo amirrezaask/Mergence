@@ -3,7 +3,7 @@ import { AnimatePresence } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
 import { Plus, Settings, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
-import { SidebarShell, cn, yaadeMotion } from "@yaade/ui";
+import { SidebarShell, cn, yaadeMotion } from "@yaade/ui/session";
 import { Button, Input } from "@yaade/ui/primitives";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import {

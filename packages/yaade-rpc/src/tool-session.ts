@@ -239,6 +239,8 @@ export class SaveSessionTabLayout extends Schema.TaggedClass<SaveSessionTabLayou
   {
     tabId: SessionTabId,
     layoutJson: Schema.String.pipe(Schema.maxLength(65_536)),
+    /** Revision observed by the writer; prevents an older layout overwriting a newer one. */
+    revision: Schema.optional(Schema.Number),
   },
 ) {}
 export class ReorderSessionTabs extends Schema.TaggedClass<ReorderSessionTabs>()(
@@ -485,6 +487,14 @@ export class SessionTabNotFound extends Data.TaggedError("SessionTabNotFound")<{
 }> {
   readonly code = "NOT_FOUND" as const;
 }
+export class SessionTabConflict extends Data.TaggedError("SessionTabConflict")<{
+  readonly tabId: string;
+  readonly expectedRevision: number;
+  readonly actualRevision: number;
+  readonly message: string;
+}> {
+  readonly code = "CONFLICT" as const;
+}
 export class SessionNotFound extends Data.TaggedError("SessionNotFound")<{
   readonly sessionId: string;
   readonly message: string;
@@ -544,6 +554,7 @@ export class ToolRuntimeFailure extends Data.TaggedError("ToolRuntimeFailure")<{
 export type ToolSessionError =
   | SessionNotFound
   | SessionTabNotFound
+  | SessionTabConflict
   | ToolUseNotFound
   | InvalidToolInput
   | InvalidToolCommand

@@ -1,1 +1,1 @@
-export { DockSourceHandle as default } from "@yaade/ui";
+export { DockSourceHandle as default } from "@yaade/ui/session";

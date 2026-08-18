@@ -12,7 +12,7 @@ import {
 } from "@/components/ui/resizable.js"
 import { cn } from "@/lib/utils.js"
 import { yaadeMotion } from "@/motion/tokens.js"
-import { usePanelDrag } from "./PanelDragContext.js"
+import { usePanelDragSource } from "./PanelDragContext.js"
 import { PanelDropOverlay } from "./PanelDropOverlay.js"
 import { TabDndRoot, type TabDndHandlers } from "./TabDndRoot.js"
 
@@ -28,14 +28,16 @@ export type PanelDockProps<TView> = {
   focusedPanelId: PanelId | null
   onFocusPanel: (id: PanelId) => void
   onEvent: (event: PanelEvent) => void
+  /** Handlers used by the default `PanelDock` DnD boundary. */
   tabDnd: TabDndHandlers
-  /** When false, parent owns TabDndRoot (e.g. sidebar + workspace share one context). */
-  wrapTabDnd?: boolean
   /** Optional visual treatment for every leaf in this dock. */
   leafClassName?: string
   renderHeader: (view: TView, panelId: PanelId, meta: PanelSlotMeta) => ReactNode
   renderContent: (view: TView, panelId: PanelId, meta: PanelSlotMeta) => ReactNode
 }
+
+/** Props for a dock rendered inside an existing `TabDndRoot`. */
+export type PanelDockInDndProps<TView> = Omit<PanelDockProps<TView>, "tabDnd">
 
 function splitPanelDomId(path: number[], index: number): string {
   return path.length === 0 ? `yaade-split-${index}` : `yaade-split-${path.join(".")}-${index}`
@@ -64,11 +66,10 @@ function PanelLeaf<TView>({
   renderContent: PanelDockProps<TView>["renderContent"]
   leafClassName?: string
 }) {
-  const drag = usePanelDrag()
+  const tabDrag = usePanelDragSource()
   const [dragOver, setDragOver] = useState(false)
   const onClose = () => onEvent({ type: "panelClose", panelId })
   const meta: PanelSlotMeta = { focused, onClose }
-  const tabDrag = drag.tabSource
   const isDropTarget =
     tabDrag != null &&
     (tabDrag.panelId == null || tabDrag.panelId.id !== panelId.id)
@@ -121,7 +122,7 @@ function PanelSplitNode<TView>({
 }: {
   node: Extract<PanelNode<TView>, { kind: "row" | "column" }>
   path: number[]
-  props: PanelDockProps<TView>
+  props: PanelDockInDndProps<TView>
 }) {
   const orientation = node.kind === "row" ? "horizontal" : "vertical"
   const { children, ratios } = node.split
@@ -194,7 +195,7 @@ function PanelTreeNode<TView>({
 }: {
   node: PanelNode<TView>
   path: number[]
-  props: PanelDockProps<TView>
+  props: PanelDockInDndProps<TView>
 }) {
   if (node.kind === "leaf") {
     const focused = props.focusedPanelId?.id === node.panelId.id
@@ -216,7 +217,7 @@ function PanelTreeNode<TView>({
   return <PanelSplitNode node={node} path={path} props={props} />
 }
 
-function PanelDockInner<TView>(props: PanelDockProps<TView>) {
+function PanelDockInner<TView>(props: PanelDockInDndProps<TView>) {
   const dock = (
     <LazyMotion features={loadMotionFeatures}>
       <MotionConfig reducedMotion="user">
@@ -228,10 +229,24 @@ function PanelDockInner<TView>(props: PanelDockProps<TView>) {
       </MotionConfig>
     </LazyMotion>
   )
-  if (props.wrapTabDnd === false) return dock
-  return <TabDndRoot handlers={props.tabDnd}>{dock}</TabDndRoot>
+  return dock
 }
 
-export const PanelDock = memo(PanelDockInner) as <TView>(
+function PanelDockWithDnd<TView>(props: PanelDockProps<TView>) {
+  const { tabDnd, ...dockProps } = props
+  return (
+    <TabDndRoot handlers={tabDnd}>
+      <PanelDockInner {...dockProps} />
+    </TabDndRoot>
+  )
+}
+
+/** Self-contained dock that owns its `TabDndRoot`. */
+export const PanelDock = memo(PanelDockWithDnd) as <TView>(
   props: PanelDockProps<TView>,
+) => ReactNode
+
+/** Dock layout for callers that already provide the surrounding DnD context. */
+export const PanelDockInDnd = memo(PanelDockInner) as <TView>(
+  props: PanelDockInDndProps<TView>,
 ) => ReactNode

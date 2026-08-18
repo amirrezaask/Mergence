@@ -26,7 +26,7 @@ import type {
   ToolUseId,
 } from "@yaade/rpc";
 import { ExistingWorktreeCheckout, MainCheckout } from "@yaade/rpc";
-import { SidebarShell, cn, yaadeMotion } from "@yaade/ui";
+import { SidebarShell, cn, yaadeMotion } from "@yaade/ui/session";
 import {
   Button,
   DropdownMenu,

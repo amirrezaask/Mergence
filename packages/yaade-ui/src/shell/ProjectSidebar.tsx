@@ -29,7 +29,10 @@ export type ProjectSidebarProps = {
   activeProjectId?: string | null
   onSelectProject: (project: ProjectSidebarProject) => void
   onOpenSettings: () => void
-  renderAddProject: (compact: boolean) => ReactNode
+  /** Expanded add-project control. Compose the control instead of branching on sidebar state. */
+  addProject: ReactNode
+  /** Optional icon-only control used when the sidebar is collapsed. */
+  compactAddProject?: ReactNode
   loading?: boolean
   error?: string | null
   onRetry?: () => void
@@ -46,7 +49,8 @@ export function ProjectSidebar({
   activeProjectId = null,
   onSelectProject,
   onOpenSettings,
-  renderAddProject,
+  addProject,
+  compactAddProject = addProject,
   loading = false,
   error = null,
   onRetry,
@@ -94,11 +98,11 @@ export function ProjectSidebar({
             </span>
           </div>
           <div className="group-data-[collapsible=icon]:hidden">
-            {renderAddProject(false)}
+            {addProject}
           </div>
         </div>
         <div className="hidden group-data-[collapsible=icon]:block">
-          {renderAddProject(true)}
+          {compactAddProject}
         </div>
       </SidebarHeader>
 

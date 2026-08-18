@@ -1,3 +1,4 @@
+import { expect } from "@playwright/test"
 import { resolve } from "node:path"
 import { launchWeb } from "../shell/launch-web.js"
 import type { LaunchShellResult, ShellDriver } from "../shell/driver.js"
@@ -67,7 +68,7 @@ export async function launchJet(
 
 /** Wait for the primary Tool Session shell and its test bridge. */
 export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise<void> {
-  await page.waitForSelector('[data-yaade-shell="tool-session"]', {
+  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible({
     timeout: timeoutMs,
   })
   await page.evaluate(() => window.__yaadeAgent!.waitForReady())
@@ -79,12 +80,15 @@ async function openMuxTerminal(
   timeoutMs = 15_000,
 ): Promise<void> {
   const terminal = page.locator("[data-yaade-terminal-panel]")
-  if ((await terminal.count()) > 0) return
+  if ((await terminal.count()) > 0) {
+    await expect(terminal).toBeVisible({ timeout: timeoutMs })
+    return
+  }
 
   const launcher = page.locator('[data-yaade-empty-tool="terminal"]')
-  await launcher.waitFor({ state: "visible", timeout: timeoutMs })
+  await expect(launcher).toBeVisible({ timeout: timeoutMs })
   await launcher.click()
-  await terminal.waitFor({ state: "visible", timeout: timeoutMs })
+  await expect(terminal).toBeVisible({ timeout: timeoutMs })
 }
 
 export async function focusTerminal(page: ShellDriver): Promise<void> {
@@ -102,9 +106,9 @@ export async function focusTerminal(page: ShellDriver): Promise<void> {
 
 export async function showTerminal(page: ShellDriver): Promise<void> {
   await waitForMux(page)
-  await page.waitForSelector("[data-yaade-terminal-panel] [data-ghostty-terminal-canvas]", {
-    timeout: 30_000,
-  })
+  await expect(
+    page.locator("[data-yaade-terminal-panel] [data-ghostty-terminal-canvas]"),
+  ).toBeVisible({ timeout: 30_000 })
 }
 
 function modChord(): "Meta" | "Control" {

@@ -74,14 +74,14 @@ export type ProjectWorkspaceSidebarProps = {
   gitHistoryLoading?: boolean
   gitHistoryError?: string | null
   onNewGitWorktree: () => void
-  processes: readonly ProjectWorkspaceSidebarProcess[]
   searches?: readonly ProjectWorkspaceSidebarSearch[]
   onNewSearch?: () => void
   onOpenHq: () => void
   onOpenSettings: () => void
   /** Single Running launcher (+ shell & agent providers). */
   launcher?: ReactNode
-  showProcesses?: boolean
+  /** Omit this slot to compose a workspace without the Running section. */
+  processes?: readonly ProjectWorkspaceSidebarProcess[]
   loading?: boolean
   error?: string | null
   footer?: ReactNode
@@ -381,7 +381,6 @@ export function ProjectWorkspaceSidebar({
   onOpenHq,
   onOpenSettings,
   launcher,
-  showProcesses = true,
   loading,
   error,
   footer,
@@ -443,7 +442,7 @@ export function ProjectWorkspaceSidebar({
             <SidebarSeparator />
           </>
         ) : null}
-        {showProcesses ? (
+        {processes ? (
           <ProcessGroup
             items={processes}
             loading={loading}

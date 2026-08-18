@@ -31,6 +31,12 @@ export type ToolRevisionGap = {
   readonly actualRevision: number
 }
 
+export type ToolStoreRevisionSnapshot = {
+  readonly sessions: ReadonlyMap<SessionId, number>
+  readonly tabs: ReadonlyMap<SessionTabId, number>
+  readonly uses: ReadonlyMap<ToolUseId, number>
+}
+
 function fallbackTab(session: AppSession): SessionTab {
   const id = Schema.decodeUnknownSync(SessionTabId)(`tab-${session.id.slice(4)}`)
   return SessionTab.make({
@@ -70,6 +76,135 @@ export class ToolSessionStore {
 
   getSnapshot = (): ToolStoreSnapshot => this.snapshot
 
+  captureRevisions(): ToolStoreRevisionSnapshot {
+    return {
+      sessions: new Map(
+        [...this.sessionsById].map(([id, value]) => [id, value.revision ?? 0]),
+      ),
+      tabs: new Map(
+        [...this.tabsById].map(([id, value]) => [id, value.revision ?? 0]),
+      ),
+      uses: new Map(
+        [...this.usesById].map(([id, value]) => [id, value.revision]),
+      ),
+    }
+  }
+
+  /**
+   * Apply an authoritative snapshot without allowing a response that was
+   * started earlier to overwrite newer realtime events. Entities changed
+   * during the request are retained when the response omits or regresses them.
+   */
+  mergeSnapshot(
+    sessions: readonly AppSession[],
+    uses: readonly ToolUse[],
+    tabs: readonly SessionTab[],
+    hasTabs: boolean,
+    baseline: ToolStoreRevisionSnapshot,
+  ): void {
+    const previousSessions = this.sessionsById
+    const previousTabs = this.tabsById
+    const previousUses = this.usesById
+    const incomingSessions = new Map(sessions.map(value => [value.id, value]))
+    const nextSessions = new Map<SessionId, AppSession>()
+    for (const [id, incoming] of incomingSessions) {
+      const current = this.sessionsById.get(id)
+      nextSessions.set(
+        id,
+        current && (current.revision ?? 0) > (incoming.revision ?? 0)
+          ? current
+          : incoming,
+      )
+    }
+    for (const [id, current] of this.sessionsById) {
+      if (incomingSessions.has(id)) continue
+      if ((current.revision ?? 0) > (baseline.sessions.get(id) ?? 0)) {
+        nextSessions.set(id, current)
+      }
+    }
+
+    const incomingTabs = new Map(tabs.map(value => [value.id, value]))
+    const nextTabs = hasTabs ? new Map<SessionTabId, SessionTab>() : new Map(this.tabsById)
+    if (hasTabs) {
+      for (const [id, incoming] of incomingTabs) {
+        const current = this.tabsById.get(id)
+        nextTabs.set(
+          id,
+          current && (current.revision ?? 0) > (incoming.revision ?? 0)
+            ? current
+            : incoming,
+        )
+      }
+      for (const [id, current] of this.tabsById) {
+        if (incomingTabs.has(id)) continue
+        if ((current.revision ?? 0) > (baseline.tabs.get(id) ?? 0)) {
+          nextTabs.set(id, current)
+        }
+      }
+    }
+
+    for (const session of nextSessions.values()) {
+      const hasVisibleTab = [...nextTabs.values()].some(
+        tab => tab.sessionId === session.id && !tab.archivedAt,
+      )
+      if (!hasVisibleTab) {
+        const fallback = fallbackTab(session)
+        nextTabs.set(fallback.id, fallback)
+      }
+    }
+
+    const incomingUses = new Map(uses.map(value => [value.id, value]))
+    const nextUses = new Map<ToolUseId, ToolUse>()
+    for (const [id, incoming] of incomingUses) {
+      const current = this.usesById.get(id)
+      nextUses.set(
+        id,
+        current && current.revision > incoming.revision ? current : incoming,
+      )
+    }
+    for (const [id, current] of this.usesById) {
+      if (incomingUses.has(id)) continue
+      if (current.revision > (baseline.uses.get(id) ?? 0)) {
+        nextUses.set(id, current)
+      }
+    }
+
+    this.sessionsById = nextSessions
+    this.tabsById = nextTabs
+    this.usesById = nextUses
+    for (const [id, value] of nextSessions) {
+      this.revisions.set(`session:${id}`, Math.max(this.revisions.get(`session:${id}`) ?? 0, value.revision ?? 0))
+    }
+    for (const [id, value] of nextTabs) {
+      this.revisions.set(`tab:${id}`, Math.max(this.revisions.get(`tab:${id}`) ?? 0, value.revision ?? 0))
+    }
+    for (const [id, value] of nextUses) {
+      this.revisions.set(`use:${id}`, Math.max(this.revisions.get(`use:${id}`) ?? 0, value.revision))
+    }
+    for (const [id, revision] of baseline.sessions) {
+      this.revisions.set(`session:${id}`, Math.max(this.revisions.get(`session:${id}`) ?? 0, revision))
+    }
+    for (const [id, revision] of baseline.tabs) {
+      this.revisions.set(`tab:${id}`, Math.max(this.revisions.get(`tab:${id}`) ?? 0, revision))
+    }
+    for (const [id, revision] of baseline.uses) {
+      this.revisions.set(`use:${id}`, Math.max(this.revisions.get(`use:${id}`) ?? 0, revision))
+    }
+    this.rebuildVisibleSessions()
+    this.rebuildVisibleTabs()
+    this.reconcileSelection()
+    this.notifyMapChanges(previousSessions, nextSessions, this.sessionListeners)
+    this.notifyMapChanges(previousTabs, nextTabs, this.tabListeners)
+    this.notifyMapChanges(previousUses, nextUses, this.useListeners)
+    this.publish()
+  }
+
+  replaceToolUseIfNewer(use: ToolUse): void {
+    const current = this.usesById.get(use.id)
+    if (current && current.revision > use.revision) return
+    this.replaceToolUse(use)
+  }
+
   subscribe = (listener: Listener): (() => void) => {
     this.listeners.add(listener)
     return () => this.listeners.delete(listener)
@@ -102,6 +237,13 @@ export class ToolSessionStore {
   }
 
   replaceTab(tab: SessionTab): void {
+    const current = this.tabsById.get(tab.id)
+    if (
+      current &&
+      ((current.revision ?? 0) > (tab.revision ?? 0) ||
+        ((current.revision ?? 0) === (tab.revision ?? 0) &&
+          current.updatedAt > tab.updatedAt))
+    ) return
     this.tabsById = new Map(this.tabsById).set(tab.id, tab)
     this.rebuildVisibleTabs()
     this.reconcileSelection()
@@ -110,6 +252,12 @@ export class ToolSessionStore {
   }
 
   replaceToolUse(use: ToolUse): void {
+    const current = this.usesById.get(use.id)
+    if (
+      current &&
+      (current.revision > use.revision ||
+        (current.revision === use.revision && current.updatedAt > use.updatedAt))
+    ) return
     const sessions = [...this.sessionsById.values()]
     const tabs = [...this.tabsById.values()]
     const uses = [...this.usesById.values()].filter(candidate => candidate.id !== use.id)
@@ -119,12 +267,50 @@ export class ToolSessionStore {
   replaceSession(
     session: AppSession,
     uses: readonly ToolUse[],
-    tabs: readonly SessionTab[] = [],
+    tabs?: readonly SessionTab[],
   ): void {
+    const currentSession = this.sessionsById.get(session.id)
+    const nextSession =
+      currentSession && (currentSession.revision ?? 0) > (session.revision ?? 0)
+        ? currentSession
+        : session
     const sessions = [...this.sessionsById.values()].filter(candidate => candidate.id !== session.id)
     const existingUses = [...this.usesById.values()].filter(candidate => candidate.sessionId !== session.id)
+    const incomingUses = new Map(uses.map(value => [value.id, value]))
+    for (const current of this.usesById.values()) {
+      if (current.sessionId !== session.id || incomingUses.has(current.id)) continue
+      if (current.archivedAt) incomingUses.set(current.id, current)
+    }
+    for (const incoming of uses) {
+      const current = this.usesById.get(incoming.id)
+      if (current && current.revision > incoming.revision) {
+        incomingUses.set(incoming.id, current)
+      }
+    }
     const existingTabs = [...this.tabsById.values()].filter(candidate => candidate.sessionId !== session.id)
-    this.replace([...sessions, session], [...existingUses, ...uses], [...existingTabs, ...tabs])
+    const incomingTabs = new Map((tabs ?? []).map(value => [value.id, value]))
+    for (const current of this.tabsById.values()) {
+      if (current.sessionId !== session.id) continue
+      // A legacy host may omit tabs entirely. Retain the local normalized tabs
+      // in that case; an explicit empty array remains authoritative.
+      if (tabs === undefined) {
+        incomingTabs.set(current.id, current)
+        continue
+      }
+      if (incomingTabs.has(current.id)) continue
+      if (current.archivedAt) incomingTabs.set(current.id, current)
+    }
+    for (const incoming of tabs ?? []) {
+      const current = this.tabsById.get(incoming.id)
+      if (current && (current.revision ?? 0) > (incoming.revision ?? 0)) {
+        incomingTabs.set(incoming.id, current)
+      }
+    }
+    this.replace(
+      [...sessions, nextSession],
+      [...existingUses, ...incomingUses.values()],
+      [...existingTabs, ...incomingTabs.values()],
+    )
   }
 
   setConnection(connection: ToolStoreSnapshot["connection"]): void {
@@ -139,6 +325,9 @@ export class ToolSessionStore {
     uses: readonly ToolUse[],
     tabs: readonly SessionTab[] = [],
   ): void {
+    const previousSessions = this.sessionsById
+    const previousTabs = this.tabsById
+    const previousUses = this.usesById
     this.sessionsById = new Map(sessions.map(session => [session.id, session]))
     this.visibleSessionIds = sessions
       .filter(session => !session.archivedAt)
@@ -164,8 +353,20 @@ export class ToolSessionStore {
     }
 
     this.usesById = new Map(uses.map(use => [use.id, use]))
+    for (const session of sessions) {
+      this.revisions.set(`session:${session.id}`, Math.max(this.revisions.get(`session:${session.id}`) ?? 0, session.revision ?? 0))
+    }
+    for (const tab of tabs) {
+      this.revisions.set(`tab:${tab.id}`, Math.max(this.revisions.get(`tab:${tab.id}`) ?? 0, tab.revision ?? 0))
+    }
+    for (const use of uses) {
+      this.revisions.set(`use:${use.id}`, Math.max(this.revisions.get(`use:${use.id}`) ?? 0, use.revision))
+    }
     this.rebuildUseIndexes()
     this.reconcileSelection()
+    this.notifyMapChanges(previousSessions, this.sessionsById, this.sessionListeners)
+    this.notifyMapChanges(previousTabs, this.tabsById, this.tabListeners)
+    this.notifyMapChanges(previousUses, this.usesById, this.useListeners)
     this.publish()
   }
 
@@ -203,23 +404,19 @@ export class ToolSessionStore {
     let entityKey: string | undefined
     let entity: ToolRevisionGap["entity"] | undefined
     let entityId: SessionId | SessionTabId | ToolUseId | undefined
-    let entityUpdatedAt: string | undefined
 
     if (event._tag === "SessionTabCreated" || event._tag === "SessionTabUpdated" || event._tag === "SessionTabArchived") {
       entityKey = `tab:${event.tab.id}`
       entity = "tab"
       entityId = event.tab.id
-      entityUpdatedAt = event.tab.updatedAt
     } else if ("toolUseId" in event) {
       entityKey = `use:${event.toolUseId}`
       entity = "toolUse"
       entityId = event.toolUseId
-      entityUpdatedAt = "toolUse" in event ? event.toolUse.updatedAt : event.occurredAt
     } else if ("session" in event) {
       entityKey = `session:${event.session.id}`
       entity = "session"
       entityId = event.session.id
-      entityUpdatedAt = event.session.updatedAt
     }
 
     const current = entity === "tab" && entityId
@@ -235,10 +432,10 @@ export class ToolSessionStore {
           current?.revision ?? 0,
         )
       : 0
-    if (
-      entityKey && knownRevision >= event.revision &&
-      (!current || !entityUpdatedAt || current.updatedAt >= entityUpdatedAt)
-    ) return
+    // Revisions are the authoritative ordering. Wall-clock timestamps can
+    // differ between host processes, so never let a lower/equal revision
+    // regress an entity merely because its timestamp looks newer.
+    if (entityKey && knownRevision >= event.revision) return
     if (
       entityKey &&
       entity &&
@@ -262,12 +459,16 @@ export class ToolSessionStore {
       case "SessionRestored":
         this.sessionsById = new Map(this.sessionsById).set(event.session.id, event.session)
         this.rebuildVisibleSessions()
-        if (event.session.id === this.activeSessionId && event.session.activeTabId) {
+        this.notify(this.sessionListeners, event.session.id)
+        if (event.session.id === this.activeSessionId) {
           const tabIds = this.visibleTabIdsBySession.get(event.session.id) ?? []
-          if (tabIds.includes(event.session.activeTabId)) {
-            this.activeTabId = event.session.activeTabId
-            this.activeToolUseId = this.selectedUseForTab(event.session.activeTabId)
-          }
+          const nextTabId = event.session.activeTabId && tabIds.includes(event.session.activeTabId)
+            ? event.session.activeTabId
+            : this.selectedTabForSession(event.session.id)
+          this.activeTabId = nextTabId
+          this.activeToolUseId = nextTabId
+            ? this.selectedUseForTab(nextTabId)
+            : undefined
         }
         break
       case "SessionTabCreated":
@@ -276,11 +477,17 @@ export class ToolSessionStore {
         this.tabsById = new Map(this.tabsById).set(event.tab.id, event.tab)
         this.rebuildVisibleTabs()
         this.notify(this.tabListeners, event.tab.id)
+        if (this.activeTabId === event.tab.id) {
+          this.activeToolUseId = this.selectedUseForTab(event.tab.id)
+        }
         break
       case "ToolUseCreated":
-      case "ToolUseUpdated":
+      case "ToolUseUpdated": {
+        const currentUse = this.usesById.get(event.toolUse.id)
+        if (currentUse?.archivedAt && !event.toolUse.archivedAt) break
         this.upsertUse(event.toolUse)
         break
+      }
       case "ToolUseOutputChanged": {
         const use = this.usesById.get(event.toolUseId)
         if (use) this.upsertUse({ ...use, output: event.output, revision: event.revision, updatedAt: event.occurredAt })
@@ -477,5 +684,16 @@ export class ToolSessionStore {
 
   private notify<K>(map: Map<K, Set<Listener>>, key: K): void {
     for (const listener of map.get(key) ?? []) listener()
+  }
+
+  private notifyMapChanges<K, V>(
+    previous: ReadonlyMap<K, V>,
+    next: ReadonlyMap<K, V>,
+    listeners: Map<K, Set<Listener>>,
+  ): void {
+    const keys = new Set([...previous.keys(), ...next.keys()])
+    for (const key of keys) {
+      if (previous.get(key) !== next.get(key)) this.notify(listeners, key)
+    }
   }
 }

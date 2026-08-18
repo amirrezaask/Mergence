@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type {
   AppNotification,
   ListNotificationsRequest,
@@ -210,38 +210,41 @@ export function useNotificationCenter(): NotificationCenterState {
     }
   }, [refresh])
 
-  const openFiltered: NotificationCenterState["openFiltered"] = opts => {
-    setProjectId(opts.projectId ?? null)
-    setSessionId(opts.sessionId ?? null)
-    if (opts.filter) setFilter(opts.filter)
-    setOpen(true)
-  }
+  const openFiltered = useCallback<NotificationCenterState["openFiltered"]>(
+    opts => {
+      setProjectId(opts.projectId ?? null)
+      setSessionId(opts.sessionId ?? null)
+      if (opts.filter) setFilter(opts.filter)
+      setOpen(true)
+    },
+    [],
+  )
 
-  const markRead = async (id: string) => {
+  const markRead = useCallback(async (id: string) => {
     await notificationsApi()?.markRead(id)
     await refresh()
-  }
-  const markUnread = async (id: string) => {
+  }, [refresh])
+  const markUnread = useCallback(async (id: string) => {
     await notificationsApi()?.markUnread(id)
     await refresh()
-  }
-  const markSessionRead = async (sessionId: string) => {
+  }, [refresh])
+  const markSessionRead = useCallback(async (sessionId: string) => {
     await notificationsApi()?.markAllRead({ sessionId })
     await refresh()
-  }
-  const markSessionUnread = async (sessionId: string) => {
+  }, [refresh])
+  const markSessionUnread = useCallback(async (sessionId: string) => {
     await notificationsApi()?.markSessionUnread(sessionId)
     await refresh()
-  }
-  const dismiss = async (id: string) => {
+  }, [refresh])
+  const dismiss = useCallback(async (id: string) => {
     await notificationsApi()?.dismiss(id)
     await refresh()
-  }
-  const acknowledge = async (id: string) => {
+  }, [refresh])
+  const acknowledge = useCallback(async (id: string) => {
     await notificationsApi()?.acknowledge(id)
     await refresh()
-  }
-  const markAllVisibleRead = async () => {
+  }, [refresh])
+  const markAllVisibleRead = useCallback(async () => {
     await notificationsApi()?.markAllRead({
       onlyVisible: true,
       filter,
@@ -250,46 +253,92 @@ export function useNotificationCenter(): NotificationCenterState {
       query: debouncedQuery || undefined,
     })
     await refresh()
-  }
+  }, [debouncedQuery, filter, projectId, refresh, sessionId])
 
-  return {
-    open,
-    setOpen: next => {
-      if (!next) {
-        setProjectId(null)
-        setSessionId(null)
-      }
-      setOpen(next)
-    },
-    openFiltered,
-    items,
-    recentItems,
-    counts,
-    unreadBySession,
-    filter,
-    setFilter,
-    query,
-    setQuery,
-    projectId,
-    sessionId,
-    loading,
-    error,
-    prefs,
-    selectedId,
-    setSelectedId,
-    refresh,
-    markRead,
-    markUnread,
-    markSessionRead,
-    markSessionUnread,
-    dismiss,
-    acknowledge,
-    markAllVisibleRead,
-    ingestForTests: req => notificationsApi()!.ingest(req),
-    bindSession: async req => {
+  const setOpenState = useCallback((next: boolean) => {
+    if (!next) {
+      setProjectId(null)
+      setSessionId(null)
+    }
+    setOpen(next)
+  }, [])
+
+  const ingestForTests = useCallback(
+    (req: import("@yaade/shared").IngestNotificationRequest) =>
+      notificationsApi()!.ingest(req),
+    [],
+  )
+  const bindSession = useCallback(
+    async (req: import("@yaade/shared").BindNotificationSessionRequest) => {
       await notificationsApi()?.bindSession(req)
     },
-    viewingSessionId,
-    setViewingSessionId,
-  }
+    [],
+  )
+
+  return useMemo<NotificationCenterState>(
+    () => ({
+      open,
+      setOpen: setOpenState,
+      openFiltered,
+      items,
+      recentItems,
+      counts,
+      unreadBySession,
+      filter,
+      setFilter,
+      query,
+      setQuery,
+      projectId,
+      sessionId,
+      loading,
+      error,
+      prefs,
+      selectedId,
+      setSelectedId,
+      refresh,
+      markRead,
+      markUnread,
+      markSessionRead,
+      markSessionUnread,
+      dismiss,
+      acknowledge,
+      markAllVisibleRead,
+      ingestForTests,
+      bindSession,
+      viewingSessionId,
+      setViewingSessionId,
+    }),
+    [
+      acknowledge,
+      bindSession,
+      counts,
+      dismiss,
+      error,
+      filter,
+      ingestForTests,
+      items,
+      loading,
+      markAllVisibleRead,
+      markRead,
+      markSessionRead,
+      markSessionUnread,
+      markUnread,
+      open,
+      openFiltered,
+      prefs,
+      projectId,
+      query,
+      recentItems,
+      refresh,
+      selectedId,
+      sessionId,
+      setFilter,
+      setOpenState,
+      setQuery,
+      setSelectedId,
+      setViewingSessionId,
+      unreadBySession,
+      viewingSessionId,
+    ],
+  )
 }

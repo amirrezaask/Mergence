@@ -1,6 +1,6 @@
 import { GitBranch, Terminal } from "lucide-react";
 import type { AppSession, ToolKind, ToolUse, ToolUseId } from "@yaade/rpc";
-import { formatKeyBinding, PaletteShell, type PaletteShellItem } from "@yaade/ui";
+import { formatKeyBinding, PaletteShell, type PaletteShellItem } from "@yaade/ui/session";
 import { toolUseContextCaption, toolUseWorkTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { toolSessionShortcutFor } from "./tool-session-keymap.js";
 

@@ -39,7 +39,7 @@ import {
   isTabDragData,
   type DockDragData,
 } from "./tab-dnd-types.js"
-import { PanelDragProvider, usePanelDrag } from "./PanelDragContext.js"
+import { PanelDragProvider, usePanelDragActions } from "./PanelDragContext.js"
 
 export type TabDndHandlers = {
   onTabReorder: (panelId: PanelId, tabId: string, toIndex: number) => void
@@ -161,7 +161,7 @@ type OverlaySnapshot = {
 }
 
 function TabDndInner({ children, handlers }: TabDndInnerProps) {
-  const drag = usePanelDrag()
+  const drag = usePanelDragActions()
   const [activeDrag, setActiveDrag] = useState<DockDragData | null>(null)
   const dropHotRef = useRef<DropHotState>(null)
   const dropAnimTargetRef = useRef<DropAnimTarget | null>(null)

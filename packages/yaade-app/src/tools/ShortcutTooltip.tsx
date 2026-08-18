@@ -1,5 +1,5 @@
 import type { ReactElement } from "react";
-import { KeyBindingKbd } from "@yaade/ui";
+import { KeyBindingKbd } from "@yaade/ui/session";
 import {
   Tooltip,
   TooltipContent,

@@ -1,36 +1,28 @@
-import { expect, test } from "@playwright/test"
-import { launchJet } from "./_launch.js"
+import { expect } from "@playwright/test"
+import { test } from "../fixtures/e2e.js"
 
 test.describe("release build branding", () => {
-  test("serves release favicon and omits the DEV badge", async () => {
-    const { app, page } = await launchJet({ withTerminal: false })
-    try {
-      const branding = await page.evaluate(() => {
-        const icon = document.querySelector('link[rel="icon"]')?.getAttribute("href")
-        const apple = document
-          .querySelector('link[rel="apple-touch-icon"]')
-          ?.getAttribute("href")
-        return {
-          title: document.title,
-          icon: icon ?? null,
-          apple: apple ?? null,
-          badgeCount: document.querySelectorAll("[data-yaade-build-badge]").length,
-        }
-      })
+  test("serves release favicon and omits the DEV badge", async ({ launchApp }) => {
+    const { page } = await launchApp()
 
-      expect(branding.icon).toBe("/favicon.png")
-      expect(branding.apple).toBe("/apple-touch-icon.png")
-      expect(branding.badgeCount).toBe(0)
-      expect(branding.title.startsWith("DEV · ")).toBe(false)
+    await expect(page.locator('link[rel="icon"]')).toHaveAttribute(
+      "href",
+      "/favicon.png",
+    )
+    await expect(page.locator('link[rel="apple-touch-icon"]')).toHaveAttribute(
+      "href",
+      "/apple-touch-icon.png",
+    )
+    await expect(page.locator("[data-yaade-build-badge]")).toHaveCount(0)
 
-      const favicon = await page.evaluate(async () => {
-        const res = await fetch("/favicon.png")
-        return { ok: res.ok, status: res.status }
-      })
-      expect(favicon.ok).toBe(true)
-      expect(favicon.status).toBe(200)
-    } finally {
-      await app.close()
-    }
+    const title = await page.evaluate(() => document.title)
+    expect(title.startsWith("DEV · ")).toBe(false)
+
+    const favicon = await page.evaluate(async () => {
+      const res = await fetch("/favicon.png")
+      return { ok: res.ok, status: res.status }
+    })
+    expect(favicon.ok).toBe(true)
+    expect(favicon.status).toBe(200)
   })
 })

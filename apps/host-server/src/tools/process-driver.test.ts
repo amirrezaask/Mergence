@@ -178,6 +178,63 @@ describe("process Tool driver", () => {
     }
   });
 
+  it("archives a live terminal by stopping its PTY and clearing focus", async () => {
+    const { host, parent, projectRoot } = await hostWithProject();
+    try {
+      const project = host.runtime.db
+        .projects()
+        .find((item) => item.rootPath === projectRoot);
+      assert.ok(project);
+      const session = host.runtime.toolSessions.listSessions()[0];
+      assert.ok(session);
+      const created = Schema.decodeUnknownSync(ToolUse)(
+        await dispatchPromise(
+          host.runtime,
+          "tools:createUse",
+          [
+            CreateToolUse.make({
+              sessionId: session.id,
+              kind: "terminal",
+              project: ProjectTarget.make({
+                projectId: project.id,
+                projectPath: project.rootPath,
+                projectName: project.name,
+              }),
+              checkout: MainCheckout.make({ kind: "main" }),
+              input: TerminalToolInput.make({ kind: "terminal" }),
+            }),
+          ],
+          "process-archive-test",
+        ),
+      );
+      await waitFor(() => {
+        const use = host.runtime.toolSessions.getToolUse(created.id);
+        return use?.status === "running" && use.output.kind === "process" && Boolean(use.output.ptyId);
+      });
+      const running = host.runtime.toolSessions.getToolUse(created.id);
+      assert.ok(running);
+      assert.equal(running.output.kind, "process");
+      if (running.output.kind !== "process" || !running.output.ptyId) return;
+      const archived = Schema.decodeUnknownSync(ToolUse)(
+        await dispatchPromise(
+          host.runtime,
+          "tools:archiveUse",
+          [{ _tag: "ArchiveToolUse", toolUseId: running.id }],
+          "process-archive-test",
+        ),
+      );
+      assert.ok(archived.archivedAt);
+      assert.equal(host.runtime.terminal.inspect(running.output.ptyId), null);
+      assert.equal(host.runtime.terminalInstances.get(running.output.terminalInstanceId), null);
+      assert.equal(host.runtime.toolSessions.getSession(session.id)?.activeToolUseId, undefined);
+      const tab = host.runtime.toolSessions.listTabs(session.id)[0];
+      assert.equal(tab?.activeToolUseId, undefined);
+    } finally {
+      await host.close();
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
   it("restarts a TerminalToolUse with a new generation and live PTY", async () => {
     const { host, parent, projectRoot } = await hostWithProject();
     try {
@@ -286,6 +343,27 @@ describe("process Tool driver", () => {
       assert.equal(running.output.kind, "process");
       const firstPty =
         running.output.kind === "process" ? running.output.ptyId : undefined;
+      await assert.rejects(
+        dispatchPromise(
+          host.runtime,
+          "tools:updateUseContext",
+          [
+            {
+              _tag: "UpdateToolUseContext",
+              toolUseId: running.id,
+              revision: running.revision - 1,
+              project: ProjectTarget.make({
+                projectId: secondProject.id,
+                projectPath: secondProject.rootPath,
+                projectName: secondProject.name,
+              }),
+              checkout: MainCheckout.make({ kind: "main" }),
+            },
+          ],
+          "process-context-test",
+        ),
+        /revision conflict/,
+      );
       const updated = Schema.decodeUnknownSync(ToolUse)(
         await dispatchPromise(
           host.runtime,
@@ -294,7 +372,7 @@ describe("process Tool driver", () => {
             {
               _tag: "UpdateToolUseContext",
               toolUseId: running.id,
-              revision: 0,
+              revision: running.revision,
               project: ProjectTarget.make({
                 projectId: secondProject.id,
                 projectPath: secondProject.rootPath,
@@ -314,6 +392,60 @@ describe("process Tool driver", () => {
     } finally {
       await host.close();
       fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("marks persisted live tools disconnected after a host restart", async () => {
+    const first = await hostWithProject();
+    let currentHost = first.host;
+    try {
+      const project = currentHost.runtime.db
+        .projects()
+        .find((item) => item.rootPath === first.projectRoot);
+      assert.ok(project);
+      const session = currentHost.runtime.toolSessions.listSessions()[0];
+      assert.ok(session);
+      const created = Schema.decodeUnknownSync(ToolUse)(
+        await dispatchPromise(
+          currentHost.runtime,
+          "tools:createUse",
+          [
+            CreateToolUse.make({
+              sessionId: session.id,
+              kind: "terminal",
+              project: ProjectTarget.make({
+                projectId: project.id,
+                projectPath: project.rootPath,
+                projectName: project.name,
+              }),
+              checkout: MainCheckout.make({ kind: "main" }),
+              input: TerminalToolInput.make({ kind: "terminal" }),
+            }),
+          ],
+          "process-restart-reconcile-test",
+        ),
+      );
+      await waitFor(() => currentHost.runtime.toolSessions.getToolUse(created.id)?.status === "running");
+
+      await currentHost.close();
+      const config = await loadConfig([
+        "--host", "127.0.0.1",
+        "--port", "0",
+        "--data-dir", path.join(first.parent, "data"),
+        "--allowed-roots", first.parent,
+        first.projectRoot,
+      ]);
+      currentHost = await startHostServer(config);
+      const disconnected = currentHost.runtime.toolSessions.getToolUse(created.id);
+      assert.equal(disconnected?.status, "disconnected");
+      assert.equal(disconnected?.output.kind, "process");
+      if (disconnected?.output.kind === "process") {
+        assert.equal(disconnected.output.processState, "disconnected");
+        assert.equal(disconnected.output.ptyId, undefined);
+      }
+    } finally {
+      await currentHost.close();
+      fs.rmSync(first.parent, { recursive: true, force: true });
     }
   });
 

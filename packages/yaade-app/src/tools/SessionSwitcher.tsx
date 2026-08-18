@@ -7,7 +7,7 @@ import {
   X,
 } from "lucide-react"
 import type { AppSession, SessionId } from "@yaade/rpc"
-import { cn, formatKeyBinding } from "@yaade/ui"
+import { cn, formatKeyBinding } from "@yaade/ui/session"
 import {
   Button,
   Input,

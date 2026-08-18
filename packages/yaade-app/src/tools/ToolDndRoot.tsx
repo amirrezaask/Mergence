@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { TabDndRoot, type TabDndHandlers } from "@yaade/ui";
+import { TabDndRoot, type TabDndHandlers } from "@yaade/ui/session";
 
 export type ToolDndRootProps = {
   readonly handlers: TabDndHandlers;

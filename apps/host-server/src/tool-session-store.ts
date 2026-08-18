@@ -3,6 +3,7 @@ import { Data, Schema } from "effect";
 import {
   AppSession,
   SessionTab,
+  SessionTabConflict,
   SessionTabId,
   GitToolInput,
   GitToolOutput,
@@ -87,6 +88,23 @@ const tabId = (): string => `tab-${randomUUID()}`;
 const toolUseId = (): string => `use-${randomUUID()}`;
 const ToolUseInputSchema = Schema.Union(TerminalToolInput, GitToolInput);
 const ToolUseOutputSchema = Schema.Union(ProcessToolOutput, GitToolOutput);
+
+function assertPermutation(
+  actual: readonly string[],
+  expected: readonly string[],
+  label: string,
+): void {
+  const expectedSet = new Set(expected);
+  if (
+    actual.length !== expected.length ||
+    new Set(actual).size !== actual.length ||
+    actual.some(id => !expectedSet.has(id))
+  ) {
+    throw new ToolSessionStorageError({
+      message: `invalid ${label} order`,
+    });
+  }
+}
 
 function decodeJson<A>(
   schema: Schema.Schema<A>,
@@ -720,17 +738,55 @@ export class ToolSessionStore {
     return this.getTab(id) as SessionTab;
   }
 
-  saveTabLayout(id: SessionTabId, layoutJson: string): SessionTab {
+  saveTabLayout(
+    id: SessionTabId,
+    layoutJson: string,
+    expectedRevision?: number,
+  ): SessionTab {
     const current = this.getTab(id);
     if (!current)
       throw new ToolSessionStorageError({ message: `tab not found: ${id}` });
-    this.db
-      .prepare("UPDATE app_tabs SET layout_json=?,updated_at=?,revision=revision+1 WHERE id=?")
-      .run(layoutJson, now(), id);
+    if (current.archivedAt)
+      throw new ToolSessionStorageError({ message: `tab is archived: ${id}` });
+    if (
+      expectedRevision !== undefined &&
+      current.revision !== expectedRevision
+    ) {
+      throw new SessionTabConflict({
+        tabId: id,
+        expectedRevision,
+        actualRevision: current.revision ?? 1,
+        message: `tab revision conflict: ${id}`,
+      });
+    }
+    const result = this.db
+      .prepare(
+        `UPDATE app_tabs SET layout_json=?,updated_at=?,revision=revision+1
+         WHERE id=?${expectedRevision === undefined ? "" : " AND revision=?"}`,
+      )
+      .run(
+        ...(expectedRevision === undefined
+          ? [layoutJson, now(), id]
+          : [layoutJson, now(), id, expectedRevision]),
+      );
+    if (Number(result.changes) !== 1) {
+      const latest = this.getTab(id);
+      throw new SessionTabConflict({
+        tabId: id,
+        expectedRevision: expectedRevision ?? current.revision ?? 1,
+        actualRevision: latest?.revision ?? current.revision ?? 1,
+        message: `tab revision conflict: ${id}`,
+      });
+    }
     return this.getTab(id) as SessionTab;
   }
 
   reorderTabs(sessionId: SessionId, ids: readonly SessionTabId[]): SessionTab[] {
+    const session = this.getSession(sessionId);
+    if (!session || session.archivedAt)
+      throw new ToolSessionStorageError({ message: `session not found: ${sessionId}` });
+    const current = this.listTabs(sessionId);
+    assertPermutation(ids, current.map(tab => tab.id), `tabs for ${sessionId}`);
     const update = this.db.prepare(
       "UPDATE app_tabs SET position=?,updated_at=?,revision=revision+1 WHERE id=? AND session_id=?",
     );
@@ -744,6 +800,7 @@ export class ToolSessionStore {
     const current = this.getTab(id);
     if (!current)
       throw new ToolSessionStorageError({ message: `tab not found: ${id}` });
+    if (current.archivedAt) return current;
     const timestamp = now();
     this.db
       .prepare("UPDATE app_tabs SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=?")
@@ -809,6 +866,8 @@ export class ToolSessionStore {
   }
 
   reorderSessions(ids: readonly SessionId[]): AppSession[] {
+    const current = this.listSessions();
+    assertPermutation(ids, current.map(session => session.id), "sessions");
     const update = this.db.prepare(
       "UPDATE app_sessions SET position=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
     );
@@ -819,6 +878,10 @@ export class ToolSessionStore {
   }
 
   archiveSession(id: SessionId): AppSession {
+    const current = this.getSession(id);
+    if (!current)
+      throw new ToolSessionStorageError({ message: `session not found: ${id}` });
+    if (current.archivedAt) return current;
     const timestamp = now();
     this.db
       .prepare(
@@ -851,6 +914,13 @@ export class ToolSessionStore {
   }
 
   setActiveToolUse(session: SessionId, use: ToolUseId | null): AppSession {
+    const currentSession = this.getSession(session);
+    if (!currentSession)
+      throw new ToolSessionStorageError({
+        message: `session not found: ${session}`,
+      });
+
+    let activeTabId = currentSession.activeTabId ?? null;
     if (use) {
       const row = this.db
         .prepare(
@@ -861,17 +931,24 @@ export class ToolSessionStore {
         throw new ToolSessionStorageError({
           message: "active tool use does not belong to session",
         });
-      const tab = row.tab_id ? validSessionTabId(row.tab_id) : this.ensureActiveTab(session).id;
-      this.setActiveTab(session, tab);
+      activeTabId = row.tab_id
+        ? validSessionTabId(row.tab_id)
+        : this.ensureActiveTab(session).id;
+    }
+
+    const timestamp = now();
+    if (activeTabId) {
       this.db
-        .prepare("UPDATE app_tabs SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=?")
-        .run(use, now(), tab);
+        .prepare(
+          "UPDATE app_tabs SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
+        )
+        .run(use, timestamp, activeTabId);
     }
     this.db
       .prepare(
-        "UPDATE app_sessions SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
+        "UPDATE app_sessions SET active_tab_id=?,active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
       )
-      .run(use, now(), session, this.machine);
+      .run(activeTabId, use, timestamp, session, this.machine);
     const result = this.getSession(session);
     if (!result)
       throw new ToolSessionStorageError({
@@ -946,23 +1023,70 @@ export class ToolSessionStore {
   }
 
   reorderToolUses(session: SessionId, ids: readonly ToolUseId[], tabId?: SessionTabId): ToolUse[] {
-    const tab = tabId ?? this.ensureActiveTab(session).id;
+    const sessionRow = this.getSession(session);
+    if (!sessionRow || sessionRow.archivedAt)
+      throw new ToolSessionStorageError({ message: `session not found: ${session}` });
+    const tab = tabId ? this.getTab(tabId) : this.ensureActiveTab(session);
+    if (!tab || tab.sessionId !== session || tab.archivedAt)
+      throw new ToolSessionStorageError({
+        message: `tab does not belong to session: ${tabId ?? "active"}`,
+      });
+    const current = this.listToolUsesByTab(tab.id);
+    assertPermutation(ids, current.map(use => use.id), `tools for ${tab.id}`);
     const update = this.db.prepare(
-      "UPDATE tool_uses SET position=?,updated_at=? WHERE id=? AND session_id=? AND tab_id=?",
+      "UPDATE tool_uses SET position=?,updated_at=?,revision=revision+1 WHERE id=? AND session_id=? AND tab_id=?",
     );
     const timestamp = now();
     for (const [position, id] of ids.entries())
-      update.run(position, timestamp, id, session, tab);
-    return this.listToolUsesByTab(tab);
+      update.run(position, timestamp, id, session, tab.id);
+    return this.listToolUsesByTab(tab.id);
   }
 
   archiveToolUse(id: ToolUseId): ToolUse {
+    const current = this.getToolUse(id);
+    if (!current)
+      throw new ToolSessionStorageError({
+        message: `tool use not found: ${id}`,
+      });
+    if (current.archivedAt) return current;
+
+    const session = this.getSession(current.sessionId);
+    const tab = current.tabId ? this.getTab(current.tabId) : null;
+    const tabWasFocused = tab?.activeToolUseId === id;
+    const sessionWasFocused = session?.activeToolUseId === id;
     const timestamp = now();
     this.db
       .prepare(
         "UPDATE tool_uses SET archived_at=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
       )
       .run(timestamp, timestamp, id);
+
+    // Keep focus durable and valid after a close. The browser still applies its
+    // normal first-visible fallback, but snapshots and reconnects should agree
+    // on the same next use instead of pointing at an archived id or at null.
+    const nextUses = tab
+      ? this.listToolUsesByTab(tab.id)
+      : this.listToolUses(current.sessionId);
+    const nextId = nextUses[0]?.id ?? null;
+    this.db
+      .prepare(
+        "UPDATE app_tabs SET active_tool_use_id=NULL,updated_at=?,revision=revision+1 WHERE active_tool_use_id=?",
+      )
+      .run(timestamp, id);
+    if (tabWasFocused && tab && !tab.archivedAt) {
+      this.db
+        .prepare(
+          "UPDATE app_tabs SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
+        )
+        .run(nextId, timestamp, tab.id);
+    }
+    if (sessionWasFocused) {
+      this.db
+        .prepare(
+          "UPDATE app_sessions SET active_tool_use_id=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=?",
+        )
+        .run(nextId, timestamp, current.sessionId, this.machine);
+    }
     const result = this.getToolUse(id);
     if (!result)
       throw new ToolSessionStorageError({

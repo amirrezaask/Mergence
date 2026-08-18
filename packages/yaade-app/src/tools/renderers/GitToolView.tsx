@@ -1,13 +1,11 @@
-import type { ReactNode } from "react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import { pathToFileUri, type YaadeTheme } from "@yaade/shared";
 import { GitWorkspace } from "@yaade/ui/git";
-import { useIsMobile } from "@yaade/ui";
+import { useIsMobile } from "@yaade/ui/session";
 
 export type GitToolViewProps = {
   readonly use: ToolUse;
   readonly theme: YaadeTheme;
-  readonly toolbar: ReactNode;
   readonly projects: readonly ProjectTarget[];
   readonly onContextChange: (
     project: ProjectTarget,
@@ -23,7 +21,6 @@ export function GitToolView(props: GitToolViewProps) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
-      {props.toolbar}
       <div className="min-h-0 flex-1">
         <GitWorkspace
           rootUri={pathToFileUri(props.use.context.checkoutPath)}

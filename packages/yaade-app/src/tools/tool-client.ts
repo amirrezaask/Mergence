@@ -6,7 +6,10 @@ import type {
   ToolUseId,
 } from "@yaade/rpc"
 import type { JetElectronTools, ToolSessionSnapshot } from "@yaade/workspace"
-import { ToolSessionStore, type ToolRevisionGap } from "./tool-store.js"
+import {
+  ToolSessionStore,
+  type ToolRevisionGap,
+} from "./tool-store.js"
 
 type ToolApi = JetElectronTools
 
@@ -31,6 +34,9 @@ export class ToolClient {
   private disposeEvents: (() => void) | undefined
   private disposed = false
   private reconcilePromise: Promise<void> | undefined
+  private readonly revisionGapHandler = (gap: ToolRevisionGap): void => {
+    void this.reconcileGap(gap)
+  }
 
   constructor(options: ToolClientOptions = {}) {
     this.store = options.store ?? new ToolSessionStore()
@@ -39,12 +45,12 @@ export class ToolClient {
       addEventListener: () => undefined,
       removeEventListener: () => undefined,
     }
-    this.store.setRevisionGapHandler(gap => {
-      void this.reconcileGap(gap)
-    })
+    this.store.setRevisionGapHandler(this.revisionGapHandler)
   }
 
   start(): () => void {
+    this.disposed = false
+    this.store.setRevisionGapHandler(this.revisionGapHandler)
     if (this.disposeEvents) return this.disposeEvents
     const disposeToolEvents = this.api.onEvent(event => this.store.apply(event))
     const onReconnect = () => { void this.reconcile() }
@@ -61,13 +67,16 @@ export class ToolClient {
   }
 
   async hydrate(includeArchived = false): Promise<void> {
+    if (this.disposed) return
+    const baseline = this.store.captureRevisions()
     this.store.setConnection("reconciling")
     try {
       const snapshots = await this.api.listSessions(includeArchived)
-      this.replaceSnapshots(snapshots)
+      if (this.disposed) return
+      this.replaceSnapshots(snapshots, baseline)
       this.store.setConnection("connected")
     } catch (error) {
-      this.store.setConnection("offline")
+      if (!this.disposed) this.store.setConnection("offline")
       throw error
     }
   }
@@ -75,44 +84,61 @@ export class ToolClient {
   async reconcileSession(sessionId: SessionId): Promise<void> {
     if (this.disposed) return
     const snapshot = await this.api.getSession(sessionId)
-    if (!snapshot) return
-    this.store.replaceSession(snapshot.session, snapshot.toolUses, snapshot.tabs ?? [])
+    if (!snapshot || this.disposed) return
+    this.store.replaceSession(
+      snapshot.session,
+      snapshot.toolUses,
+      snapshot.tabs,
+    )
   }
 
   async reconcile(): Promise<void> {
     if (this.disposed) return
     if (this.reconcilePromise) return this.reconcilePromise
-    this.reconcilePromise = this.hydrate().finally(() => {
-      this.reconcilePromise = undefined
+    const promise = this.hydrate().finally(() => {
+      if (this.reconcilePromise === promise) this.reconcilePromise = undefined
     })
-    return this.reconcilePromise
+    this.reconcilePromise = promise
+    return promise
   }
 
   dispose(): void {
     this.disposed = true
     this.disposeEvents?.()
+    this.reconcilePromise = undefined
     this.store.setRevisionGapHandler(undefined)
   }
 
   private async reconcileGap(gap: ToolRevisionGap): Promise<void> {
-    if (gap.entity === "session" || gap.entity === "tab") {
-      const sessionId = gap.entity === "session"
-        ? gap.id as SessionId
-        : this.store.getSnapshot().tabsById.get(gap.id as SessionTabId)?.sessionId
-      if (!sessionId) return
-      await this.reconcileSession(sessionId)
-      return
+    try {
+      if (gap.entity === "session" || gap.entity === "tab") {
+        const sessionId = gap.entity === "session"
+          ? gap.id as SessionId
+          : this.store.getSnapshot().tabsById.get(gap.id as SessionTabId)?.sessionId
+        if (!sessionId) return
+        await this.reconcileSession(sessionId)
+        return
+      }
+      const use = await this.api.getUse(gap.id as ToolUseId)
+      if (!use || this.disposed) return
+      this.store.replaceToolUseIfNewer(use)
+    } catch {
+      // Reconciliation is best effort; a dropped host connection will trigger
+      // the next full snapshot instead of an unhandled rejection.
     }
-    const use = await this.api.getUse(gap.id as ToolUseId)
-    if (!use) return
-    this.store.replaceToolUse(use)
   }
 
-  private replaceSnapshots(snapshots: readonly ToolSessionSnapshot[]): void {
-    this.store.replace(
+  private replaceSnapshots(
+    snapshots: readonly ToolSessionSnapshot[],
+    baseline: ReturnType<ToolSessionStore["captureRevisions"]>,
+  ): void {
+    const hasTabs = snapshots.some(snapshot => snapshot.tabs !== undefined)
+    this.store.mergeSnapshot(
       snapshots.map(snapshot => snapshot.session),
       snapshots.flatMap(snapshot => snapshot.toolUses),
       snapshots.flatMap(snapshot => snapshot.tabs ?? []),
+      hasTabs,
+      baseline,
     )
   }
 }
@@ -129,11 +155,9 @@ export function activeToolUse(
   const tabId = snapshot.activeSessionId === sessionId
     ? snapshot.activeTabId
     : snapshot.sessionsById.get(sessionId)?.activeTabId
-  const id = tabId
-    ? snapshot.useIdsByTab.get(tabId)?.find(useId =>
-        snapshot.usesById.get(useId)?.id === snapshot.tabsById.get(tabId)?.activeToolUseId,
-      )
-    : undefined
+  const ids = tabId ? snapshot.useIdsByTab.get(tabId) ?? [] : []
+  const activeId = tabId ? snapshot.tabsById.get(tabId)?.activeToolUseId : undefined
+  const id = activeId && ids.includes(activeId) ? activeId : ids[0]
   return id ? snapshot.usesById.get(id) : undefined
 }
 

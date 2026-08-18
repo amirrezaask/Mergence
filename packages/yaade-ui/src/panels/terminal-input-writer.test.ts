@@ -56,3 +56,27 @@ test("preserves ordering between text and binary terminal input", async () => {
 
   assert.deepEqual(writes, ["text:a", "binary:\x80\xff", "text:b"])
 })
+
+test("does not let a later async write overtake an earlier one", async () => {
+  const writes: string[] = []
+  const resolvers: Array<() => void> = []
+  const writer = createTerminalInputWriter(
+    data => {
+      writes.push(data)
+      return new Promise<void>(resolve => resolvers.push(resolve))
+    },
+    error => assert.fail(String(error)),
+  )
+
+  writer.enqueue("first")
+  const firstFlush = writer.flush()
+  writer.enqueue("second")
+  const secondFlush = writer.flush()
+  await Promise.resolve()
+  assert.deepEqual(writes, ["first"])
+  resolvers[0]!()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(writes, ["first", "second"])
+  resolvers[1]!()
+  await Promise.all([firstFlush, secondFlush])
+})

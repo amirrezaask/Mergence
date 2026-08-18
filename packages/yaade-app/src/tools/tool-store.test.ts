@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { Schema } from "effect"
-import { AppSession, SessionId, ToolUseId, type ToolUse } from "@yaade/rpc"
+import { AppSession, SessionTab, SessionTabId, SessionId, ToolUseId, type ToolUse } from "@yaade/rpc"
 import { ToolSessionStore } from "./tool-store.js"
 import {
   nextRuntimeToolTitle,
@@ -136,6 +136,81 @@ describe("ToolSessionStore browser state", () => {
     assert.equal(otherNotifications, 0)
     disposeUse()
     disposeOther()
+  })
+
+  it("notifies session subscribers for realtime session changes", () => {
+    const store = new ToolSessionStore()
+    store.replace([session()], [use()])
+    let notifications = 0
+    const dispose = store.subscribeSession(sessionId, () => { notifications += 1 })
+    store.apply({
+      _tag: "SessionUpdated",
+      eventId: "session-update",
+      revision: 2,
+      occurredAt: "2026-01-02",
+      session: { ...session(), title: "Renamed", revision: 2, updatedAt: "2026-01-02" },
+    })
+    assert.equal(notifications, 1)
+    dispose()
+  })
+
+  it("does not let an older snapshot overwrite a realtime update", () => {
+    const store = new ToolSessionStore()
+    store.replace([session()], [use()])
+    const baseline = store.captureRevisions()
+    store.apply({
+      _tag: "ToolUseUpdated",
+      eventId: "newer",
+      toolUseId: useId,
+      toolUse: { ...use(), title: "Newer", revision: 2, updatedAt: "2026-01-02" },
+      revision: 2,
+      occurredAt: "2026-01-02",
+    })
+    store.mergeSnapshot([session()], [use()], [], false, baseline)
+    assert.equal(store.getSnapshot().usesById.get(useId)?.title, "Newer")
+  })
+
+  it("does not resurrect an archived use from a late update", () => {
+    const store = new ToolSessionStore()
+    store.replace([session()], [use()])
+    store.apply({
+      _tag: "ToolUseArchived", eventId: "archive", toolUseId: useId,
+      revision: 2, occurredAt: "2026-01-02",
+    })
+    store.apply({
+      _tag: "ToolUseUpdated", eventId: "late", toolUseId: useId,
+      toolUse: { ...use(), title: "Late", revision: 3, updatedAt: "2026-01-03" },
+      revision: 3, occurredAt: "2026-01-03",
+    })
+    assert.equal(store.getSnapshot().usesById.get(useId)?.archivedAt, "2026-01-02")
+    assert.deepEqual(store.getSnapshot().useIdsBySession.get(sessionId), [])
+  })
+
+  it("follows authoritative active-tool changes from another client", () => {
+    const store = new ToolSessionStore()
+    const tabId = Schema.decodeUnknownSync(SessionTabId)("tab-a")
+    const otherId = Schema.decodeUnknownSync(ToolUseId)("use-b")
+    const first = { ...use(), tabId }
+    const second = { ...use(), id: otherId, tabId, position: 1 }
+    const tab = SessionTab.make({
+      id: tabId,
+      sessionId,
+      title: "Window 1",
+      position: 0,
+      activeToolUseId: first.id,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    })
+    store.replace([session()], [first, second], [tab])
+    store.selectToolUse(first.id)
+    store.apply({
+      _tag: "SessionTabUpdated",
+      eventId: "tab-focus",
+      revision: 2,
+      occurredAt: "2026-01-02",
+      tab: { ...tab, activeToolUseId: second.id, revision: 2, updatedAt: "2026-01-02" },
+    })
+    assert.equal(store.getSnapshot().activeToolUseId, second.id)
   })
 
   it("ignores duplicate and older revisions", () => {

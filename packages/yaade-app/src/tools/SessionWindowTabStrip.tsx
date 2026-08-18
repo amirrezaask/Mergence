@@ -4,7 +4,7 @@ import { div as MotionDiv } from "motion/react-m"
 import { PanelTop, Plus, X } from "lucide-react"
 import type { SessionTab, SessionTabId } from "@yaade/rpc"
 import { Button, Input } from "@yaade/ui/primitives"
-import { GlassSurface, cn, yaadeMotion } from "@yaade/ui"
+import { GlassSurface, cn, yaadeMotion } from "@yaade/ui/session"
 import { ShortcutTooltip } from "./ShortcutTooltip.js"
 import { toolSessionShortcutFor } from "./tool-session-keymap.js"
 

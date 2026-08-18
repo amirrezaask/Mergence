@@ -1,5 +1,6 @@
 import { chromium } from "@playwright/test"
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process"
+import { spawn, type ChildProcessByStdio } from "node:child_process"
+import type { Readable } from "node:stream"
 import fs from "node:fs"
 import net from "node:net"
 import os from "node:os"
@@ -29,7 +30,7 @@ function resolveTsxCli(): string {
   throw new Error(`tsx CLI missing; run pnpm install from repo root`)
 }
 
-type LaunchWebOptions = {
+export type LaunchWebOptions = {
   workspaceRel?: string
   env?: Record<string, string>
   userDataDir?: string
@@ -113,13 +114,18 @@ async function freePort(): Promise<number> {
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
-      if (!address || typeof address === "string") return reject(new Error("no test port"))
-      server.close(error => (error ? reject(error) : resolve(address.port)))
+      const addressObject = Object(address)
+      if (!address || !("port" in addressObject)) {
+        return reject(new Error("no test port"))
+      }
+      server.close(error => (error ? reject(error) : resolve(addressObject.port)))
     })
   })
 }
 
-async function waitForHttpOk(url: string, proc: ChildProcessWithoutNullStreams, logs: () => string): Promise<void> {
+type TestServerProcess = ChildProcessByStdio<null, Readable, Readable>
+
+async function waitForHttpOk(url: string, proc: TestServerProcess, logs: () => string): Promise<void> {
   const deadline = Date.now() + 30_000
   while (Date.now() < deadline) {
     if (proc.exitCode !== null) throw new Error(`process exited (${proc.exitCode})\n${logs()}`)
@@ -134,7 +140,7 @@ async function waitForHttpOk(url: string, proc: ChildProcessWithoutNullStreams, 
   throw new Error(`timed out waiting for ${url}\n${logs()}`)
 }
 
-function attachLogs(proc: ChildProcessWithoutNullStreams): () => string {
+function attachLogs(proc: TestServerProcess): () => string {
   let logs = ""
   proc.stdout.on("data", chunk => {
     logs += chunk.toString()
@@ -145,7 +151,7 @@ function attachLogs(proc: ChildProcessWithoutNullStreams): () => string {
   return () => logs
 }
 
-function signalProcessTree(proc: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
+function signalProcessTree(proc: TestServerProcess, signal: NodeJS.Signals): void {
   if (proc.pid == null) return
   if (process.platform !== "win32") {
     try {
@@ -158,7 +164,7 @@ function signalProcessTree(proc: ChildProcessWithoutNullStreams, signal: NodeJS.
   proc.kill(signal)
 }
 
-async function killProc(proc: ChildProcessWithoutNullStreams): Promise<void> {
+async function killProc(proc: TestServerProcess): Promise<void> {
   if (proc.exitCode !== null) return
   signalProcessTree(proc, "SIGTERM")
   await new Promise<void>(resolve => {
@@ -176,6 +182,7 @@ async function killProc(proc: ChildProcessWithoutNullStreams): Promise<void> {
 
 export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchShellResult> {
   const port = await freePort()
+  const ownsTemporaryRoot = options.userDataDir == null
   const temporaryRoot = options.userDataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "jet-web-e2e-"))
   const browserData = path.join(temporaryRoot, "browser")
   const serverData = path.join(temporaryRoot, "server")
@@ -192,7 +199,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   }
   const tsxCli = resolveTsxCli()
 
-  const sharedEnv = {
+  const sharedEnv: NodeJS.ProcessEnv = {
     ...process.env,
     JET_ALLOWED_ROOTS: `${REPO_ROOT},${temporaryRoot},${path.dirname(sourceWorkspace)}`,
     YAADE_E2E: "1",
@@ -212,7 +219,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
     sharedEnv.JET_ALLOWED_ROOTS = `${sharedEnv.JET_ALLOWED_ROOTS},${homeDir}`
   }
 
-  const server = spawn(
+  const server: TestServerProcess = spawn(
     process.execPath,
     [
       tsxCli,
@@ -231,7 +238,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
       stdio: ["ignore", "pipe", "pipe"],
       detached: process.platform !== "win32",
     },
-  ) as ChildProcessWithoutNullStreams
+  )
   const jetLogs = attachLogs(server)
   const url = `http://127.0.0.1:${port}`
   await waitForHttpOk(`${url}/health`, server, jetLogs)
@@ -246,21 +253,23 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
     if (!response.ok) {
       throw new Error(`could not register E2E launch project (${response.status})`)
     }
+    // SAFETY: The host API returns a project object with a string id.
     const project = (await response.json()) as { id: string }
     defaultStartPath = `/_project/${encodeURIComponent(project.id)}`
   }
 
-  const context = await chromium.launchPersistentContext(browserData, {
+  const contextOptions: Parameters<typeof chromium.launchPersistentContext>[1] = {
     headless: process.env.YAADE_HEADED !== "1",
-    ...(process.env.YAADE_PLAYWRIGHT_CHANNEL
-      ? { channel: process.env.YAADE_PLAYWRIGHT_CHANNEL }
-      : {}),
     viewport: { width: 1440, height: 900 },
     deviceScaleFactor: 1,
     locale: "en-US",
     timezoneId: "UTC",
     colorScheme: "dark",
-  })
+  }
+  if (process.env.YAADE_PLAYWRIGHT_CHANNEL) {
+    contextOptions.channel = process.env.YAADE_PLAYWRIGHT_CHANNEL
+  }
+  const context = await chromium.launchPersistentContext(browserData, contextOptions)
   const browserPage = context.pages()[0] ?? (await context.newPage())
   const browserFailures: BrowserFailure[] = []
   let lastMainFrameNavigationAt = 0
@@ -309,7 +318,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   const startUrl = `${url}${startPath.startsWith("/") ? startPath : `/${startPath}`}`
   await browserPage.goto(startUrl, { waitUntil: "domcontentloaded" })
   if (options.expectBootError) {
-    await browserPage.waitForSelector('[data-yaade-boot="error"]', {
+    await browserPage.locator('[data-yaade-boot="error"]').waitFor({
       state: "visible",
       timeout: 30_000,
     })
@@ -334,6 +343,9 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
         const failuresBeforeTeardown = [...browserFailures]
         await context.close().catch(() => {})
         await killProc(server)
+        if (ownsTemporaryRoot) {
+          fs.rmSync(temporaryRoot, { recursive: true, force: true })
+        }
         const unexpected = failuresBeforeTeardown.filter(
           failure => !isExpectedBrowserFailure(failure, options.expectedHttpErrors),
         )

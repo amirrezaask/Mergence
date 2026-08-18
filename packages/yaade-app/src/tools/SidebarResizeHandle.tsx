@@ -4,7 +4,7 @@ import {
   useRef,
   type PointerEvent as ReactPointerEvent,
 } from "react";
-import { cn } from "@yaade/ui";
+import { cn } from "@yaade/ui/session";
 
 type SidebarResizeHandleProps = {
   value: number;

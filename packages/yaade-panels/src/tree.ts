@@ -115,8 +115,9 @@ export class PanelTree<TView> {
     const node = this.getAtPath(this.root, path)
     if (!node || node.kind === "leaf") return false
     if (ratios.length !== node.split.children.length) return false
+    if (ratios.some(ratio => !Number.isFinite(ratio) || ratio <= 0)) return false
     const next = [...ratios]
-    this.normalizeRatios(next)
+    if (!this.normalizeRatios(next)) return false
     const changed = next.some((ratio, index) => Math.abs(ratio - node.split.ratios[index]!) > 0.001)
     if (!changed) return false
     node.split.ratios = next
@@ -191,7 +192,10 @@ export class PanelTree<TView> {
 
   applySnapshot(snapshot: PanelTreeSnapshot<TView>): void {
     this.root = snapshot.root
-    this.nextPanelId = snapshot.nextPanelId
+    const minimumNextId = maxPanelId(snapshot.root) + 1
+    this.nextPanelId = Number.isSafeInteger(snapshot.nextPanelId) && snapshot.nextPanelId > 0
+      ? Math.max(snapshot.nextPanelId, minimumNextId)
+      : minimumNextId
   }
 
   static fromSnapshot<TView>(
@@ -260,9 +264,11 @@ export class PanelTree<TView> {
     return Array.from({ length: n }, () => 1 / n)
   }
 
-  private normalizeRatios(ratios: number[]): void {
+  private normalizeRatios(ratios: number[]): boolean {
     const sum = ratios.reduce((a, b) => a + b, 0)
+    if (!Number.isFinite(sum) || sum <= 0) return false
     for (let i = 0; i < ratios.length; i++) ratios[i]! /= sum
+    return true
   }
 
   private layoutNode(node: PanelNode<TView>, rect: Rect, map: Map<number, Rect>): void {
@@ -295,6 +301,14 @@ export class PanelTree<TView> {
     }
     return current
   }
+}
+
+function maxPanelId<TView>(node: PanelNode<TView>): number {
+  if (node.kind === "leaf") return node.panelId.id
+  return node.split.children.reduce(
+    (maximum, child) => Math.max(maximum, maxPanelId(child)),
+    0,
+  )
 }
 
 function clonePanelNode<TView>(node: PanelNode<TView>): PanelNode<TView> {

@@ -1,6 +1,6 @@
 import { GitBranch, Terminal, type LucideIcon } from "lucide-react"
 import type { ToolKind } from "@yaade/rpc"
-import { KeyBindingKbd } from "@yaade/ui"
+import { KeyBindingKbd } from "@yaade/ui/session"
 import {
   Button,
   Empty,

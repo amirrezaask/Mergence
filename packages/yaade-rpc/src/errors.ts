@@ -160,6 +160,12 @@ export function hostErrorWire(error: HostRpcError): {
               expectedRevision: error.expectedRevision,
               actualRevision: error.actualRevision,
             }
+          : error._tag === "SessionTabConflict"
+            ? {
+                tabId: error.tabId,
+                expectedRevision: error.expectedRevision,
+                actualRevision: error.actualRevision,
+              }
           : error._tag === "SessionNotFound"
             ? { sessionId: error.sessionId }
             : error._tag === "SessionTabNotFound"

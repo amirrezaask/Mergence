@@ -26,7 +26,7 @@ function browserFn(source) {
 
 /** @param {string | ((...args: unknown[]) => unknown)} script */
 function serializeBrowserScript(script) {
-  if (typeof script === "function") {
+  if (script instanceof Function) {
     return `return (${browserFn(script.toString())}).apply(null, arguments)`
   }
   return String(script)

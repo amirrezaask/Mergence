@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test"
+import type { ShellDriver } from "../shell/driver.js"
 import {
   assertBudget,
   logBenchResult,
@@ -16,20 +17,13 @@ import {
 
 const ptyAvailable = hasPtySpawn()
 
-async function waitForRunningTerminal(page: import("@playwright/test").Page): Promise<void> {
-  await page.waitForFunction(
-    () =>
-      document.querySelector(
-        '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
-      ) != null,
-    null,
-    { timeout: 15_000 },
-  )
+async function waitForRunningTerminal(page: ShellDriver): Promise<void> {
+  await expect(
+    page.locator('[data-yaade-terminal-panel][data-yaade-terminal-status="running"]'),
+  ).toBeVisible({ timeout: 15_000 })
 }
 
-async function terminalRenderer(
-  page: import("@playwright/test").Page,
-): Promise<string> {
+async function terminalRenderer(page: ShellDriver): Promise<string> {
   return page.evaluate(
     () =>
       document.querySelector<HTMLElement>("[data-yaade-terminal-panel]")
@@ -38,7 +32,7 @@ async function terminalRenderer(
 }
 
 async function resetTerminalForStreamSample(
-  page: import("@playwright/test").Page,
+  page: ShellDriver,
   resetMarker: string,
 ): Promise<void> {
   await page.evaluate(async currentMarker => {

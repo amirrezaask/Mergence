@@ -1,6 +1,6 @@
 import {
   createContext,
-  useContext,
+  use,
   useMemo,
   type ReactNode,
   type RefCallback,
@@ -31,7 +31,7 @@ export function SessionHeaderChromePortal(props: {
   active: boolean
   children: ReactNode
 }) {
-  const ctx = useContext(SessionHeaderChromeContext)
+  const ctx = use(SessionHeaderChromeContext)
   if (!props.active || !ctx?.target) return null
   return createPortal(props.children, ctx.target)
 }

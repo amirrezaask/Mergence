@@ -21,22 +21,26 @@ export function createTerminalInputWriter(
   let pending: PendingInput[] = []
   let scheduled = false
   let disposed = false
+  // The Herdr client queues input because separate host requests can otherwise
+  // complete out of order. Preserve same-turn batching while serializing the
+  // Promise-backed browser transport.
+  let writeTail = Promise.resolve()
 
   const send = (
     fn: ((data: string) => void | Promise<unknown>) | undefined,
     chunk: string,
   ): void => {
     if (!fn) return
-    try {
-      const result = fn(chunk)
-      if (result != null && typeof (result as Promise<unknown>).then === "function") {
-        void (result as Promise<unknown>).then(undefined, error => {
-          onError(error)
-        })
+    writeTail = writeTail.then(async () => {
+      // Once a batch has been flushed, disposal only prevents new input from
+      // entering the queue. Already-flushed replies must still reach the PTY;
+      // TerminalPanel disposes immediately after requesting that final flush.
+      try {
+        await fn(chunk)
+      } catch (error) {
+        onError(error)
       }
-    } catch (error) {
-      onError(error)
-    }
+    })
   }
 
   const flush = (): Promise<void> => {
@@ -53,7 +57,7 @@ export function createTerminalInputWriter(
         else send(write, chunk)
       }
     }
-    return Promise.resolve()
+    return writeTail.then(() => undefined)
   }
 
   const schedule = () => {

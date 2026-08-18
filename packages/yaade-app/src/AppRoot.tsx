@@ -1,10 +1,11 @@
-import { useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState } from "react"
 import { RefreshCw } from "lucide-react"
-import { GlassMaterialGallery } from "@yaade/ui"
 import { Button } from "@yaade/ui/primitives"
 import { basicAgentBridge } from "./basic-agent-bridge.js"
 import { ToolSessionApp } from "./tools/ToolSessionApp.js"
 import { applyPwaUpdate, isPwaUpdateReady } from "./pwa.js"
+
+const GlassMaterialGallery = lazy(() => import("@yaade/ui/gallery"))
 
 /** The Session shell is now the only browser app surface. */
 export function AppRoot() {
@@ -27,7 +28,11 @@ export function AppRoot() {
   }, [])
 
   if (location.pathname === "/__yaade/glass-gallery") {
-    return <GlassMaterialGallery />
+    return (
+      <Suspense fallback={null}>
+        <GlassMaterialGallery />
+      </Suspense>
+    )
   }
   return (
     <>

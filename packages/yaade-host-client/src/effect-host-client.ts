@@ -15,6 +15,7 @@ import {
   PayloadTooLargeError,
   ProjectTargetUnavailable,
   SessionNotFound,
+  SessionTabConflict,
   SessionTabNotFound,
   ToolRuntimeFailure,
   ToolUseConflict,
@@ -52,11 +53,15 @@ function mapFetchError(
     })
   }
   if (code === "CONFLICT") {
-    const toolUseId = typeof details?.toolUseId === "string" ? details.toolUseId : undefined
     const expectedRevision = typeof details?.expectedRevision === "number" ? details.expectedRevision : undefined
     const actualRevision = typeof details?.actualRevision === "number" ? details.actualRevision : undefined
+    const toolUseId = typeof details?.toolUseId === "string" ? details.toolUseId : undefined
     if (toolUseId && expectedRevision !== undefined && actualRevision !== undefined) {
       return new ToolUseConflict({ toolUseId, expectedRevision, actualRevision, message })
+    }
+    const tabId = typeof details?.tabId === "string" ? details.tabId : undefined
+    if (tabId && expectedRevision !== undefined && actualRevision !== undefined) {
+      return new SessionTabConflict({ tabId, expectedRevision, actualRevision, message })
     }
     return new ConflictError({ message })
   }

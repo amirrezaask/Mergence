@@ -130,6 +130,20 @@ describe("tool tiling workspace", () => {
     assert.equal(focusedTool(restored), second);
   });
 
+  it("normalizes tampered persisted split ratios", () => {
+    const first = toolId("first");
+    const second = toolId("second");
+    let workspace = openToolView(createToolWorkspace(), first);
+    workspace = openToolView(workspace, second);
+    if (workspace.tree.root.kind !== "row") throw new Error("expected row");
+    workspace.tree.root.split.ratios = [100, 1];
+    const restored = restoreToolWorkspace(serializeToolWorkspace(workspace), [first, second]);
+    if (restored.tree.root.kind !== "row") throw new Error("expected row");
+    const sum = restored.tree.root.split.ratios.reduce((a, b) => a + b, 0);
+    assert.ok(Math.abs(sum - 1) < 1e-6);
+    assert.ok(restored.tree.root.split.ratios[0]! < 1);
+  });
+
   it("drops stale persisted ToolUses and places new ones", () => {
     const stale = toolId("stale");
     const current = toolId("current");

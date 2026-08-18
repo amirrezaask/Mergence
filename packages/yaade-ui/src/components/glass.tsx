@@ -1,31 +1,31 @@
 import { Slot } from "radix-ui"
-import type { ComponentPropsWithoutRef, ElementRef, ReactNode } from "react"
-import { forwardRef } from "react"
+import type {
+  ComponentPropsWithoutRef,
+  ElementRef,
+  ReactNode,
+  Ref,
+} from "react"
 import { cn } from "../lib/utils.js"
 
 export type GlassMaterial = "shell" | "chrome" | "content" | "floating"
 
 export type GlassSurfaceProps = ComponentPropsWithoutRef<"div"> & {
+  ref?: Ref<ElementRef<"div">>
   material: GlassMaterial
   interactive?: boolean
   elevated?: boolean
   asChild?: boolean
 }
 
-export const GlassSurface = forwardRef<
-  ElementRef<"div">,
-  GlassSurfaceProps
->(function GlassSurface(
-  {
-    material,
-    interactive = false,
-    elevated = false,
-    asChild = false,
-    className,
-    ...props
-  },
+export function GlassSurface({
+  material,
+  interactive = false,
+  elevated = false,
+  asChild = false,
+  className,
   ref,
-) {
+  ...props
+}: GlassSurfaceProps) {
   const Comp = asChild ? Slot.Root : "div"
   return (
     <Comp
@@ -38,7 +38,7 @@ export const GlassSurface = forwardRef<
       {...props}
     />
   )
-})
+}
 
 export type GlassControlGroupProps = Omit<GlassSurfaceProps, "material"> & {
   children?: ReactNode

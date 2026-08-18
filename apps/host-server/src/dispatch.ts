@@ -45,6 +45,7 @@ import {
   RestartToolUse,
   SelectSessionToolUse,
   SessionNotFound,
+  SessionTabConflict,
   SessionTabNotFound,
   ToolUseNotFound,
   InvalidToolInput,
@@ -122,6 +123,7 @@ export function mapDispatchError(
     error instanceof PathOutsideRootsError ||
     error instanceof PayloadTooLargeError ||
     error instanceof SessionNotFound ||
+    error instanceof SessionTabConflict ||
     error instanceof SessionTabNotFound ||
     error instanceof ToolUseNotFound ||
     error instanceof InvalidToolInput ||
@@ -284,7 +286,18 @@ async function handleTools(
         args[0],
         "reorder sessions",
       );
-      return store.reorderSessions(command.sessionIds);
+      const sessions = store.reorderSessions(command.sessionIds);
+      for (const session of sessions) {
+        runtime.events.emit("tools:event", [
+          SessionUpdated.make({
+            eventId: `evt-session-reorder-${Date.now()}-${session.id}`,
+            revision: session.revision ?? 1,
+            occurredAt: session.updatedAt,
+            session,
+          }),
+        ]);
+      }
+      return sessions;
     }
     case "tools:createTab": {
       const command = decodeToolCommand(
@@ -292,6 +305,7 @@ async function handleTools(
         args[0],
         "create tab",
       );
+      const previousSession = store.getSession(command.sessionId);
       const tab = store.createTab(
         command.sessionId,
         command.title ?? "New tab",
@@ -304,6 +318,21 @@ async function handleTools(
           tab,
         }),
       ]);
+      const nextSession = store.getSession(command.sessionId);
+      if (
+        nextSession &&
+        previousSession &&
+        nextSession.revision !== previousSession.revision
+      ) {
+        runtime.events.emit("tools:event", [
+          SessionUpdated.make({
+            eventId: `evt-session-tab-created-${Date.now()}-${nextSession.id}`,
+            revision: nextSession.revision ?? 1,
+            occurredAt: nextSession.updatedAt,
+            session: nextSession,
+          }),
+        ]);
+      }
       return tab;
     }
     case "tools:renameTab": {
@@ -329,7 +358,11 @@ async function handleTools(
         args[0],
         "save tab layout",
       );
-      const tab = store.saveTabLayout(command.tabId, command.layoutJson);
+      const tab = store.saveTabLayout(
+        command.tabId,
+        command.layoutJson,
+        command.revision,
+      );
       runtime.events.emit("tools:event", [
         SessionTabUpdated.make({
           eventId: `evt-tab-layout-${Date.now()}-${tab.id}`,
@@ -347,6 +380,16 @@ async function handleTools(
         "reorder tabs",
       );
       const tabs = store.reorderTabs(command.sessionId, command.tabIds);
+      for (const tab of tabs) {
+        runtime.events.emit("tools:event", [
+          SessionTabUpdated.make({
+            eventId: `evt-tab-reorder-${Date.now()}-${tab.id}`,
+            revision: tab.revision ?? 1,
+            occurredAt: tab.updatedAt,
+            tab,
+          }),
+        ]);
+      }
       return tabs;
     }
     case "tools:archiveTab": {
@@ -490,7 +533,7 @@ async function handleTools(
         args[0],
         "reorder tool uses",
       );
-      return store.reorderToolUses(
+      return requiredToolService(runtime).reorderToolUses(
         command.sessionId,
         command.toolUseIds,
         command.tabId,
@@ -506,7 +549,7 @@ async function handleTools(
         },
         "select tool use",
       );
-      return store.setActiveToolUse(
+      return requiredToolService(runtime).selectToolUse(
         command.sessionId,
         command.toolUseId ?? null,
       );
@@ -1018,18 +1061,15 @@ async function createTerminalInstance(
 
   let checkoutPath = body.checkoutPath?.trim() ?? "";
   if (body.workspaceId) {
-    const workspace = runtime.db
-      .raw()
-      .prepare(
-        `SELECT id, project_path, cwd_path FROM project_sessions WHERE id=? AND archived_at IS NULL`,
-      )
-      .get(body.workspaceId) as
-      | { id: string; project_path: string; cwd_path: string }
-      | undefined;
-    if (!workspace || workspace.project_path !== project.rootPath) {
+    const workspace = runtime.db.getProjectSession(body.workspaceId);
+    if (
+      !workspace ||
+      workspace.archivedAt !== null ||
+      workspace.projectPath !== project.rootPath
+    ) {
       throw new Error("project workspace is unavailable");
     }
-    if (!checkoutPath) checkoutPath = workspace.cwd_path;
+    if (!checkoutPath) checkoutPath = workspace.cwdPath;
   }
   if (!checkoutPath)
     throw new Error("terminal:createInstance requires checkoutPath");

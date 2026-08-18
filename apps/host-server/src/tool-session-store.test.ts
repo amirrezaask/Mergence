@@ -5,6 +5,7 @@ import { Schema } from "effect"
 import {
   ProcessToolOutput,
   ProjectTarget,
+  SessionTabConflict,
   ToolUseId,
   ToolUseConflict,
 } from "@yaade/rpc"
@@ -55,6 +56,10 @@ describe("ToolSessionStore", () => {
     const savedTab = store.saveTabLayout(secondTab.id, layoutJson)
     assert.equal(savedTab.layoutJson, layoutJson)
     assert.equal(savedTab.revision, (renamedTab.revision ?? 1) + 1)
+    assert.throws(
+      () => store.saveTabLayout(secondTab.id, "stale", renamedTab.revision),
+      SessionTabConflict,
+    )
     const second = store.createSession("Review")
     assert.deepEqual(store.listSessions().map(session => session.title), ["Session 1", "Review"])
     assert.deepEqual(store.listTabs(second.id).map(tab => tab.title), ["Window 1"])
@@ -96,6 +101,61 @@ describe("ToolSessionStore", () => {
       () => store.setActiveToolUse(session.id, Schema.decodeUnknownSync(ToolUseId)("use-missing")),
       ToolSessionStorageError,
     )
+    db.close()
+  })
+
+  it("archives a focused use and clears persisted focus pointers", () => {
+    const db = database()
+    const store = new ToolSessionStore(db)
+    const session = store.listSessions()[0]
+    assert.ok(session)
+    const use = store.createToolUse({
+      sessionId: session.id,
+      kind: "terminal",
+      title: "Shell",
+      position: 0,
+      context: context(),
+      input: { _tag: "TerminalToolInput", kind: "terminal" },
+      output: terminalOutput(),
+    })
+    store.setActiveToolUse(session.id, use.id)
+    store.archiveToolUse(use.id)
+    assert.equal(store.getSession(session.id)?.activeToolUseId, undefined)
+    const tab = store.listTabs(session.id)[0]
+    assert.equal(tab?.activeToolUseId, undefined)
+    db.close()
+  })
+
+  it("rejects incomplete reorder commands and versions accepted reorders", () => {
+    const db = database()
+    const store = new ToolSessionStore(db)
+    const session = store.listSessions()[0]
+    assert.ok(session)
+    const first = store.createToolUse({
+      sessionId: session.id,
+      kind: "terminal",
+      title: "First",
+      position: 0,
+      context: context(),
+      input: { _tag: "TerminalToolInput", kind: "terminal" },
+      output: terminalOutput(),
+    })
+    const second = store.createToolUse({
+      sessionId: session.id,
+      kind: "terminal",
+      title: "Second",
+      position: 1,
+      context: context(),
+      input: { _tag: "TerminalToolInput", kind: "terminal" },
+      output: terminalOutput(),
+    })
+    assert.throws(
+      () => store.reorderToolUses(session.id, [first.id]),
+      ToolSessionStorageError,
+    )
+    const reordered = store.reorderToolUses(session.id, [second.id, first.id])
+    assert.deepEqual(reordered.map(use => use.id), [second.id, first.id])
+    assert.equal(reordered[0]?.revision, 2)
     db.close()
   })
 

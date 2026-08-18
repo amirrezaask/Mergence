@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { useEffect, useMemo, useRef, useState } from "react"
 import type {
   GitCommit,
   GitCommitDetail,
@@ -45,6 +45,8 @@ import { PierreCommitFileTree } from "./pierre-commit-file-tree.js"
 import { YaadeDiffViewer } from "./YaadeDiffViewer.js"
 import { PierreDiffPool } from "./pierre-diff-pool.js"
 import { listApplyHunks } from "./pierre-hunk-patch.js"
+import { readGitDiffStyle, writeGitDiffStyle } from "./git-diff-style.js"
+import { GitReviewController } from "./git-review-controller.js"
 
 const dateFormatter = new Intl.DateTimeFormat(undefined, {
   dateStyle: "medium",
@@ -87,16 +89,6 @@ function fileStatusColor(status: GitCommitFile["status"]): string {
   return "text-git-modified"
 }
 
-function storedDiffStyle(): DiffStyle {
-  try {
-    return localStorage.getItem("yaade:git-diff-style") === "split"
-      ? "split"
-      : "unified"
-  } catch {
-    return "unified"
-  }
-}
-
 export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const {
     open,
@@ -121,13 +113,17 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const [diffContents, setDiffContents] = useState<DiffContents | null>(null)
   const [diffLoading, setDiffLoading] = useState(false)
   const [diffError, setDiffError] = useState<string | null>(null)
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>(storedDiffStyle)
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>(readGitDiffStyle)
   const [compactLayout, setCompactLayout] = useState(
     () => window.matchMedia("(max-width: 767px)").matches,
   )
   const [compactShowDiff, setCompactShowDiff] = useState(false)
   const detailRequest = useRef(0)
   const diffRequest = useRef(0)
+  const reviewController = useMemo(
+    () => (api ? new GitReviewController(api, rootUri) : null),
+    [api, rootUri],
+  )
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 767px)")
@@ -139,11 +135,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
 
   const changeDiffStyle = (style: DiffStyle) => {
     setDiffStyle(style)
-    try {
-      localStorage.setItem("yaade:git-diff-style", style)
-    } catch {
-      /* keep the in-memory preference */
-    }
+    writeGitDiffStyle(style)
   }
 
   useEffect(() => {
@@ -186,18 +178,33 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
       })
   }, [open, api, compactLayout, rootUri, hash, workingTree])
 
+  const runWorkingTreeMutation = async (
+    operation: () => Promise<void>,
+  ): Promise<{ detail: GitCommitDetail; entries: GitStatusEntry[] }> => {
+    const git = api
+    if (!git) throw new Error("Git access is unavailable.")
+    reviewController?.invalidateRequests()
+    if (reviewController) {
+      return reviewController.mutate(async () => {
+        await operation()
+        return loadWorkingTreeSnapshot(git, rootUri)
+      })
+    }
+    await operation()
+    return loadWorkingTreeSnapshot(git, rootUri)
+  }
+
   const toggleWorkingTreeStage = async (file: GitCommitFile) => {
     if (!api || !workingTree) return
     const entry = workingTreeEntries.find(item => item.path === file.path)
     if (!entry) return
     setWorkingTreePendingPath(file.path)
     try {
-      if (entry.staged) {
-        await api.unstage(rootUri, [file.path])
-      } else {
-        await api.stage(rootUri, [file.path])
-      }
-      const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
+      const snapshot = await runWorkingTreeMutation(() =>
+        entry.staged
+          ? api.unstage(rootUri, [file.path])
+          : api.stage(rootUri, [file.path]),
+      )
       setWorkingTreeEntries(snapshot.entries)
       setDetail(snapshot.detail)
       onWorkingTreeChange?.()
@@ -217,8 +224,11 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
 
     setWorkingTreePendingPath(BULK_ACTION)
     try {
-      await (action === "stage" ? api.stage(rootUri, paths) : api.unstage(rootUri, paths))
-      const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
+      const snapshot = await runWorkingTreeMutation(() =>
+        action === "stage"
+          ? api.stage(rootUri, paths)
+          : api.unstage(rootUri, paths),
+      )
       setWorkingTreeEntries(snapshot.entries)
       setDetail(snapshot.detail)
       setSelectedPath(current => snapshot.detail.files.some(file => file.path === current) ? current : snapshot.detail.files[0]?.path ?? null)
@@ -307,14 +317,15 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     if (!hunk) return
     setWorkingTreePendingPath(selectedFile?.path ?? BULK_ACTION)
     try {
-      if (kind === "stage") {
-        await api.applyPatch(rootUri, hunk.patch, { cached: true })
-      } else if (kind === "unstage") {
-        await api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: true })
-      } else {
-        await api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: false })
-      }
-      const snapshot = await loadWorkingTreeSnapshot(api, rootUri)
+      const snapshot = await runWorkingTreeMutation(() => {
+        if (kind === "stage") {
+          return api.applyPatch(rootUri, hunk.patch, { cached: true })
+        }
+        if (kind === "unstage") {
+          return api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: true })
+        }
+        return api.applyPatch(rootUri, hunk.patch, { reverse: true, cached: false })
+      })
       setWorkingTreeEntries(snapshot.entries)
       setDetail(snapshot.detail)
       setSelectedPath(current =>

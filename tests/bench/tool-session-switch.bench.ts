@@ -1,4 +1,4 @@
-import { test } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { launchWeb } from "../shell/launch-web.js";
 import { assertBudget, runBench } from "./_bench.js";
 
@@ -9,7 +9,7 @@ async function openShell(
     history.pushState(null, "", "/");
     window.dispatchEvent(new Event("popstate"));
   });
-  await page.waitForSelector('[data-yaade-shell="tool-session"]');
+  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible();
   await page.waitForFunction(
     () => (window.__yaadeAgent?.getState().sessions?.length ?? 0) >= 1,
   );

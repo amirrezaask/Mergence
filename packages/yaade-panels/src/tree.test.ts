@@ -188,6 +188,17 @@ describe("PanelTree — setSplitRatios", () => {
     assert.equal(tree.setSplitRatios([], [0.5, 0.5]), false)
   })
 
+  it("rejects non-finite, negative, and all-zero ratios", () => {
+    const tree = new PanelTree(options)
+    tree.splitAtEdge(rootLeafId(tree), "right")
+    assert.equal(tree.setSplitRatios([], [Number.NaN, 1]), false)
+    assert.equal(tree.setSplitRatios([], [-1, 2]), false)
+    assert.equal(tree.setSplitRatios([], [0, 1]), false)
+    assert.equal(tree.setSplitRatios([], [0, 0]), false)
+    if (tree.root.kind !== "row") throw new Error("expected row")
+    assert.deepEqual(tree.root.split.ratios, [0.5, 0.5])
+  })
+
   it("setSplitRatios on leaf path returns false", () => {
     const tree = new PanelTree(options)
     assert.equal(tree.setSplitRatios([], [1]), false)
@@ -245,6 +256,7 @@ describe("PanelTree — JSON round-trip", () => {
     const b = tree.splitAtEdge(a, "right")
     tree.setView(b, { kind: "text", value: "roundtrip" })
     const json = tree.toJSON()
+    json.nextPanelId = 1
     const restored = PanelTree.fromJSON(options, json)
     assert.equal(countLeaves(restored), 2)
     assert.deepEqual(restored.getView(b), { kind: "text", value: "roundtrip" })

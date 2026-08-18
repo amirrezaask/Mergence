@@ -23,7 +23,7 @@ import type {
   ToolUseId,
   ToolUseInput,
 } from "@yaade/rpc";
-import { MainCheckout } from "@yaade/rpc";
+import { MainCheckout, SessionTabConflict } from "@yaade/rpc";
 import type { PanelId, YaadeTheme } from "@yaade/shared";
 import type { PanelEvent } from "@yaade/panels";
 import {
@@ -55,7 +55,7 @@ import {
   useIsMobile,
   yaadeMotion,
   type TabDndHandlers,
-} from "@yaade/ui";
+} from "@yaade/ui/session";
 import {
   CHORD_TIMEOUT_MS,
   keyEventMatchesBinding,
@@ -83,7 +83,6 @@ import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { ToolUseTabStrip } from "./ToolUseTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
-import { ToolUseSwitcher } from "./ToolUseSwitcher.js";
 import { nextRuntimeToolTitle, type RuntimeToolTitle } from "./tool-title.js";
 import { SessionEmptyState, SessionBootState } from "./SessionEmptyState.js";
 import {
@@ -118,6 +117,11 @@ import {
 } from "../keybindings.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
+const ToolUseSwitcher = lazy(() =>
+  import("./ToolUseSwitcher.js").then(({ ToolUseSwitcher: View }) => ({
+    default: View,
+  })),
+);
 const MobileToolView = lazy(() =>
   import("./MobileToolView.js").then(({ MobileToolView: View }) => ({
     default: View,
@@ -197,6 +201,10 @@ export function ToolSessionApp() {
   const [runtimeTitles, setRuntimeTitles] = useState<
     ReadonlyMap<ToolUseId, RuntimeToolTitle>
   >(() => new Map());
+  const layoutSaveTails = useRef(new Map<SessionTabId, Promise<void>>());
+  const layoutServerStateRef = useRef(
+    new Map<SessionTabId, { revision: number; layoutJson?: string }>(),
+  );
   const prefixPendingRef = useRef(false);
   const toolUsesRef = useRef(snapshot.usesById);
   const isMobile = useIsMobile();
@@ -275,27 +283,42 @@ export function ToolSessionApp() {
     isMobile,
   ]);
 
-  const visibleSessions = snapshot.visibleSessionIds
-    .map((id) => snapshot.sessionsById.get(id))
-    .filter((session): session is NonNullable<typeof session> =>
-      Boolean(session),
-    );
+  const visibleSessions = useMemo(
+    () =>
+      snapshot.visibleSessionIds
+        .map(id => snapshot.sessionsById.get(id))
+        .filter((session): session is NonNullable<typeof session> =>
+          Boolean(session),
+        ),
+    [snapshot.sessionsById, snapshot.visibleSessionIds],
+  );
   const activeSession = snapshot.activeSessionId
     ? snapshot.sessionsById.get(snapshot.activeSessionId)
     : undefined;
   const activeTab = snapshot.activeTabId
     ? snapshot.tabsById.get(snapshot.activeTabId)
     : undefined;
-  const tabIds = activeSession
-    ? (snapshot.visibleTabIdsBySession.get(activeSession.id) ?? EMPTY_TAB_IDS)
-    : EMPTY_TAB_IDS;
-  const visibleTabs = tabIds
-    .map(id => snapshot.tabsById.get(id))
-    .filter((tab): tab is SessionTab => Boolean(tab));
-  const activeTabToolIds = activeTab
-    ? (snapshot.useIdsByTab.get(activeTab.id) ?? EMPTY_TOOL_USE_IDS)
-    : EMPTY_TOOL_USE_IDS;
-  const useIds = activeTabToolIds;
+  const tabIds = useMemo(
+    () =>
+      activeSession
+        ? (snapshot.visibleTabIdsBySession.get(activeSession.id) ?? EMPTY_TAB_IDS)
+        : EMPTY_TAB_IDS,
+    [activeSession?.id, snapshot.visibleTabIdsBySession],
+  );
+  const visibleTabs = useMemo(
+    () =>
+      tabIds
+        .map(id => snapshot.tabsById.get(id))
+        .filter((tab): tab is SessionTab => Boolean(tab)),
+    [snapshot.tabsById, tabIds],
+  );
+  const useIds = useMemo(
+    () =>
+      activeTab
+        ? (snapshot.useIdsByTab.get(activeTab.id) ?? EMPTY_TOOL_USE_IDS)
+        : EMPTY_TOOL_USE_IDS,
+    [activeTab?.id, snapshot.useIdsByTab],
+  );
   const sessionTitlesById = useMemo(() => {
     const titles = new Map<SessionId, string>();
     for (const session of visibleSessions) titles.set(session.id, session.title);
@@ -371,6 +394,57 @@ export function ToolSessionApp() {
     });
   }, [snapshot.tabsById, snapshot.useIdsByTab, tabIds]);
 
+  // Herdr keeps layout authoritative on the host. Adopt a remote layout event
+  // only when the local workspace still matches the last server layout; a
+  // genuinely dirty local workspace remains visible and is resolved by the
+  // revision-checked save path instead of being silently discarded.
+  useEffect(() => {
+    const replacements = new Map<
+      SessionTabId,
+      { expected: ToolWorkspace; next: ToolWorkspace }
+    >();
+    for (const tabId of tabIds) {
+      const tab = snapshot.tabsById.get(tabId);
+      const workspace = tab ? toolWorkspaces.get(tab.id) : undefined;
+      if (!tab) continue;
+      const previousServer = layoutServerStateRef.current.get(tab.id);
+      const localJson = workspace ? serializeToolWorkspace(workspace) : undefined;
+      const serverChanged = Boolean(
+        previousServer &&
+          (previousServer.revision !== (tab.revision ?? 0) ||
+            previousServer.layoutJson !== tab.layoutJson),
+      );
+      if (
+        workspace &&
+        previousServer &&
+        serverChanged &&
+        localJson === previousServer.layoutJson &&
+        localJson !== tab.layoutJson
+      ) {
+        const ids = snapshot.useIdsByTab.get(tab.id) ?? EMPTY_TOOL_USE_IDS;
+        replacements.set(tab.id, {
+          expected: workspace,
+          next: restoreToolWorkspace(tab.layoutJson, ids),
+        });
+      }
+      layoutServerStateRef.current.set(tab.id, {
+        revision: tab.revision ?? 0,
+        ...(tab.layoutJson === undefined ? {} : { layoutJson: tab.layoutJson }),
+      });
+    }
+    if (replacements.size === 0) return;
+    setToolWorkspaces(previous => {
+      const next = new Map(previous);
+      let changed = false;
+      for (const [tabId, replacement] of replacements) {
+        if (previous.get(tabId) !== replacement.expected) continue;
+        next.set(tabId, replacement.next);
+        changed = true;
+      }
+      return changed ? next : previous;
+    });
+  }, [snapshot.tabsById, snapshot.useIdsByTab, tabIds, toolWorkspaces]);
+
   const updateToolWorkspace = useCallback(
     (
       tabId: SessionTabId,
@@ -388,13 +462,18 @@ export function ToolSessionApp() {
 
   const openToolInWorkspace = useCallback(
     (use: ToolUse) => {
-      const tabId = use.tabId ?? activeTab?.id;
+      const current = client.store.getSnapshot();
+      const tabId =
+        use.tabId ??
+        current.sessionsById.get(use.sessionId)?.activeTabId ??
+        current.visibleTabIdsBySession.get(use.sessionId)?.[0] ??
+        activeTab?.id;
       if (!tabId) return;
       updateToolWorkspace(tabId, (workspace) =>
         openToolView(workspace, use.id),
       );
     },
-    [activeTab?.id, updateToolWorkspace],
+    [activeTab?.id, client, updateToolWorkspace],
   );
 
   const selectSession = useCallback(
@@ -422,7 +501,12 @@ export function ToolSessionApp() {
       client.store.selectToolUse(use.id);
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
       const request = window.yaade?.tools?.selectUse?.(use.sessionId, use.id);
-      if (request) void request.catch(error => setActionError(errorMessage(error)));
+      if (request) {
+        void request.catch(async error => {
+          setActionError(errorMessage(error));
+          await client.reconcileSession(use.sessionId).catch(() => undefined);
+        });
+      }
       const nextUrl = toolSessionUrl(use.sessionId, tabId, use.id);
       if (
         current !== use.id ||
@@ -441,7 +525,7 @@ export function ToolSessionApp() {
     if (lastAutoOpenedToolRef.current === key) return;
     lastAutoOpenedToolRef.current = key;
     openToolInWorkspace(selected);
-  }, [openToolInWorkspace, selected]);
+  }, [openToolInWorkspace, selected?.id, selected?.sessionId]);
 
   useEffect(() => {
     if (!activeTab) return;
@@ -449,7 +533,7 @@ export function ToolSessionApp() {
     updateToolWorkspace(activeTab.id, (workspace) =>
       removeMissingToolViews(workspace, liveIds),
     );
-  }, [activeTab, updateToolWorkspace, useIds]);
+  }, [activeTab?.id, updateToolWorkspace, useIds]);
 
   const createTool = useCallback(
     async (
@@ -556,7 +640,12 @@ export function ToolSessionApp() {
         sessionId: tab.sessionId,
         tabId: tab.id,
       });
-      if (request) void request.catch(error => setActionError(errorMessage(error)));
+      if (request) {
+        void request.catch(async error => {
+          setActionError(errorMessage(error));
+          await client.reconcileSession(tab.sessionId).catch(() => undefined);
+        });
+      }
     },
     [client],
   );
@@ -1057,25 +1146,59 @@ export function ToolSessionApp() {
       restoreToolWorkspace(activeTab.layoutJson, useIds);
   }, [activeTab, toolWorkspaces, useIds]);
 
+  const activeTabForLayoutRef = useRef(activeTab);
+  activeTabForLayoutRef.current = activeTab;
+
   useEffect(() => {
-    if (!activeTab) return;
-    const workspace = toolWorkspaces.get(activeTab.id);
+    const currentTab = activeTabForLayoutRef.current;
+    if (!currentTab) return;
+    const workspace = toolWorkspaces.get(currentTab.id);
     if (!workspace) return;
     const layoutJson = serializeToolWorkspace(workspace);
-    if (layoutJson === activeTab.layoutJson) return;
+    if (layoutJson === currentTab.layoutJson) return;
+    const tabId = currentTab.id;
+    const sessionId = currentTab.sessionId;
     const handle = window.setTimeout(() => {
-      const request = window.yaade?.tools?.saveTabLayout?.({
-        _tag: "SaveSessionTabLayout",
-        tabId: activeTab.id,
-        layoutJson,
+      const save = window.yaade?.tools?.saveTabLayout;
+      if (!save) return;
+      const previous = layoutSaveTails.current.get(tabId) ?? Promise.resolve();
+      const operation = previous
+        .catch(() => undefined)
+        .then(async () => {
+          for (let attempt = 0; attempt < 2; attempt += 1) {
+            const currentTab = client.store.getSnapshot().tabsById.get(tabId);
+            if (!currentTab || currentTab.archivedAt) return;
+            try {
+              const tab = await save({
+                _tag: "SaveSessionTabLayout",
+                tabId,
+                layoutJson,
+                revision: currentTab.revision ?? 1,
+              });
+              client.store.replaceTab(tab);
+              return;
+            } catch (error) {
+              if (!(error instanceof SessionTabConflict)) throw error;
+              // The captured layout is stale after a concurrent writer won.
+              // Reconcile first; the effect will serialize the current local
+              // workspace against the new revision instead of replaying stale
+              // bytes immediately.
+              await client.reconcileSession(sessionId);
+              return;
+            }
+          }
+        })
+        .catch(error => setActionError(errorMessage(error)))
+        .then(() => undefined);
+      layoutSaveTails.current.set(tabId, operation);
+      void operation.then(() => {
+        if (layoutSaveTails.current.get(tabId) === operation) {
+          layoutSaveTails.current.delete(tabId);
+        }
       });
-      if (!request) return;
-      void request
-        .then(tab => client.store.replaceTab(tab))
-        .catch(error => setActionError(errorMessage(error)));
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [activeTab, client, toolWorkspaces]);
+  }, [activeTab?.id, client, toolWorkspaces]);
 
   const openToolUseIds = useMemo(
     () => new Set(toolIdsInWorkspace(activeToolWorkspace)),
@@ -1178,25 +1301,64 @@ export function ToolSessionApp() {
     [activeTab, activateDockedTool, updateToolWorkspace],
   );
 
-  const renderTool = (
-    use: ToolUse,
-    focused: boolean,
-    visible = true,
-  ) => (
-    <SelectedToolUse
-      key={use.id}
-      use={use}
-      theme={activeTheme}
-      fontSize={fontSize}
-      projects={projects}
-      onContextChange={(project, checkout) =>
-        updateToolContext(use, project, checkout)
-      }
-      visible={visible}
-      focused={focused}
-      onAction={(action) => void runToolAction(action, use)}
-      onTitleChange={(title) => updateRuntimeTitle(use, title, "terminal")}
-    />
+  const addToolToPanel = useCallback(
+    (panelId: PanelId, kind: ToolKind) => {
+      focusWorkspacePanel(panelId);
+      void createTool(kind);
+    },
+    [createTool, focusWorkspacePanel],
+  );
+
+  const splitToolPanelAt = useCallback(
+    (panelId: PanelId, edge: "right" | "bottom") => {
+      if (!activeTab) return;
+      updateToolWorkspace(activeTab.id, workspace =>
+        splitToolPanel(workspace, panelId, edge),
+      );
+    },
+    [activeTab?.id, updateToolWorkspace],
+  );
+
+  const zoomToolPanel = useCallback(
+    (panelId: PanelId) => {
+      if (!activeTab) return;
+      updateToolWorkspace(activeTab.id, workspace =>
+        toggleToolPanelZoom(workspace, panelId),
+      );
+    },
+    [activeTab?.id, updateToolWorkspace],
+  );
+
+  const renderTool = useCallback(
+    (use: ToolUse, focused: boolean, visible = true) => (
+      <SelectedToolUse
+        key={use.id}
+        use={use}
+        theme={activeTheme}
+        fontSize={fontSize}
+        projects={projects}
+        onContextChange={(project, checkout) =>
+          updateToolContext(use, project, checkout)
+        }
+        visible={visible}
+        focused={focused}
+        onAction={(action) => void runToolAction(action, use)}
+        onTitleChange={(title) => updateRuntimeTitle(use, title, "terminal")}
+      />
+    ),
+    [
+      activeTheme,
+      fontSize,
+      projects,
+      runToolAction,
+      updateRuntimeTitle,
+      updateToolContext,
+    ],
+  );
+
+  const emptyToolState = useMemo(
+    () => <SessionEmptyState onAddKind={kind => void createTool(kind)} />,
+    [createTool],
   );
 
   const showMobileToolList = (use: ToolUse) => {
@@ -1274,9 +1436,7 @@ export function ToolSessionApp() {
                 actionError={actionError}
                 onCloseTool={use => runToolAction("archive", use)}
                 onContextChange={updateToolContext}
-                renderTool={(use, visible, focused) =>
-                  renderTool(use, focused, visible)
-                }
+                renderTool={renderTool}
               />
             ) : (
               <>
@@ -1509,35 +1669,17 @@ export function ToolSessionApp() {
                     runtimeTitles={runtimeTitles}
                     projects={projects}
                     onContextChange={updateToolContext}
-                    tabDnd={toolTabDnd}
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
-                    onAddTool={(panelId, kind) => {
-                      focusWorkspacePanel(panelId);
-                      void createTool(kind);
-                    }}
-                    onSplit={(panelId, edge) =>
-                      updateToolWorkspace(activeTab.id, (workspace) =>
-                        splitToolPanel(workspace, panelId, edge),
-                      )
-                    }
-                    onZoom={(panelId) =>
-                      updateToolWorkspace(activeTab.id, (workspace) =>
-                        toggleToolPanelZoom(workspace, panelId),
-                      )
-                    }
+                    onAddTool={addToolToPanel}
+                    onSplit={splitToolPanelAt}
+                    onZoom={zoomToolPanel}
                     onCloseView={closeWorkspacePane}
-                    empty={
-                      <SessionEmptyState
-                        onAddKind={(kind) => void createTool(kind)}
-                      />
-                    }
+                    empty={emptyToolState}
                     renderTool={renderTool}
                   />
                   ) : (
-                    <SessionEmptyState
-                      onAddKind={(kind) => void createTool(kind)}
-                    />
+                    emptyToolState
                   )}
                 </div>
                 {renderPrefixHud()}
@@ -1593,15 +1735,19 @@ export function ToolSessionApp() {
             )}
           </ToolDndRoot>
         </Suspense>
-        <ToolUseSwitcher
-          open={toolUseSwitcherOpen}
-          onOpenChange={setToolUseSwitcherOpen}
-          sessionsById={snapshot.sessionsById}
-          usesById={snapshot.usesById}
-          activeToolUseId={snapshot.activeToolUseId}
-          runtimeTitles={runtimeTitles}
-          onSelect={selectTool}
-        />
+        {toolUseSwitcherOpen ? (
+          <Suspense fallback={null}>
+            <ToolUseSwitcher
+              open
+              onOpenChange={setToolUseSwitcherOpen}
+              sessionsById={snapshot.sessionsById}
+              usesById={snapshot.usesById}
+              activeToolUseId={snapshot.activeToolUseId}
+              runtimeTitles={runtimeTitles}
+              onSelect={selectTool}
+            />
+          </Suspense>
+        ) : null}
         {settingsOpen ? (
           <Suspense fallback={null}>
             <SettingsOverlay
@@ -1717,7 +1863,6 @@ function SelectedToolUse(props: {
         use={use}
         theme={props.theme}
         fontSize={props.fontSize}
-        toolbar={null}
         projects={props.projects}
         onContextChange={props.onContextChange}
         onTitleChange={props.onTitleChange}

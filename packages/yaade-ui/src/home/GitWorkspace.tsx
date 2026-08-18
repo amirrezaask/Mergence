@@ -81,6 +81,8 @@ import { SessionHeaderChromePortal } from "./session-header-chrome.js"
 import { SidebarShell } from "../shell/SidebarShell.js"
 import { PierreDiffPool } from "./pierre-diff-pool.js"
 import { listApplyHunks } from "./pierre-hunk-patch.js"
+import { readGitDiffStyle, writeGitDiffStyle } from "./git-diff-style.js"
+import { GitReviewController } from "./git-review-controller.js"
 
 const CommitChangesDialog = lazy(() =>
   import("./CommitChangesDialog.js").then(module => ({
@@ -174,9 +176,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const [selected, setSelected] = useState<SelectedChange | null>(null)
   const [filter, setFilter] = useState("")
   const [diffContents, setDiffContents] = useState<DiffContents | null>(null)
-  const [diffStyle, setDiffStyle] = useState<DiffStyle>(() =>
-    localStorage.getItem("yaade:git-diff-style") === "split" ? "split" : "unified",
-  )
+  const [diffStyle, setDiffStyle] = useState<DiffStyle>(readGitDiffStyle)
   const [loading, setLoading] = useState(true)
   const [diffLoading, setDiffLoading] = useState(false)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
@@ -193,6 +193,10 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const diffRequest = useRef(0)
   const historyRequest = useRef(0)
   const refreshInFlight = useRef(false)
+  const reviewController = useMemo(
+    () => (api && rootUri ? new GitReviewController(api, rootUri) : null),
+    [api, rootUri],
+  )
   const pollFingerprint = useRef<string | null>(null)
   const narrow = mobile || (containerWidth > 0 && containerWidth < 560)
 
@@ -381,15 +385,18 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       return
     }
     const entry = entries.find(item => item.path === selected.path)
-    const request = ++diffRequest.current
+    const request = reviewController?.nextRequest() ?? ++diffRequest.current
+    const isCurrent = () => reviewController
+      ? reviewController.isCurrentRequest(request)
+      : request === diffRequest.current
     setDiffLoading(true)
     setDiffContents(null)
     void loadGitDiffContents(rootUri, selected, entry, api, fsApi)
       .then(contents => {
-        if (request === diffRequest.current) setDiffContents(contents)
+        if (isCurrent()) setDiffContents(contents)
       })
       .catch(error => {
-        if (request !== diffRequest.current) return
+        if (!isCurrent()) return
         setDiffContents(null)
         showYaadeToast("Could not load diff", {
           variant: "destructive",
@@ -397,11 +404,11 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         })
       })
       .finally(() => {
-        if (request === diffRequest.current) setDiffLoading(false)
+        if (isCurrent()) setDiffLoading(false)
       })
     // entries looked up inside; selectedDiffKey is the stable invalidation signal
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [api, fsApi, rootUri, selected, selectedDiffKey])
+  }, [api, fsApi, rootUri, selected, selectedDiffKey, reviewController])
 
   useEffect(() => {
     const el = rootRef.current
@@ -462,10 +469,18 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const runAction = useCallback(
     async (label: string, task: () => Promise<void>, success?: string): Promise<boolean> => {
       setPendingAction(label)
+      reviewController?.invalidateRequests()
       try {
-        await task()
+        if (reviewController) {
+          await reviewController.mutate(async () => {
+            await task()
+            await refresh()
+          })
+        } else {
+          await task()
+          await refresh()
+        }
         if (success) showYaadeToast(success, { variant: "success" })
-        await refresh()
         return true
       } catch (error) {
         showYaadeToast(`${label} failed`, {
@@ -477,12 +492,12 @@ export function GitWorkspace(props: GitWorkspaceProps) {
         setPendingAction(null)
       }
     },
-    [refresh],
+    [refresh, reviewController],
   )
 
   const setAndPersistDiffStyle = (next: DiffStyle) => {
     setDiffStyle(next)
-    localStorage.setItem("yaade:git-diff-style", next)
+    writeGitDiffStyle(next)
   }
 
   const stageSelection = (change: SelectedChange) => {

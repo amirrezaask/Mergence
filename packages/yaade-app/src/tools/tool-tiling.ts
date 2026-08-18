@@ -390,6 +390,8 @@ function runtimePanelNode(
     };
   }
   if (node.split.children.length !== node.split.ratios.length) return null;
+  const ratioSum = node.split.ratios.reduce((sum, ratio) => sum + ratio, 0);
+  if (!Number.isFinite(ratioSum) || ratioSum <= 0) return null;
   const children: PanelNode<ToolPaneView>[] = [];
   for (const child of node.split.children) {
     const parsed = runtimePanelNode(child);
@@ -398,7 +400,10 @@ function runtimePanelNode(
   }
   return {
     kind: node.kind,
-    split: { children, ratios: [...node.split.ratios] },
+    split: {
+      children,
+      ratios: node.split.ratios.map(ratio => ratio / ratioSum),
+    },
   };
 }
 
@@ -433,13 +438,26 @@ function parseToolWorkspace(layoutJson: string | undefined): ToolWorkspace | nul
 }
 
 /** Decode a persisted Window, discard stale ToolUses, and place new tools. */
+function capRestoredToolPanes(workspace: ToolWorkspace): ToolWorkspace {
+  let next = workspace;
+  while (toolPaneCount(next) > MAX_TOOL_TILES) {
+    const leaves: PanelId[] = [];
+    next.tree.visitLeaves(leaf => leaves.push(leaf.panelId));
+    const empty = leaves.find(panel => next.tree.getView(panel)?.kind === "empty");
+    const panel = empty ?? leaves.at(-1);
+    if (!panel) break;
+    next = closeToolPanel(next, panel);
+  }
+  return next;
+}
+
 export function restoreToolWorkspace(
   layoutJson: string | undefined,
   liveToolUseIds: readonly ToolUseId[],
 ): ToolWorkspace {
   const live = new Set(liveToolUseIds);
   let workspace = parseToolWorkspace(layoutJson) ?? createToolWorkspace();
-  workspace = removeMissingToolViews(workspace, live);
+  workspace = capRestoredToolPanes(removeMissingToolViews(workspace, live));
   const open = new Set(toolIdsInWorkspace(workspace));
   for (const toolUseId of liveToolUseIds) {
     if (open.has(toolUseId)) continue;

@@ -1,21 +1,15 @@
-import { expect, test } from "@playwright/test";
-import { launchWeb } from "../shell/launch-web.js";
-import { pressShellPrefix } from "./_launch.js";
+import { expect } from "@playwright/test"
+import { test } from "../fixtures/e2e.js"
+import { pressShellPrefix } from "./_launch.js"
 
-test("Session shell exposes only Terminal and Git tools", async () => {
-  const app = await launchWeb();
-  try {
-    const { page } = app;
-    await page.waitForSelector('[data-yaade-shell="tool-session"]');
-    await page.evaluate(() => window.__yaadeAgent?.waitForReady());
+test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) => {
+  const { page } = await launchApp()
+  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
 
-    await pressShellPrefix(page);
-    const hudText = await page.locator("[data-yaade-which-key]").textContent();
-    expect(hudText).toContain("New Terminal");
-    expect(hudText).toContain("New Git");
-    expect(hudText).not.toContain("Search");
-    expect(hudText).not.toContain("Neovim");
-  } finally {
-    await app.app.close();
-  }
-});
+  await pressShellPrefix(page)
+  const hud = page.locator("[data-yaade-which-key]")
+  await expect(hud).toContainText("New Terminal")
+  await expect(hud).toContainText("New Git")
+  await expect(hud).not.toContainText("Search")
+  await expect(hud).not.toContainText("Neovim")
+})

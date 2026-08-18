@@ -54,7 +54,7 @@ import {
   DropdownMenuLabel,
   DropdownMenuTrigger,
 } from "@yaade/ui/primitives"
-import { GlassSurface, cn, yaadeMotion } from "@yaade/ui"
+import { GlassSurface, cn, yaadeMotion } from "@yaade/ui/session"
 import { ToolContextControls } from "./ToolContextControls.js"
 import {
   toolUseContextCaption,
@@ -162,10 +162,11 @@ export type MobileToolViewProps = {
     project: ProjectTarget,
     checkout: CheckoutTarget,
   ) => Promise<void>
+  /** Render the selected or retained tool; the argument order matches the desktop renderer. */
   readonly renderTool: (
     use: ToolUse,
-    visible: boolean,
     focused: boolean,
+    visible: boolean,
   ) => ReactNode
 }
 

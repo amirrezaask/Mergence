@@ -17,11 +17,10 @@ import type { PanelId } from "@yaade/shared";
 import {
   KeyBindingKbd,
   MuxPaneChrome,
-  PanelDock,
+  PanelDockInDnd,
   SessionHeaderChromeProvider,
   type PanelSlotMeta,
-  type TabDndHandlers,
-} from "@yaade/ui";
+} from "@yaade/ui/session";
 import {
   Button,
   Popover,
@@ -45,7 +44,6 @@ export type ToolTilingWorkspaceProps = {
     project: ProjectTarget,
     checkout: CheckoutTarget,
   ) => Promise<void>;
-  readonly tabDnd: TabDndHandlers;
   readonly empty: ReactNode;
   readonly onPanelEvent: (event: PanelEvent) => void;
   readonly onFocusPanel: (panelId: PanelId, use?: ToolUse) => void;
@@ -169,11 +167,26 @@ function PaneNewToolMenu(props: {
   );
 }
 
-export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
-  const openToolIds = toolIdsInWorkspace(props.workspace);
-  const paneCount = toolPaneCount(props.workspace);
+export default function ToolTilingWorkspace({
+  workspace,
+  usesById,
+  runtimeTitles,
+  projects,
+  onContextChange,
+  empty,
+  onPanelEvent,
+  onFocusPanel,
+  onAddTool,
+  onSplit,
+  onZoom,
+  onCloseView,
+  renderTool,
+}: ToolTilingWorkspaceProps) {
+  const openToolIds = toolIdsInWorkspace(workspace);
+  const hasOpenTools = openToolIds.length > 0;
+  const paneCount = toolPaneCount(workspace);
   const canZoom = paneCount > 1;
-  const zoomedPanelId = props.workspace.zoomedPanelId;
+  const zoomedPanelId = workspace.zoomedPanelId;
   const [contextTarget, setContextTarget] = useState<{
     readonly panelId: number;
     readonly toolUseId: ToolUseId;
@@ -205,7 +218,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
     (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
       const activeUse =
         view.kind === "tool"
-          ? props.usesById.get(view.toolUseId)
+          ? usesById.get(view.toolUseId)
           : undefined;
       const contextOpen =
         activeUse != null &&
@@ -217,7 +230,7 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
             activeUse
               ? toolUsePaneTitle(
                   activeUse,
-                  props.runtimeTitles.get(activeUse.id),
+                  runtimeTitles.get(activeUse.id),
                 )
               : "Empty pane"
           }
@@ -232,11 +245,11 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
           trailing={
             <PaneNewToolMenu
               panelId={panelId}
-              onAddTool={props.onAddTool}
+              onAddTool={onAddTool}
             />
           }
-          onSplitRight={() => props.onSplit(panelId, "right")}
-          onSplitDown={() => props.onSplit(panelId, "bottom")}
+          onSplitRight={() => onSplit(panelId, "right")}
+          onSplitDown={() => onSplit(panelId, "bottom")}
           onOpenContext={
             activeUse
               ? () =>
@@ -247,13 +260,13 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
               : undefined
           }
           contextOpen={contextOpen}
-          onZoom={() => props.onZoom(panelId)}
+          onZoom={() => onZoom(panelId)}
           shortcutFor={command =>
             command === "mux.zoomPane"
               ? toolSessionShortcutFor("pane.zoom")
               : undefined
           }
-          onClose={() => props.onCloseView(panelId)}
+          onClose={() => onCloseView(panelId)}
         />
       );
       if (!activeUse) return chrome;
@@ -291,36 +304,48 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
             </div>
             <ToolContextControls
               use={activeUse}
-              projects={props.projects}
+              projects={projects}
               active={meta.focused}
               presentation="popover"
               onChange={(project, checkout) =>
-                props.onContextChange(activeUse, project, checkout)
+                onContextChange(activeUse, project, checkout)
               }
             />
           </PopoverContent>
         </Popover>
       );
     },
-    [canZoom, contextTarget, headerContextRef, paneCount, props, zoomedPanelId],
+    [
+      canZoom,
+      contextTarget,
+      headerContextRef,
+      onCloseView,
+      onContextChange,
+      onSplit,
+      onZoom,
+      projects,
+      runtimeTitles,
+      usesById,
+      zoomedPanelId,
+    ],
   );
 
   const renderContent = useCallback(
     (view: ToolPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
       if (view.kind === "empty") {
-        return openToolIds.length === 0 ? (
-          props.empty
+        return !hasOpenTools ? (
+          empty
         ) : (
           <EmptyTile
-            onAddKind={(kind) => props.onAddTool(panelId, kind)}
+            onAddKind={(kind) => onAddTool(panelId, kind)}
           />
         );
       }
-      const use = props.usesById.get(view.toolUseId);
+      const use = usesById.get(view.toolUseId);
       if (!use) {
         return (
           <EmptyTile
-            onAddKind={(kind) => props.onAddTool(panelId, kind)}
+            onAddKind={(kind) => onAddTool(panelId, kind)}
           />
         );
       }
@@ -333,16 +358,23 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
             data-yaade-tool-tile={use.id}
             data-focused={meta.focused ? "" : undefined}
           >
-            {props.renderTool(use, meta.focused)}
+            {renderTool(use, meta.focused)}
           </div>
         </SessionHeaderChromeProvider>
       );
     },
-    [headerTargets, openToolIds.length, props],
+    [
+      empty,
+      hasOpenTools,
+      headerTargets,
+      onAddTool,
+      renderTool,
+      usesById,
+    ],
   );
 
   const zoomedView = zoomedPanelId
-    ? props.workspace.tree.getView(zoomedPanelId)
+    ? workspace.tree.getView(zoomedPanelId)
     : null;
 
   return (
@@ -363,30 +395,28 @@ export default function ToolTilingWorkspace(props: ToolTilingWorkspaceProps) {
         >
           {renderHeader(zoomedView, zoomedPanelId, {
             focused: true,
-            onClose: () => props.onCloseView(zoomedPanelId),
+            onClose: () => onCloseView(zoomedPanelId),
           })}
           <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
             {renderContent(zoomedView, zoomedPanelId, {
               focused: true,
-              onClose: () => props.onCloseView(zoomedPanelId),
+              onClose: () => onCloseView(zoomedPanelId),
             })}
           </div>
         </div>
       ) : (
-        <PanelDock
-          tree={props.workspace.tree}
-          focusedPanelId={props.workspace.focusedPanelId}
+        <PanelDockInDnd
+          tree={workspace.tree}
+          focusedPanelId={workspace.focusedPanelId}
           onFocusPanel={(panelId) => {
-            const view = props.workspace.tree.getView(panelId);
+            const view = workspace.tree.getView(panelId);
             const use =
               view?.kind === "tool"
-                ? props.usesById.get(view.toolUseId)
+                ? usesById.get(view.toolUseId)
                 : undefined;
-            props.onFocusPanel(panelId, use);
+            onFocusPanel(panelId, use);
           }}
-          onEvent={props.onPanelEvent}
-          tabDnd={props.tabDnd}
-          wrapTabDnd={false}
+          onEvent={onPanelEvent}
           leafClassName="rounded-none border-0 bg-background"
           renderHeader={renderHeader}
           renderContent={renderContent}

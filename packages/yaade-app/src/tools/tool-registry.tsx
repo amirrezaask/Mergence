@@ -1,4 +1,4 @@
-import type { ComponentType, ReactNode } from "react";
+import type { ComponentType } from "react";
 import { GitBranch, Terminal } from "lucide-react";
 import type {
   CheckoutTarget,
@@ -13,7 +13,6 @@ export type ToolRendererProps = {
   readonly use: ToolUse;
   readonly theme: YaadeTheme;
   readonly fontSize: number;
-  readonly toolbar: ReactNode;
   readonly projects: readonly ProjectTarget[];
   readonly onContextChange: (
     project: ProjectTarget,

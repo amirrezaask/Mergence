@@ -121,6 +121,71 @@ describe("ToolClient", () => {
     client.dispose()
   })
 
+  it("keeps realtime revisions when a stale snapshot resolves later", async () => {
+    const use = makeUse(1)
+    const newer = makeUse(2)
+    const session = AppSession.make({
+      id: "ses-client-test",
+      title: "Session",
+      position: 0,
+      activeToolUseId: use.id,
+      createdAt: use.createdAt,
+      updatedAt: use.createdAt,
+    })
+    let resolveList: ((value: ToolSessionSnapshot[]) => void) | undefined
+    const api = makeApi({ session, toolUses: [use] }, () => use)
+    api.listSessions = async () => new Promise(resolve => { resolveList = resolve })
+    const window = new FakeWindow()
+    const client = new ToolClient({ api, window })
+    client.start()
+    const hydration = client.hydrate()
+    ;(api as JetElectronTools & { emit(event: ToolEvent): void }).emit(
+      ToolUseUpdated.make({
+        eventId: "newer-event",
+        toolUseId: newer.id,
+        revision: newer.revision,
+        occurredAt: newer.updatedAt,
+        toolUse: newer,
+      }),
+    )
+    resolveList?.([{ session, toolUses: [use] }])
+    await hydration
+    assert.equal(client.store.getSnapshot().usesById.get(use.id)?.revision, 2)
+    client.dispose()
+  })
+
+  it("can be started again after disposal", async () => {
+    const use = makeUse(1)
+    const session = AppSession.make({
+      id: "ses-client-test",
+      title: "Session",
+      position: 0,
+      activeToolUseId: use.id,
+      createdAt: use.createdAt,
+      updatedAt: use.createdAt,
+    })
+    const recovered = makeUse(3)
+    const api = makeApi({ session, toolUses: [use] }, () => recovered)
+    const window = new FakeWindow()
+    const client = new ToolClient({ api, window })
+    client.start()
+    await client.hydrate()
+    client.dispose()
+    client.start()
+    ;(api as JetElectronTools & { emit(event: ToolEvent): void }).emit(
+      ToolUseUpdated.make({
+        eventId: "after-restart",
+        toolUseId: recovered.id,
+        revision: recovered.revision,
+        occurredAt: recovered.updatedAt,
+        toolUse: recovered,
+      }),
+    )
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(client.store.getSnapshot().usesById.get(use.id)?.revision, 3)
+    client.dispose()
+  })
+
   it("reconciles all snapshots after a host reconnect", async () => {
     const use = makeUse(1)
     const session = AppSession.make({

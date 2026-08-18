@@ -843,6 +843,19 @@ function handleEventSocket(
     requestedClientId && /^[A-Za-z0-9-]{1,128}$/.test(requestedClientId)
       ? requestedClientId
       : `ws-${randomUUID()}`;
+  // Subscribe before taking the replay snapshot. Events emitted while the
+  // synchronous replay frames are being sent are buffered and delivered after
+  // them; subscribing after replay creates a reconnect window that silently
+  // drops state changes.
+  let replaying = true;
+  const pendingEvents: HostEvent[] = [];
+  const unsubscribe = runtime.events.subscribe((event) => {
+    if (replaying) {
+      pendingEvents.push(event);
+      return;
+    }
+    sendEventSocketMessage(ws, event);
+  });
   const replay = runtime.events.replayWindow(since);
   if (replay.historyEvicted) {
     sendEventSocketMessage(ws, {
@@ -855,9 +868,15 @@ function handleEventSocket(
   for (const event of replay.events) {
     sendEventSocketMessage(ws, event);
   }
-  const unsubscribe = runtime.events.subscribe((event) => {
+  replaying = false;
+  for (const event of pendingEvents) {
     sendEventSocketMessage(ws, event);
-  });
+  }
+  pendingEvents.length = 0;
+  // Browser input is intentionally fire-and-forget. Serialize commands on the
+  // socket so writes, resize, ack, and replay-ready cannot overtake each other
+  // when the RPC implementation yields.
+  let commandTail = Promise.resolve();
   ws.on("message", (data) => {
     // Hot terminal control is JSON text; binary frames are host→client only.
     const text = typeof data === "string" ? data : wsDataToText(data);
@@ -873,7 +892,11 @@ function handleEventSocket(
     }
     const cmd = tryDecodeTerminalWsCommand(raw);
     if (!cmd) return;
-    void runHostRpc(managed, cmd.op, cmd.args, clientId).then((result) => {
+    const command = commandTail.then(() =>
+      runHostRpc(managed, cmd.op, cmd.args, clientId),
+    );
+    commandTail = command.then(() => undefined, () => undefined);
+    void command.then((result) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (result.ok) {
         ws.send(

@@ -13,6 +13,14 @@ test("event replay is bounded by both count and serialized bytes", () => {
   assert.equal(replay.at(-1)?.sequence, 6)
 })
 
+test("drops a single event that exceeds the byte budget", () => {
+  const events = new EventHub(3, 100)
+  events.emit("fs:changed", ["x".repeat(1_000)])
+  events.emit("fs:changed", ["y".repeat(1_000)])
+  assert.deepEqual(events.replayAfter(0), [])
+  assert.equal(events.replayWindow(1).historyEvicted, true)
+})
+
 test("replay window explicitly reports when retained history was evicted", () => {
   const events = new EventHub(2, 1024 * 1024)
   events.emit("one", [])

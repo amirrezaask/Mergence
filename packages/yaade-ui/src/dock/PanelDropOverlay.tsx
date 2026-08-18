@@ -16,7 +16,7 @@ import {
   radLerp,
 } from "@yaade/shared"
 import { cn } from "@/lib/utils.js"
-import { usePanelDrag } from "./PanelDragContext.js"
+import { usePanelDragSource } from "./PanelDragContext.js"
 import { useDropHot } from "./TabDndRoot.js"
 import { dropDndId } from "./tab-dnd-types.js"
 import {
@@ -222,10 +222,9 @@ export function PanelDropOverlay({
   /** @deprecated drops handled by TabDndRoot */
   onTabDrop?: unknown
 }) {
-  const drag = usePanelDrag()
+  const tabDrag = usePanelDragSource()
   const dropHot = useDropHot()
   const containerRef = useRef<HTMLDivElement>(null)
-  const tabDrag = drag.tabSource
   const active = tabDrag != null
   // ResizeObserver only while a tab drag is active — idle N-pane docks pay zero measure cost.
   const size = useElementSize(containerRef, active)

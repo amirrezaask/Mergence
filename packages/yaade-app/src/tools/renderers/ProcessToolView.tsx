@@ -1,4 +1,4 @@
-import { lazy, Suspense, type ReactNode } from "react";
+import { lazy, Suspense } from "react";
 import { LoaderCircle } from "lucide-react";
 import type { CheckoutTarget, ProjectTarget, ToolUse } from "@yaade/rpc";
 import type { YaadeTheme } from "@yaade/shared";
@@ -12,7 +12,6 @@ const TerminalPanel = lazy(() =>
 export type ProcessToolViewProps = {
   readonly use: ToolUse;
   readonly theme: YaadeTheme;
-  readonly toolbar: ReactNode;
   readonly projects: readonly ProjectTarget[];
   readonly onContextChange: (
     project: ProjectTarget,
@@ -26,7 +25,6 @@ export type ProcessToolViewProps = {
 export function ProcessToolView({
   use,
   theme,
-  toolbar,
   onTitleChange,
   visible = true,
   focused = visible,
@@ -39,7 +37,6 @@ export function ProcessToolView({
   const waitingForPty = !use.output.ptyId && status === "starting";
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
-      {toolbar}
       {waitingForPty ? (
         <div
           className="grid flex-1 place-items-center text-sm text-muted-foreground"

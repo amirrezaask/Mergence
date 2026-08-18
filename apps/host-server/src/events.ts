@@ -39,6 +39,7 @@ export class EventHub {
   private history: Array<RetainedHostEvent | undefined> = []
   private historyHead = 0
   private historyBytes = 0
+  private historyDroppedThrough = 0
   private readonly listeners = new Set<Listener>()
   private readonly capacity: number
   private readonly maxHistoryBytes: number
@@ -61,7 +62,7 @@ export class EventHub {
       this.history.push({ event, bytes: eventBytes })
       this.historyBytes += eventBytes
       while (
-        this.history.length - this.historyHead > 1 &&
+        this.history.length - this.historyHead > 0 &&
         (this.history.length - this.historyHead > this.capacity ||
           this.historyBytes > this.maxHistoryBytes)
       ) {
@@ -69,6 +70,10 @@ export class EventHub {
         this.history[this.historyHead] = undefined
         this.historyHead += 1
         this.historyBytes -= dropped.bytes
+        this.historyDroppedThrough = Math.max(
+          this.historyDroppedThrough,
+          dropped.event.sequence,
+        )
       }
       if (this.historyHead > 1024 && this.historyHead * 2 > this.history.length) {
         this.history = this.history.slice(this.historyHead)
@@ -107,7 +112,11 @@ export class EventHub {
       events,
       replayFloor,
       lastSequence: this.sequence,
-      historyEvicted: since > 0 && oldest !== undefined && since < oldest - 1,
+      historyEvicted:
+        since > 0 &&
+        (oldest !== undefined
+          ? since < oldest - 1
+          : this.historyDroppedThrough > since),
     }
   }
 

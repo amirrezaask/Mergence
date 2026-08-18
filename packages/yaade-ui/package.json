@@ -15,6 +15,14 @@
       "types": "./src/primitives.ts",
       "default": "./src/primitives.ts"
     },
+    "./session": {
+      "types": "./src/session-entry.ts",
+      "default": "./src/session-entry.ts"
+    },
+    "./gallery": {
+      "types": "./src/gallery-entry.ts",
+      "default": "./src/gallery-entry.ts"
+    },
     "./project": {
       "types": "./src/project-entry.ts",
       "default": "./src/project-entry.ts"
@@ -64,7 +72,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build:ghostty-wasm": "pnpm --filter @yaade/ghostty-react build:ghostty-wasm",
-    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/theme/appearance-defaults.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-da.test.ts src/panels/terminal-attach.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts src/home/commit-diff.test.ts src/home/pierre-hunk-patch.test.ts"
+    "test": "tsx --test src/lib/format-key.test.ts src/dock/panel-drop-zones.test.ts src/theme/default.test.ts src/theme/appearance-defaults.test.ts src/lister/fuzzy.test.ts src/lister/filter-tree.test.ts src/lister/measure.test.ts src/panels/terminal-file-drop.test.ts src/panels/terminal-da.test.ts src/panels/terminal-attach.test.ts src/panels/terminal-input-writer.test.ts src/panels/terminal-output-writer.test.ts src/panels/terminal-keybindings.test.ts src/panels/terminal-links.test.ts src/notifications/group-by-time.test.ts src/mux/process-identity.test.ts src/home/commit-diff.test.ts src/home/git-review-controller.test.ts src/home/pierre-hunk-patch.test.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.4.1",
@@ -73,7 +81,7 @@
     "@dnd-kit/utilities": "^3.2.2",
     "@fontsource-variable/geist": "^5.2.9",
     "@fontsource-variable/geist-mono": "^5.3.0",
-    "@pierre/diffs": "^1.2.11",
+    "@pierre/diffs": "1.2.11",
     "@pierre/trees": "1.0.0-beta.6",
     "@tanstack/react-virtual": "^3.13.6",
     "@yaade/ghostty-react": "workspace:*",
