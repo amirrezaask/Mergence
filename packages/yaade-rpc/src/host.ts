@@ -44,6 +44,7 @@ export type HostEvent = Schema.Schema.Type<typeof HostEvent>;
 export const HostEventChannels = [
   "terminal:data",
   "terminal:exit",
+  "terminal-instances:event",
   "notifications:event",
   "agents:event",
   "tools:event",

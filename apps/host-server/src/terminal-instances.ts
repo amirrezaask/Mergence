@@ -354,12 +354,61 @@ export class TerminalInstanceService {
     return Number(changed.changes) > 0;
   }
 
+  /** Associate an existing generic terminal with a discovered agent CLI. */
+  promoteToAgent(
+    id: string,
+    generation: number,
+    provider: AgentProvider,
+    title: string,
+    telemetryState: TerminalInstanceTelemetryState = "connecting",
+  ): TerminalInstance | null {
+    const current = this.get(id);
+    if (
+      !current ||
+      current.generation !== generation ||
+      current.processState !== "running"
+    ) {
+      return current;
+    }
+    const changed = this.db
+      .prepare(
+        `UPDATE terminal_instances SET provider=?, title=?, activity_state='starting',
+          telemetry_state=?, telemetry_error=NULL, revision=revision+1
+        WHERE id=? AND generation=? AND removed_at IS NULL AND provider IS NULL
+          AND process_state='running'`,
+      )
+      .run(provider, title, telemetryState, id, generation);
+    const promoted = Number(changed.changes) === 0
+      ? this.get(id)
+      : this.updated(id, "instance.updated");
+    if (promoted?.telemetryState === "connecting") {
+      this.scheduleTelemetryGrace(promoted);
+    }
+    return promoted;
+  }
+
   unbindToolUse(toolUseId: string): void {
     this.db
       .prepare(
         "UPDATE terminal_instances SET tool_use_id=NULL WHERE tool_use_id=?",
       )
       .run(toolUseId);
+  }
+
+  /** Keep a terminal ToolUse alive after its foreground agent returns to the shell. */
+  demoteToTerminal(id: string, generation: number): TerminalInstance | null {
+    this.clearTelemetryGrace(id)
+    const changed = this.db
+      .prepare(
+        `UPDATE terminal_instances SET provider=NULL, native_session_id=NULL,
+          activity_state='idle', telemetry_state='process_only', telemetry_error=NULL,
+          revision=revision+1
+        WHERE id=? AND generation=? AND removed_at IS NULL AND process_state='running'`,
+      )
+      .run(id, generation);
+    return Number(changed.changes) === 0
+      ? this.get(id)
+      : this.updated(id, "instance.updated");
   }
 
   bindPty(

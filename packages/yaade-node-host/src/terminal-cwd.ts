@@ -7,7 +7,7 @@ const execFileAsync = promisify(execFile)
 const DARWIN_LSOF_CANDIDATES = ["/usr/sbin/lsof", "/usr/bin/lsof", "lsof"] as const
 /** Short TTL so repeated splits reuse one lsof/ps walk. */
 const CWD_CACHE_TTL_MS = 250
-/** Share one `ps` snapshot across concurrent foreground lookups (≤1/s). */
+/** Share one `ps` snapshot across ordinary foreground lookups (≤1/s). */
 const PROCESS_TABLE_TTL_MS = 1_000
 
 type CacheEntry = { value: string | null; expiresAt: number }
@@ -192,9 +192,9 @@ async function listProcessesUncached(): Promise<ProcRow[]> {
   }
 }
 
-async function listProcesses(): Promise<ProcRow[]> {
+async function listProcesses(fresh = false): Promise<ProcRow[]> {
   const now = Date.now()
-  if (processTableCache && now <= processTableCache.expiresAt) {
+  if (!fresh && processTableCache && now <= processTableCache.expiresAt) {
     return processTableCache.rows
   }
   if (processTableInflight) return processTableInflight
@@ -250,10 +250,12 @@ function basenameOfComm(comm: string): string {
  */
 export async function foregroundProcessOf(
   leaderPid: number,
+  options?: { fresh?: boolean },
 ): Promise<{ pid: number; name: string } | null> {
   if (!Number.isFinite(leaderPid) || leaderPid <= 0) return null
+  const fresh = options?.fresh === true
 
-  const hit = cached(fgCache, leaderPid)
+  const hit = fresh ? undefined : cached(fgCache, leaderPid)
   if (hit !== undefined) {
     if (!hit) return null
     const sep = hit.indexOf("\0")
@@ -264,7 +266,7 @@ export async function foregroundProcessOf(
     }
   }
 
-  const rows = await listProcesses()
+  const rows = await listProcesses(fresh)
   if (rows.length === 0) {
     putCache(fgCache, leaderPid, null)
     return null

@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { parseOsc7Cwd } from "./terminal-osc7.js"
+import {
+  applyShellCwdReporting,
+  parseOsc7Cwd,
+} from "./terminal-osc7.js"
 
 test("parseOsc7Cwd extracts file URI paths", () => {
   assert.equal(
@@ -12,4 +15,10 @@ test("parseOsc7Cwd extracts file URI paths", () => {
     "/Users/me/work",
   )
   assert.equal(parseOsc7Cwd("no osc here"), null)
+})
+
+test("fish shells emit an OSC 7 prompt event without polling", () => {
+  const wrapped = applyShellCwdReporting("fish", [], {})
+  assert.equal(wrapped.args[0], "--init-command")
+  assert.match(wrapped.args[1] ?? "", /--on-event fish_prompt/)
 })

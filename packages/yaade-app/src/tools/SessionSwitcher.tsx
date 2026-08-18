@@ -27,6 +27,7 @@ export type SessionSwitcherProps = {
   readonly onClose?: (id: SessionId) => void
   readonly onRename?: (id: SessionId, title: string) => void
   readonly toolCounts?: ReadonlyMap<SessionId, number>
+  readonly className?: string
 }
 
 export function SessionSwitcher(props: SessionSwitcherProps) {
@@ -70,7 +71,10 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
           data-yaade-session-switcher=""
           data-yaade-active-session={activeSession?.id}
           title={switchShortcut ? `Switch session (${formatKeyBinding(switchShortcut)})` : "Switch session"}
-          className="h-8 min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-md px-1.5 text-left hover:bg-accent/70"
+          className={cn(
+            "h-8 min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-md px-1.5 text-left hover:bg-accent/70",
+            props.className,
+          )}
         >
           <span
             className="grid size-5 shrink-0 place-items-center rounded border border-border/70 bg-secondary/80 text-muted-foreground"

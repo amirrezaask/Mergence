@@ -15,6 +15,12 @@ export {
   SidebarShell,
   type SidebarShellProps,
 } from "./shell/SidebarShell.js"
+export {
+  RunningAgentsSidebar,
+  type RunningAgentSidebarItem,
+  type RunningAgentSidebarStatus,
+  type RunningAgentsSidebarProps,
+} from "./shell/RunningAgentsSidebar.js"
 export { useIsMobile } from "./hooks/use-mobile.js"
 export { MuxPaneChrome, type MuxPaneChromeProps } from "./mux/index.js"
 export { SessionHeaderChromeProvider } from "./home/session-header-chrome.js"

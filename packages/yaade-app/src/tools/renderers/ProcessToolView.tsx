@@ -73,7 +73,3 @@ export function ProcessToolView({
     </div>
   );
 }
-
-export function TerminalToolView(props: ProcessToolViewProps) {
-  return <ProcessToolView {...props} />;
-}

@@ -2,7 +2,9 @@ let waitingWorker: ServiceWorker | null = null
 let reloadForUpdate = false
 
 export function registerPwa(): void {
-  if (!import.meta.env.PROD || !("serviceWorker" in navigator)) return
+  // Electron owns the packaged asset lifecycle; a browser service worker
+  // would otherwise be able to serve stale assets across desktop updates.
+  if (!import.meta.env.PROD || !("serviceWorker" in navigator) || window.yaadeDesktop) return
 
   navigator.serviceWorker.addEventListener("controllerchange", () => {
     if (reloadForUpdate) location.reload()

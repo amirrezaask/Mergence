@@ -36,6 +36,12 @@ function parseAgentProvider(value: string): AgentProvider | null {
   return null
 }
 
+function providerTitle(provider: AgentProvider): string {
+  return provider === "opencode"
+    ? "OpenCode"
+    : `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`
+}
+
 export function processOutput(instance: TerminalInstance): ProcessToolOutput {
   return ProcessToolOutput.make({
     kind: "process",
@@ -84,7 +90,7 @@ export async function createTerminalInstance(
   const checkoutKey = request.checkoutKey?.trim() ||
     (checkoutPath === project.rootPath ? "main" : checkoutPath)
   const title = request.title?.trim().slice(0, 160) ||
-    (provider ? `${provider.charAt(0).toUpperCase()}${provider.slice(1)} agent` : "Terminal")
+    (provider ? providerTitle(provider) : "Terminal")
 
   if (request.launchRequestId) {
     const existing = runtime.terminalInstances.byLaunchRequestId(request.launchRequestId)

@@ -500,15 +500,19 @@ export class TerminalHost {
 
   /**
    * Basename of the foreground process under this PTY (e.g. `nvim`, `fish`).
-   * Used for Deck icons / tab titles.
+   * Used for Deck icons / tab titles. `fresh` bypasses the process-table cache
+   * for event-driven foreground transitions.
    */
-  async getForegroundProcess(id: string): Promise<string | null> {
+  async getForegroundProcess(
+    id: string,
+    fresh = false,
+  ): Promise<string | null> {
     if (id.length > 256) return null
     const entry = this.entries.get(id)
     if (!entry || entry.disposed) return null
     const pid = entry.proc?.pid
     if (typeof pid !== "number") return null
-    const fg = await foregroundProcessOf(pid)
+    const fg = await foregroundProcessOf(pid, { fresh })
     return fg?.name ?? null
   }
 

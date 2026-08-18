@@ -2,7 +2,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
-const INTEGRATION_VERSION = "1"
+const INTEGRATION_VERSION = "2"
 
 /**
  * OSC 7 — `ESC ] 7 ; file://[host]/path BEL` (or ST).
@@ -63,6 +63,7 @@ if [[ -z "$YAADE_OSC7_HOOKED" ]]; then
   autoload -Uz add-zsh-hook 2>/dev/null
   if typeset -f add-zsh-hook >/dev/null 2>&1; then
     add-zsh-hook chpwd _yaade_osc7
+    add-zsh-hook precmd _yaade_osc7
   fi
   _yaade_osc7
 fi
@@ -86,6 +87,10 @@ if [[ -z "\${YAADE_OSC7_HOOKED:-}" ]]; then
   _yaade_osc7
 fi
 `
+
+const FISH_INIT_COMMAND = `function _yaade_osc7 --on-event fish_prompt
+  printf '\\033]7;file://%s\\033\\\\' "$PWD"
+end`
 
 /** Ensure shell integration files exist (idempotent). */
 export function ensureShellIntegrationFiles(): string {
@@ -117,8 +122,8 @@ export function ensureShellIntegrationFiles(): string {
 }
 
 /**
- * Wrap a default-shell spawn so interactive zsh/bash emit OSC 7 on cwd change.
- * Custom launch commands (nvim, agents) are left unchanged.
+ * Wrap a default-shell spawn so interactive zsh/bash/fish emit OSC 7 at
+ * command prompts. Custom launch commands (nvim, agents) are left unchanged.
  */
 export function applyShellCwdReporting(
   command: string,
@@ -126,6 +131,13 @@ export function applyShellCwdReporting(
   env: Record<string, string>,
 ): { command: string; args: string[]; env: Record<string, string> } {
   const base = path.basename(command)
+  if (base === "fish") {
+    return {
+      command,
+      args: ["--init-command", FISH_INIT_COMMAND, ...args],
+      env,
+    }
+  }
   if (base !== "zsh" && base !== "bash") {
     return { command, args, env }
   }

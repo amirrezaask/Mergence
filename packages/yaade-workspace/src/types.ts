@@ -515,6 +515,7 @@ export type AgentRunInfo = {
   checkoutKey: string;
   checkoutPath: string;
   title: string;
+  toolUseId?: string | null;
   ptyId: string | null;
   nativeSessionId: string | null;
   processState: "reserved" | "starting" | "running" | "exited" | "disconnected";

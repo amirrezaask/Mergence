@@ -50,10 +50,12 @@ import {
 import {
   AmbientCanvas,
   GlassSurface,
+  RunningAgentsSidebar,
   WhichKeyPanel,
   cn,
   useIsMobile,
   yaadeMotion,
+  type RunningAgentSidebarItem,
   type TabDndHandlers,
 } from "@yaade/ui/session";
 import {
@@ -68,6 +70,10 @@ import {
   MIN_SIDEBAR_WIDTH,
   useAppearanceSettings,
 } from "../hooks/useAppearanceSettings.js";
+import {
+  toRunningAgentSidebarItems,
+  useRunningAgents,
+} from "../hooks/useRunningAgents.js";
 import { createToolClient, type ToolClient } from "./tool-client.js";
 import {
   chooseSession,
@@ -92,6 +98,7 @@ import {
   dockToolView,
   focusToolPanel,
   openToolView,
+  openToolViewInPanel,
   removeMissingToolViews,
   reorderToolTabs,
   resizeToolSplit,
@@ -132,8 +139,45 @@ const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
 const EMPTY_TOOL_USE_IDS: readonly ToolUseId[] = [];
 const EMPTY_TAB_IDS: readonly SessionTabId[] = [];
+const AGENT_SIDEBAR_DEFAULT_WIDTH = 256;
+const AGENT_SIDEBAR_MIN_WIDTH = 220;
+const AGENT_SIDEBAR_MAX_WIDTH = 420;
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
+
+type ToolOpenTarget = {
+  readonly sessionId: SessionId;
+  readonly tabId: SessionTabId;
+  readonly panelId: PanelId;
+};
+
+function PrefixHud(props: {
+  readonly showSidebarToggle: boolean;
+  readonly onSelect: (key: string) => void;
+}) {
+  return (
+    <div className="pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-2">
+      <div className="pointer-events-auto w-full max-w-4xl">
+        <WhichKeyPanel
+          variant="overlay"
+          prefix={TOOL_SESSION_PREFIX}
+          groups={TOOL_SESSION_PREFIX_GROUPS}
+          entries={toolSessionHudBindings()
+            .filter(
+              (binding) =>
+                props.showSidebarToggle || binding.command !== "sidebar.toggle",
+            )
+            .map((binding) => ({
+              key: binding.key,
+              desc: binding.desc,
+              group: binding.group,
+            }))}
+          onSelect={props.onSelect}
+        />
+      </div>
+    </div>
+  );
+}
 
 function isLive(use: ToolUse): boolean {
   return (
@@ -193,6 +237,9 @@ export function ToolSessionApp() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [agentSidebarWidth, setAgentSidebarWidth] = useState(
+    AGENT_SIDEBAR_DEFAULT_WIDTH,
+  );
   const [routeRevision, setRouteRevision] = useState(0);
   const [toolWorkspaces, setToolWorkspaces] = useState<
     ReadonlyMap<SessionTabId, ToolWorkspace>
@@ -339,6 +386,29 @@ export function ToolSessionApp() {
   const sidebarsCollapsed =
     sidebarLayout && appearanceSettings.sidebarCollapsed;
   const sidebarOrientation = isMobile ? "horizontal" : "vertical";
+  const runningAgents = useRunningAgents();
+  const toolUseIdByPty = useMemo(() => {
+    const ids = new Map<string, ToolUseId>();
+    for (const use of snapshot.usesById.values()) {
+      if (use.output.kind !== "process" || !use.output.ptyId) continue;
+      ids.set(use.output.ptyId, use.id);
+    }
+    return ids;
+  }, [snapshot.usesById]);
+  const projectNamesById = useMemo(() => {
+    const names = new Map<string, string>();
+    for (const project of projects) names.set(project.projectId, project.projectName);
+    return names;
+  }, [projects]);
+  const runningAgentItems = useMemo(
+    () =>
+      toRunningAgentSidebarItems(
+        runningAgents.agents,
+        toolUseIdByPty,
+        projectNamesById,
+      ),
+    [projectNamesById, runningAgents.agents, toolUseIdByPty],
+  );
 
   const toggleSidebars = useCallback(() => {
     if (!sidebarLayout) return;
@@ -461,16 +531,19 @@ export function ToolSessionApp() {
   );
 
   const openToolInWorkspace = useCallback(
-    (use: ToolUse) => {
+    (use: ToolUse, target?: ToolOpenTarget) => {
       const current = client.store.getSnapshot();
       const tabId =
+        target?.tabId ??
         use.tabId ??
         current.sessionsById.get(use.sessionId)?.activeTabId ??
         current.visibleTabIdsBySession.get(use.sessionId)?.[0] ??
         activeTab?.id;
       if (!tabId) return;
       updateToolWorkspace(tabId, (workspace) =>
-        openToolView(workspace, use.id),
+        target?.panelId === undefined
+          ? openToolView(workspace, use.id)
+          : openToolViewInPanel(workspace, target.panelId, use.id),
       );
     },
     [activeTab?.id, client, updateToolWorkspace],
@@ -494,9 +567,9 @@ export function ToolSessionApp() {
   );
 
   const selectTool = useCallback(
-    (use: ToolUse) => {
+    (use: ToolUse, target?: ToolOpenTarget) => {
       markPerformance("yaade:tool-switch");
-      openToolInWorkspace(use);
+      openToolInWorkspace(use, target);
       const current = client.store.getSnapshot().activeToolUseId;
       client.store.selectToolUse(use.id);
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
@@ -516,6 +589,19 @@ export function ToolSessionApp() {
       }
     },
     [client, openToolInWorkspace],
+  );
+
+  const focusRunningAgent = useCallback(
+    (agent: RunningAgentSidebarItem) => {
+      if (!agent.toolUseId) return;
+      for (const candidate of snapshot.usesById.values()) {
+        if (candidate.id === agent.toolUseId) {
+          selectTool(candidate);
+          return;
+        }
+      }
+    },
+    [selectTool, snapshot.usesById],
   );
 
   const lastAutoOpenedToolRef = useRef<string | undefined>(undefined);
@@ -540,15 +626,18 @@ export function ToolSessionApp() {
       nextKind: ToolKind = "terminal",
       launchContext?: ToolContextSelection,
       targetSessionId?: SessionId,
+      target?: ToolOpenTarget,
     ): Promise<ToolUse | undefined> => {
       const currentSnapshot = client.store.getSnapshot();
-      const targetSession = targetSessionId
-        ? currentSnapshot.sessionsById.get(targetSessionId)
-        : activeSession;
+      const targetSession = target
+        ? currentSnapshot.sessionsById.get(target.sessionId)
+        : targetSessionId
+          ? currentSnapshot.sessionsById.get(targetSessionId)
+          : activeSession;
       const targetTabIds = targetSession
         ? currentSnapshot.visibleTabIdsBySession.get(targetSession.id) ?? EMPTY_TAB_IDS
         : EMPTY_TAB_IDS;
-      const preferredTabId = targetSession?.activeTabId ?? targetTabIds[0];
+      const preferredTabId = target?.tabId ?? targetSession?.activeTabId ?? targetTabIds[0];
       const targetTab = preferredTabId
         ? currentSnapshot.tabsById.get(preferredTabId)
         : undefined;
@@ -607,7 +696,11 @@ export function ToolSessionApp() {
           const created = await window.yaade?.tools?.createUse?.(command);
           if (created) client.store.replaceToolUse(created);
           await client.reconcileSession(targetSession.id);
-          if (created) selectTool(created);
+          if (created) {
+            const openTarget =
+              target && destinationTab.id === target.tabId ? target : undefined;
+            selectTool(created, openTarget);
+          }
           return created;
         } catch (error) {
           if (rollbackTab) {
@@ -1309,6 +1402,34 @@ export function ToolSessionApp() {
     [createTool, focusWorkspacePanel],
   );
 
+  const addToolToSplitPanel = useCallback(
+    (panelId: PanelId, edge: "right" | "bottom", kind: ToolKind) => {
+      if (!activeSession || !activeTab) return;
+      const tabId = activeTab.id;
+      const currentWorkspace =
+        toolWorkspaces.get(tabId) ?? activeToolWorkspace;
+      const nextWorkspace = splitToolPanel(currentWorkspace, panelId, edge);
+      if (nextWorkspace === currentWorkspace) return;
+      const target: ToolOpenTarget = {
+        sessionId: activeSession.id,
+        tabId,
+        panelId: nextWorkspace.focusedPanelId,
+      };
+      updateToolWorkspace(tabId, workspace =>
+        splitToolPanel(workspace, panelId, edge),
+      );
+      void createTool(kind, undefined, activeSession.id, target);
+    },
+    [
+      activeSession,
+      activeTab,
+      activeToolWorkspace,
+      createTool,
+      toolWorkspaces,
+      updateToolWorkspace,
+    ],
+  );
+
   const splitToolPanelAt = useCallback(
     (panelId: PanelId, edge: "right" | "bottom") => {
       if (!activeTab) return;
@@ -1372,37 +1493,15 @@ export function ToolSessionApp() {
     setRouteRevision(revision => revision + 1);
   };
 
-  const renderPrefixHud = () =>
-    prefixPending ? (
-      <div className="pointer-events-none absolute inset-x-0 bottom-2 z-20 flex justify-center px-2">
-        <div className="pointer-events-auto w-full max-w-4xl">
-          <WhichKeyPanel
-            variant="overlay"
-            prefix={TOOL_SESSION_PREFIX}
-            groups={TOOL_SESSION_PREFIX_GROUPS}
-            entries={toolSessionHudBindings()
-              .filter(
-                (binding) =>
-                  sidebarLayout || binding.command !== "sidebar.toggle",
-              )
-              .map((binding) => ({
-                key: binding.key,
-                desc: binding.desc,
-                group: binding.group,
-              }))}
-            onSelect={(key) => {
-              clearPrefix();
-              if (isToolSessionJumpKey(key)) {
-                runPrefixCommand("tool.jump", Number(key) - 1);
-                return;
-              }
-              const binding = matchToolSessionPrefixBinding(key);
-              if (binding) runPrefixCommand(binding.command);
-            }}
-          />
-        </div>
-      </div>
-    ) : null;
+  const onPrefixHudSelect = (key: string) => {
+    clearPrefix();
+    if (isToolSessionJumpKey(key)) {
+      runPrefixCommand("tool.jump", Number(key) - 1);
+      return;
+    }
+    const binding = matchToolSessionPrefixBinding(key);
+    if (binding) runPrefixCommand(binding.command);
+  };
 
   return (
     <MotionConfig reducedMotion="user">
@@ -1411,11 +1510,48 @@ export function ToolSessionApp() {
         <LayoutGroup id="yaade-tool-session">
       <AmbientCanvas asChild>
       <div
-        className="flex h-full min-h-0 flex-col bg-transparent text-foreground"
+        className="flex h-full min-h-0 flex-row overflow-hidden bg-transparent text-foreground"
         data-yaade-shell="tool-session"
         data-yaade-session-layout={appearanceSettings.sessionLayout}
         data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
       >
+        {!isMobile ? (
+          <div
+            className="relative h-full shrink-0"
+            style={{ width: `${agentSidebarWidth}px` }}
+          >
+            <RunningAgentsSidebar
+              header={
+                <SessionSwitcher
+                  open={switcherOpen}
+                  onOpenChange={setSwitcherOpen}
+                  sessions={visibleSessions}
+                  activeSessionId={snapshot.activeSessionId}
+                  onSelect={session => selectSession(session.id)}
+                  onCreate={() => void createSession()}
+                  onClose={requestCloseSession}
+                  onRename={(id, title) => void renameSession(id, title)}
+                  toolCounts={toolCounts}
+                  className="w-full max-w-none"
+                />
+              }
+              agents={runningAgentItems}
+              loading={runningAgents.loading}
+              error={runningAgents.error}
+              onSelectAgent={focusRunningAgent}
+              className="w-full"
+            />
+            <SidebarResizeHandle
+              value={agentSidebarWidth}
+              min={AGENT_SIDEBAR_MIN_WIDTH}
+              max={AGENT_SIDEBAR_MAX_WIDTH}
+              side="left"
+              label="Resize agent sidebar"
+              onChange={setAgentSidebarWidth}
+            />
+          </div>
+        ) : null}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         <Suspense fallback={<SessionBootState />}>
           <ToolDndRoot handlers={toolTabDnd}>
             {isMobile ? (
@@ -1463,17 +1599,6 @@ export function ToolSessionApp() {
                     <Settings />
                   </Button>
                 </ShortcutTooltip>
-                <SessionSwitcher
-                  open={switcherOpen}
-                  onOpenChange={setSwitcherOpen}
-                  sessions={visibleSessions}
-                  activeSessionId={snapshot.activeSessionId}
-                  onSelect={(session) => selectSession(session.id)}
-                  onCreate={() => void createSession()}
-                  onClose={requestCloseSession}
-                  onRename={(id, title) => void renameSession(id, title)}
-                  toolCounts={toolCounts}
-                />
                 <SessionWindowTabStrip
                   tabs={visibleTabs}
                   activeTabId={activeTab?.id}
@@ -1672,6 +1797,7 @@ export function ToolSessionApp() {
                     onPanelEvent={handleToolPanelEvent}
                     onFocusPanel={focusWorkspacePanel}
                     onAddTool={addToolToPanel}
+                    onAddSplitTool={addToolToSplitPanel}
                     onSplit={splitToolPanelAt}
                     onZoom={zoomToolPanel}
                     onCloseView={closeWorkspacePane}
@@ -1682,7 +1808,12 @@ export function ToolSessionApp() {
                     emptyToolState
                   )}
                 </div>
-                {renderPrefixHud()}
+                {prefixPending ? (
+                  <PrefixHud
+                    showSidebarToggle={sidebarLayout}
+                    onSelect={onPrefixHudSelect}
+                  />
+                ) : null}
               </main>
               {twoSidebarLayout ? (
                 <div
@@ -1769,6 +1900,7 @@ export function ToolSessionApp() {
               : undefined
           }
         />
+        </div>
       </div>
       </AmbientCanvas>
         </LayoutGroup>

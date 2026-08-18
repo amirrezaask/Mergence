@@ -44,7 +44,7 @@ const entries: readonly RegistryEntry[] = [
     describeInput: () => "shell",
     loadRenderer: async () => {
       const module = await import("./renderers/ProcessToolView.js");
-      return { default: module.TerminalToolView as ComponentType<ToolRendererProps> };
+      return { default: module.ProcessToolView as ComponentType<ToolRendererProps> };
     },
   },
   {

@@ -11,8 +11,6 @@ Supported ToolKinds are exactly:
 
 Do not add standalone Agent, Search, Editor, or Neovim ToolUses. Agent CLIs run inside Terminal.
 
-**No Rust, Tauri, Electron, or native desktop shell.**
-
 ## Layout
 
 - `apps/host-server` — Effect-based HTTP/WS host and ToolUse lifecycle

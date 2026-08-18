@@ -16,7 +16,7 @@ http://localhost:5174/?s=ses-…&t=tab-…&u=use-… Deep link
 | **Terminal** | Persistent PTY with replay, flow control, mobile accessory keys, and support for running shell or agent CLIs directly. |
 | **Git History** | Virtualized commit history, changed files, and diffs for the selected checkout. |
 
-Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal.
+Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. A resizable **Agents** sidebar shows live agent CLIs and focuses their session, window, and pane when selected; its header is the session switcher.
 
 ## Sessions
 
@@ -44,6 +44,24 @@ Prefix: **`Mod-k`** (`⌘K` on macOS, `Ctrl+K` elsewhere). Press it twice in a t
 | `Mod-k x` | Close tool |
 | `Mod-k Shift-X` | Close Session |
 | `Mod-k ,` or `Mod-,` | Settings |
+
+## Desktop app
+
+The Electron wrapper keeps the renderer sandboxed and runs the existing host on a loopback-only port. Development starts both the Vite renderer and host automatically:
+
+```bash
+pnpm install
+pnpm dev:desktop
+```
+
+Build a packaged desktop app after the normal runtime build:
+
+```bash
+pnpm package:desktop  # package for the current platform
+pnpm make:desktop     # create a ZIP artifact for the current platform
+```
+
+Pass a workspace explicitly with `--workspace /path/to/project`. Desktop builds keep host data under Electron's `userData` directory and do not register the browser PWA service worker. Forge packaging uses Node 22 LTS; set `YAADE_PACKAGER_NODE` when it is not discoverable locally.
 
 ## Development
 

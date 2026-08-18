@@ -2,7 +2,6 @@ import { useCallback, useRef, useState, type ReactNode } from "react";
 import {
   GitBranch,
   PanelTopOpen,
-  Plus,
   Terminal as TerminalIcon,
 } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
@@ -26,7 +25,6 @@ import {
   Popover,
   PopoverAnchor,
   PopoverContent,
-  PopoverTrigger,
 } from "@yaade/ui/primitives";
 import { ToolContextControls } from "./ToolContextControls.js";
 import { toolUsePaneTitle, type RuntimeToolTitle } from "./tool-title.js";
@@ -48,6 +46,11 @@ export type ToolTilingWorkspaceProps = {
   readonly onPanelEvent: (event: PanelEvent) => void;
   readonly onFocusPanel: (panelId: PanelId, use?: ToolUse) => void;
   readonly onAddTool: (panelId: PanelId, kind: ToolKind) => void;
+  readonly onAddSplitTool: (
+    panelId: PanelId,
+    edge: "right" | "bottom",
+    kind: ToolKind,
+  ) => void;
   readonly onSplit: (panelId: PanelId, edge: "right" | "bottom") => void;
   readonly onZoom: (panelId: PanelId) => void;
   readonly onCloseView: (panelId: PanelId) => void;
@@ -113,23 +116,19 @@ const paneToolKinds: readonly PaneTool[] = [
 
 function PaneNewToolMenu(props: {
   readonly panelId: PanelId;
-  readonly onAddTool: (panelId: PanelId, kind: ToolKind) => void;
+  readonly edge: "right" | "bottom";
+  readonly open: boolean;
+  readonly onOpenChange: (open: boolean) => void;
+  readonly trigger: ReactNode;
+  readonly onAddTool: (
+    panelId: PanelId,
+    edge: "right" | "bottom",
+    kind: ToolKind,
+  ) => void;
 }) {
-  const [open, setOpen] = useState(false);
   return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger asChild>
-        <Button
-          type="button"
-          size="icon-xs"
-          variant="ghost"
-          aria-label="New tool"
-          title="New tool"
-          data-yaade-pane-new-tool=""
-        >
-          <Plus />
-        </Button>
-      </PopoverTrigger>
+    <Popover open={props.open} onOpenChange={props.onOpenChange}>
+      <PopoverAnchor asChild>{props.trigger}</PopoverAnchor>
       <PopoverContent
         align="end"
         side="bottom"
@@ -137,9 +136,6 @@ function PaneNewToolMenu(props: {
         className="w-48 p-1.5"
         data-yaade-pane-tool-menu=""
       >
-        <p className="px-2 py-1 text-3xs font-bold uppercase tracking-[0.1em] text-muted-foreground">
-          New tool
-        </p>
         {paneToolKinds.map(item => {
           const Icon = item.icon;
           const shortcut = toolSessionShortcutFor(item.command);
@@ -152,8 +148,8 @@ function PaneNewToolMenu(props: {
               className="w-full justify-start"
               data-yaade-pane-new-tool-kind={item.kind}
               onClick={() => {
-                setOpen(false);
-                props.onAddTool(props.panelId, item.kind);
+                props.onOpenChange(false);
+                props.onAddTool(props.panelId, props.edge, item.kind);
               }}
             >
               <Icon data-icon="inline-start" />
@@ -177,6 +173,7 @@ export default function ToolTilingWorkspace({
   onPanelEvent,
   onFocusPanel,
   onAddTool,
+  onAddSplitTool,
   onSplit,
   onZoom,
   onCloseView,
@@ -190,6 +187,10 @@ export default function ToolTilingWorkspace({
   const [contextTarget, setContextTarget] = useState<{
     readonly panelId: number;
     readonly toolUseId: ToolUseId;
+  } | null>(null);
+  const [splitToolTarget, setSplitToolTarget] = useState<{
+    readonly panelId: number;
+    readonly edge: "right" | "bottom";
   } | null>(null);
   // Mode-specific chrome is owned by the tool renderer but lives in its pane header.
   const [headerTargets, setHeaderTargets] = useState<ReadonlyMap<number, HTMLElement>>(
@@ -240,14 +241,39 @@ export default function ToolTilingWorkspace({
           zoomed={zoomedPanelId?.id === panelId.id}
           canZoom={canZoom}
           processName={activeUse?.kind}
-          splitControlsOnly
           contextRef={headerContextRef(panelId.id)}
-          trailing={
-            <PaneNewToolMenu
-              panelId={panelId}
-              onAddTool={onAddTool}
-            />
-          }
+          onSplitButton={direction => {
+            setContextTarget(null);
+            setSplitToolTarget({
+              panelId: panelId.id,
+              edge: direction === "right" ? "right" : "bottom",
+            });
+          }}
+          wrapSplitButton={(direction, button) => {
+            const edge = direction === "right" ? "right" : "bottom";
+            const open =
+              splitToolTarget?.panelId === panelId.id &&
+              splitToolTarget.edge === edge;
+            return (
+              <PaneNewToolMenu
+                panelId={panelId}
+                edge={edge}
+                open={open}
+                onOpenChange={nextOpen => {
+                  setSplitToolTarget(current =>
+                    nextOpen
+                      ? { panelId: panelId.id, edge }
+                      : current?.panelId === panelId.id &&
+                          current.edge === edge
+                        ? null
+                        : current,
+                  );
+                }}
+                trigger={button}
+                onAddTool={onAddSplitTool}
+              />
+            );
+          }}
           onSplitRight={() => onSplit(panelId, "right")}
           onSplitDown={() => onSplit(panelId, "bottom")}
           onOpenContext={
@@ -319,12 +345,14 @@ export default function ToolTilingWorkspace({
       canZoom,
       contextTarget,
       headerContextRef,
+      onAddSplitTool,
       onCloseView,
       onContextChange,
       onSplit,
       onZoom,
       projects,
       runtimeTitles,
+      splitToolTarget,
       usesById,
       zoomedPanelId,
     ],

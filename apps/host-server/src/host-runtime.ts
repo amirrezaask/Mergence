@@ -20,6 +20,7 @@ import {
 import type { ProjectDatabase } from "./persistence.js";
 import { TerminalInstanceService } from "./terminal-instances.js";
 import { ToolSessionStore } from "./tool-session-store.js";
+import { discoverTerminalAgents } from "./terminal-agent-discovery.js";
 import { ToolService } from "./tools/service.js";
 
 export type HostRuntime = {
@@ -38,8 +39,19 @@ export type HostRuntime = {
   toolSessions: ToolSessionStore;
   toolService: ToolService | null;
   hookQueueTimer: ReturnType<typeof setInterval>;
+  /** Request an event-driven foreground-process reconciliation for one PTY. */
+  requestTerminalAgentScan: (ptyId?: string, armOutputProbe?: boolean) => void;
+  stopTerminalAgentScan: () => void;
   pendingHookQueueDrain: () => Promise<void> | null;
 };
+
+function hasShellPromptMarker(data: string): boolean {
+  return (
+    data.includes("\x1b]7;") ||
+    data.includes("\x1b]133;A") ||
+    data.includes("\x1b]133;D")
+  );
+}
 
 function asAgentProvider(
   value: string | null | undefined,
@@ -113,15 +125,92 @@ export function createRuntime(
   terminalInstances = processInstances;
   // Construct after terminal persistence so migration 15 can correlate existing PTYs.
   const toolSessions = new ToolSessionStore(db.raw(), os.hostname());
+
+  // Foreground process changes have no portable child-process event in node-pty.
+  // Reconcile on PTY command/output boundaries instead of polling all terminals.
+  let terminalAgentScanInFlight: Promise<void> | null = null;
+  let terminalAgentScanQueued = false;
+  let terminalAgentScanStopped = false;
+  let scanAllTerminals = false;
+  const pendingTerminalAgentPtys = new Set<string>();
+  // Prevent a noisy non-agent command from turning every PTY frame into a ps
+  // walk. A command boundary clears the gate for one post-submit probe.
+  const outputProbeArmed = new Set<string>();
+
+  const runTerminalAgentScan = () => {
+    if (terminalAgentScanStopped || terminalAgentScanInFlight) return;
+    const ptyIds = scanAllTerminals
+      ? undefined
+      : [...pendingTerminalAgentPtys];
+    scanAllTerminals = false;
+    pendingTerminalAgentPtys.clear();
+    if (ptyIds && ptyIds.length === 0) return;
+    terminalAgentScanInFlight = discoverTerminalAgents(runtime, ptyIds)
+      .catch(error => console.warn("Failed to discover terminal agents", error))
+      .finally(() => {
+        terminalAgentScanInFlight = null;
+        if (
+          !terminalAgentScanStopped &&
+          (scanAllTerminals || pendingTerminalAgentPtys.size > 0)
+        ) {
+          queueMicrotask(runTerminalAgentScan);
+        }
+      });
+  };
+
+  const requestTerminalAgentScan = (
+    ptyId?: string,
+    armOutputProbe = false,
+  ) => {
+    if (terminalAgentScanStopped) return;
+    if (ptyId) {
+      if (armOutputProbe) outputProbeArmed.delete(ptyId);
+      pendingTerminalAgentPtys.add(ptyId);
+    } else {
+      scanAllTerminals = true;
+    }
+    if (terminalAgentScanInFlight || terminalAgentScanQueued) return;
+    terminalAgentScanQueued = true;
+    queueMicrotask(() => {
+      terminalAgentScanQueued = false;
+      runTerminalAgentScan();
+    });
+  };
+
+  const stopTerminalAgentScan = () => {
+    terminalAgentScanStopped = true;
+    scanAllTerminals = false;
+    pendingTerminalAgentPtys.clear();
+    outputProbeArmed.clear();
+  };
+
   terminal.setEmit((channel, args) => {
     events.emit(channel, args);
     if (channel === "terminal:data") {
       const ptyId = String(args[0] ?? "");
       const data = String(args[1] ?? "");
       handleTerminalOsc(notifications, agents, terminalOscBuffers, ptyId, data);
+      const instance = processInstances.byPtyId(ptyId);
+      const shellPrompt = hasShellPromptMarker(data);
+      const shellCommandStart = data.includes("\x1b]133;C");
+      // OSC 7/133 prompt markers are cheap, precise signals for an agent
+      // returning to the shell. OSC 133 command-start markers also reopen the
+      // one output probe used to catch a CLI that starts just after the input
+      // reconciliation.
+      if (shellPrompt) {
+        outputProbeArmed.add(ptyId);
+        requestTerminalAgentScan(ptyId);
+      } else if (shellCommandStart && !instance?.provider) {
+        outputProbeArmed.delete(ptyId);
+        requestTerminalAgentScan(ptyId);
+      } else if (!instance?.provider && !outputProbeArmed.has(ptyId)) {
+        outputProbeArmed.add(ptyId);
+        requestTerminalAgentScan(ptyId);
+      }
     } else if (channel === "terminal:exit") {
       const ptyId = String(args[0] ?? "");
       terminalOscBuffers.delete(ptyId);
+      outputProbeArmed.delete(ptyId);
       const exitCode =
         typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0);
       const replay = terminal.readOutput(ptyId);
@@ -175,6 +264,8 @@ export function createRuntime(
     toolSessions,
     toolService: null,
     hookQueueTimer,
+    requestTerminalAgentScan,
+    stopTerminalAgentScan,
     pendingHookQueueDrain: () => hookQueueDrain,
   };
   runtime.toolService = new ToolService(runtime);
@@ -186,6 +277,7 @@ export function createRuntime(
   }
   // Drain offline hook queue from previous host downtime without blocking boot.
   requestHookQueueDrain();
+  requestTerminalAgentScan();
 
   return runtime;
 }
@@ -346,6 +438,7 @@ function handleTerminalExit(
 export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
   runtime.events.emit("server:shuttingDown", []);
   clearInterval(runtime.hookQueueTimer);
+  runtime.stopTerminalAgentScan();
   await runtime.pendingHookQueueDrain();
   await runtime.toolService?.close();
   runtime.terminal.stopAll();

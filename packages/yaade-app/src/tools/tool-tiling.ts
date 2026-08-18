@@ -112,6 +112,28 @@ export function openToolView(
   return { tree, focusedPanelId: created, zoomedPanelId: null };
 }
 
+/** Open a ToolUse in a known empty pane, falling back to normal placement. */
+export function openToolViewInPanel(
+  workspace: ToolWorkspace,
+  panelId: PanelId,
+  toolUseId: ToolUseId,
+): ToolWorkspace {
+  const existing = findToolPanel(workspace.tree, toolUseId);
+  if (existing) return focusToolPanel(workspace, existing);
+  if (!panelExists(workspace.tree, panelId)) {
+    return openToolView(workspace, toolUseId);
+  }
+
+  const targetView = workspace.tree.getView(panelId);
+  if (targetView?.kind !== "empty") {
+    return openToolView(workspace, toolUseId);
+  }
+
+  const tree = workspace.tree.clone();
+  tree.setView(panelId, { kind: "tool", toolUseId });
+  return { tree, focusedPanelId: panelId, zoomedPanelId: null };
+}
+
 export function focusToolPanel(
   workspace: ToolWorkspace,
   panelId: PanelId,

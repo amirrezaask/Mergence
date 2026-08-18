@@ -30,6 +30,12 @@ export {
   type ProjectSidebarProps,
 } from "./shell/ProjectSidebar.js"
 export { SidebarShell, type SidebarShellProps } from "./shell/SidebarShell.js"
+export {
+  RunningAgentsSidebar,
+  type RunningAgentSidebarItem,
+  type RunningAgentSidebarStatus,
+  type RunningAgentsSidebarProps,
+} from "./shell/RunningAgentsSidebar.js"
 export { useIsMobile } from "./hooks/use-mobile.js"
 export {
   ProjectWorkspaceSidebar,
@@ -202,13 +208,10 @@ export { ListRow, type ListRowProps } from "./components/ListRow.js"
 export { PanelEmpty } from "./components/PanelEmpty.js"
 export {
   MuxPaneChrome,
-  MuxEmptyState,
   processIdentity,
   deckTileStyle,
   formatMuxTitle,
   type MuxPaneChromeProps,
-  type MuxEmptyActionId,
-  type MuxEmptyStateProps,
   type ProcessIdentity,
   type TabOrientation,
 } from "./mux/index.js"

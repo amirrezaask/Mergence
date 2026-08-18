@@ -786,13 +786,23 @@ async function handleAgents(
       return runtime.terminalInstances
         .listLive(projectId)
         .filter((instance) => instance.provider)
-        .map(instanceToAgentRunInfo);
+        .map(instance =>
+          instanceToAgentRunInfo(
+            instance,
+            runtime.notifications.bindingForSession(instance.id)?.sessionTitle,
+          ),
+        );
     }
     case "agents:listProject":
       return runtime.terminalInstances
         .listProject(str(args[0], "projectId"))
         .filter((instance) => instance.provider)
-        .map(instanceToAgentRunInfo);
+        .map(instance =>
+          instanceToAgentRunInfo(
+            instance,
+            runtime.notifications.bindingForSession(instance.id)?.sessionTitle,
+          ),
+        );
     case "agents:get": {
       const instance = runtime.terminalInstances.get(str(args[0], "runId"));
       return instance?.provider
@@ -1004,6 +1014,7 @@ function parseAgentProvider(
 
 function instanceToAgentRunInfo(
   instance: import("./terminal-instances.js").TerminalInstance,
+  sessionTitle?: string | null,
 ) {
   if (!instance.provider) {
     throw new Error("terminal instance is not an agent process");
@@ -1017,7 +1028,8 @@ function instanceToAgentRunInfo(
     workspaceId: instance.workspaceId ?? "",
     checkoutKey: instance.checkoutKey,
     checkoutPath: instance.checkoutPath,
-    title: instance.title,
+    title: sessionTitle?.trim() || instance.title,
+    toolUseId: instance.toolUseId,
     ptyId: instance.ptyId,
     nativeSessionId: instance.nativeSessionId,
     processState:
@@ -1337,8 +1349,27 @@ async function handleTerminal(
       });
       return created;
     }
-    case "terminal:write":
-      return runtime.terminal.write(str(args[0], "id"), String(args[1] ?? ""));
+    case "terminal:write": {
+      const id = str(args[0], "id");
+      const data = String(args[1] ?? "");
+      const result = runtime.terminal.write(id, data);
+      // Enter starts a foreground command; Ctrl-C/Ctrl-D can return an agent
+      // to its shell. Ask for one targeted reconciliation without polling on
+      // every printable keystroke.
+      const commandBoundary =
+        data.includes("\r") ||
+        data.includes("\n") ||
+        data.includes("\u0003") ||
+        data.includes("\u0004");
+      if (commandBoundary) {
+        const instance = runtime.terminalInstances.byPtyId(id);
+        const interrupt = data.includes("\u0003") || data.includes("\u0004");
+        if (!instance?.provider || interrupt) {
+          runtime.requestTerminalAgentScan(id, true);
+        }
+      }
+      return result;
+    }
     case "terminal:writeBinary":
       return runtime.terminal.writeBinary(
         str(args[0], "id"),

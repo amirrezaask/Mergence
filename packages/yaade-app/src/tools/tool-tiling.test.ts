@@ -9,6 +9,7 @@ import {
   createToolWorkspace,
   dockToolView,
   openToolView,
+  openToolViewInPanel,
   restoreToolWorkspace,
   serializeToolWorkspace,
   splitToolPanel,
@@ -51,6 +52,20 @@ describe("tool tiling workspace", () => {
 
     assert.equal(toolPaneCount(workspace), 2);
     assert.equal(workspace.tree.root.kind, "column");
+    assert.equal(focusedTool(workspace), second);
+  });
+
+  it("opens a selected split tool in the new pane", () => {
+    const first = toolId("first");
+    const second = toolId("second");
+    let workspace = openToolView(createToolWorkspace(), first);
+    const firstPanel = workspace.focusedPanelId;
+    workspace = splitToolPanel(workspace, firstPanel, "right");
+    const splitPanel = workspace.focusedPanelId;
+    workspace = openToolViewInPanel(workspace, splitPanel, second);
+
+    assert.deepEqual(toolIdsInWorkspace(workspace), [first, second]);
+    assert.equal(workspace.tree.getView(splitPanel)?.kind, "tool");
     assert.equal(focusedTool(workspace), second);
   });
 
