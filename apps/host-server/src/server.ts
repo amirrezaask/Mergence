@@ -35,15 +35,18 @@ import { makeHostLayers, type HostLayerServices } from "./effect/layers.js";
 import { HostRuntimeTag } from "./effect/tags.js";
 import { shutdownRuntime, type HostRuntime } from "./host-runtime.js";
 import { pathAllowed, pathStaysWithin } from "./sandbox.js";
-import { isAllowedWebSocketOrigin } from "./security.js";
+import { isAllowedWebSocketOrigin, isAuthorizedRequest } from "./security.js";
 import { normalizeProviderHookRequest } from "./notifications/index.js";
 
 const VERSION = "0.0.1";
 const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
-/** Slow clients get closed 1013. Lowered now that terminal:data is live-only. */
+/** Slow clients get paused, then closed 1013 if they stay behind. */
 const MAX_WEBSOCKET_BUFFERED_BYTES = 2 * 1024 * 1024;
+const SOFT_WEBSOCKET_BUFFERED_BYTES = 512 * 1024;
 /** Bound concurrent /api/v1/rpc handlers to avoid stampede spikes. */
 const MAX_INFLIGHT_RPC = 32;
+const MAX_WS_COMMAND_QUEUE = 64;
+const MAX_WS_PAYLOAD_BYTES = 1024 * 1024;
 
 class HttpError extends Error {
   constructor(
@@ -74,7 +77,7 @@ export async function startHostServer(
   options?: { eventHubCapacity?: number },
 ): Promise<{
   runtime: HostRuntime;
-  close: () => Promise<void>;
+  close: (options?: { killPtys?: boolean }) => Promise<void>;
   port: number;
 }> {
   const hostLayer = makeHostLayers(config, options);
@@ -112,7 +115,10 @@ export async function startHostServer(
     }
   });
 
-  const wss = new WebSocketServer({ noServer: true });
+  const wss = new WebSocketServer({
+    noServer: true,
+    maxPayload: MAX_WS_PAYLOAD_BYTES,
+  });
 
   server.on("upgrade", (req, socket, head) => {
     if (!isAllowedWebSocketOrigin(req.headers.origin, req.headers.host)) {
@@ -124,6 +130,11 @@ export async function startHostServer(
       req.url ?? "/",
       `http://${req.headers.host ?? "localhost"}`,
     );
+    if (!isAuthorizedRequest(req, runtime.config.authToken, url)) {
+      socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
+      socket.destroy();
+      return;
+    }
     if (url.pathname === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => {
         handleEventSocket(runtime, managed, ws, url);
@@ -145,12 +156,15 @@ export async function startHostServer(
   );
 
   let closePromise: Promise<void> | null = null;
-  const close = () => {
+  const close = (options?: { killPtys?: boolean }) => {
     closePromise ??= (async () => {
-      await shutdownRuntime(runtime);
+      await shutdownRuntime(runtime, {
+        killPtys: options?.killPtys ?? config.killPtysOnShutdown,
+      });
       const serverClosed = new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
+      server.closeAllConnections?.();
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await serverClosed;
@@ -267,6 +281,20 @@ async function handleHttp(
 
   if (req.method === "GET" && pathname === "/health") {
     sendJson(res, 200, { status: "ok", version: VERSION });
+    return;
+  }
+
+  if (
+    pathname.startsWith("/api") &&
+    !isAuthorizedRequest(req, runtime.config.authToken, url)
+  ) {
+    sendJson(res, 401, {
+      error: {
+        code: "UNAUTHORIZED",
+        message: "host token required",
+        details: {},
+      },
+    });
     return;
   }
 
@@ -864,12 +892,18 @@ function handleEventSocket(
   // drops state changes.
   let replaying = true;
   const pendingEvents: HostEvent[] = [];
+  const attachedTerminals = new Set<string>();
   const unsubscribe = runtime.events.subscribe((event) => {
+    if (event.channel === "terminal:data") {
+      const id = String(event.args[0] ?? "");
+      const known = attachedTerminals.has(id);
+      if (!known) return;
+    }
     if (replaying) {
       pendingEvents.push(event);
       return;
     }
-    sendEventSocketMessage(ws, event);
+    sendEventSocketMessage(ws, event, runtime, attachedTerminals);
   });
   const replay = runtime.events.replayWindow(since);
   if (replay.historyEvicted) {
@@ -878,22 +912,19 @@ function handleEventSocket(
       sequence: replay.replayFloor - 1,
       channel: "protocol:replay-gap",
       args: [replay.replayFloor, replay.lastSequence],
-    });
+    }, runtime, attachedTerminals);
   }
   for (const event of replay.events) {
-    sendEventSocketMessage(ws, event);
+    sendEventSocketMessage(ws, event, runtime, attachedTerminals);
   }
   replaying = false;
   for (const event of pendingEvents) {
-    sendEventSocketMessage(ws, event);
+    sendEventSocketMessage(ws, event, runtime, attachedTerminals);
   }
   pendingEvents.length = 0;
-  // Browser input is intentionally fire-and-forget. Serialize commands on the
-  // socket so writes, resize, ack, and replay-ready cannot overtake each other
-  // when the RPC implementation yields.
   let commandTail = Promise.resolve();
+  let commandQueue = 0;
   ws.on("message", (data) => {
-    // Hot terminal control is JSON text; binary frames are host→client only.
     const text = typeof data === "string" ? data : wsDataToText(data);
     if (text === "ping") {
       ws.send("pong");
@@ -907,10 +938,35 @@ function handleEventSocket(
     }
     const cmd = tryDecodeTerminalWsCommand(raw);
     if (!cmd) return;
+    if (commandQueue >= MAX_WS_COMMAND_QUEUE) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(
+          JSON.stringify({
+            type: "terminal:result",
+            requestId: cmd.requestId,
+            ok: false,
+            error: { code: "HOST_BUSY", message: "too many in-flight terminal commands" },
+          }),
+        );
+      }
+      return;
+    }
+    commandQueue += 1;
+    if (cmd.op === "terminal:attach") {
+      const id = cmd.args[0];
+      if (typeof id === "string" && id) attachedTerminals.add(id);
+    }
     const command = commandTail.then(() =>
       runHostRpc(managed, cmd.op, cmd.args, clientId),
     );
-    commandTail = command.then(() => undefined, () => undefined);
+    commandTail = command.then(
+      () => {
+        commandQueue = Math.max(0, commandQueue - 1);
+      },
+      () => {
+        commandQueue = Math.max(0, commandQueue - 1);
+      },
+    );
     void command.then((result) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (result.ok) {
@@ -937,12 +993,21 @@ function handleEventSocket(
   });
   ws.on("close", () => {
     unsubscribe();
-    runtime.terminal.resumeForClient(clientId);
+    void Promise.resolve(runtime.terminal.resumeForClient(clientId));
   });
 }
 
-function sendEventSocketMessage(ws: WebSocket, event: HostEvent): void {
+function sendEventSocketMessage(
+  ws: WebSocket,
+  event: HostEvent,
+  runtime?: { terminal: HostRuntime["terminal"] },
+  attachedTerminals?: Set<string>,
+): void {
   if (ws.readyState !== WebSocket.OPEN) return;
+  if (ws.bufferedAmount > SOFT_WEBSOCKET_BUFFERED_BYTES) {
+    const ids = attachedTerminals ? [...attachedTerminals] : undefined;
+    void Promise.resolve(runtime?.terminal.pauseForBackpressure(ids));
+  }
   if (ws.bufferedAmount > MAX_WEBSOCKET_BUFFERED_BYTES) {
     ws.close(1013, "client is not consuming events");
     return;

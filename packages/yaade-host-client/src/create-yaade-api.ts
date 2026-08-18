@@ -232,13 +232,16 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       bufferTerminalData(id, data, sequence);
       return;
     }
-    if (sequence > 0) terminalReplayFloors.set(id, sequence);
     const listeners = terminalDataListeners.get(id);
     if (listeners && listeners.size > 0) {
+      if (sequence > 0) terminalReplayFloors.set(id, sequence);
       listeners.forEach((cb) => cb(data, false, false, false));
       return;
     }
-    bufferTerminalData(id, data, sequence);
+    if (terminalReplayFloors.has(id)) {
+      if (sequence > 0) terminalReplayFloors.set(id, sequence);
+      bufferTerminalData(id, data, sequence);
+    }
   });
   transport.on("terminal:exit", (...args: unknown[]) => {
     const id = args[0] as string;
@@ -497,10 +500,16 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       create: (cwdUri, launch) =>
         transport.invoke("terminal:create", cwdUri, launch),
       attach: async (id) => {
-        const result = await transport.invoke<TerminalAttachResult | null>(
+        const realtime = transport.invokeRealtime?.<TerminalAttachResult | null>(
           "terminal:attach",
           id,
         );
+        const result = realtime
+          ? await realtime
+          : await transport.invoke<TerminalAttachResult | null>(
+              "terminal:attach",
+              id,
+            );
         if (result) {
           terminalReplayFloors.set(id, result.lastSequence);
           const pending = terminalDataBuffers.get(id);
@@ -517,12 +526,29 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         }
         return result;
       },
-      write: (id, data) =>
-        invokeTerminalHot(transport, "terminal:write", id, data),
-      writeBinary: (id, dataBase64) =>
-        invokeTerminalHot(transport, "terminal:writeBinary", id, dataBase64),
-      resize: (id, cols, rows) =>
-        invokeTerminalHot(transport, "terminal:resize", id, cols, rows),
+      write: (id, data) => {
+        if (transport.sendRealtime?.("terminal:write", id, data)) {
+          return Promise.resolve();
+        }
+        return invokeTerminalHot(transport, "terminal:write", id, data);
+      },
+      writeBinary: (id, dataBase64) => {
+        if (transport.sendRealtime?.("terminal:writeBinary", id, dataBase64)) {
+          return Promise.resolve();
+        }
+        return invokeTerminalHot(
+          transport,
+          "terminal:writeBinary",
+          id,
+          dataBase64,
+        );
+      },
+      resize: (id, cols, rows) => {
+        if (transport.sendRealtime?.("terminal:resize", id, cols, rows)) {
+          return Promise.resolve();
+        }
+        return invokeTerminalHot(transport, "terminal:resize", id, cols, rows);
+      },
       acknowledgeData: (id, charCount) =>
         invokeTerminalHot(transport, "terminal:ack", id, charCount),
       markReplayReady: (id) =>

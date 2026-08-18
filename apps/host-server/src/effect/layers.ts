@@ -3,12 +3,17 @@ import { Effect, Layer, PubSub, Stream } from "effect";
 import {
   makeTerminalHostScoped,
   PerfHost,
+  SupervisedTerminalHost,
   TerminalHost,
 } from "@yaade/node-host";
 import type { NotificationStreamEvent } from "@yaade/shared";
 import type { HostConfig } from "../config.js";
 import { EventHub } from "../events.js";
-import { createRuntime, type HostRuntime } from "../host-runtime.js";
+import {
+  createRuntime,
+  prepareLiveTerminals,
+  type HostRuntime,
+} from "../host-runtime.js";
 import { NotificationService } from "../notifications/index.js";
 import { ProjectDatabase } from "../persistence.js";
 import { GitServiceLive, GitServiceTag } from "./git.js";
@@ -64,7 +69,12 @@ export function makeHostLayers(
       const db = yield* makeProjectDatabaseScoped(
         path.join(config.dataDir, "jet.sqlite3"),
       );
-      const terminal = yield* makeTerminalHostScoped;
+      const terminal = config.ptySupervisor
+        ? yield* Effect.acquireRelease(
+            Effect.promise(() => SupervisedTerminalHost.connect(config.dataDir)),
+            (host) => Effect.promise(() => host.disconnect()),
+          )
+        : yield* makeTerminalHostScoped;
 
       // Sliding: drop oldest under notification burst instead of unbounded growth.
       const pubsub = yield* Effect.acquireRelease(
@@ -86,6 +96,7 @@ export function makeHostLayers(
           Effect.runSync(PubSub.publish(pubsub, event));
         },
       });
+      yield* Effect.promise(() => prepareLiveTerminals(runtime));
       return runtime;
     }),
   );

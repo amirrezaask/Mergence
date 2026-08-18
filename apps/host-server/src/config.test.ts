@@ -19,8 +19,37 @@ describe("loadConfig launch workspace", () => {
   })
 
   it("accepts an explicit non-loopback host for LAN mode", async () => {
-    const config = await loadConfig(["--host", "0.0.0.0", "--port", "0"])
+    const config = await loadConfig([
+      "--host",
+      "0.0.0.0",
+      "--port",
+      "0",
+      "--token",
+      "test-host-token",
+    ])
     assert.equal(config.host, "0.0.0.0")
+    assert.equal(config.authToken, "test-host-token")
+  })
+
+  it("refuses a non-loopback bind without a host token", async () => {
+    await assert.rejects(
+      () => loadConfig(["--host", "0.0.0.0", "--port", "0"]),
+      /requires --token or YAADE_HOST_TOKEN/,
+    )
+  })
+
+  it("keeps the PTY supervisor off under node:test unless requested", async () => {
+    const implicit = await loadConfig(["--host", "127.0.0.1", "--port", "0"])
+    assert.equal(implicit.ptySupervisor, false)
+    const enabled = await loadConfig([
+      "--host",
+      "127.0.0.1",
+      "--port",
+      "0",
+      "--pty-supervisor",
+      "1",
+    ])
+    assert.equal(enabled.ptySupervisor, true)
   })
 
   it("falls back to home when process cwd is outside allowed roots", async () => {

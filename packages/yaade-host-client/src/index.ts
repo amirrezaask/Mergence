@@ -4,6 +4,7 @@ export {
   WebHostTransport,
   websocketUrl,
   hostRealtimeReconnectDelay,
+  readHostAuthToken,
 } from "./web-transport.js";
 export {
   HostClient,

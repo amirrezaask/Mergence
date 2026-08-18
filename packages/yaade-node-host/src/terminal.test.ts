@@ -6,6 +6,7 @@ import {
   TerminalHost,
   TERMINAL_FLOW_HIGH_WATERMARK_CHARS,
 } from "./terminal.js"
+import { isProcessAlive } from "./process-identity.js"
 
 test("normalizes valid PTY sizes to finite integer bounds", () => {
   assert.deepEqual(normalizeTerminalSize(undefined, undefined), { cols: 80, rows: 24 })
@@ -155,6 +156,7 @@ test("resumes a paused PTY when its websocket client reconnects", async () => {
       },
       "terminal-flow-control-test",
     )
+    terminal.attach(created.id, "terminal-flow-control-test")
     await resumedOutput
 
     const attached = terminal.attach(created.id, "terminal-flow-control-test")
@@ -455,5 +457,185 @@ test("answers a Primary Device Attributes query before any renderer attaches", a
   } finally {
     if (timeout) clearTimeout(timeout)
     terminal.stopAll()
+  }
+})
+
+async function waitUntil(
+  check: () => boolean,
+  timeoutMs = 5_000,
+  message = "timed out",
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (check()) return
+    await new Promise(resolve => setTimeout(resolve, 20))
+  }
+  throw new Error(message)
+}
+
+test("dispose kills the OS process", async () => {
+  const terminal = new TerminalHost({ killGraceMs: 40 })
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: ["-e", "setInterval(() => {}, 1e9)"],
+      },
+      "dispose-kill-test",
+    )
+    assert.ok(created.osPid)
+    assert.equal(isProcessAlive(created.osPid!), true)
+    terminal.dispose(created.id)
+    await waitUntil(
+      () => !isProcessAlive(created.osPid!),
+      5_000,
+      "disposed PTY process is still alive",
+    )
+  } finally {
+    terminal.stopAll()
+  }
+})
+
+test("escalates past a SIGHUP/SIGTERM trapper", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX signals")
+    return
+  }
+  const terminal = new TerminalHost({ killGraceMs: 40 })
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.on('SIGHUP',()=>{}); process.on('SIGTERM',()=>{}); setInterval(()=>{},1e9)",
+        ],
+      },
+      "kill-escalate-test",
+    )
+    assert.ok(created.osPid)
+    terminal.dispose(created.id)
+    await waitUntil(
+      () => !isProcessAlive(created.osPid!),
+      5_000,
+      "signal-trapping PTY survived SIGKILL window",
+    )
+  } finally {
+    terminal.stopAll()
+  }
+})
+
+test("dispose kills a grandchild in the same process group", async (t) => {
+  if (process.platform === "win32") {
+    t.skip("POSIX process groups")
+    return
+  }
+  const terminal = new TerminalHost({ killGraceMs: 40 })
+  let childPid: number | null = null
+  terminal.setEmit((channel, args) => {
+    if (channel !== "terminal:data") return
+    const match = String(args[1] ?? "").match(/CHILD:(\d+)/)
+    if (match) childPid = Number(match[1])
+  })
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          `const {spawn}=require('node:child_process'); const child=spawn(process.execPath,['-e','setInterval(()=>{},1e9)'],{stdio:'ignore'}); process.stdout.write('CHILD:'+child.pid); setInterval(()=>{},1e9)`,
+        ],
+      },
+      "process-group-kill-test",
+    )
+    await waitUntil(() => childPid != null && isProcessAlive(childPid), 5_000, "grandchild never started")
+    terminal.dispose(created.id)
+    await waitUntil(
+      () => !isProcessAlive(created.osPid!) && !isProcessAlive(childPid!),
+      5_000,
+      "grandchild survived PTY process-group kill",
+    )
+  } finally {
+    terminal.stopAll()
+  }
+})
+
+test("a second attach does not clear the first viewer's flow-control debt", async () => {
+  const terminal = new TerminalHost()
+  let sawResumeMarker = false
+  terminal.setEmit((channel, args) => {
+    if (channel !== "terminal:data") return
+    if (String(args[1] ?? "").includes("client-b-must-not-resume")) {
+      sawResumeMarker = true
+    }
+  })
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdin.once('data',()=>{process.stdout.write('x'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 8_000})); setTimeout(()=>process.stdout.write('client-b-must-not-resume'),80)})`,
+        ],
+      },
+      "creator",
+    )
+    terminal.attach(created.id, "client-a")
+    terminal.write(created.id, "go\n")
+    await new Promise(resolve => setTimeout(resolve, 150))
+    terminal.attach(created.id, "client-b")
+    await new Promise(resolve => setTimeout(resolve, 250))
+    assert.equal(sawResumeMarker, false)
+    terminal.acknowledgeData(created.id, 1_000_000, "client-a")
+    terminal.acknowledgeData(created.id, 1_000_000, "client-b")
+    await waitUntil(() => sawResumeMarker, 5_000, "acked PTY never resumed")
+  } finally {
+    terminal.stopAll()
+  }
+})
+
+test("sanitizes nested multiplexer env unless the launch explicitly preserves it", async () => {
+  const previousTmux = process.env.TMUX
+  const previousColumns = process.env.COLUMNS
+  process.env.TMUX = "nested-session"
+  process.env.COLUMNS = "120"
+  const terminal = new TerminalHost()
+  const chunks: string[] = []
+  terminal.setEmit((channel, args) => {
+    if (channel === "terminal:data") chunks.push(String(args[1] ?? ""))
+  })
+  try {
+    terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          "process.stdout.write(JSON.stringify({tmux:process.env.TMUX ?? null,columns:process.env.COLUMNS ?? null}))",
+        ],
+      },
+      "env-sanitize-test",
+    )
+    await waitUntil(
+      () => chunks.join("").includes("{"),
+      5_000,
+      "child env snapshot never arrived",
+    )
+    const snapshot = JSON.parse(chunks.join("")) as {
+      tmux: string | null
+      columns: string | null
+    }
+    assert.equal(snapshot.tmux, null)
+    assert.equal(snapshot.columns, null)
+  } finally {
+    terminal.stopAll()
+    if (previousTmux === undefined) delete process.env.TMUX
+    else process.env.TMUX = previousTmux
+    if (previousColumns === undefined) delete process.env.COLUMNS
+    else process.env.COLUMNS = previousColumns
   }
 })

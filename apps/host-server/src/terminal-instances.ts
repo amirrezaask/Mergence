@@ -275,13 +275,41 @@ export class TerminalInstanceService {
     ).run();
     this.backfillLegacyProjectTerminals();
     this.migrateAgentRuns();
-    // Host restart invalidates live PTYs after all migrations have loaded rows.
-    db.prepare(
-      `UPDATE terminal_instances
-          SET process_state='disconnected', ended_at=COALESCE(ended_at, ?),
-              end_reason=COALESCE(end_reason, 'host_restart'), revision=revision+1
-        WHERE process_state IN ('starting','running')`,
-    ).run(nowIso());
+  }
+
+  /**
+   * After the PTY owner is reachable, keep live ids and disconnect the rest.
+   * Orphan pids from a dead supervisor are reaped when `reapPid` is provided.
+   */
+  reconcileHostStart(
+    livePtyIds: ReadonlySet<string>,
+    reapPid?: (pid: number) => void,
+  ): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id, pty_id, os_pid FROM terminal_instances
+         WHERE removed_at IS NULL AND process_state IN ('starting','running')`,
+      )
+      .all() as Array<{ id: string; pty_id: string | null; os_pid: number | null }>;
+    const now = nowIso();
+    for (const row of rows) {
+      if (row.pty_id && livePtyIds.has(row.pty_id)) continue;
+      if (row.os_pid != null) reapPid?.(row.os_pid);
+      this.db
+        .prepare(
+          `UPDATE terminal_instances
+           SET process_state='disconnected', ended_at=COALESCE(ended_at, ?),
+               end_reason=COALESCE(end_reason, 'host_restart'), revision=revision+1
+           WHERE id=?`,
+        )
+        .run(now, row.id);
+      this.updated(row.id, "instance.updated");
+    }
+  }
+
+  dispose(): void {
+    for (const timer of this.telemetryTimers.values()) clearTimeout(timer);
+    this.telemetryTimers.clear();
   }
 
   reserve(input: {
@@ -417,6 +445,7 @@ export class TerminalInstanceService {
     ptyId: string,
     title?: string | null,
     telemetryState?: TerminalInstanceTelemetryState,
+    identity?: { osPid?: number | null; osStartedAtMs?: number },
   ): TerminalInstance | null {
     const current = this.get(id);
     if (!current || current.generation !== generation) return null;
@@ -431,7 +460,7 @@ export class TerminalInstanceService {
           activity_state=CASE WHEN provider IS NOT NULL THEN 'starting' ELSE activity_state END,
           telemetry_state=?, started_at=?, last_activity_at=?, ended_at=NULL,
           exit_code=NULL, end_reason=NULL, transcript='', transcript_truncated=0,
-          telemetry_error=NULL, revision=revision+1
+          telemetry_error=NULL, os_pid=?, os_started_at_ms=?, revision=revision+1
         WHERE id=? AND generation=? AND removed_at IS NULL AND process_state='starting'`,
       )
       .run(
@@ -440,6 +469,8 @@ export class TerminalInstanceService {
         nextTelemetry,
         timestamp,
         timestamp,
+        identity?.osPid ?? null,
+        identity?.osStartedAtMs ?? null,
         id,
         generation,
       );
@@ -721,27 +752,26 @@ export class TerminalInstanceService {
 
   private scheduleTelemetryGrace(instance: TerminalInstance): void {
     this.clearTelemetryGrace(instance.id);
-    this.telemetryTimers.set(
-      instance.id,
-      setTimeout(() => {
-        const current = this.get(instance.id);
-        if (!current || current.generation !== instance.generation) return;
-        if (
-          current.processState !== "running" ||
-          current.telemetryState !== "connecting"
-        )
-          return;
-        const changed = this.db
-          .prepare(
-            `UPDATE terminal_instances SET telemetry_state='degraded',
+    const timer = setTimeout(() => {
+      const current = this.get(instance.id);
+      if (!current || current.generation !== instance.generation) return;
+      if (
+        current.processState !== "running" ||
+        current.telemetryState !== "connecting"
+      )
+        return;
+      const changed = this.db
+        .prepare(
+          `UPDATE terminal_instances SET telemetry_state='degraded',
             telemetry_error='No provider telemetry received within 10 seconds', revision=revision+1
           WHERE id=? AND generation=? AND process_state='running' AND telemetry_state='connecting'`,
-          )
-          .run(instance.id, instance.generation);
-        if (Number(changed.changes) > 0)
-          this.updated(instance.id, "instance.updated");
-      }, TELEMETRY_GRACE_MS),
-    );
+        )
+        .run(instance.id, instance.generation);
+      if (Number(changed.changes) > 0)
+        this.updated(instance.id, "instance.updated");
+    }, TELEMETRY_GRACE_MS);
+    timer.unref?.();
+    this.telemetryTimers.set(instance.id, timer);
   }
 
   private clearTelemetryGrace(id: string): void {
@@ -760,6 +790,8 @@ export class TerminalInstanceService {
       ["activity_state", "TEXT NOT NULL DEFAULT 'idle'"],
       ["telemetry_state", "TEXT NOT NULL DEFAULT 'process_only'"],
       ["telemetry_error", "TEXT"],
+      ["os_pid", "INTEGER"],
+      ["os_started_at_ms", "INTEGER"],
     ];
     for (const [column, decl] of additions) {
       if (!tableHasColumn(this.db, "terminal_instances", column)) {

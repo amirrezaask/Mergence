@@ -25,8 +25,26 @@ test("material gallery exposes named chrome and matte content surfaces", async (
         borderRadius: style.borderRadius,
       }
     })
-  expect(computed.backdropFilter).toMatch(/3[24]px/)
+  expect(computed.backdropFilter).toMatch(/blur\(([3-9]\d)px\)/)
+  expect(computed.backdropFilter).toMatch(/saturate\(/)
+  expect(computed.backdropFilter).toMatch(/brightness\(/)
   expect(computed.borderRadius).not.toBe("0px")
+
+  const fill = await page
+    .locator('[data-yaade-glass-gallery-material="floating"]')
+    .evaluate(element => {
+      const style = getComputedStyle(element)
+      const color = style.backgroundColor
+      const match = color.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/)
+      return {
+        color,
+        alpha: match?.[4] == null ? 1 : Number(match[4]),
+        boxShadow: style.boxShadow,
+      }
+    })
+  expect(fill.alpha).toBeGreaterThan(0)
+  expect(fill.alpha).toBeLessThan(0.4)
+  expect(fill.boxShadow).toMatch(/inset/)
 
   const contentComputed = await page
     .locator('[data-yaade-glass-gallery-material="content"]')

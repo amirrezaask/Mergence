@@ -130,7 +130,7 @@ Only path for destructive confirms. Never `window.confirm`.
 
 ## Surface composition
 
-Use full `Card` anatomy for grouped surfaces and `Item`/`ItemGroup` for compact data rows. Navigation, pane, card, popover, and dialog surfaces use the shared material variables in `globals.css`: translucent semantic fills, backdrop blur, a luminous inset edge, and restrained depth. Never stack multiple translucent fills over the same content; use the stronger material only for floating surfaces. Honor `prefers-reduced-transparency` with an opaque semantic fallback. Keep material behavior centralized in primitives/selectors rather than reintroducing one-off `Surface`, `Text`, or `SectionLabel` wrappers.
+Use full `Card` anatomy for grouped surfaces and `Item`/`ItemGroup` for compact data rows. Navigation, pane, card, popover, and dialog surfaces use the shared material variables in `globals.css`: a white frost film, saturated blur, refractive inset rim, and restrained depth. Never stack multiple translucent fills over the same content; use the stronger material only for floating surfaces. Honor `prefers-reduced-transparency` with an opaque semantic fallback. Keep material behavior centralized in primitives/selectors rather than reintroducing one-off `Surface`, `Text`, or `SectionLabel` wrappers.
 
 ## Rules
 

@@ -1,6 +1,37 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import { isAllowedWebSocketOrigin, isLoopbackHostname } from "./security.js"
+import {
+  isAllowedWebSocketOrigin,
+  isAuthorizedRequest,
+  isLoopbackHostname,
+} from "./security.js"
+
+test("authorizes requests against the configured host token", () => {
+  const req = (headers: Record<string, string | string[] | undefined>) =>
+    ({ headers }) as import("node:http").IncomingMessage
+  assert.equal(isAuthorizedRequest(req({}), null), true)
+  assert.equal(isAuthorizedRequest(req({}), "secret"), false)
+  assert.equal(
+    isAuthorizedRequest(req({ authorization: "Bearer secret" }), "secret"),
+    true,
+  )
+  assert.equal(
+    isAuthorizedRequest(req({ "x-yaade-token": "secret" }), "secret"),
+    true,
+  )
+  assert.equal(
+    isAuthorizedRequest(
+      req({}),
+      "secret",
+      new URL("http://127.0.0.1/ws?token=secret"),
+    ),
+    true,
+  )
+  assert.equal(
+    isAuthorizedRequest(req({ authorization: "Bearer other" }), "secret"),
+    false,
+  )
+})
 
 test("identifies loopback bind hosts", () => {
   assert.equal(isLoopbackHostname("127.0.0.1"), true)

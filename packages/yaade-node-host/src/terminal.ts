@@ -3,6 +3,12 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { pathToUri, uriToPath } from "./paths.js"
+import {
+  isProcessAlive,
+  signalProcess,
+  signalProcessGroup,
+} from "./process-identity.js"
+import { sanitizePtyEnv } from "./terminal-env.js"
 import { cwdOfForeground, foregroundProcessOf } from "./terminal-cwd.js"
 import {
   applyShellCwdReporting,
@@ -65,6 +71,8 @@ export type TerminalLaunch = {
 export type TerminalCreateResult = {
   id: string
   title: string | null
+  osPid: number | null
+  osStartedAtMs: number
 }
 
 export type TerminalAttachSnapshot = {
@@ -101,15 +109,26 @@ export type TerminalInspectSnapshot = {
   spawnCommand: string | null
   /** Absolute spawn-time cwd. */
   spawnCwd: string
+  osPid: number | null
 }
 
 type EmitFn = (channel: string, args: unknown[]) => void
+
+type TerminalViewer = {
+  unacknowledgedChars: number
+  hasAttached: boolean
+}
 
 type TerminalEntry = {
   id: string
   title: string | null
   titleKey: string | null
+  /** Last client that attached; used for query-replay ownership, not write locks. */
   clientId: string
+  viewers: Map<string, TerminalViewer>
+  lastAttachAt: number
+  osPid: number | null
+  osStartedAtMs: number
   /** Absolute spawn-time cwd (fallback when live process cwd is unavailable). */
   spawnCwd: string
   /** Custom launch command when not the default shell; null for interactive shells. */
@@ -125,14 +144,11 @@ type TerminalEntry = {
   outputBytes: number
   /** The raw replay ring has dropped bytes for this PTY's lifetime. */
   replayTruncated: boolean
-  /** The current live renderer has completed a query-capable replay attach. */
-  hasAttached: boolean
   pendingOutput: string[]
   pendingOutputBytes: number
   pendingOutputTimer: ReturnType<typeof setTimeout> | null
   disposeTimer: ReturnType<typeof setTimeout> | null
-  /** Chars emitted to the client that have not yet been ack'd as parsed. */
-  unacknowledgedChars: number
+  killTimers: Array<ReturnType<typeof setTimeout>>
   ptyPaused: boolean
   proc: pty.IPty | null
   disposed: boolean
@@ -141,6 +157,38 @@ type TerminalEntry = {
   exitWaiters: Array<(result: { exitCode: number | null; signal?: string }) => void>
   /** Incomplete DA1 prefix (`ESC` / `ESC[` / `ESC[0`) spanning PTY reads. */
   da1Scanner: Da1Scanner
+}
+
+function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
+  let viewer = entry.viewers.get(clientId)
+  if (!viewer) {
+    viewer = { unacknowledgedChars: 0, hasAttached: false }
+    entry.viewers.set(clientId, viewer)
+  }
+  return viewer
+}
+
+function anyViewerOverHighWater(entry: TerminalEntry): boolean {
+  for (const viewer of entry.viewers.values()) {
+    if (viewer.unacknowledgedChars > TERMINAL_FLOW_HIGH_WATERMARK_CHARS) return true
+  }
+  return false
+}
+
+function allViewersUnderLowWater(entry: TerminalEntry): boolean {
+  if (entry.viewers.size === 0) return true
+  for (const viewer of entry.viewers.values()) {
+    if (viewer.unacknowledgedChars >= TERMINAL_FLOW_LOW_WATERMARK_CHARS) return false
+  }
+  return true
+}
+
+function incrementViewerDebt(entry: TerminalEntry, chars: number): void {
+  // Only connected attach() viewers count. Create-time RPC clients never ack,
+  // and an unattached PTY must keep running so agents survive reconnect.
+  for (const viewer of entry.viewers.values()) {
+    viewer.unacknowledgedChars += chars
+  }
 }
 
 function pausePtyForFlowControl(entry: TerminalEntry): void {
@@ -176,12 +224,9 @@ function flushPendingOutput(entry: TerminalEntry, emit: EmitFn): void {
   entry.pendingOutput.length = 0
   entry.pendingOutputBytes = 0
   // Flow control counts chars (VS Code) — JS string length matches xterm write units.
-  entry.unacknowledgedChars += data.length
+  incrementViewerDebt(entry, data.length)
   emit("terminal:data", [entry.id, data, entry.sequence])
-  if (
-    !entry.ptyPaused &&
-    entry.unacknowledgedChars > TERMINAL_FLOW_HIGH_WATERMARK_CHARS
-  ) {
+  if (!entry.ptyPaused && anyViewerOverHighWater(entry)) {
     pausePtyForFlowControl(entry)
   }
 }
@@ -286,6 +331,12 @@ export function normalizeTerminalSize(
   }
 }
 
+export type TerminalHostOptions = {
+  maxEntries?: number
+  /** Delay between SIGHUP → SIGTERM → SIGKILL. Tests use a short value. */
+  killGraceMs?: number
+}
+
 export class TerminalHost {
   private readonly entries = new Map<string, TerminalEntry>()
   private seqCounter = 0
@@ -293,9 +344,21 @@ export class TerminalHost {
   private emit: EmitFn = () => {}
   /** Cap concurrent entries; overridable in tests. */
   private readonly maxEntries: number
+  private readonly killGraceMs: number
 
-  constructor(maxEntries: number = MAX_TERMINAL_ENTRIES) {
-    this.maxEntries = Math.max(1, Math.trunc(maxEntries))
+  constructor(
+    maxEntries: number | TerminalHostOptions = MAX_TERMINAL_ENTRIES,
+  ) {
+    if (typeof maxEntries === "number") {
+      this.maxEntries = Math.max(1, Math.trunc(maxEntries))
+      this.killGraceMs = 2_000
+    } else {
+      this.maxEntries = Math.max(
+        1,
+        Math.trunc(maxEntries.maxEntries ?? MAX_TERMINAL_ENTRIES),
+      )
+      this.killGraceMs = Math.max(20, Math.trunc(maxEntries.killGraceMs ?? 2_000))
+    }
   }
 
   setEmit(emit: EmitFn): void {
@@ -305,12 +368,22 @@ export class TerminalHost {
   /** Free exited slots for a new create. Never evict a live user shell. */
   private reclaimSlots(needed: number): void {
     if (needed <= 0 || this.entries.size === 0) return
-    const exited: string[] = []
+    const exited: Array<{ id: string; lastAttachAt: number }> = []
     for (const [id, entry] of this.entries) {
-      if (entry.status === "exited") exited.push(id)
+      if (entry.status !== "exited") continue
+      let viewed = false
+      for (const viewer of entry.viewers.values()) {
+        if (viewer.hasAttached) {
+          viewed = true
+          break
+        }
+      }
+      if (viewed) continue
+      exited.push({ id, lastAttachAt: entry.lastAttachAt })
     }
+    exited.sort((a, b) => a.lastAttachAt - b.lastAttachAt)
     const victims = exited.slice(0, needed)
-    for (const id of victims) this.dispose(id)
+    for (const victim of victims) this.dispose(victim.id)
   }
 
   create(cwdUri: string, launch: TerminalLaunch | null | undefined, clientId: string): TerminalCreateResult {
@@ -347,13 +420,17 @@ export class TerminalHost {
 
     let proc: pty.IPty | null = null
     let lastError: unknown
-    const baseEnv: Record<string, string> = {
-      ...process.env,
-      TERM: "xterm-256color",
-      COLORTERM: "truecolor",
-      HOME: process.env.HOME ?? os.homedir(),
-      ...launch?.env,
-    } as Record<string, string>
+    const launchEnv = launch?.env
+    const baseEnv = sanitizePtyEnv(
+      {
+        ...process.env,
+        TERM: "xterm-256color",
+        COLORTERM: "truecolor",
+        HOME: process.env.HOME ?? os.homedir(),
+        ...launchEnv,
+      } as Record<string, string>,
+      launchEnv,
+    )
 
     for (const candidate of candidates) {
       try {
@@ -385,11 +462,17 @@ export class TerminalHost {
       title = n === 1 ? base : `${base} ${n}`
     }
 
+    const osPid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : null
+    const osStartedAtMs = Date.now()
     const entry: TerminalEntry = {
       id,
       title,
       titleKey,
       clientId,
+      viewers: new Map(),
+      lastAttachAt: 0,
+      osPid,
+      osStartedAtMs,
       spawnCwd: cwd,
       spawnCommand: custom?.command ?? null,
       liveCwd: null,
@@ -401,12 +484,11 @@ export class TerminalHost {
       outputHead: 0,
       outputBytes: 0,
       replayTruncated: false,
-      hasAttached: false,
       pendingOutput: [],
       pendingOutputBytes: 0,
       pendingOutputTimer: null,
       disposeTimer: null,
-      unacknowledgedChars: 0,
+      killTimers: [],
       ptyPaused: false,
       proc,
       disposed: false,
@@ -426,11 +508,15 @@ export class TerminalHost {
       }
       const oscCwd = parseOsc7Cwd(data)
       if (oscCwd) {
-        try {
-          entry.liveCwd = fs.realpathSync(oscCwd)
-        } catch {
-          entry.liveCwd = oscCwd
-        }
+        // Defer realpath so a slow/NFS cwd cannot block the PTY read loop.
+        queueMicrotask(() => {
+          if (entry.disposed) return
+          try {
+            entry.liveCwd = fs.realpathSync(oscCwd)
+          } catch {
+            entry.liveCwd = oscCwd
+          }
+        })
       }
       entry.sequence += 1
       const dataBytes = Buffer.byteLength(data, "utf8")
@@ -441,7 +527,11 @@ export class TerminalHost {
     })
 
     entry.exitDisposable = proc.onExit(({ exitCode, signal }) => {
-      if (entry.disposed) return
+      this.clearKillTimers(entry)
+      if (entry.disposed) {
+        entry.proc = null
+        return
+      }
       // Preserve wire ordering: consumers must see the final output before exit.
       flushPendingOutput(entry, this.emit)
       entry.status = "exited"
@@ -456,7 +546,7 @@ export class TerminalHost {
       this.scheduleDisposeAfterExit(entry)
     })
 
-    return { id, title }
+    return { id, title, osPid, osStartedAtMs }
   }
 
   private scheduleDisposeAfterExit(entry: TerminalEntry): void {
@@ -528,6 +618,7 @@ export class TerminalHost {
       signal: entry.signal,
       spawnCommand: entry.spawnCommand,
       spawnCwd: entry.spawnCwd,
+      osPid: entry.osPid,
     }
   }
 
@@ -544,6 +635,7 @@ export class TerminalHost {
         signal: entry.signal,
         spawnCommand: entry.spawnCommand,
         spawnCwd: entry.spawnCwd,
+        osPid: entry.osPid,
       })
     }
     return out
@@ -583,16 +675,20 @@ export class TerminalHost {
    * Renderer finished parsing `charCount` chars of previously emitted output.
    * Drop below the low watermark → resume a paused PTY (VS Code pattern).
    */
-  acknowledgeData(id: string, charCount: number): null {
+  acknowledgeData(id: string, charCount: number, clientId?: string): null {
     if (id.length > 256) return null
     const entry = this.entries.get(id)
     if (!entry || entry.disposed) return null
     const n = Number.isFinite(charCount) ? Math.max(0, Math.trunc(charCount)) : 0
-    entry.unacknowledgedChars = Math.max(0, entry.unacknowledgedChars - n)
-    if (
-      entry.ptyPaused &&
-      entry.unacknowledgedChars < TERMINAL_FLOW_LOW_WATERMARK_CHARS
-    ) {
+    if (clientId) {
+      const viewer = entry.viewers.get(clientId)
+      if (viewer) viewer.unacknowledgedChars = Math.max(0, viewer.unacknowledgedChars - n)
+    } else {
+      for (const viewer of entry.viewers.values()) {
+        viewer.unacknowledgedChars = Math.max(0, viewer.unacknowledgedChars - n)
+      }
+    }
+    if (entry.ptyPaused && allViewersUnderLowWater(entry)) {
       resumePtyForFlowControl(entry)
     }
     return null
@@ -602,27 +698,44 @@ export class TerminalHost {
   clearUnacknowledgedChars(id: string): null {
     const entry = this.entries.get(id)
     if (!entry) return null
-    entry.unacknowledgedChars = 0
+    for (const viewer of entry.viewers.values()) viewer.unacknowledgedChars = 0
     resumePtyForFlowControl(entry)
     return null
+  }
+
+  /** Pause the highest-debt PTYs when a shared socket is falling behind. */
+  pauseForBackpressure(ids?: readonly string[]): void {
+    const allow = ids ? new Set(ids) : null
+    const ranked: TerminalEntry[] = []
+    for (const entry of this.entries.values()) {
+      if (entry.disposed || entry.status !== "running" || !entry.proc) continue
+      if (allow && !allow.has(entry.id)) continue
+      ranked.push(entry)
+    }
+    ranked.sort((a, b) => {
+      let aMax = 0
+      let bMax = 0
+      for (const viewer of a.viewers.values()) {
+        if (viewer.unacknowledgedChars > aMax) aMax = viewer.unacknowledgedChars
+      }
+      for (const viewer of b.viewers.values()) {
+        if (viewer.unacknowledgedChars > bMax) bMax = viewer.unacknowledgedChars
+      }
+      return bMax - aMax
+    })
+    for (const entry of ranked) pausePtyForFlowControl(entry)
   }
 
   /**
    * A websocket can disappear after the client has received terminal output
    * but before its acknowledgement reaches the host. Clear that stale debt for
-   * every PTY owned by the reconnecting client so flow control cannot leave a
-   * shell suspended indefinitely.
+   * this client only so other viewers keep protecting the PTY.
    */
   resumeForClient(clientId: string): void {
     if (clientId.length > 256) return
     for (const entry of this.entries.values()) {
-      if (entry.clientId !== clientId) continue
-      // The renderer may have been torn down before parsing the final live
-      // chunks. Make the next attach query-capable so a reconnect cannot leave
-      // the shell waiting on a response that only Ghostty can generate.
-      entry.hasAttached = false
-      entry.unacknowledgedChars = 0
-      resumePtyForFlowControl(entry)
+      if (!entry.viewers.delete(clientId)) continue
+      if (allViewersUnderLowWater(entry)) resumePtyForFlowControl(entry)
     }
   }
 
@@ -633,22 +746,14 @@ export class TerminalHost {
   ): TerminalAttachSnapshot | null {
     const entry = this.entries.get(id)
     if (!entry) return null
-    // Client re-attached — cancel auto-dispose so replay stays available.
     this.clearDisposeTimer(entry)
-    const replayNeedsQueryResponses =
-      !entry.hasAttached || entry.clientId !== clientId
-    // The renderer marks the replay ready after Ghostty has parsed it. Keeping
-    // this false across an interrupted first attach lets a reload retry query
-    // responses instead of leaving the live shell waiting forever.
-    // Establish a clean sequence boundary. Otherwise a batch containing both
-    // pre- and post-attach bytes could be accepted in full and duplicate replay.
+    const viewer = viewerOf(entry, clientId)
+    const replayNeedsQueryResponses = !viewer.hasAttached
     flushPendingOutput(entry, this.emit)
     entry.clientId = clientId
-    // Replay is applied synchronously on the client — reset flow control so a
-    // previous session's unacked count cannot keep the PTY paused.
-    entry.unacknowledgedChars = 0
-    resumePtyForFlowControl(entry)
-    // If already exited, reschedule dispose after this attach window.
+    entry.lastAttachAt = Date.now()
+    viewer.unacknowledgedChars = 0
+    if (allViewersUnderLowWater(entry)) resumePtyForFlowControl(entry)
     if (entry.status === "exited") {
       this.scheduleDisposeAfterExit(entry)
     }
@@ -669,7 +774,6 @@ export class TerminalHost {
     return {
       id: entry.id,
       title: entry.title,
-      // Slice the ring segments — do not join into one 2 MB string here.
       outputChunks: outputChunks.slice(replayOffset),
       output: "",
       replayTruncated,
@@ -681,13 +785,20 @@ export class TerminalHost {
     }
   }
 
-  /** Mark a live replay as parsed by the owning renderer. */
+  /** Mark a live replay as parsed by this renderer. */
   markReplayReady(id: string, clientId: string): null {
     if (id.length > 256 || clientId.length > 256) return null
     const entry = this.entries.get(id)
-    if (!entry || entry.disposed || entry.clientId !== clientId) return null
-    entry.hasAttached = true
+    if (!entry || entry.disposed) return null
+    const viewer = entry.viewers.get(clientId)
+    if (!viewer) return null
+    viewer.hasAttached = true
     return null
+  }
+
+  hasViewer(id: string, clientId: string): boolean {
+    const entry = this.entries.get(id)
+    return Boolean(entry && !entry.disposed && entry.viewers.has(clientId))
   }
 
   /** Bounded replay snapshot for an agent-owned PTY; does not attach or change ownership. */
@@ -707,6 +818,52 @@ export class TerminalHost {
     return new Promise(resolve => entry.exitWaiters.push(resolve))
   }
 
+  private clearKillTimers(entry: TerminalEntry): void {
+    for (const timer of entry.killTimers) clearTimeout(timer)
+    entry.killTimers.length = 0
+  }
+
+  private beginKill(entry: TerminalEntry): void {
+    this.clearKillTimers(entry)
+    const pid =
+      entry.osPid ??
+      (typeof entry.proc?.pid === "number" ? entry.proc.pid : null)
+    const proc = entry.proc
+    if (pid && pid !== process.pid) {
+      signalProcessGroup(pid, "SIGHUP")
+      signalProcess(pid, "SIGHUP")
+    }
+    try {
+      proc?.kill("SIGHUP")
+    } catch {
+      /* ignore */
+    }
+    const destroyable = proc as { destroy?: () => void } | null
+    try {
+      destroyable?.destroy?.()
+    } catch {
+      /* ignore */
+    }
+    if (!pid || pid === process.pid) {
+      entry.proc = null
+      return
+    }
+    const grace = this.killGraceMs
+    const termTimer = setTimeout(() => {
+      if (!isProcessAlive(pid)) return
+      signalProcessGroup(pid, "SIGTERM")
+      signalProcess(pid, "SIGTERM")
+    }, grace)
+    const killTimer = setTimeout(() => {
+      if (!isProcessAlive(pid)) return
+      signalProcessGroup(pid, "SIGKILL")
+      signalProcess(pid, "SIGKILL")
+    }, grace * 2)
+    termTimer.unref?.()
+    killTimer.unref?.()
+    entry.killTimers.push(termTimer, killTimer)
+  }
+
   dispose(id: string): null {
     const entry = this.entries.get(id)
     if (!entry) return null
@@ -717,23 +874,17 @@ export class TerminalHost {
     entry.pendingOutputTimer = null
     entry.pendingOutput.length = 0
     entry.pendingOutputBytes = 0
-    entry.unacknowledgedChars = 0
+    for (const viewer of entry.viewers.values()) viewer.unacknowledgedChars = 0
     resumePtyForFlowControl(entry)
     entry.dataDisposable?.dispose()
-    entry.exitDisposable?.dispose()
     entry.dataDisposable = null
-    entry.exitDisposable = null
     for (const resolve of entry.exitWaiters.splice(0)) resolve({ exitCode: null, signal: "disposed" })
     if (entry.titleKey) {
       const n = (this.titleCounts.get(entry.titleKey) ?? 1) - 1
       if (n <= 0) this.titleCounts.delete(entry.titleKey)
       else this.titleCounts.set(entry.titleKey, n)
     }
-    try {
-      entry.proc?.kill()
-    } catch {
-      /* ignore */
-    }
+    this.beginKill(entry)
     return null
   }
 

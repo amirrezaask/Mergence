@@ -6,8 +6,9 @@
  * resize/ready) stays JSON — payloads are tiny.
  */
 
-/** Host → client: binary `terminal:data` frame type byte. */
-export const TERMINAL_DATA_FRAME_TYPE = 0x01 as const;
+/** Host → client: binary `terminal:data` frame type bytes. */
+export const TERMINAL_DATA_FRAME_TYPE_V1 = 0x01 as const;
+export const TERMINAL_DATA_FRAME_TYPE = 0x02 as const;
 
 type Utf8Encoder = { encode(input: string): Uint8Array };
 type Utf8Decoder = { decode(input: Uint8Array): string };
@@ -27,13 +28,15 @@ function utf8Decode(bytes: Uint8Array): string {
 }
 
 /**
- * Binary layout (big-endian):
- *   u8  type (= TERMINAL_DATA_FRAME_TYPE)
- *   u32 eventSequence   (EventHub sequence for reconnect / since=)
- *   u32 terminalSequence (PTY entry sequence for attach dedupe)
+ * Binary layout v2 (big-endian):
+ *   u8  type (= 0x02)
+ *   u64 eventSequence
+ *   u64 terminalSequence
  *   u16 idLen
  *   id bytes (utf8)
  *   data bytes (utf8, remainder)
+ *
+ * v1 (u32 sequences) is still decoded for mixed-version clients.
  */
 export function encodeTerminalDataFrame(
   eventSequence: number,
@@ -46,15 +49,25 @@ export function encodeTerminalDataFrame(
   if (idBytes.length > 0xffff) {
     throw new Error("terminal id too long for binary frame");
   }
-  const out = new Uint8Array(1 + 4 + 4 + 2 + idBytes.length + dataBytes.length);
+  const out = new Uint8Array(1 + 8 + 8 + 2 + idBytes.length + dataBytes.length);
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
   out[0] = TERMINAL_DATA_FRAME_TYPE;
-  view.setUint32(1, eventSequence >>> 0);
-  view.setUint32(5, terminalSequence >>> 0);
-  view.setUint16(9, idBytes.length);
-  out.set(idBytes, 11);
-  out.set(dataBytes, 11 + idBytes.length);
+  view.setBigUint64(1, toU64(eventSequence));
+  view.setBigUint64(9, toU64(terminalSequence));
+  view.setUint16(17, idBytes.length);
+  out.set(idBytes, 19);
+  out.set(dataBytes, 19 + idBytes.length);
   return out;
+}
+
+function toU64(value: number): bigint {
+  if (!Number.isFinite(value) || value <= 0) return 0n;
+  return BigInt(Math.trunc(value));
+}
+
+function fromU64(value: bigint): number {
+  if (value > BigInt(Number.MAX_SAFE_INTEGER)) return Number.MAX_SAFE_INTEGER;
+  return Number(value);
 }
 
 export type DecodedTerminalDataFrame = {
@@ -71,8 +84,19 @@ export function decodeTerminalDataFrame(
     bytes instanceof ArrayBuffer
       ? new Uint8Array(bytes)
       : new Uint8Array(bytes.buffer, bytes.byteOffset, bytes.byteLength);
-  if (buf.length < 11 || buf[0] !== TERMINAL_DATA_FRAME_TYPE) return null;
+  if (buf.length < 11) return null;
   const view = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+  if (buf[0] === TERMINAL_DATA_FRAME_TYPE) {
+    if (buf.length < 19) return null;
+    const eventSequence = fromU64(view.getBigUint64(1));
+    const terminalSequence = fromU64(view.getBigUint64(9));
+    const idLen = view.getUint16(17);
+    if (19 + idLen > buf.length) return null;
+    const id = utf8Decode(buf.subarray(19, 19 + idLen));
+    const data = utf8Decode(buf.subarray(19 + idLen));
+    return { eventSequence, terminalSequence, id, data };
+  }
+  if (buf[0] !== TERMINAL_DATA_FRAME_TYPE_V1) return null;
   const eventSequence = view.getUint32(1);
   const terminalSequence = view.getUint32(5);
   const idLen = view.getUint16(9);
@@ -89,6 +113,7 @@ export const TERMINAL_WS_HOT_OPS = [
   "terminal:ack",
   "terminal:resize",
   "terminal:ready",
+  "terminal:attach",
 ] as const;
 
 export type TerminalWsHotOp = (typeof TERMINAL_WS_HOT_OPS)[number];
@@ -113,7 +138,8 @@ export function isTerminalWsHotOp(value: unknown): value is TerminalWsHotOp {
     value === "terminal:writeBinary" ||
     value === "terminal:ack" ||
     value === "terminal:resize" ||
-    value === "terminal:ready"
+    value === "terminal:ready" ||
+    value === "terminal:attach"
   );
 }
 

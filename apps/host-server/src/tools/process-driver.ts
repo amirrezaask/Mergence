@@ -141,9 +141,14 @@ export async function launchReservedTerminalInstance(
     const launch = request.args && request.args.length > 0
       ? { args: [...request.args] }
       : null
-    const created = runtime.terminal.create(pathToFileUri(request.checkoutPath), launch, clientId)
+    const created = await Promise.resolve(
+      runtime.terminal.create(pathToFileUri(request.checkoutPath), launch, clientId),
+    )
     return runtime.terminalInstances.bindPty(
-      instance.id, instance.generation, created.id, created.title,
+      instance.id, instance.generation, created.id, created.title, undefined, {
+        osPid: created.osPid,
+        osStartedAtMs: created.osStartedAtMs,
+      },
     ) ?? instance
   }
 
@@ -176,17 +181,18 @@ export async function launchReservedTerminalInstance(
   } catch (error) {
     telemetryError = error instanceof Error ? error.message : String(error)
   }
-  const created = runtime.terminal.create(pathToFileUri(request.checkoutPath), {
+  const created = await Promise.resolve(runtime.terminal.create(pathToFileUri(request.checkoutPath), {
     command: availability.binary,
     args: [...launchArgs, ...(request.args ?? [])],
     env: launchEnv,
-  }, clientId)
+  }, clientId))
   const bound = runtime.terminalInstances.bindPty(
     instance.id,
     instance.generation,
     created.id,
     created.title,
     processOnly ? "process_only" : "connecting",
+    { osPid: created.osPid, osStartedAtMs: created.osStartedAtMs },
   )
   if (!bound) throw new Error("process binding was rejected")
   runtime.db.recordSession(created.id, "terminal", "running", { title: created.title })
@@ -220,7 +226,7 @@ export async function restartTerminalInstance(
   args: readonly string[],
   clientId: string,
 ): Promise<TerminalInstance> {
-  if (instance.ptyId) runtime.terminal.dispose(instance.ptyId)
+  if (instance.ptyId) await Promise.resolve(runtime.terminal.dispose(instance.ptyId))
   const restarting = runtime.terminalInstances.beginRestart(instance.id, instance.generation)
   if (!restarting) throw new Error("terminal instance cannot be restarted")
   return launchReservedTerminalInstance(runtime, restarting, {
@@ -288,7 +294,7 @@ export class ProcessToolDriver implements ToolDriver {
           return processOutput(restarted)
         }
         if (instance) {
-          if (instance.ptyId) this.runtime.terminal.dispose(instance.ptyId)
+          if (instance.ptyId) await Promise.resolve(this.runtime.terminal.dispose(instance.ptyId))
           this.runtime.terminalInstances.close(instance.id, instance.generation, "")
         }
         const created = await createTerminalInstance(this.runtime, {
@@ -318,7 +324,7 @@ export class ProcessToolDriver implements ToolDriver {
           if (toolUse.output.kind !== "process") throw new Error("process output is unavailable")
           return toolUse.output
         }
-        if (instance.ptyId) this.runtime.terminal.dispose(instance.ptyId)
+        if (instance.ptyId) await Promise.resolve(this.runtime.terminal.dispose(instance.ptyId))
         const closed = this.runtime.terminalInstances.close(instance.id, instance.generation, "")
         return processOutput(closed ?? instance)
       },

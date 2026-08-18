@@ -912,7 +912,7 @@ async function handleAgents(
           return instanceToAgentRunInfo(instance);
         }
         if (instance.ptyId) {
-          runtime.terminal.dispose(instance.ptyId);
+          await Promise.resolve(runtime.terminal.dispose(instance.ptyId));
         }
         const closed = runtime.terminalInstances.close(
           instance.id,
@@ -926,13 +926,15 @@ async function handleAgents(
       if (body.generation != null && body.generation !== run.generation)
         return run;
       if (run.ptyId) {
-        const replay = runtime.terminal.readOutput(run.ptyId);
+        const replay = await Promise.resolve(
+          runtime.terminal.readOutput(run.ptyId),
+        );
         runtime.agentRuns.storeTranscript(
           run.ptyId,
           replay?.output ?? "",
           replay?.truncated ?? false,
         );
-        runtime.terminal.dispose(run.ptyId);
+        await Promise.resolve(runtime.terminal.dispose(run.ptyId));
       }
       return runtime.agentRuns.stop(run.runId, run.generation);
     }
@@ -948,7 +950,7 @@ async function handleAgents(
           return instanceToAgentRunInfo(instance);
         }
         if (instance.ptyId) {
-          runtime.terminal.dispose(instance.ptyId);
+          await Promise.resolve(runtime.terminal.dispose(instance.ptyId));
         }
         const closed = runtime.terminalInstances.close(
           instance.id,
@@ -962,13 +964,15 @@ async function handleAgents(
       if (body.generation != null && body.generation !== run.generation)
         return run;
       if (run.ptyId) {
-        const replay = runtime.terminal.readOutput(run.ptyId);
+        const replay = await Promise.resolve(
+          runtime.terminal.readOutput(run.ptyId),
+        );
         runtime.agentRuns.storeTranscript(
           run.ptyId,
           replay?.output ?? "",
           replay?.truncated ?? false,
         );
-        runtime.terminal.dispose(run.ptyId);
+        await Promise.resolve(runtime.terminal.dispose(run.ptyId));
       }
       return runtime.agentRuns.close(run.runId, run.generation);
     }
@@ -1360,9 +1364,9 @@ async function handleTerminal(
       const instance = runtime.terminalInstances.get(body.id);
       if (!instance || instance.generation !== body.generation) return instance;
       const replay = instance.ptyId
-        ? runtime.terminal.readOutput(instance.ptyId)
+        ? await Promise.resolve(runtime.terminal.readOutput(instance.ptyId))
         : null;
-      if (instance.ptyId) runtime.terminal.dispose(instance.ptyId);
+      if (instance.ptyId) await Promise.resolve(runtime.terminal.dispose(instance.ptyId));
       return runtime.terminalInstances.close(
         instance.id,
         instance.generation,
@@ -1377,7 +1381,9 @@ async function handleTerminal(
         fileUriToPath,
       );
       const launch = (args[1] as TerminalLaunch | null | undefined) ?? null;
-      const created = runtime.terminal.create(cwdUri, launch, clientId);
+      const created = await Promise.resolve(
+        runtime.terminal.create(cwdUri, launch, clientId),
+      );
       runtime.db.recordSession(created.id, "terminal", "running", {
         title: created.title,
       });
@@ -1386,7 +1392,7 @@ async function handleTerminal(
     case "terminal:write": {
       const id = str(args[0], "id");
       const data = String(args[1] ?? "");
-      const result = runtime.terminal.write(id, data);
+      const result = await Promise.resolve(runtime.terminal.write(id, data));
       // Enter starts a foreground command; Ctrl-C/Ctrl-D can return an agent
       // to its shell. Ask for one targeted reconciliation without polling on
       // every printable keystroke.
@@ -1405,36 +1411,46 @@ async function handleTerminal(
       return result;
     }
     case "terminal:writeBinary":
-      return runtime.terminal.writeBinary(
-        str(args[0], "id"),
-        String(args[1] ?? ""),
+      return Promise.resolve(
+        runtime.terminal.writeBinary(str(args[0], "id"), String(args[1] ?? "")),
       );
     case "terminal:resize":
-      return runtime.terminal.resize(
-        str(args[0], "id"),
-        typeof args[1] === "number" ? args[1] : undefined,
-        typeof args[2] === "number" ? args[2] : undefined,
+      return Promise.resolve(
+        runtime.terminal.resize(
+          str(args[0], "id"),
+          typeof args[1] === "number" ? args[1] : undefined,
+          typeof args[2] === "number" ? args[2] : undefined,
+        ),
       );
     case "terminal:ack":
-      return runtime.terminal.acknowledgeData(
-        str(args[0], "id"),
-        typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0),
+      return Promise.resolve(
+        runtime.terminal.acknowledgeData(
+          str(args[0], "id"),
+          typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0),
+          clientId,
+        ),
       );
     case "terminal:ready":
-      return runtime.terminal.markReplayReady(str(args[0], "id"), clientId);
+      return Promise.resolve(
+        runtime.terminal.markReplayReady(str(args[0], "id"), clientId),
+      );
     case "terminal:attach":
-      return runtime.terminal.attach(
-        str(args[0], "id"),
-        clientId,
-        typeof args[1] === "number" ? args[1] : undefined,
+      return Promise.resolve(
+        runtime.terminal.attach(
+          str(args[0], "id"),
+          clientId,
+          typeof args[1] === "number" ? args[1] : undefined,
+        ),
       );
     case "terminal:getCwd":
-      return runtime.terminal.getCwd(str(args[0], "id"));
+      return Promise.resolve(runtime.terminal.getCwd(str(args[0], "id")));
     case "terminal:getForegroundProcess":
-      return runtime.terminal.getForegroundProcess(str(args[0], "id"));
+      return Promise.resolve(
+        runtime.terminal.getForegroundProcess(str(args[0], "id")),
+      );
     case "terminal:dispose": {
       const id = str(args[0], "id");
-      runtime.terminal.dispose(id);
+      await Promise.resolve(runtime.terminal.dispose(id));
       runtime.db.updateSessionStatus(id, "stopped");
       // A terminal can be disposed while its agent history remains useful in
       // HQ.  The terminal exit callback marks the durable run ended; never

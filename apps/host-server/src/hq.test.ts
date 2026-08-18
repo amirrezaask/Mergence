@@ -30,7 +30,7 @@ describe("HQ aggregation", () => {
     assert.equal(inferAgentProvider(undefined, "bash"), null)
   })
 
-  it("includes running agent PTYs only, dedupes newest mappings, and keeps pending telemetry", () => {
+  it("includes running agent PTYs only, dedupes newest mappings, and keeps pending telemetry", async () => {
     const alpha = path.join(dir, "alpha")
     const beta = path.join(dir, "beta")
     fs.mkdirSync(alpha)
@@ -110,7 +110,7 @@ describe("HQ aggregation", () => {
       },
     } as unknown as HostRuntime
 
-    const snapshot = buildHqSnapshot(runtime)
+    const snapshot = await buildHqSnapshot(runtime)
     assert.equal(snapshot.agents.length, 2)
     assert.equal(snapshot.agents.some(agent => agent.sessionId === "agent-old"), false)
     assert.equal(snapshot.agents.some(agent => agent.sessionId === "agent-exited"), false)
@@ -128,7 +128,7 @@ describe("HQ aggregation", () => {
     assert.equal(alphaHealth?.unreadCount, 1)
   })
 
-  it("lists running agent PTYs even when session payload has not persisted yet", () => {
+  it("lists running agent PTYs even when session payload has not persisted yet", async () => {
     const alpha = path.join(dir, "alpha-live")
     fs.mkdirSync(alpha)
     const emptyLayout = {
@@ -185,7 +185,7 @@ describe("HQ aggregation", () => {
       agents: { getSnapshot() { return null } },
     } as unknown as HostRuntime
 
-    const snapshot = buildHqSnapshot(runtime)
+    const snapshot = await buildHqSnapshot(runtime)
     assert.equal(snapshot.agents.length, 1)
     assert.equal(snapshot.agents[0]?.provider, "cursor")
     assert.equal(snapshot.agents[0]?.sessionId, "term-cursor-1")

@@ -140,7 +140,7 @@ function findProjectForCwd<T extends { rootPath: string }>(
   return best
 }
 
-export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
+export async function buildHqSnapshot(runtime: HostRuntime): Promise<HqSnapshot> {
   const projects = runtime.db.projects()
   const sessions = runtime.db.listAllProjectSessions(runtime.machineHostname)
   const projectById = new Map(projects.map(project => [project.id, project]))
@@ -162,7 +162,7 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
   const liveProcesses = runtime.terminalInstances?.listLive?.() ?? []
   for (const run of liveProcesses) {
     if (!run.provider || !run.ptyId) continue
-    const inspected = runtime.terminal.inspect(run.ptyId)
+    const inspected = await Promise.resolve(runtime.terminal.inspect(run.ptyId))
     if (!inspected || inspected.status !== "running") continue
     const project = projectById.get(run.projectId)
     const referencedSession = run.workspaceId ? sessionById.get(run.workspaceId) : undefined
@@ -225,7 +225,7 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
         const provider = inferAgentProvider(leaf.agentProvider, leaf.launchCommand)
         if (!provider) continue
         claimedPtyIds.add(ptyId)
-        const inspected = runtime.terminal.inspect(ptyId)
+        const inspected = await Promise.resolve(runtime.terminal.inspect(ptyId))
         if (!inspected || inspected.status !== "running") continue
         const project = projects.find(candidate => candidate.rootPath === projectSession.projectPath)
         if (!project) continue
@@ -260,7 +260,7 @@ export function buildHqSnapshot(runtime: HostRuntime): HqSnapshot {
     }
     const listRunning = runtime.terminal.listRunning?.bind(runtime.terminal)
     if (listRunning) {
-      for (const inspected of listRunning()) {
+      for (const inspected of await Promise.resolve(listRunning())) {
         if (claimedPtyIds.has(inspected.id)) continue
         const provider = inferAgentProvider(undefined, inspected.spawnCommand ?? undefined)
         const project = provider ? findProjectForCwd(inspected.spawnCwd, projects) : null

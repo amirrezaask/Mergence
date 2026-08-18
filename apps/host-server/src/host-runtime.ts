@@ -1,5 +1,10 @@
 import os from "node:os";
-import { PerfHost, type TerminalHost } from "@yaade/node-host";
+import {
+  isProcessAlive,
+  PerfHost,
+  SupervisedTerminalHost,
+  type TerminalHost,
+} from "@yaade/node-host";
 import type { NotificationStreamEvent } from "@yaade/shared";
 import type { AgentProvider } from "@yaade/agent-telemetry";
 import type { HostConfig } from "./config.js";
@@ -23,11 +28,13 @@ import { ToolSessionStore } from "./tool-session-store.js";
 import { discoverTerminalAgents } from "./terminal-agent-discovery.js";
 import { ToolService } from "./tools/service.js";
 
+export type RuntimeTerminal = TerminalHost | SupervisedTerminalHost;
+
 export type HostRuntime = {
   config: HostConfig;
   events: EventHub;
   db: ProjectDatabase;
-  terminal: TerminalHost;
+  terminal: RuntimeTerminal;
   perf: PerfHost;
   homeDir: string;
   /** `os.hostname()` — workspace session identity with root path. */
@@ -39,6 +46,7 @@ export type HostRuntime = {
   toolSessions: ToolSessionStore;
   toolService: ToolService | null;
   hookQueueTimer: ReturnType<typeof setInterval>;
+  reconcileTimer: ReturnType<typeof setInterval>;
   /** Request an event-driven foreground-process reconciliation for one PTY. */
   requestTerminalAgentScan: (ptyId?: string, armOutputProbe?: boolean) => void;
   stopTerminalAgentScan: () => void;
@@ -73,7 +81,7 @@ export function createRuntime(
   config: HostConfig,
   events: EventHub,
   db: ProjectDatabase,
-  terminal: TerminalHost,
+  terminal: RuntimeTerminal,
   options?: {
     /** When set, notification stream events go here (e.g. PubSub → EventHub bridge). */
     emitNotification?: (event: NotificationStreamEvent) => void;
@@ -213,27 +221,28 @@ export function createRuntime(
       outputProbeArmed.delete(ptyId);
       const exitCode =
         typeof args[1] === "number" ? args[1] : Number(args[1] ?? 0);
-      const replay = terminal.readOutput(ptyId);
-      processInstances.onPtyExit(
-        ptyId,
-        exitCode,
-        replay?.output ?? "",
-        replay?.truncated ?? false,
-      );
-      runService.storeTranscript(
-        ptyId,
-        replay?.output ?? "",
-        replay?.truncated ?? false,
-      );
-      handleTerminalExit(
-        notifications,
-        agents,
-        processInstances,
-        agentRuns,
-        ptyId,
-        exitCode,
-      );
-      runtime.toolService?.onProcessExit(ptyId);
+      void Promise.resolve(terminal.readOutput(ptyId)).then((replay) => {
+        processInstances.onPtyExit(
+          ptyId,
+          exitCode,
+          replay?.output ?? "",
+          replay?.truncated ?? false,
+        );
+        runService.storeTranscript(
+          ptyId,
+          replay?.output ?? "",
+          replay?.truncated ?? false,
+        );
+        handleTerminalExit(
+          notifications,
+          agents,
+          processInstances,
+          agentRuns,
+          ptyId,
+          exitCode,
+        );
+        runtime.toolService?.onProcessExit(ptyId);
+      });
     }
   });
 
@@ -249,6 +258,10 @@ export function createRuntime(
   };
   const hookQueueTimer = setInterval(requestHookQueueDrain, 5_000);
   hookQueueTimer.unref?.();
+  const reconcileTimer = setInterval(() => {
+    runtime.toolService?.reconcile();
+  }, 15_000);
+  reconcileTimer.unref?.();
   const runtime: HostRuntime = {
     config,
     events,
@@ -264,22 +277,38 @@ export function createRuntime(
     toolSessions,
     toolService: null,
     hookQueueTimer,
+    reconcileTimer,
     requestTerminalAgentScan,
     stopTerminalAgentScan,
     pendingHookQueueDrain: () => hookQueueDrain,
   };
   runtime.toolService = new ToolService(runtime);
-  runtime.toolService.reconcile();
   try {
     db.addProject(config.launchConfig.workspacePath);
   } catch {
     /* Launch target validation remains authoritative; HQ can still load. */
   }
-  // Drain offline hook queue from previous host downtime without blocking boot.
   requestHookQueueDrain();
   requestTerminalAgentScan();
 
   return runtime;
+}
+
+export async function prepareLiveTerminals(runtime: HostRuntime): Promise<void> {
+  const live = await Promise.resolve(runtime.terminal.listRunning());
+  runtime.terminalInstances.reconcileHostStart(
+    new Set(live.map((item) => item.id)),
+    (pid) => {
+      if (isProcessAlive(pid)) {
+        try {
+          process.kill(pid, "SIGKILL");
+        } catch {
+          /* ignore */
+        }
+      }
+    },
+  );
+  runtime.toolService?.reconcile();
 }
 
 async function drainHookQueue(
@@ -435,11 +464,22 @@ function handleTerminalExit(
   });
 }
 
-export async function shutdownRuntime(runtime: HostRuntime): Promise<void> {
+export async function shutdownRuntime(
+  runtime: HostRuntime,
+  options?: { killPtys?: boolean },
+): Promise<void> {
   runtime.events.emit("server:shuttingDown", []);
   clearInterval(runtime.hookQueueTimer);
+  clearInterval(runtime.reconcileTimer);
   runtime.stopTerminalAgentScan();
+  runtime.terminalInstances.dispose();
   await runtime.pendingHookQueueDrain();
   await runtime.toolService?.close();
-  runtime.terminal.stopAll();
+  const killPtys = options?.killPtys ?? runtime.config.killPtysOnShutdown;
+  if (runtime.terminal instanceof SupervisedTerminalHost) {
+    if (killPtys) await runtime.terminal.shutdownSupervisor();
+    else await runtime.terminal.disconnect();
+  } else {
+    runtime.terminal.stopAll();
+  }
 }

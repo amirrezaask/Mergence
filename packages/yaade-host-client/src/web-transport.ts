@@ -46,10 +46,33 @@ export function websocketUrl(
   location: Pick<Location, "protocol" | "host">,
   since = 0,
   clientId?: string,
+  token?: string | null,
 ): string {
   const protocol = location.protocol === "https:" ? "wss:" : "ws:";
   const client = clientId ? `&clientId=${encodeURIComponent(clientId)}` : "";
-  return `${protocol}//${location.host}/ws?since=${since}${client}`;
+  const auth = token ? `&token=${encodeURIComponent(token)}` : "";
+  return `${protocol}//${location.host}/ws?since=${since}${client}${auth}`;
+}
+
+export function readHostAuthToken(
+  search = typeof window === "undefined" ? "" : window.location.search,
+  storage: Pick<Storage, "getItem" | "setItem"> | null =
+    typeof sessionStorage === "undefined" ? null : sessionStorage,
+): string | null {
+  const query = new URLSearchParams(search).get("token")?.trim();
+  if (query) {
+    try {
+      storage?.setItem("yaade-host-token", query);
+    } catch {
+      /* ignore */
+    }
+    return query;
+  }
+  try {
+    return storage?.getItem("yaade-host-token")?.trim() || null;
+  } catch {
+    return null;
+  }
 }
 
 /** Reconnect backoff matching legacy setTimeout: 250ms × 2^n, cap 10s. */
@@ -374,7 +397,12 @@ export class WebHostTransport implements YaadeHostTransport {
       Effect.acquireRelease(
         Effect.sync(() => {
           const socket = new WebSocket(
-            websocketUrl(window.location, self.lastSequence, self.clientId),
+            websocketUrl(
+              window.location,
+              self.lastSequence,
+              self.clientId,
+              readHostAuthToken(),
+            ),
           );
           socket.binaryType = "arraybuffer";
           self.socket = socket;

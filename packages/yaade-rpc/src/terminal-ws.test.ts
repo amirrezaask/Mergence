@@ -25,6 +25,28 @@ test("rejects truncated or wrong-type binary frames", () => {
     null,
   );
   assert.equal(decodeTerminalDataFrame(new Uint8Array([0x01, 0, 0])), null);
+  assert.equal(
+    decodeTerminalDataFrame(new Uint8Array([0x03, 0, 0, 0, 1, 0, 0, 0, 1])),
+    null,
+  );
+});
+
+test("round-trips v2 frames with sequences above 2^32", () => {
+  const eventSequence = 2 ** 32 + 17;
+  const terminalSequence = 2 ** 32 + 99;
+  const encoded = encodeTerminalDataFrame(
+    eventSequence,
+    terminalSequence,
+    "term-u64",
+    "payload",
+  );
+  assert.equal(encoded[0], 0x02);
+  assert.deepEqual(decodeTerminalDataFrame(encoded), {
+    eventSequence,
+    terminalSequence,
+    id: "term-u64",
+    data: "payload",
+  });
 });
 
 test("encodes and decodes terminal WS control commands", () => {

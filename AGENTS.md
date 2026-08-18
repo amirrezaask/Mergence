@@ -49,7 +49,8 @@ Tests use `node:test` through `tsx`, not Vitest. App tests must be listed in `pa
 - Terminal control uses the binary WebSocket path with replay and flow control.
 - Host work must stay behind typed RPC boundaries.
 - Paths are validated against `allowedRoots` on the host.
-- The service has no authentication; keep the default loopback bind and never claim remote deployment is secure.
+- Default bind is loopback and may stay open without a token. Binding off loopback requires `--token` / `YAADE_HOST_TOKEN`.
+- PTYs live in a detached supervisor by default so API restarts do not kill long-running agents. Desktop passes `--kill-ptys-on-exit`. Disable the supervisor with `JET_PTY_SUPERVISOR=0`.
 
 ## Keyboard
 

@@ -219,7 +219,7 @@ async function launchHost(repoRoot, workspace) {
   const dataDir = path.join(app.getPath("userData"), "host")
   await fs.promises.mkdir(dataDir, { recursive: true })
 
-  const args = ["--host", LOOPBACK_HOST, "--port", String(port), "--data-dir", dataDir]
+  const args = ["--host", LOOPBACK_HOST, "--port", String(port), "--data-dir", dataDir, "--kill-ptys-on-exit"]
   let command
   let commandArgs
   let cwd

@@ -217,6 +217,21 @@ export class ProjectDatabase {
     this.db.exec(`
       PRAGMA journal_mode=WAL;
       PRAGMA foreign_keys=ON;
+      PRAGMA busy_timeout=5000;
+    `);
+    const integrity = this.db
+      .prepare("PRAGMA quick_check")
+      .get() as { quick_check?: string } | string | undefined;
+    const integrityText =
+      typeof integrity === "string"
+        ? integrity
+        : integrity && typeof integrity === "object"
+          ? String(Object.values(integrity)[0] ?? "")
+          : "";
+    if (integrityText && integrityText !== "ok") {
+      throw new Error(`sqlite integrity check failed: ${integrityText}`);
+    }
+    this.db.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY);
       INSERT OR IGNORE INTO schema_migrations(version) VALUES(1);
       CREATE TABLE IF NOT EXISTS projects(
@@ -1082,8 +1097,9 @@ export class ProjectDatabase {
     const machine = normalized.machine.trim()
     if (!machine) throw new Error("invalid workspace session machine")
 
-    // Keep ptyId so a same-host reload can reattach. After a host restart the
-    // client attach fails and TerminalPanel spawns a fresh shell.
+    // Keep ptyId so a same-host reload can reattach. After an API restart the
+    // detached PTY supervisor still owns the process; attach succeeds while
+    // that supervisor is alive. Only supervisor death requires a new shell.
     const sessions = normalized.sessions.map(leaf => ({
       ...leaf,
       cwdRootUri: this.canonicalizeCwdUri(leaf.cwdRootUri),

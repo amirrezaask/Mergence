@@ -64,11 +64,21 @@ export {
   type TerminalLaunch,
   type TerminalAttachSnapshot,
   type TerminalInspectSnapshot,
+  type TerminalCreateResult,
+  type TerminalHostOptions,
   TERMINAL_FLOW_ACK_CHARS,
   TERMINAL_FLOW_HIGH_WATERMARK_CHARS,
   TERMINAL_FLOW_LOW_WATERMARK_CHARS,
 } from "./terminal.js";
 export { makeTerminalHostScoped } from "./effect-terminal.js";
+export { SupervisedTerminalHost } from "./terminal-supervisor-client.js";
+export {
+  ensureTerminalSupervisor,
+  listenTerminalSupervisor,
+  supervisorSocketPath,
+} from "./terminal-supervisor.js";
+export { isProcessAlive } from "./process-identity.js";
+export { PTY_SANITIZED_ENV_KEYS, sanitizePtyEnv } from "./terminal-env.js";
 export { openInApp, revealInFolder } from "./shell.js";
 export {
   spawnTask,

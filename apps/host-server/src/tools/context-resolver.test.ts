@@ -18,6 +18,9 @@ function config(root: string) {
     launchPath: root,
     launchConfig: { workspacePath: root, source: "default" as const },
     staticDir: null,
+    authToken: null,
+    ptySupervisor: false,
+    killPtysOnShutdown: true,
   }
 }
 

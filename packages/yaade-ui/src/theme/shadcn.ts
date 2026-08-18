@@ -9,10 +9,10 @@ import {
   paletteHighlights,
 } from "./theme-palette.js"
 
-const designSource = "https://developer.apple.com/design/human-interface-guidelines/materials"
+const designSource = "https://developer.apple.com/videos/play/wwdc2025/219/"
 
-// Syntax + ANSI stay vivid against the soft graphite chrome — same cool-blue
-// primary family as the UI tokens, without pulling chrome chroma into code.
+// Syntax + ANSI stay vivid against the frost chrome — cool-blue primary
+// family, kept off the glass film so code doesn't inherit material tint.
 const darkHighlights = paletteHighlights({
   keyword: "oklch(0.72 0.17 25)",
   controlKeyword: "oklch(0.72 0.17 25)",
@@ -92,7 +92,7 @@ export const defaultDark: YaadeTheme = makeTheme({
   name: "Default Dark",
   family: "Default",
   scheme: "dark",
-  sourceName: "YAADE Liquid Glass (Apple materials–inspired)",
+  sourceName: "YAADE Dark Liquid Glass (Apple WWDC 2025)",
   sourceUrl: designSource,
   license: "MIT",
   tokens: shadcnDefaultDark,

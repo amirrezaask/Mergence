@@ -23,6 +23,7 @@ import {
   type HostRpcError,
 } from "@yaade/rpc"
 import type { YaadeHostTransport } from "./transport.js"
+import { readHostAuthToken } from "./web-transport.js"
 
 export class HostClient extends Context.Tag("yaade/HostClient")<
   HostClient,
@@ -118,11 +119,14 @@ export function invokeHostRpc(
           cause,
         }),
     )
+    const token = readHostAuthToken()
+    const headers: Record<string, string> = { "content-type": "application/json" }
+    if (token) headers.authorization = `Bearer ${token}`
     const response = yield* Effect.tryPromise({
       try: () =>
         fetch("/api/v1/rpc", {
           method: "POST",
-          headers: { "content-type": "application/json" },
+          headers,
           body: JSON.stringify(body satisfies HostRpcRequest),
           signal: options?.signal,
         }),

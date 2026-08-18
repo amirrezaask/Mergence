@@ -9,6 +9,7 @@ const DARWIN_LSOF_CANDIDATES = ["/usr/sbin/lsof", "/usr/bin/lsof", "lsof"] as co
 const CWD_CACHE_TTL_MS = 250
 /** Share one `ps` snapshot across ordinary foreground lookups (≤1/s). */
 const PROCESS_TABLE_TTL_MS = 1_000
+const MAX_PID_CACHE_ENTRIES = 512
 
 type CacheEntry = { value: string | null; expiresAt: number }
 
@@ -39,6 +40,9 @@ function putCache(
   value: string | null,
 ): void {
   map.set(pid, { value, expiresAt: Date.now() + CWD_CACHE_TTL_MS })
+  if (map.size <= MAX_PID_CACHE_ENTRIES) return
+  const first = map.keys().next().value
+  if (typeof first === "number") map.delete(first)
 }
 
 /** Test helper — clears cwd / foreground caches between cases. */

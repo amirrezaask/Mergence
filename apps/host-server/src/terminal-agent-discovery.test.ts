@@ -53,6 +53,7 @@ describe("terminal agent discovery", () => {
           signal: null,
           spawnCommand: null,
           spawnCwd: workspace,
+          osPid: null,
         },
       ],
       getForegroundProcess: async () => foreground,

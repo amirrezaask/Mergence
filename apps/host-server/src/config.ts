@@ -15,6 +15,12 @@ export type HostConfig = {
   launchPath: string
   launchConfig: LaunchConfig
   staticDir: string | null
+  /** Shared bearer token. Required when binding off loopback. */
+  authToken: string | null
+  /** Own PTYs in a detached supervisor so API restarts do not kill agents. */
+  ptySupervisor: boolean
+  /** When true, shutdown kills PTYs (desktop). Server default is detach. */
+  killPtysOnShutdown: boolean
 }
 
 function parseArgs(argv: string[]): Record<string, string | boolean> {
@@ -45,9 +51,17 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
   const args = parseArgs(argv)
   const home = os.homedir()
   const host = String(args.host ?? process.env.JET_HOST ?? "127.0.0.1")
+  const authToken = String(
+    args.token ?? process.env.YAADE_HOST_TOKEN ?? process.env.JET_HOST_TOKEN ?? "",
+  ).trim() || null
+  if (!isLoopbackHostname(host) && !authToken) {
+    throw new Error(
+      `binding to ${host} requires --token or YAADE_HOST_TOKEN so the host API is not open on the network`,
+    )
+  }
   if (!isLoopbackHostname(host)) {
     console.warn(
-      `[host-server] WARNING: binding to ${host} exposes the unauthenticated host API on the network`,
+      `[host-server] binding to ${host}; API access requires the configured host token`,
     )
   }
   // 0 = OS-assigned ephemeral port so concurrent instances do not share 4747.
@@ -98,6 +112,27 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
 
   fs.mkdirSync(dataDir, { recursive: true })
 
+  const supervisorArg = args["pty-supervisor"]
+  const supervisorExplicit =
+    supervisorArg === true || supervisorArg === "1" || supervisorArg === "true"
+      ? true
+      : supervisorArg === false ||
+          supervisorArg === "0" ||
+          supervisorArg === "false"
+        ? false
+        : process.env.JET_PTY_SUPERVISOR === "1"
+          ? true
+          : process.env.JET_PTY_SUPERVISOR === "0"
+            ? false
+            : null
+  // Production default is on. node:test stays in-process unless a test opts in.
+  const ptySupervisor =
+    supervisorExplicit ?? !Boolean(process.env.NODE_TEST_CONTEXT)
+  const killPtysOnShutdown =
+    args["kill-ptys-on-exit"] === true ||
+    process.env.JET_KILL_PTYS_ON_EXIT === "1" ||
+    Boolean(process.env.NODE_TEST_CONTEXT)
+
   return {
     host,
     port,
@@ -107,5 +142,8 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
     launchPath,
     launchConfig,
     staticDir,
+    authToken,
+    ptySupervisor,
+    killPtysOnShutdown,
   }
 }

@@ -5,6 +5,7 @@ import {
   acceptHostEvent,
   createClientId,
   hostRealtimeReconnectDelay,
+  readHostAuthToken,
   subscribeRealtimeWake,
   websocketUrl,
 } from "./web-transport.js"
@@ -31,6 +32,28 @@ test("websocket URL follows the page origin and carries replay sequence", () => 
     ),
     "wss://jet.example/ws?since=9&clientId=client%20id%2Fwith%20reserved%20chars",
   )
+  assert.equal(
+    websocketUrl(
+      { protocol: "https:", host: "yaade.example" } as Location,
+      3,
+      "c1",
+      "secret token",
+    ),
+    "wss://yaade.example/ws?since=3&clientId=c1&token=secret%20token",
+  )
+})
+
+test("readHostAuthToken prefers the query token and remembers it", () => {
+  const store = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value)
+    },
+  }
+  assert.equal(readHostAuthToken("?token=abc", storage), "abc")
+  assert.equal(store.get("yaade-host-token"), "abc")
+  assert.equal(readHostAuthToken("", storage), "abc")
 })
 
 test("client ids work when randomUUID is unavailable outside secure contexts", () => {

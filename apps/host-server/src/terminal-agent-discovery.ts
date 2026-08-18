@@ -246,9 +246,9 @@ export async function discoverTerminalAgents(
   ptyIds?: readonly string[],
 ): Promise<void> {
   const requestedPtyIds = ptyIds ? new Set(ptyIds) : null
-  const inspectedTerminals = runtime.terminal
-    .listRunning()
-    .filter(inspected => !requestedPtyIds || requestedPtyIds.has(inspected.id))
+  const inspectedTerminals = (
+    await Promise.resolve(runtime.terminal.listRunning())
+  ).filter(inspected => !requestedPtyIds || requestedPtyIds.has(inspected.id))
   if (inspectedTerminals.length === 0) return
   const projects = runtime.db.projects()
   const sessions = runtime.db.listAllProjectSessions(runtime.machineHostname)
@@ -256,7 +256,7 @@ export async function discoverTerminalAgents(
   for (const inspected of inspectedTerminals) {
     const processName = await runtime.terminal.getForegroundProcess(
       inspected.id,
-      true,
+      false,
     )
     const provider = inferAgentProvider(
       undefined,

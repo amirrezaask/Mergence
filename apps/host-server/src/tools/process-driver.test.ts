@@ -16,6 +16,7 @@ import {
   restartTerminalInstance,
 } from "./process-driver.js";
 import { dispatchPromise } from "../dispatch.js";
+import { SupervisedTerminalHost } from "@yaade/node-host";
 import { loadConfig } from "../config.js";
 import { startHostServer } from "../server.js";
 
@@ -44,7 +45,7 @@ exit 0
   return binDir;
 }
 
-async function hostWithProject() {
+async function hostWithProject(extraArgs: string[] = []) {
   const parent = fs.mkdtempSync(
     path.join(os.tmpdir(), "yaade-process-driver-"),
   );
@@ -61,6 +62,7 @@ async function hostWithProject() {
     "--allowed-roots",
     parent,
     projectRoot,
+    ...extraArgs,
   ]);
   const host = await startHostServer(config);
   return { host, parent, projectRoot: canonicalProjectRoot };
@@ -224,7 +226,10 @@ describe("process Tool driver", () => {
         ),
       );
       assert.ok(archived.archivedAt);
-      assert.equal(host.runtime.terminal.inspect(running.output.ptyId), null);
+      assert.equal(
+        await Promise.resolve(host.runtime.terminal.inspect(running.output.ptyId)),
+        null,
+      );
       assert.equal(host.runtime.terminalInstances.get(running.output.terminalInstanceId), null);
       assert.equal(host.runtime.toolSessions.getSession(session.id)?.activeToolUseId, undefined);
       const tab = host.runtime.toolSessions.listTabs(session.id)[0];
@@ -445,6 +450,79 @@ describe("process Tool driver", () => {
       }
     } finally {
       await currentHost.close();
+      fs.rmSync(first.parent, { recursive: true, force: true });
+    }
+  });
+
+  it("keeps live tools attached across an API restart when the PTY supervisor survives", async () => {
+    const first = await hostWithProject(["--pty-supervisor", "1"]);
+    let currentHost = first.host;
+    const dataDir = path.join(first.parent, "data");
+    try {
+      const project = currentHost.runtime.db
+        .projects()
+        .find((item) => item.rootPath === first.projectRoot);
+      assert.ok(project);
+      const session = currentHost.runtime.toolSessions.listSessions()[0];
+      assert.ok(session);
+      const created = Schema.decodeUnknownSync(ToolUse)(
+        await dispatchPromise(
+          currentHost.runtime,
+          "tools:createUse",
+          [
+            CreateToolUse.make({
+              sessionId: session.id,
+              kind: "terminal",
+              project: ProjectTarget.make({
+                projectId: project.id,
+                projectPath: project.rootPath,
+                projectName: project.name,
+              }),
+              checkout: MainCheckout.make({ kind: "main" }),
+              input: TerminalToolInput.make({ kind: "terminal" }),
+            }),
+          ],
+          "process-supervisor-durability-test",
+        ),
+      );
+      await waitFor(() => currentHost.runtime.toolSessions.getToolUse(created.id)?.status === "running");
+      const live = currentHost.runtime.toolSessions.getToolUse(created.id);
+      assert.ok(live);
+      assert.equal(live.output.kind, "process");
+      if (live.output.kind !== "process") return;
+      const ptyId = live.output.ptyId;
+      assert.ok(ptyId);
+
+      await currentHost.close({ killPtys: false });
+      const config = await loadConfig([
+        "--host", "127.0.0.1",
+        "--port", "0",
+        "--data-dir", dataDir,
+        "--allowed-roots", first.parent,
+        "--pty-supervisor", "1",
+        first.projectRoot,
+      ]);
+      currentHost = await startHostServer(config);
+      const restored = currentHost.runtime.toolSessions.getToolUse(created.id);
+      assert.equal(restored?.status, "running");
+      assert.equal(restored?.output.kind, "process");
+      if (restored?.output.kind === "process") {
+        assert.equal(restored.output.processState, "running");
+        assert.equal(restored.output.ptyId, ptyId);
+      }
+      const attached = await Promise.resolve(
+        currentHost.runtime.terminal.attach(ptyId, "durability-reattach"),
+      );
+      assert.ok(attached);
+      assert.equal(attached.status, "running");
+    } finally {
+      try {
+        const supervisor = await SupervisedTerminalHost.connect(dataDir);
+        await supervisor.shutdownSupervisor();
+      } catch {
+        /* supervisor may already be gone */
+      }
+      await currentHost.close({ killPtys: true });
       fs.rmSync(first.parent, { recursive: true, force: true });
     }
   });

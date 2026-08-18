@@ -353,10 +353,10 @@ body {
   border-color: var(--yaade-material-light-edge);
   background: var(--yaade-material-floating-fill);
   box-shadow:
-    inset 0 1px var(--yaade-material-specular),
+    var(--yaade-material-inset-rim),
     var(--yaade-material-floating-shadow);
-  -webkit-backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
-  backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-floating-filter);
+  backdrop-filter: var(--yaade-material-floating-filter);
 }
 
 [data-slot="card"] {
@@ -519,8 +519,8 @@ body {
 [data-yaade-session-tabs],
 [data-yaade-tool-tabs],
 [data-yaade-tool-context] {
-  -webkit-backdrop-filter: blur(var(--yaade-material-shell-blur)) saturate(var(--yaade-material-shell-saturation));
-  backdrop-filter: blur(var(--yaade-material-shell-blur)) saturate(var(--yaade-material-shell-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-shell-filter);
+  backdrop-filter: var(--yaade-material-shell-filter);
 }
 
 [data-yaade-tool-use] {
@@ -534,10 +534,10 @@ body {
   border-color: var(--yaade-material-light-edge);
   background: var(--yaade-material-shell-fill);
   box-shadow:
-    inset 0 1px var(--yaade-material-specular),
+    var(--yaade-material-inset-rim),
     var(--yaade-material-shell-shadow);
-  -webkit-backdrop-filter: blur(var(--yaade-material-shell-blur)) saturate(var(--yaade-material-shell-saturation));
-  backdrop-filter: blur(var(--yaade-material-shell-blur)) saturate(var(--yaade-material-shell-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-shell-filter);
+  backdrop-filter: var(--yaade-material-shell-filter);
 }
 
 [data-yaade-shell="tool-session"] [data-yaade-top-tabbar] {
@@ -545,10 +545,11 @@ body {
   min-height: var(--yaade-tab-bar-height);
   margin: 0;
   border-radius: 0;
-  background: var(--muted);
-  box-shadow: none;
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  border-bottom: 1px solid var(--yaade-material-light-edge);
+  background: var(--yaade-material-chrome-fill);
+  box-shadow: inset 0 1px var(--yaade-material-specular);
+  -webkit-backdrop-filter: var(--yaade-material-chrome-filter);
+  backdrop-filter: var(--yaade-material-chrome-filter);
 }
 
 /* Electron hides the native titlebar so the Session/Window strip becomes the
@@ -674,7 +675,7 @@ body {
   border-radius: var(--yaade-material-tab-radius);
   background: var(--yaade-material-chrome-fill);
   box-shadow:
-    inset 0 1px var(--yaade-material-specular),
+    var(--yaade-material-inset-rim),
     var(--yaade-material-chrome-shadow);
   transform: translateY(-1px);
 }
@@ -775,6 +776,8 @@ body {
   [data-yaade-session-sidebar],
   [data-yaade-tool-sidebar],
   [data-yaade-single-sidebar],
+  [data-yaade-top-tabbar],
+  [data-yaade-app-header],
   [data-yaade-tool-workspace] [data-yaade-panel-leaf] {
     background: var(--card);
     -webkit-backdrop-filter: none;
@@ -797,7 +800,9 @@ body {
 
 :root[data-yaade-reduced-transparency="true"] :is(
   [data-yaade-window-tabs],
-  [data-yaade-mux-pane-chrome]
+  [data-yaade-mux-pane-chrome],
+  [data-yaade-top-tabbar],
+  [data-yaade-app-header]
 ) {
   background: var(--yaade-material-chrome-fallback);
   -webkit-backdrop-filter: none;
@@ -826,8 +831,11 @@ body {
 /* Shared app rails: one calm chrome treatment across HQ, project, and mux. */
 [data-yaade-app-header] {
   min-height: var(--yaade-app-header-height);
-  border-color: color-mix(in oklch, var(--border) 88%, transparent);
-  background: color-mix(in oklch, var(--background) 94%, var(--card));
+  border-color: var(--yaade-material-light-edge);
+  background: var(--yaade-material-chrome-fill);
+  box-shadow: inset 0 1px var(--yaade-material-specular);
+  -webkit-backdrop-filter: var(--yaade-material-chrome-filter);
+  backdrop-filter: var(--yaade-material-chrome-filter);
 }
 
 /* Project navigation is a floating material layer, not a layout rail. */
@@ -841,10 +849,10 @@ body {
   border-radius: var(--yaade-material-shell-radius);
   background: var(--yaade-material-floating-fill);
   box-shadow:
-    inset 0 1px var(--yaade-material-specular),
+    var(--yaade-material-inset-rim),
     var(--yaade-material-floating-shadow);
-  -webkit-backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
-  backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-floating-filter);
+  backdrop-filter: var(--yaade-material-floating-filter);
 }
 
 @media (max-width: 640px) {
@@ -879,17 +887,17 @@ body {
   border-radius: var(--yaade-material-shell-radius);
   background: var(--yaade-material-shell-fill);
   box-shadow:
-    inset 0 1px var(--yaade-material-specular),
+    var(--yaade-material-inset-rim),
     var(--yaade-material-shell-shadow);
-  -webkit-backdrop-filter: blur(var(--yaade-material-shell-blur)) saturate(var(--yaade-material-shell-saturation));
-  backdrop-filter: blur(var(--yaade-material-shell-blur)) saturate(var(--yaade-material-shell-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-shell-filter);
+  backdrop-filter: var(--yaade-material-shell-filter);
 }
 
 [data-yaade-raised-surface] {
   border: 1px solid var(--yaade-material-light-edge);
   border-radius: var(--yaade-material-control-radius);
   background: var(--yaade-material-chrome-fill);
-  box-shadow: inset 0 1px var(--yaade-material-specular);
+  box-shadow: var(--yaade-material-inset-rim);
 }
 
 @media (prefers-reduced-transparency: reduce) {
@@ -1277,8 +1285,8 @@ body {
 
 .chat-composer-glass {
   background: var(--yaade-material-floating-fill);
-  -webkit-backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
-  backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-floating-filter);
+  backdrop-filter: var(--yaade-material-floating-filter);
 }
 
 .chat-composer-glass-shell {
@@ -1296,8 +1304,8 @@ body {
   inset: 0;
   border-radius: 22px;
   background: var(--yaade-material-floating-fill);
-  -webkit-backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
-  backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
+  -webkit-backdrop-filter: var(--yaade-material-floating-filter);
+  backdrop-filter: var(--yaade-material-floating-filter);
   content: "";
 }
 
@@ -1424,8 +1432,8 @@ body {
 
   .chat-composer-context-strip::before {
     background: var(--yaade-material-floating-fill);
-    -webkit-backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
-    backdrop-filter: blur(var(--yaade-material-floating-blur)) saturate(var(--yaade-material-floating-saturation));
+    -webkit-backdrop-filter: var(--yaade-material-floating-filter);
+    backdrop-filter: var(--yaade-material-floating-filter);
   }
 
   .dark .chat-composer-context-strip::before {

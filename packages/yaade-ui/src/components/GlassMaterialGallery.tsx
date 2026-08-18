@@ -39,28 +39,30 @@ export function GlassMaterialGallery() {
       <main className="mx-auto flex w-full max-w-6xl flex-col gap-8">
         <header className="flex flex-wrap items-end justify-between gap-4">
           <div className="max-w-2xl">
-            <p className="font-mono text-3xs font-semibold uppercase tracking-[0.16em] text-primary">
+            <p className="font-mono text-3xs font-semibold uppercase tracking-[0.16em] text-muted-foreground">
               YAADE / material lab
             </p>
-            <h1 className="mt-2 text-xl font-semibold tracking-[-0.025em]">
-              Technical liquid glass
+            <h1 className="mt-2 text-xl font-semibold tracking-[-0.03em]">
+              Dark liquid glass
             </h1>
             <p className="mt-2 max-w-xl text-sm leading-relaxed text-muted-foreground">
-              A quiet inspection surface for the four named materials. Chrome catches
-              light; the work surface stays solid enough for code and terminal output.
+              Navigation is refractive frost: white film, saturated blur, and a
+              bright rim. The work surface stays matte so the terminal does not
+              sit behind glass.
             </p>
           </div>
-          <GlassFocusRing asChild>
+          <GlassSurface material="chrome" interactive asChild>
             <button
               type="button"
-              className="rounded-[var(--yaade-material-control-radius)] border border-border bg-card/50 px-3 py-2 text-xs font-medium transition-colors hover:bg-accent"
+              className="yaade-glass-focus-ring px-3 py-2 text-xs font-medium"
               onClick={() => setBusyCanvas(value => !value)}
               aria-pressed={busyCanvas}
+              aria-label={busyCanvas ? "Use void canvas" : "Use sample canvas"}
               data-yaade-glass-gallery-busy-toggle=""
             >
-              {busyCanvas ? "Quiet canvas" : "Busy canvas"}
+              {busyCanvas ? "Void canvas" : "Sample canvas"}
             </button>
-          </GlassFocusRing>
+          </GlassSurface>
         </header>
 
         <section

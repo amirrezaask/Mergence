@@ -3,6 +3,7 @@ import type {
   TextFileWriteOptions,
   TextFileWriteResult,
 } from "@yaade/rpc"
+import { readHostAuthToken } from "./web-transport.js"
 
 const TEXT_FILE_ROUTE = "/api/v1/fs/text-file"
 
@@ -81,12 +82,23 @@ function requestUrl(uri: string, writeOptions?: TextFileWriteOptions): string {
   return `${TEXT_FILE_ROUTE}?${params}`
 }
 
+function authHeaders(extra?: Record<string, string>): Record<string, string> {
+  const token = readHostAuthToken()
+  return {
+    ...extra,
+    ...(token ? { authorization: `Bearer ${token}` } : {}),
+  }
+}
+
 export async function readTextFileHttp(
   uri: string,
   options: HttpRequestOptions = {},
 ): Promise<TextFileReadResult> {
   const fetcher = options.fetcher ?? fetch
-  const response = await fetcher(requestUrl(uri), { signal: options.signal })
+  const response = await fetcher(requestUrl(uri), {
+    signal: options.signal,
+    headers: authHeaders(),
+  })
   if (!response.ok) throw await responseError(response)
   const metadata = resultHeaders(response)
   return {
@@ -105,7 +117,7 @@ export async function writeTextFileHttp(
   const fetcher = options.fetcher ?? fetch
   const response = await fetcher(requestUrl(uri, writeOptions), {
     method: "PUT",
-    headers: { "content-type": "text/plain; charset=utf-8" },
+    headers: authHeaders({ "content-type": "text/plain; charset=utf-8" }),
     body: content,
     signal: options.signal,
   })

@@ -1,10 +1,10 @@
 /**
  * Semantic palette contract for YAADE's workbench.
  *
- * The default pair is tuned for a translucent, Apple-inspired material stack:
- * a cool atmospheric canvas, luminous glass surfaces, restrained separators,
- * and one system-blue interaction color. Status and Git colors remain
- * purpose-built so they stay readable through translucent chrome.
+ * The default pair is tuned for Apple Liquid Glass: a near-black void in
+ * dark, a milky daylight field in light, white-frost materials, and one
+ * system-blue interaction color. Status and Git colors stay purpose-built
+ * so they remain readable through translucent chrome.
  */
 import { getDocumentElement } from "./dom-root.js"
 
@@ -103,52 +103,53 @@ export const shadcnDefaultLight: YaadeSemanticTokens = {
 }
 
 export const shadcnDefaultDark: YaadeSemanticTokens = {
-  // Near-black graphite keeps the original cool surface hierarchy while
-  // lowering its neutral lightness by roughly 22%. Interaction and status
-  // colors stay vivid, so the dark palette keeps the same visual relationships.
-  background: "oklch(0.105 0.02 252)",
-  foreground: "oklch(0.95 0.01 248)",
-  card: "oklch(0.145 0.022 252)",
-  cardForeground: "oklch(0.95 0.01 248)",
-  popover: "oklch(0.176 0.025 252)",
-  popoverForeground: "oklch(0.95 0.01 248)",
-  primary: "oklch(0.55 0.21 255)",
+  // Apple dark Liquid Glass: a near-black void, low-chroma graphite
+  // surfaces, and a single system-blue signal. Glass fills live in
+  // materials.css as white frost — these tokens are the opaque fallback
+  // stack and the matte work surface, not the refractive film.
+  background: "oklch(0.108 0.007 255)",
+  foreground: "oklch(0.96 0.005 255)",
+  card: "oklch(0.152 0.009 255)",
+  cardForeground: "oklch(0.96 0.005 255)",
+  popover: "oklch(0.172 0.01 255)",
+  popoverForeground: "oklch(0.96 0.005 255)",
+  primary: "oklch(0.54 0.14 250)",
   primaryForeground: "oklch(0.99 0 255)",
-  secondary: "oklch(0.184 0.026 252)",
-  secondaryForeground: "oklch(0.95 0.01 248)",
-  muted: "oklch(0.168 0.022 252)",
-  mutedForeground: "oklch(0.69 0.025 248)",
-  accent: "oklch(0.226 0.065 252)",
-  accentForeground: "oklch(0.97 0.012 248)",
-  destructive: "oklch(0.55 0.22 24)",
+  secondary: "oklch(0.188 0.012 255)",
+  secondaryForeground: "oklch(0.96 0.005 255)",
+  muted: "oklch(0.168 0.009 255)",
+  mutedForeground: "oklch(0.73 0.012 255)",
+  accent: "oklch(0.22 0.02 255)",
+  accentForeground: "oklch(0.96 0.005 255)",
+  destructive: "oklch(0.55 0.19 25)",
   destructiveForeground: "oklch(0.99 0 255)",
-  success: "oklch(0.72 0.14 158)",
-  successForeground: "oklch(0.15 0.045 158)",
-  warning: "oklch(0.8 0.14 72)",
-  warningForeground: "oklch(0.2 0.055 55)",
-  info: "oklch(0.72 0.16 252)",
-  infoForeground: "oklch(0.14 0.035 252)",
-  backdrop: "rgba(1, 3, 10, 0.62)",
-  gitAdded: "oklch(0.72 0.14 158)",
-  gitAddedForeground: "oklch(0.15 0.045 158)",
-  gitModified: "oklch(0.72 0.16 252)",
-  gitModifiedForeground: "oklch(0.14 0.035 252)",
-  gitDeleted: "oklch(0.55 0.22 24)",
+  success: "oklch(0.74 0.12 155)",
+  successForeground: "oklch(0.18 0.04 155)",
+  warning: "oklch(0.8 0.12 75)",
+  warningForeground: "oklch(0.22 0.05 55)",
+  info: "oklch(0.7 0.11 250)",
+  infoForeground: "oklch(0.16 0.03 250)",
+  backdrop: "rgba(0, 0, 0, 0.55)",
+  gitAdded: "oklch(0.74 0.12 155)",
+  gitAddedForeground: "oklch(0.18 0.04 155)",
+  gitModified: "oklch(0.7 0.11 250)",
+  gitModifiedForeground: "oklch(0.16 0.03 250)",
+  gitDeleted: "oklch(0.55 0.19 25)",
   gitDeletedForeground: "oklch(0.99 0 255)",
-  gitConflict: "oklch(0.8 0.14 72)",
-  gitConflictForeground: "oklch(0.2 0.055 55)",
-  border: "oklch(0.265 0.03 252)",
+  gitConflict: "oklch(0.8 0.12 75)",
+  gitConflictForeground: "oklch(0.22 0.05 55)",
+  border: "oklch(0.32 0.014 255)",
   // Keep the control boundary above the scaled surface stack for 3:1 focus-area contrast.
-  input: "oklch(0.48 0.035 252)",
-  ring: "oklch(0.55 0.21 255)",
-  sidebar: "oklch(0.129 0.022 252)",
-  sidebarForeground: "oklch(0.95 0.01 248)",
-  sidebarPrimary: "oklch(0.55 0.21 255)",
+  input: "oklch(0.5 0.018 255)",
+  ring: "oklch(0.54 0.14 250)",
+  sidebar: "oklch(0.128 0.008 255)",
+  sidebarForeground: "oklch(0.96 0.005 255)",
+  sidebarPrimary: "oklch(0.54 0.14 250)",
   sidebarPrimaryForeground: "oklch(0.99 0 255)",
-  sidebarAccent: "oklch(0.222 0.06 252)",
-  sidebarAccentForeground: "oklch(0.97 0.012 248)",
-  sidebarBorder: "oklch(0.242 0.028 252)",
-  sidebarRing: "oklch(0.55 0.21 255)",
+  sidebarAccent: "oklch(0.218 0.018 255)",
+  sidebarAccentForeground: "oklch(0.96 0.005 255)",
+  sidebarBorder: "oklch(0.28 0.012 255)",
+  sidebarRing: "oklch(0.54 0.14 250)",
 }
 
 /**

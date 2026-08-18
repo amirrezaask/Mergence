@@ -62,6 +62,21 @@ describe("TerminalInstanceService", () => {
     })
   })
 
+  it("dispose clears telemetry timers without closing instance rows", () => {
+    withService(service => {
+      const reserved = service.reserve({
+        projectId: "project-1",
+        checkoutKey: "main",
+        checkoutPath: "/tmp/project",
+        title: "Terminal",
+      })
+      service.bindPty(reserved.id, 1, "pty-1")
+      service.dispose()
+      assert.equal(service.get(reserved.id)?.processState, "running")
+      assert.equal(service.get(reserved.id)?.ptyId, "pty-1")
+    })
+  })
+
   it("marks live rows disconnected when the host is reconstructed", () => {
     withService((service, db) => {
       const reserved = service.reserve({
@@ -72,6 +87,7 @@ describe("TerminalInstanceService", () => {
       })
       service.bindPty(reserved.id, 1, "pty-1")
       const restarted = new TerminalInstanceService(db, () => undefined)
+      restarted.reconcileHostStart(new Set())
       assert.equal(restarted.get(reserved.id)?.processState, "disconnected")
       assert.equal(restarted.listLiveForCheckout("/tmp/project").length, 0)
     })
@@ -151,7 +167,7 @@ describe("TerminalInstanceService", () => {
     `)
     try {
       const service = new TerminalInstanceService(db, () => undefined)
-      // host restart marks live rows disconnected
+      service.reconcileHostStart(new Set())
       const row = service.get("run-1")
       assert.equal(row?.provider, "codex")
       assert.equal(row?.workspaceId, "ses-1")

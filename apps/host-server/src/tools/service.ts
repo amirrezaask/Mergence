@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { Effect } from "effect";
+import { Effect, Schema } from "effect";
 import {
   CreateToolUse,
   GitToolOutput,
@@ -15,10 +15,10 @@ import {
   ToolUseArchived,
   ToolUseConflict,
   ToolUseCreated,
+  ToolUseId,
   ToolUseNotFound,
   ToolUseUpdated,
   type ToolUse,
-  type ToolUseId,
   type ToolUseOutput,
   type ToolUseStatus,
 } from "@yaade/rpc";
@@ -477,14 +477,11 @@ export class ToolService {
   onProcessExit(ptyId: string): void {
     const instance = this.runtime.terminalInstances.byPtyId(ptyId);
     if (!instance) return;
-    const use = this.runtime.toolSessions
-      .listSessions(true)
-      .flatMap((session) => this.runtime.toolSessions.listToolUses(session.id))
-      .find(
-        (candidate) =>
-          candidate.output.kind === "process" &&
-          candidate.output.ptyId === ptyId,
-      );
+    const use = instance.toolUseId
+      ? this.runtime.toolSessions.getToolUse(
+          Schema.decodeUnknownSync(ToolUseId)(instance.toolUseId),
+        )
+      : null;
     if (!use) return;
     try {
       const updated = this.runtime.toolSessions.compareAndSetToolUse(
@@ -509,7 +506,7 @@ export class ToolService {
   }
 
   reconcile(): void {
-    for (const session of this.runtime.toolSessions.listSessions(true)) {
+    for (const session of this.runtime.toolSessions.listSessions(false)) {
       for (const use of this.runtime.toolSessions.listToolUses(session.id)) {
         if (use.output.kind !== "process") continue;
         if (
