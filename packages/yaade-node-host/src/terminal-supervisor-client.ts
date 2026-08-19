@@ -74,6 +74,10 @@ export class SupervisedTerminalHost {
     return this.rpc("pauseForBackpressure", [ids]) as Promise<null>
   }
 
+  armLiveViewer(id: string, clientId: string): Promise<void> {
+    return this.rpc("armLiveViewer", [id, clientId]) as Promise<void>
+  }
+
   resumeForClient(clientId: string): Promise<void> {
     return this.rpc("resumeForClient", [clientId]) as Promise<void>
   }

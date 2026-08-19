@@ -652,6 +652,7 @@ export class GhosttyTerminalSurface {
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
+    document.addEventListener("visibilitychange", this.onVisibilityChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
     this.resizeObserver.observe(mount);
     if (mount.parentElement) this.resizeObserver.observe(mount.parentElement);
@@ -841,6 +842,19 @@ export class GhosttyTerminalSurface {
     // Nothing else wakes an idle steady cursor: the blink timer only reschedules
     // from a render, and reduced motion is exactly the state that stopped it.
     this.cursorOn = true;
+    this.requestRender();
+  };
+
+  private readonly onVisibilityChange = () => {
+    if (this.disposed || document.visibilityState !== "visible") return;
+    // Chromium can drop a pending rAF while the page is hidden, leaving
+    // `frame` set so later writes parse but never paint.
+    if (this.frame !== 0) {
+      window.cancelAnimationFrame(this.frame);
+      this.frame = 0;
+    }
+    this.forceFullRender = true;
+    this.scrollbarDirty = true;
     this.requestRender();
   };
 
@@ -1103,6 +1117,7 @@ export class GhosttyTerminalSurface {
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
     this.reducedMotionMedia?.removeEventListener("change", this.onReducedMotionChange);
+    document.removeEventListener("visibilitychange", this.onVisibilityChange);
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
     if (this.touchHoldTimer !== null) window.clearTimeout(this.touchHoldTimer);
     if (this.resizeNotifyTimer !== null) {

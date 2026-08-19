@@ -28,6 +28,8 @@ test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) 
   const hud = page.locator("[data-yaade-which-key]")
   await expect(hud).toContainText("New Terminal")
   await expect(hud).toContainText("New Git")
+  await expect(hud).toContainText("Close tab")
+  await expect(hud).toContainText("Zoom pane")
   await expect(hud).not.toContainText("Toggle sidebar")
   await expect(hud).not.toContainText("Search")
   await expect(hud).not.toContainText("Neovim")
@@ -308,4 +310,27 @@ test("split controls open Terminal by default and the picker with a modifier", a
   await expect(page.locator('[data-yaade-mux-close-pane=""]').first()).toBeVisible()
   await expect(page.locator('[data-yaade-mux-split="right"]').first()).toBeVisible()
   await expect(page.locator('[data-yaade-mux-split="down"]').first()).toBeVisible()
+})
+
+test("closing Settings returns keyboard focus to the terminal", async ({
+  launchApp,
+}) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
+  await focusTerminal(page)
+  await page.getByRole("button", { name: "Settings" }).click()
+  await expect(page.getByRole("dialog")).toBeVisible()
+  await page.keyboard.press("Escape")
+  await expect(page.getByRole("dialog")).toHaveCount(0)
+  await expect
+    .poll(() =>
+      page.evaluate(() =>
+        Boolean(
+          document.activeElement?.closest("[data-ghostty-terminal-input]"),
+        ),
+      ),
+    )
+    .toBe(true)
 })

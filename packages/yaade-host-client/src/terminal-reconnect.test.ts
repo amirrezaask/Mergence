@@ -14,7 +14,7 @@ type AttachResult = {
 }
 
 class FakeTransport implements YaadeHostTransport {
-  readonly calls: Array<{ channel: string; args: unknown[] }> = []
+  readonly calls: Array<{ channel: string; args: unknown[]; via: "http" | "realtime" }> = []
   private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   private readonly attachResults: AttachResult[] = []
 
@@ -26,12 +26,22 @@ class FakeTransport implements YaadeHostTransport {
     this.listeners.get(channel)?.forEach(listener => listener(...args))
   }
 
-  async invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
-    this.calls.push({ channel, args })
-    if (channel !== "terminal:attach") throw new Error(`unexpected ${channel}`)
+  private shiftAttach<T>(): T {
     const result = this.attachResults.shift()
     if (!result) throw new Error("missing attach result")
     return result as T
+  }
+
+  async invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+    this.calls.push({ channel, args, via: "http" })
+    if (channel !== "terminal:attach") throw new Error(`unexpected ${channel}`)
+    return this.shiftAttach()
+  }
+
+  invokeRealtime<T>(channel: string, ...args: unknown[]): Promise<T> | null {
+    this.calls.push({ channel, args, via: "realtime" })
+    if (channel !== "terminal:attach") throw new Error(`unexpected ${channel}`)
+    return Promise.resolve(this.shiftAttach())
   }
 
   on(channel: string, listener: (...args: unknown[]) => void): () => void {
@@ -93,5 +103,6 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
   assert.deepEqual(transport.calls.at(-1), {
     channel: "terminal:attach",
     args: ["pty-1", 3],
+    via: "realtime",
   })
 })

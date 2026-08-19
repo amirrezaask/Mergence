@@ -31,7 +31,6 @@ import {
   clearChord,
   createChordState,
   keyEventMatchesBinding,
-  keyEventMatchesChordSecond,
   startChord,
   type ChordState,
   type KeyEventLike,
@@ -56,6 +55,7 @@ export type ToolSessionCommand =
   | "tool.jump"
   | "session.new"
   | "tab.new"
+  | "tab.close"
   | "tool.close"
   | "session.close"
   | "settings.show";
@@ -140,6 +140,12 @@ export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
     { key: "1", command: "tool.jump", desc: "Jump tool 1–9", group: "move" },
     { key: "c", command: "session.new", desc: "New session", group: "session" },
     { key: "n", command: "tab.new", desc: "New tab", group: "session" },
+    {
+      key: "Shift-N",
+      command: "tab.close",
+      desc: "Close tab",
+      group: "session",
+    },
     { key: "x", command: "tool.close", desc: "Close tool", group: "session" },
     {
       key: "Shift-X",
@@ -320,7 +326,13 @@ export function resolveToolSessionKeydown(
 ): ToolSessionKeydownResult | null {
   if (event.isComposing || isModifierOnlyKey(event.key)) return null;
   if (!chordIsActive(state, now)) clearChord(state);
-  if (context.overlayOpen) return null;
+  if (context.overlayOpen) {
+    if (state.prefix != null) {
+      clearChord(state);
+      return { type: "prefix-cancelled" };
+    }
+    return null;
+  }
 
   const prefixActive = chordIsActive(state, now) && state.prefix != null;
   if (context.inEditable && !context.inTerminal) {
@@ -347,10 +359,7 @@ export function resolveToolSessionKeydown(
     if (event.repeat && keyEventMatchesBinding(event, prefix)) {
       return { type: "consume" };
     }
-    if (
-      context.inTerminal &&
-      keyEventMatchesChordSecond(event, `${prefix} k`, prefix)
-    ) {
+    if (context.inTerminal && keyEventMatchesBinding(event, prefix)) {
       clearChord(state);
       const byte = prefixLiteralByte(prefix);
       return byte ? { type: "prefix-literal", byte } : { type: "consume" };
@@ -378,10 +387,6 @@ export function resolveToolSessionKeydown(
     context.contextKind,
   );
   if (contextBinding) return commandResult(contextBinding, event);
-
-  if (context.zoomed && event.key === "Escape") {
-    return { type: "command", command: "pane.zoom" };
-  }
 
   if (event.repeat && keyEventMatchesBinding(event, TOOL_SESSION_PREFIX)) {
     return { type: "consume" };

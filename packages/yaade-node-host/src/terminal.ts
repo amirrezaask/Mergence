@@ -117,6 +117,8 @@ type EmitFn = (channel: string, args: unknown[]) => void
 type TerminalViewer = {
   unacknowledgedChars: number
   hasAttached: boolean
+  /** True only while this client's event socket is armed for live frames. */
+  live: boolean
 }
 
 type TerminalEntry = {
@@ -162,7 +164,7 @@ type TerminalEntry = {
 function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
   let viewer = entry.viewers.get(clientId)
   if (!viewer) {
-    viewer = { unacknowledgedChars: 0, hasAttached: false }
+    viewer = { unacknowledgedChars: 0, hasAttached: false, live: false }
     entry.viewers.set(clientId, viewer)
   }
   return viewer
@@ -170,7 +172,12 @@ function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
 
 function anyViewerOverHighWater(entry: TerminalEntry): boolean {
   for (const viewer of entry.viewers.values()) {
-    if (viewer.unacknowledgedChars > TERMINAL_FLOW_HIGH_WATERMARK_CHARS) return true
+    if (
+      viewer.live &&
+      viewer.unacknowledgedChars > TERMINAL_FLOW_HIGH_WATERMARK_CHARS
+    ) {
+      return true
+    }
   }
   return false
 }
@@ -178,15 +185,17 @@ function anyViewerOverHighWater(entry: TerminalEntry): boolean {
 function allViewersUnderLowWater(entry: TerminalEntry): boolean {
   if (entry.viewers.size === 0) return true
   for (const viewer of entry.viewers.values()) {
+    if (!viewer.live) continue
     if (viewer.unacknowledgedChars >= TERMINAL_FLOW_LOW_WATERMARK_CHARS) return false
   }
   return true
 }
 
 function incrementViewerDebt(entry: TerminalEntry, chars: number): void {
-  // Only connected attach() viewers count. Create-time RPC clients never ack,
-  // and an unattached PTY must keep running so agents survive reconnect.
+  // Only live event-socket viewers count. HTTP attach / create-time RPC
+  // clients never see live frames, so charging them pauses a healthy PTY.
   for (const viewer of entry.viewers.values()) {
+    if (!viewer.live) continue
     viewer.unacknowledgedChars += chars
   }
 }
@@ -716,14 +725,29 @@ export class TerminalHost {
       let aMax = 0
       let bMax = 0
       for (const viewer of a.viewers.values()) {
-        if (viewer.unacknowledgedChars > aMax) aMax = viewer.unacknowledgedChars
+        if (viewer.live && viewer.unacknowledgedChars > aMax) {
+          aMax = viewer.unacknowledgedChars
+        }
       }
       for (const viewer of b.viewers.values()) {
-        if (viewer.unacknowledgedChars > bMax) bMax = viewer.unacknowledgedChars
+        if (viewer.live && viewer.unacknowledgedChars > bMax) {
+          bMax = viewer.unacknowledgedChars
+        }
       }
       return bMax - aMax
     })
     for (const entry of ranked) pausePtyForFlowControl(entry)
+  }
+
+  /**
+   * Mark a viewer as receiving live `terminal:data` on an event socket.
+   * HTTP attach must not call this — those clients never see live frames.
+   */
+  armLiveViewer(id: string, clientId: string): void {
+    if (id.length > 256 || clientId.length > 256) return
+    const entry = this.entries.get(id)
+    if (!entry || entry.disposed) return
+    viewerOf(entry, clientId).live = true
   }
 
   /**

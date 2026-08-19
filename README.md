@@ -47,9 +47,14 @@ Prefix: **`Mod-k`** (`⌘K` on macOS, `Ctrl+K` elsewhere). Press it twice in a t
 | `Mod-k 1`–`9` | Jump to tool |
 | `Mod-k c` | New Session |
 | `Mod-k n` | New Window |
+| `Mod-k Shift-N` | Close Window |
 | `Mod-k x` | Close tool |
 | `Mod-k Shift-X` | Close Session |
+| `Mod-k z` | Zoom / unzoom pane |
 | `Mod-k ,` or `Mod-,` | Settings |
+| `Mod-=` / `Mod-Shift-=` | Increase UI and terminal font |
+| `Mod--` / `Mod-Shift--` | Decrease UI and terminal font |
+| `Mod-0` | Reset UI and terminal font |
 
 ## Desktop app
 

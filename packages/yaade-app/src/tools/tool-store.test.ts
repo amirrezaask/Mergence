@@ -213,6 +213,33 @@ describe("ToolSessionStore browser state", () => {
     assert.equal(store.getSnapshot().activeToolUseId, second.id)
   })
 
+  it("keeps a newer local pane selection across layout-only tab updates", () => {
+    const store = new ToolSessionStore()
+    const tabId = Schema.decodeUnknownSync(SessionTabId)("tab-a")
+    const otherId = Schema.decodeUnknownSync(ToolUseId)("use-b")
+    const first = { ...use(), tabId }
+    const second = { ...use(), id: otherId, tabId, position: 1 }
+    const tab = SessionTab.make({
+      id: tabId,
+      sessionId,
+      title: "Window 1",
+      position: 0,
+      activeToolUseId: first.id,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    })
+    store.replace([session()], [first, second], [tab])
+    store.selectToolUse(second.id)
+    store.apply({
+      _tag: "SessionTabUpdated",
+      eventId: "layout-save",
+      revision: 2,
+      occurredAt: "2026-01-02",
+      tab: { ...tab, layoutJson: "{}", revision: 2, updatedAt: "2026-01-02" },
+    })
+    assert.equal(store.getSnapshot().activeToolUseId, second.id)
+  })
+
   it("ignores duplicate and older revisions", () => {
     const store = new ToolSessionStore()
     store.replace([session()], [use()])

@@ -91,6 +91,41 @@ export function toolSessionUrl(
   return `/?${params.toString()}`
 }
 
+export const LAST_TOOL_SESSION_ROUTE_KEY = "yaade:last-tool-session-route"
+
+export function persistToolSessionRoute(
+  url: string,
+  storage: Pick<Storage, "setItem">,
+): void {
+  try {
+    storage.setItem(LAST_TOOL_SESSION_ROUTE_KEY, url)
+  } catch {
+    /* private mode / quota */
+  }
+}
+
+export function readPersistedToolSessionRoute(
+  storage: Pick<Storage, "getItem">,
+): string | undefined {
+  try {
+    return storage.getItem(LAST_TOOL_SESSION_ROUTE_KEY) ?? undefined
+  } catch {
+    return undefined
+  }
+}
+
+export function resolveToolSessionRoute(
+  href: string,
+  storage: Pick<Storage, "getItem">,
+): ToolSessionRoute {
+  const live = parseToolSessionRoute(href)
+  if (live.sessionId) return live
+  const saved = readPersistedToolSessionRoute(storage)
+  if (!saved) return live
+  const restored = parseToolSessionRoute(saved)
+  return restored.sessionId ? restored : live
+}
+
 export function chooseSession(
   requested: SessionIdType | undefined,
   sessions: readonly AppSession[],
@@ -119,6 +154,7 @@ export function chooseTab(
   requested: SessionTabId | undefined,
   session: AppSession | undefined,
   tabs: readonly SessionTab[],
+  owningTabId?: SessionTabId,
 ): SessionTab | undefined {
   if (!session) return undefined
   const visible = tabs
@@ -126,6 +162,7 @@ export function chooseTab(
     .sort((a, b) => a.position - b.position)
   return (
     visible.find(tab => tab.id === requested) ??
+    visible.find(tab => tab.id === owningTabId) ??
     visible.find(tab => tab.id === session.activeTabId) ??
     visible[0]
   )

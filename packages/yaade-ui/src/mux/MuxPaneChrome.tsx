@@ -246,7 +246,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
               data-yaade-mux-pane-title=""
               className={cn(
                 "min-w-0 truncate font-sans text-xs font-medium tracking-[-0.015em]",
-                focused ? "text-foreground/65" : "text-muted-foreground/55",
+                focused ? "text-foreground" : "text-muted-foreground/55",
               )}
             >
               {title || "Pane"}

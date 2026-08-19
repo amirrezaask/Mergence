@@ -98,6 +98,9 @@ function applyOp(host: TerminalHost, op: string, args: unknown[]): unknown {
         Array.isArray(args[0]) ? args[0].map(String) : undefined,
       )
       return null
+    case "armLiveViewer":
+      host.armLiveViewer(String(args[0] ?? ""), String(args[1] ?? ""))
+      return null
     case "resumeForClient":
       host.resumeForClient(String(args[0] ?? ""))
       return null

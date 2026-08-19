@@ -90,7 +90,7 @@ test("reconnect delay doubles then caps at 10s", () => {
   assert.equal(Duration.toMillis(hostRealtimeReconnectDelay(20)), 10_000)
 })
 
-test("foreground lifecycle wakes reconnect and replaces a backgrounded socket", () => {
+test("foreground lifecycle wakes reconnect without replacing an open socket on blur", () => {
   class WakeDocument extends EventTarget {
     visibilityState: DocumentVisibilityState = "visible"
   }
@@ -108,10 +108,10 @@ test("foreground lifecycle wakes reconnect and replaces a backgrounded socket", 
   doc.dispatchEvent(new Event("visibilitychange"))
   target.dispatchEvent(new Event("online"))
 
-  assert.deepEqual(wakes, [true, true, true])
+  assert.deepEqual(wakes, [false, true, true])
   dispose()
   target.dispatchEvent(new Event("focus"))
-  assert.deepEqual(wakes, [true, true, true])
+  assert.deepEqual(wakes, [false, true, true])
 })
 
 test("hot path accepts terminal frames structurally", () => {

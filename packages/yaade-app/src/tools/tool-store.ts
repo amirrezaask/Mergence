@@ -473,14 +473,27 @@ export class ToolSessionStore {
         break
       case "SessionTabCreated":
       case "SessionTabUpdated":
-      case "SessionTabArchived":
+      case "SessionTabArchived": {
+        const previousActive =
+          current && "activeToolUseId" in current
+            ? current.activeToolUseId
+            : undefined
         this.tabsById = new Map(this.tabsById).set(event.tab.id, event.tab)
         this.rebuildVisibleTabs()
         this.notify(this.tabListeners, event.tab.id)
         if (this.activeTabId === event.tab.id) {
-          this.activeToolUseId = this.selectedUseForTab(event.tab.id)
+          const ids = this.useIdsByTab.get(event.tab.id) ?? []
+          const keepLocal =
+            event._tag === "SessionTabUpdated" &&
+            event.tab.activeToolUseId === previousActive &&
+            this.activeToolUseId != null &&
+            ids.includes(this.activeToolUseId)
+          if (!keepLocal) {
+            this.activeToolUseId = this.selectedUseForTab(event.tab.id)
+          }
         }
         break
+      }
       case "ToolUseCreated":
       case "ToolUseUpdated": {
         const currentUse = this.usesById.get(event.toolUse.id)

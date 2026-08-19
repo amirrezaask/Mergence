@@ -97,14 +97,29 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     return true;
   };
 
+  const attachTerminal = (
+    id: string,
+    afterSequence?: number,
+  ): Promise<TerminalAttachResult | null> => {
+    const args =
+      afterSequence === undefined ? [id] : [id, afterSequence];
+    const realtime = transport.invokeRealtime?.<TerminalAttachResult | null>(
+      "terminal:attach",
+      ...args,
+    );
+    if (realtime) return realtime;
+    return transport.invoke<TerminalAttachResult | null>(
+      "terminal:attach",
+      ...args,
+    );
+  };
+
   const resyncTerminal = async (id: string, generation: number) => {
     const afterSequence = terminalReplayFloors.get(id) ?? 0;
     try {
-      const result = await transport.invoke<TerminalAttachResult | null>(
-        "terminal:attach",
-        id,
-        afterSequence,
-      );
+      // Must go over the live socket so the host arms `attachedTerminals`.
+      // HTTP attach replays the ring but leaves live `terminal:data` dropped.
+      const result = await attachTerminal(id, afterSequence);
       if (
         generation !== reconnectGeneration ||
         !realtimeConnected ||
@@ -500,16 +515,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       create: (cwdUri, launch) =>
         transport.invoke("terminal:create", cwdUri, launch),
       attach: async (id) => {
-        const realtime = transport.invokeRealtime?.<TerminalAttachResult | null>(
-          "terminal:attach",
-          id,
-        );
-        const result = realtime
-          ? await realtime
-          : await transport.invoke<TerminalAttachResult | null>(
-              "terminal:attach",
-              id,
-            );
+        const result = await attachTerminal(id);
         if (result) {
           terminalReplayFloors.set(id, result.lastSequence);
           const pending = terminalDataBuffers.get(id);

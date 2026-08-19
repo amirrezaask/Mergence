@@ -694,6 +694,10 @@ body {
   backdrop-filter: none;
 }
 
+[data-yaade-tool-workspace] [data-yaade-panel-leaf][data-focused] {
+  border-color: var(--ring);
+}
+
 [data-yaade-tool-workspace] [data-yaade-mux-pane-chrome] {
   height: 1.75rem;
   background: transparent;

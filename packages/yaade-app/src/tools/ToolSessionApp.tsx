@@ -63,6 +63,7 @@ import {
   type RunningAgentSidebarItem,
   type TabDndHandlers,
 } from "@yaade/ui/session";
+import { focusRegisteredTerminal } from "@yaade/ui/terminal-registry";
 import { CHORD_TIMEOUT_MS, isPathUnderRoot } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import { toolRegistry } from "./tool-registry.js";
@@ -81,7 +82,9 @@ import {
   chooseTab,
   chooseToolUse,
   isLiveSessionTab,
+  persistToolSessionRoute,
   parseToolSessionRoute,
+  resolveToolSessionRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js";
 import type { ToolContextSelection } from "./ToolContextControls.js";
@@ -147,6 +150,18 @@ const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
 const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
 const EMPTY_TOOL_USE_IDS: readonly ToolUseId[] = [];
+
+type ToolSessionHistoryState = { readonly yaadeMobileTool?: string } | null
+
+function writeToolSessionLocation(
+  url: string,
+  mode: "push" | "replace",
+  state: ToolSessionHistoryState = null,
+): void {
+  persistToolSessionRoute(url, localStorage)
+  if (mode === "push") history.pushState(state, "", url)
+  else history.replaceState(state, "", url)
+}
 const EMPTY_TAB_IDS: readonly SessionTabId[] = [];
 const AGENT_SIDEBAR_DEFAULT_WIDTH = 256;
 const AGENT_SIDEBAR_MIN_WIDTH = 220;
@@ -317,6 +332,7 @@ export function ToolSessionApp() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paneChromeOverlayOpen, setPaneChromeOverlayOpen] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     AGENT_SIDEBAR_DEFAULT_WIDTH,
   );
@@ -338,6 +354,8 @@ export function ToolSessionApp() {
   const pendingToolPanelRequestsRef = useRef(new Set<string>());
   const closingTabIdsRef = useRef(new Set<SessionTabId>());
   const toolUsesRef = useRef(snapshot.usesById);
+  const focusedToolUseRef = useRef<ToolUse | undefined>(undefined);
+  const overlayWasOpenRef = useRef(false);
   const isMobile = useIsMobile();
   const desktopPlatform = window.yaadeDesktop?.platform;
   toolUsesRef.current = snapshot.usesById;
@@ -430,8 +448,11 @@ export function ToolSessionApp() {
   }, []);
 
   useEffect(() => {
-    const route = parseToolSessionRoute(location.href);
-    const session = chooseSession(route.sessionId, [
+    const route = resolveToolSessionRoute(location.href, localStorage);
+    const requestedUse = route.toolUseId
+      ? snapshot.usesById.get(route.toolUseId)
+      : undefined;
+    const session = chooseSession(route.sessionId ?? requestedUse?.sessionId, [
       ...snapshot.sessionsById.values(),
     ]);
     if (!session) return;
@@ -440,6 +461,7 @@ export function ToolSessionApp() {
       route.tabId,
       session,
       tabs.map(id => snapshot.tabsById.get(id)).filter((value): value is SessionTab => Boolean(value)),
+      requestedUse?.sessionId === session.id ? requestedUse.tabId : undefined,
     );
     const ids = tab ? snapshot.useIdsByTab.get(tab.id) ?? [] : EMPTY_TOOL_USE_IDS;
     const mobileListRoute = isMobile && !route.toolUseId;
@@ -453,6 +475,7 @@ export function ToolSessionApp() {
     if (useId && snapshot.activeToolUseId !== useId)
       client.store.selectToolUse(useId);
     const url = toolSessionUrl(session.id, tab?.id, useId);
+    persistToolSessionRoute(url, localStorage);
     if (location.href !== new URL(url, location.origin).href)
       history.replaceState(null, "", url);
   }, [
@@ -462,6 +485,7 @@ export function ToolSessionApp() {
     snapshot.activeToolUseId,
     snapshot.sessionsById,
     snapshot.tabsById,
+    snapshot.usesById,
     snapshot.visibleTabIdsBySession,
     snapshot.useIdsByTab,
     routeRevision,
@@ -715,10 +739,9 @@ export function ToolSessionApp() {
       const nextTab = session?.activeTabId
         ? client.store.getSnapshot().tabsById.get(session.activeTabId)
         : undefined;
-      history.pushState(
-        null,
-        "",
+      writeToolSessionLocation(
         session ? toolSessionUrl(session.id, nextTab?.id, nextTab?.activeToolUseId) : "/",
+        "push",
       );
     },
     [client],
@@ -743,7 +766,7 @@ export function ToolSessionApp() {
         current !== use.id ||
         location.href !== new URL(nextUrl, location.origin).href
       ) {
-        history.pushState({ yaadeMobileTool: use.id }, "", nextUrl);
+        writeToolSessionLocation(nextUrl, "push", { yaadeMobileTool: use.id });
       }
     },
     [client, openToolInWorkspace],
@@ -956,7 +979,7 @@ export function ToolSessionApp() {
       markPerformance("yaade:tab-switch");
       client.store.selectTab(tab.id);
       const nextUse = client.store.getSnapshot().activeToolUseId;
-      history.pushState(null, "", toolSessionUrl(session.id, tab.id, nextUse));
+      writeToolSessionLocation(toolSessionUrl(session.id, tab.id, nextUse), "push");
       const request = window.yaade?.tools?.selectTab?.({
         _tag: "SelectSessionTab",
         sessionId: tab.sessionId,
@@ -1293,6 +1316,9 @@ export function ToolSessionApp() {
         case "tab.new":
           void createTab();
           return;
+        case "tab.close":
+          if (activeTab) void closeTab(activeTab);
+          return;
         case "tab.next":
         case "tab.previous": {
           if (!activeTab || tabIds.length === 0) return;
@@ -1336,9 +1362,11 @@ export function ToolSessionApp() {
           if (next) selectTool(next);
           return;
         }
-        case "tool.close":
-          if (selected) void runToolAction("archive", selected);
+        case "tool.close": {
+          const target = focusedToolUseRef.current ?? selected;
+          if (target) void runToolAction("archive", target);
           return;
+        }
         case "session.close":
           if (activeSession) requestCloseSession(activeSession.id);
           return;
@@ -1368,6 +1396,7 @@ export function ToolSessionApp() {
       activeTab,
       createSession,
       createTab,
+      closeTab,
       createTool,
       requestCloseSession,
       runToolAction,
@@ -1391,7 +1420,13 @@ export function ToolSessionApp() {
     Pick<ToolSessionKeydownContext, "overlayOpen" | "zoomed" | "contextKind">
   >({ overlayOpen: false, zoomed: false });
   keybindingContextRef.current = {
-    overlayOpen: Boolean(switcherOpen || toolUseSwitcherOpen || settingsOpen || closeChoice),
+    overlayOpen: Boolean(
+      switcherOpen ||
+        toolUseSwitcherOpen ||
+        settingsOpen ||
+        closeChoice ||
+        paneChromeOverlayOpen,
+    ),
     zoomed: Boolean(
       activeSession &&
         activeTab &&
@@ -1434,11 +1469,9 @@ export function ToolSessionApp() {
       }
       if (result.type === "prefix-literal") {
         clearPrefix();
-        const selectedTool = selectedToolRef.current;
+        const target = focusedToolUseRef.current ?? selectedToolRef.current;
         const ptyId =
-          selectedTool?.output.kind === "process"
-            ? selectedTool.output.ptyId
-            : undefined;
+          target?.output.kind === "process" ? target.output.ptyId : undefined;
         if (ptyId) void window.yaade?.terminal?.write?.(ptyId, result.byte);
         return;
       }
@@ -1459,6 +1492,40 @@ export function ToolSessionApp() {
       clearToolSessionKeymapState(keymapStateRef.current);
     };
   }, [clearPrefix, showPrefix]);
+
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (!prefixPending) return;
+      const target = event.target instanceof Element ? event.target : null;
+      if (target?.closest("[data-yaade-which-key]")) return;
+      clearPrefix();
+    };
+    window.addEventListener("pointerdown", onPointerDown, true);
+    return () => window.removeEventListener("pointerdown", onPointerDown, true);
+  }, [clearPrefix, prefixPending]);
+
+  const muxOverlayOpen = Boolean(
+    switcherOpen ||
+      toolUseSwitcherOpen ||
+      settingsOpen ||
+      closeChoice ||
+      paneChromeOverlayOpen,
+  );
+  useEffect(() => {
+    if (muxOverlayOpen) {
+      overlayWasOpenRef.current = true;
+      clearPrefix();
+      return;
+    }
+    if (!overlayWasOpenRef.current) return;
+    overlayWasOpenRef.current = false;
+    const target = focusedToolUseRef.current ?? selectedToolRef.current;
+    const tabId = target?.kind === "terminal" ? target.id : undefined;
+    const raf = requestAnimationFrame(() => {
+      focusRegisteredTerminal(tabId);
+    });
+    return () => cancelAnimationFrame(raf);
+  }, [clearPrefix, muxOverlayOpen]);
 
   const updateToolContext = useCallback(
     async (
@@ -1491,6 +1558,13 @@ export function ToolSessionApp() {
     return toolWorkspaces.get(activeTab.id) ??
       restoreToolWorkspace(activeTab.layoutJson, useIds);
   }, [activeTab, toolWorkspaces, useIds]);
+  const focusedView = activeToolWorkspace.tree.getView(
+    activeToolWorkspace.focusedPanelId,
+  );
+  focusedToolUseRef.current =
+    focusedView?.kind === "tool"
+      ? snapshot.usesById.get(focusedView.toolUseId)
+      : undefined;
 
   useEffect(() => {
     if (!activeSession || !activeTab || snapshot.connection !== "connected") {
@@ -1613,7 +1687,18 @@ export function ToolSessionApp() {
     (use: ToolUse) => {
       if (client.store.getSnapshot().activeToolUseId === use.id) return;
       client.store.selectToolUse(use.id);
-      history.replaceState(null, "", toolSessionUrl(use.sessionId, use.tabId, use.id));
+      const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
+      const request = window.yaade?.tools?.selectUse?.(use.sessionId, use.id);
+      if (request) {
+        void request.catch(async error => {
+          setActionError(errorMessage(error));
+          await client.reconcileSession(use.sessionId).catch(() => undefined);
+        });
+      }
+      writeToolSessionLocation(
+        toolSessionUrl(use.sessionId, tabId, use.id),
+        "replace",
+      );
     },
     [client],
   );
@@ -1787,6 +1872,7 @@ export function ToolSessionApp() {
       history.back();
       return;
     }
+    persistToolSessionRoute(listUrl, localStorage);
     history.replaceState(null, "", listUrl);
     setRouteRevision(revision => revision + 1);
   };
@@ -2151,6 +2237,7 @@ export function ToolSessionApp() {
                     onSplit={splitToolPanelAt}
                     onZoom={zoomToolPanel}
                     onCloseView={closeWorkspacePane}
+                    onChromeOverlayChange={setPaneChromeOverlayOpen}
                     renderTool={renderTool}
                   />
                   ) : null}

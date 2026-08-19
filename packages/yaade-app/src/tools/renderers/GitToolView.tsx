@@ -12,6 +12,7 @@ export type GitToolViewProps = {
     checkout: CheckoutTarget,
   ) => Promise<void>;
   readonly visible?: boolean;
+  readonly focused?: boolean;
 };
 
 /** The session-shell Git tool starts on the repository history surface. */
@@ -28,7 +29,7 @@ export function GitToolView(props: GitToolViewProps) {
           initialView="history"
           unifiedHistory
           mobile={mobile}
-          active={props.visible}
+          active={Boolean(props.focused) && props.visible !== false}
           onOpenFile={() => undefined}
         />
       </div>

@@ -157,11 +157,48 @@ test("resumes a paused PTY when its websocket client reconnects", async () => {
       "terminal-flow-control-test",
     )
     terminal.attach(created.id, "terminal-flow-control-test")
+    terminal.armLiveViewer(created.id, "terminal-flow-control-test")
     await resumedOutput
 
     const attached = terminal.attach(created.id, "terminal-flow-control-test")
     assert.ok(attached)
     assert.equal(attached.status, "running")
+  } finally {
+    if (timeout) clearTimeout(timeout)
+    terminal.stopAll()
+  }
+})
+
+test("HTTP attach without a live socket does not pause the PTY", async () => {
+  const terminal = new TerminalHost()
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const marker = new Promise<void>((resolve, reject) => {
+    timeout = setTimeout(
+      () => reject(new Error("HTTP-attached PTY was paused")),
+      8_000,
+    )
+    terminal.setEmit((channel, args) => {
+      if (channel !== "terminal:data") return
+      if (String(args[1] ?? "").includes("http-attach-not-paused")) {
+        if (timeout) clearTimeout(timeout)
+        resolve()
+      }
+    })
+  })
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: [
+          "-e",
+          `process.stdout.write('y'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 10_000})); setTimeout(() => process.stdout.write('http-attach-not-paused'), 80)`,
+        ],
+      },
+      "http-attach-flow-test",
+    )
+    terminal.attach(created.id, "http-attach-flow-test")
+    await marker
   } finally {
     if (timeout) clearTimeout(timeout)
     terminal.stopAll()
@@ -585,9 +622,11 @@ test("a second attach does not clear the first viewer's flow-control debt", asyn
       "creator",
     )
     terminal.attach(created.id, "client-a")
+    terminal.armLiveViewer(created.id, "client-a")
     terminal.write(created.id, "go\n")
     await new Promise(resolve => setTimeout(resolve, 150))
     terminal.attach(created.id, "client-b")
+    terminal.armLiveViewer(created.id, "client-b")
     await new Promise(resolve => setTimeout(resolve, 250))
     assert.equal(sawResumeMarker, false)
     terminal.acknowledgeData(created.id, 1_000_000, "client-a")

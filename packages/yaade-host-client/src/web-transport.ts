@@ -125,7 +125,10 @@ export function subscribeRealtimeWake(
   const onFocus = () => {
     if (!wasBlurred) return;
     wasBlurred = false;
-    onWake(true);
+    // Wake a dead reconnect loop after alt-tab, but never replace an OPEN
+    // socket. Ordinary blur/focus is Slack, Spotlight, a native menu — not a
+    // suspended network path. Hidden→visible still replaces below.
+    onWake(false);
   };
   const onPageShow = (event: Event) => {
     if ("persisted" in event && event.persisted === true) onWake(true);

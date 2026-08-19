@@ -78,6 +78,7 @@ describe("keybinding catalog", () => {
       "toolSession prefix Mod-k 1 → tool.jump",
       "toolSession prefix Mod-k c → session.new",
       "toolSession prefix Mod-k n → tab.new",
+      "toolSession prefix Mod-k Shift-N → tab.close",
       "toolSession prefix Mod-k x → tool.close",
       "toolSession prefix Mod-k Shift-X → session.close",
       "toolSession prefix Mod-k , → settings.show",
@@ -214,5 +215,95 @@ describe("tool session keydown resolver", () => {
       { type: "consume" },
     );
     assert.equal(state.prefix, null);
+  });
+
+  it("sends ^K only when the prefix is pressed again in a terminal", () => {
+    const state = createToolSessionKeymapState();
+    const inTerminal = { ...shellContext, inTerminal: true, inEditable: true };
+    resolveToolSessionKeydown(
+      keyEvent({ key: "k", modKey: true }),
+      state,
+      inTerminal,
+      100,
+    );
+    assert.deepEqual(
+      resolveToolSessionKeydown(
+        keyEvent({ key: "k", modKey: true }),
+        state,
+        inTerminal,
+        101,
+      ),
+      { type: "prefix-literal", byte: "\x0b" },
+    );
+  });
+
+  it("runs tool.previous for bare k after the prefix in a terminal", () => {
+    const state = createToolSessionKeymapState();
+    const inTerminal = { ...shellContext, inTerminal: true, inEditable: true };
+    resolveToolSessionKeydown(
+      keyEvent({ key: "k", modKey: true }),
+      state,
+      inTerminal,
+      100,
+    );
+    assert.deepEqual(
+      resolveToolSessionKeydown(
+        keyEvent({ key: "k" }),
+        state,
+        inTerminal,
+        101,
+      ),
+      { type: "command", command: "tool.previous" },
+    );
+  });
+
+  it("does not steal Escape from a zoomed terminal", () => {
+    assert.equal(
+      resolveToolSessionKeydown(
+        keyEvent({ key: "Escape" }),
+        createToolSessionKeymapState(),
+        { ...shellContext, inTerminal: true, inEditable: true, zoomed: true },
+      ),
+      null,
+    );
+  });
+
+  it("cancels a pending prefix when an overlay opens", () => {
+    const state = createToolSessionKeymapState();
+    resolveToolSessionKeydown(
+      keyEvent({ key: "k", modKey: true }),
+      state,
+      shellContext,
+      100,
+    );
+    assert.deepEqual(
+      resolveToolSessionKeydown(
+        keyEvent({ key: "t" }),
+        state,
+        { ...shellContext, overlayOpen: true },
+        101,
+      ),
+      { type: "prefix-cancelled" },
+    );
+    assert.equal(state.prefix, null);
+  });
+
+  it("resolves Close tab from Shift-N after the prefix", () => {
+    const state = createToolSessionKeymapState();
+    resolveToolSessionKeydown(
+      keyEvent({ key: "k", modKey: true }),
+      state,
+      shellContext,
+      100,
+    );
+    assert.deepEqual(
+      resolveToolSessionKeydown(
+        keyEvent({ key: "N", shiftKey: true }),
+        state,
+        shellContext,
+        101,
+      ),
+      { type: "command", command: "tab.close" },
+    );
   });
 });

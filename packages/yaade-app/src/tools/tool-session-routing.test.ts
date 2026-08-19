@@ -4,9 +4,12 @@ import { Schema } from "effect"
 import { AppSession, SessionId, SessionTab, SessionTabId, ToolUseId } from "@yaade/rpc"
 import {
   chooseSession,
+  chooseTab,
   chooseToolUse,
   isLiveSessionTab,
   parseToolSessionRoute,
+  persistToolSessionRoute,
+  resolveToolSessionRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js"
 
@@ -34,6 +37,41 @@ describe("tool session routing", () => {
     const active = AppSession.make({ ...sessionA, activeToolUseId: useId })
     assert.equal(chooseToolUse(undefined, active, [useId]), useId)
     assert.equal(chooseToolUse(undefined, sessionA, [useId]), useId)
+  })
+
+  it("resolves a tool's owning window when the URL omits t", () => {
+    const tabA = SessionTab.make({
+      id: Schema.decodeUnknownSync(SessionTabId)("tab-a"),
+      sessionId: sessionA.id,
+      title: "Window 1",
+      position: 0,
+      createdAt: sessionA.createdAt,
+      updatedAt: sessionA.updatedAt,
+    })
+    const tabB = SessionTab.make({
+      id: Schema.decodeUnknownSync(SessionTabId)("tab-b"),
+      sessionId: sessionA.id,
+      title: "Window 2",
+      position: 1,
+      createdAt: sessionA.createdAt,
+      updatedAt: sessionA.updatedAt,
+    })
+    const chosen = chooseTab(undefined, sessionA, [tabA, tabB], tabB.id)
+    assert.equal(chosen?.id, tabB.id)
+  })
+
+  it("restores the last session route when the URL has no s", () => {
+    const memory = new Map<string, string>()
+    const storage = {
+      getItem: (key: string) => memory.get(key) ?? null,
+      setItem: (key: string, value: string) => {
+        memory.set(key, value)
+      },
+    }
+    const url = toolSessionUrl(sessionA.id, Schema.decodeUnknownSync(SessionTabId)("tab-a"))
+    persistToolSessionRoute(url, storage)
+    assert.equal(resolveToolSessionRoute("/", storage).sessionId, sessionA.id)
+    assert.equal(resolveToolSessionRoute("/?s=ses-b", storage).sessionId, sessionB.id)
   })
 
   it("rejects archived or cross-session tabs as tool targets", () => {

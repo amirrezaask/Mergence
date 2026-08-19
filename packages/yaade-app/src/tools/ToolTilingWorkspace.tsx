@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { GitBranch, Terminal as TerminalIcon } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
 import type {
@@ -53,6 +53,7 @@ export type ToolTilingWorkspaceProps = {
   readonly onSplit: (panelId: PanelId, edge: "right" | "bottom") => void;
   readonly onZoom: (panelId: PanelId) => void;
   readonly onCloseView: (panelId: PanelId) => void;
+  readonly onChromeOverlayChange?: (open: boolean) => void;
   readonly renderTool: (use: ToolUse, focused: boolean) => ReactNode;
 };
 
@@ -141,6 +142,7 @@ export default function ToolTilingWorkspace({
   onSplit,
   onZoom,
   onCloseView,
+  onChromeOverlayChange,
   renderTool,
 }: ToolTilingWorkspaceProps) {
   const openToolIds = toolIdsInWorkspace(workspace);
@@ -155,6 +157,11 @@ export default function ToolTilingWorkspace({
     readonly panelId: number;
     readonly edge: "right" | "bottom";
   } | null>(null);
+  useEffect(() => {
+    onChromeOverlayChange?.(
+      contextTarget != null || splitToolTarget != null,
+    );
+  }, [contextTarget, onChromeOverlayChange, splitToolTarget]);
   // Mode-specific chrome is owned by the tool renderer but lives in its pane header.
   const [headerTargets, setHeaderTargets] = useState<ReadonlyMap<number, HTMLElement>>(
     () => new Map(),

@@ -954,7 +954,10 @@ function handleEventSocket(
     commandQueue += 1;
     if (cmd.op === "terminal:attach") {
       const id = cmd.args[0];
-      if (typeof id === "string" && id) attachedTerminals.add(id);
+      if (typeof id === "string" && id) {
+        attachedTerminals.add(id);
+        void Promise.resolve(runtime.terminal.armLiveViewer(id, clientId));
+      }
     }
     const command = commandTail.then(() =>
       runHostRpc(managed, cmd.op, cmd.args, clientId),
