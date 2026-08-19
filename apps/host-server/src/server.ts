@@ -16,6 +16,7 @@ import {
   writeTextFile,
 } from "@yaade/node-host";
 import {
+  decodeHostRouteArgs,
   FileChangedError,
   HostRpcRequest,
   InvalidRpcPayloadError,
@@ -23,6 +24,7 @@ import {
   PayloadTooLargeError,
   encodeTerminalDataFrame,
   hostErrorHttpStatus,
+  getHostRoute,
   hostErrorWire,
   tryDecodeTerminalWsCommand,
   type HostRpcError,
@@ -431,7 +433,18 @@ async function handleHttp(
         return;
       }
       const { channel, args, clientId } = decoded.right;
-      const rpcArgs = [...args];
+      let rpcArgs: unknown[];
+      try {
+        rpcArgs = decodeHostRouteArgs(channel, [...args]);
+      } catch (cause) {
+        const error = new InvalidRpcPayloadError({
+          message: `invalid arguments for host route ${channel}`,
+          cause,
+        });
+        const wire = hostErrorWire(error);
+        sendJson(res, hostErrorHttpStatus(error), { error: wire });
+        return;
+      }
       const pathError = validateRpcPaths(runtime.config, channel, rpcArgs);
       if (pathError) {
         const wire = hostErrorWire(pathError);
@@ -1062,53 +1075,45 @@ function validateRpcPathsOrThrow(
   channel: string,
   args: unknown[],
 ): void {
-  if (channel.startsWith("notifications:")) return;
-  if (!/^(fs|git|terminal):/.test(channel)) return;
-  if (channel === "fs:rename") {
-    for (const candidate of [args[0], args[1]]) {
+  const route = getHostRoute(channel);
+  if (!route) return;
+  switch (route.pathPolicy.kind) {
+    case "none":
+    case "read-only-path":
+      // Read-only file routes intentionally allow module-cache and standard
+      // library paths outside allowedRoots.
+      return;
+    case "terminal-id-or-path": {
+      const first = args[0];
+      if (typeof first !== "string" || !first.startsWith("file:")) return;
+      if (!pathAllowed(uriOrPath(first), config.allowedRoots)) {
+        throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
+      }
+      return;
+    }
+    case "trash-restore": {
+      const target = args[1];
       if (
-        typeof candidate !== "string" ||
-        !pathAllowed(uriOrPath(candidate), config.allowedRoots)
+        typeof target === "string" &&
+        !pathAllowed(uriOrPath(target), config.allowedRoots)
       ) {
         throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
       }
+      // Without an override, dispatch validates the original path stored in
+      // the host-owned trash metadata before restoring it.
+      return;
     }
-    return;
-  }
-  if (channel === "fs:restoreTrash") {
-    const target = args[1];
-    if (
-      typeof target === "string" &&
-      !pathAllowed(uriOrPath(target), config.allowedRoots)
-    ) {
-      throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
-    }
-    // Without an override, dispatch validates the original path stored in the
-    // host-owned trash metadata before restoring it.
-    return;
-  }
-  // Read-only FS: allow absolute paths outside allowedRoots so goto-def can
-  // open language stdlib / module cache files (e.g. GOROOT, node_modules
-  // outside $HOME). Writes and directory listing stay sandboxed.
-  if (
-    channel === "fs:readFile" ||
-    channel === "fs:readTextFile" ||
-    channel === "fs:stat" ||
-    channel === "fs:exists"
-  )
-    return;
-  if (channel === "fs:writeTempDrop") return;
-  if (
-    channel.startsWith("terminal:") &&
-    typeof args[0] === "string" &&
-    !args[0].startsWith("file:")
-  ) {
-    return;
-  }
-  const first = args[0];
-  if (typeof first !== "string") return;
-  if (!pathAllowed(uriOrPath(first), config.allowedRoots)) {
-    throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
+    case "allowed-root":
+      for (const index of route.pathPolicy.indices) {
+        const candidate = args[index];
+        if (
+          typeof candidate !== "string" ||
+          !pathAllowed(uriOrPath(candidate), config.allowedRoots)
+        ) {
+          throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
+        }
+      }
+      return;
   }
 }
 

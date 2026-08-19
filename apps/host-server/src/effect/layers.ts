@@ -107,11 +107,7 @@ export function makeHostLayers(
   );
   const toolServiceFromRuntime = Layer.effect(
     ToolServiceTag,
-    Effect.flatMap(HostRuntimeTag, (runtime) =>
-      runtime.toolService
-        ? Effect.succeed(runtime.toolService)
-        : Effect.die("ToolService was not initialized"),
-    ),
+    Effect.map(HostRuntimeTag, runtime => runtime.toolService),
   );
   const runtimeWithServices = Layer.provideMerge(
     Layer.provideMerge(runtimeLayer)(toolsFromRuntime),
@@ -130,13 +126,7 @@ export function hostRuntimeLayer(
     Layer.succeed(NotificationServiceTag, runtime.notifications),
     Layer.succeed(TerminalHostTag, runtime.terminal),
     Layer.succeed(ToolSessionStoreTag, runtime.toolSessions),
-    Layer.succeed(
-      ToolServiceTag,
-      runtime.toolService ??
-        (() => {
-          throw new Error("ToolService is not initialized");
-        })(),
-    ),
+    Layer.succeed(ToolServiceTag, runtime.toolService),
     Layer.succeed(PerfHostTag, runtime.perf),
     Layer.succeed(HomeDirTag, runtime.homeDir),
     Layer.succeed(HostRuntimeTag, runtime),
@@ -167,7 +157,7 @@ export function NotificationServiceLive(
     NotificationServiceTag,
     () =>
       new NotificationService(
-        db.raw(),
+        db.session(),
         (streamEvent: NotificationStreamEvent) => {
           events.emit("notifications:event", [streamEvent]);
         },

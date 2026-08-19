@@ -24,11 +24,11 @@
     "rebuild:native": "node packages/yaade-node-host/scripts/fix-node-pty-perms.mjs"
   },
   "devDependencies": {
-    "@oxlint/plugins": "1.78.0",
+    "@oxlint/plugins": "1.79.0",
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.15.29",
     "effect": "3.22.1",
-    "oxlint": "1.78.0",
+    "oxlint": "1.79.0",
     "tsx": "^4.23.0",
     "turbo": "^2.10.4",
     "typescript": "^7.0.2"

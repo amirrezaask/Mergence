@@ -39,7 +39,7 @@ export async function cleanupManagedWorktree(
   if (!pathAllowed(canonical, deps.config.allowedRoots)) {
     throw new CheckoutResolutionFailed({ message: "worktree is outside allowed roots" })
   }
-  const live = deps.db.raw().prepare(
+  const live = deps.db.session().prepare(
     `SELECT id FROM tool_uses
        WHERE checkout_path=? AND archived_at IS NULL
          AND status IN ('created','starting','running','waiting')

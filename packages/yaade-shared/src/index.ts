@@ -148,6 +148,7 @@ export * from "./git.js";
 export * from "./panels.js";
 export * from "./diagnostics.js";
 export * from "./notifications.js";
+export * from "./providers.js";
 export * from "./motion.js";
 export * from "./rad-motion.js";
 export * from "./rad-scroll.js";

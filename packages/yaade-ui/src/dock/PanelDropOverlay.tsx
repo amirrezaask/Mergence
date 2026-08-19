@@ -130,36 +130,35 @@ function DropSiteTarget({
 
 function AnimatedDropPreview({
   target,
-  panelSize,
 }: {
   target: SiteRect
-  panelSize: { w: number; h: number }
 }) {
   const elementRef = useRef<HTMLDivElement>(null)
   const currentRef = useRef<SiteRect | null>(null)
+  const { x, y, w, h } = target
 
   useEffect(() => {
     const element = elementRef.current
-    if (!element || target.w <= 0 || target.h <= 0) return
+    if (!element || w <= 0 || h <= 0) return
     let frame: number | null = null
     let lastFrame = performance.now()
     const current = currentRef.current ?? {
-      x: target.x + target.w * 0.025,
-      y: target.y + target.h * 0.025,
-      w: target.w * 0.95,
-      h: target.h * 0.95,
+      x: x + w * 0.025,
+      y: y + h * 0.025,
+      w: w * 0.95,
+      h: h * 0.95,
     }
     currentRef.current = current
 
     const paint = () => {
-      const scaleX = current.w / target.w
-      const scaleY = current.h / target.h
+      const scaleX = current.w / w
+      const scaleY = current.h / h
       element.style.transform =
         `translate3d(${current.x}px, ${current.y}px, 0) scale(${scaleX}, ${scaleY})`
     }
 
     if (prefersReducedMotion()) {
-      Object.assign(current, target)
+      Object.assign(current, { x, y, w, h })
       element.style.opacity = "1"
       paint()
       return
@@ -171,19 +170,19 @@ function AnimatedDropPreview({
       const dt = Math.min(0.05, Math.max(0, (now - lastFrame) / 1000))
       lastFrame = now
       const rate = radAnimationRate(YAADE_RATE_MENU, dt)
-      current.x = radLerp(current.x, target.x, rate)
-      current.y = radLerp(current.y, target.y, rate)
-      current.w = radLerp(current.w, target.w, rate)
-      current.h = radLerp(current.h, target.h, rate)
+      current.x = radLerp(current.x, x, rate)
+      current.y = radLerp(current.y, y, rate)
+      current.w = radLerp(current.w, w, rate)
+      current.h = radLerp(current.h, h, rate)
       paint()
 
       const settled =
-        Math.abs(current.x - target.x) < YAADE_LAYOUT_EPSILON &&
-        Math.abs(current.y - target.y) < YAADE_LAYOUT_EPSILON &&
-        Math.abs(current.w - target.w) < YAADE_LAYOUT_EPSILON &&
-        Math.abs(current.h - target.h) < YAADE_LAYOUT_EPSILON
+        Math.abs(current.x - x) < YAADE_LAYOUT_EPSILON &&
+        Math.abs(current.y - y) < YAADE_LAYOUT_EPSILON &&
+        Math.abs(current.w - w) < YAADE_LAYOUT_EPSILON &&
+        Math.abs(current.h - h) < YAADE_LAYOUT_EPSILON
       if (settled) {
-        Object.assign(current, target)
+        Object.assign(current, { x, y, w, h })
         paint()
         element.style.willChange = "auto"
       } else {
@@ -196,7 +195,7 @@ function AnimatedDropPreview({
       if (frame != null) cancelAnimationFrame(frame)
       element.style.willChange = "auto"
     }
-  }, [panelSize.h, panelSize.w, target.h, target.w, target.x, target.y])
+  }, [h, w, x, y])
 
   return (
     <div
@@ -206,10 +205,10 @@ function AnimatedDropPreview({
         position: "absolute",
         left: 0,
         top: 0,
-        width: target.w,
-        height: target.h,
+        width: w,
+        height: h,
         transformOrigin: "0 0",
-        transform: `translate3d(${target.x + target.w * 0.025}px, ${target.y + target.h * 0.025}px, 0) scale(0.95)`,
+        transform: `translate3d(${x + w * 0.025}px, ${y + h * 0.025}px, 0) scale(0.95)`,
       }}
     />
   )
@@ -263,7 +262,7 @@ export function PanelDropOverlay({
       {active && (
         <>
           {hotSite && (
-            <AnimatedDropPreview target={hotSite.preview} panelSize={size} />
+            <AnimatedDropPreview target={hotSite.preview} />
           )}
 
           {effectiveSites.map(site => (

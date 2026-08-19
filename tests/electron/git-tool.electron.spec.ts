@@ -70,6 +70,45 @@ test("Git History is available as a Session tool", async ({ launchApp }) => {
   )
 })
 
+test("commits staged changes from the Git commit dialog", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  const projectPath = await ensureGitRepository(page)
+  const fileName = "commit-button-regression.txt"
+  fs.writeFileSync(path.join(projectPath, fileName), "commit me\n")
+  execFileSync("git", ["add", "--", fileName], { cwd: projectPath })
+  await openToolSessionShell(page)
+  await pressShellPrefix(page)
+  await page.keyboard.press("g")
+
+  await expect(page.locator('[data-yaade-git-workspace]')).toBeVisible({
+    timeout: 30_000,
+  })
+  const trigger = page.locator('[data-yaade-git-commit-trigger]')
+  await expect(trigger).toBeEnabled({ timeout: 30_000 })
+  await trigger.click()
+  await expect(page.locator('[data-yaade-git-commit-dialog]')).toBeVisible()
+  await page.locator("#git-commit-summary").fill("commit button regression")
+  await page.locator('[data-yaade-git-commit]').click()
+  await expect(page.locator('[data-yaade-git-commit-dialog]')).toHaveCount(0, {
+    timeout: 30_000,
+  })
+
+  expect(
+    execFileSync("git", ["log", "-1", "--pretty=%s"], {
+      cwd: projectPath,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("commit button regression")
+  expect(
+    execFileSync("git", ["status", "--short"], {
+      cwd: projectPath,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("")
+})
+
 test("mobile Git drills from commits to files to an on-demand diff", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",

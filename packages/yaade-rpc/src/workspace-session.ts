@@ -51,11 +51,11 @@ export const EMPTY_WORKSPACE_SESSION_LAYOUT: WorkspaceSessionLayout = {
   zoomedPaneId: null,
 }
 
-function asNonEmptyString(value: unknown): string | null {
+export function asNonEmptyString(value: unknown): string | null {
   return typeof value === "string" && value.trim().length > 0 ? value : null
 }
 
-function parseLeaf(raw: unknown): WorkspaceSessionLeaf | null {
+export function parseSessionLeaf(raw: unknown): WorkspaceSessionLeaf | null {
   if (!raw || typeof raw !== "object") return null
   const item = raw as Record<string, unknown>
   const ptyTabId = asNonEmptyString(item.ptyTabId)
@@ -89,7 +89,7 @@ function parseLeaf(raw: unknown): WorkspaceSessionLeaf | null {
   }
 }
 
-function parseLayout(raw: unknown): WorkspaceSessionLayout | null {
+export function parseSessionLayout(raw: unknown): WorkspaceSessionLayout | null {
   if (!raw || typeof raw !== "object") return null
   const item = raw as Record<string, unknown>
   if (item.tree == null || typeof item.tree !== "object") return null
@@ -116,13 +116,13 @@ export function tryDecodeWorkspaceSession(raw: unknown): WorkspaceSession | null
   if (body.version !== 1) return null
   const machine = asNonEmptyString(body.machine)
   const rootPath = asNonEmptyString(body.rootPath)
-  const layout = parseLayout(body.layout)
+  const layout = parseSessionLayout(body.layout)
   if (!machine || !rootPath || !layout) return null
   if (!Array.isArray(body.sessions)) return null
   const seen = new Set<string>()
   const sessions: WorkspaceSessionLeaf[] = []
   for (const item of body.sessions) {
-    const leaf = parseLeaf(item)
+    const leaf = parseSessionLeaf(item)
     if (!leaf || seen.has(leaf.ptyTabId)) continue
     seen.add(leaf.ptyTabId)
     sessions.push(leaf)

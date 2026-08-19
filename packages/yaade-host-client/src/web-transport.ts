@@ -7,17 +7,21 @@ import {
   tryDecodeRealtimeHostEvent,
   tryDecodeTerminalWsResult,
   type HostEvent,
+  type HostRpcError,
+  type HostRouteArgs,
+  type HostRouteName,
+  type HostRouteResult,
   type TextFileReadResult,
   type TextFileWriteOptions,
   type TextFileWriteResult,
   type TerminalWsHotOp,
 } from "@yaade/rpc";
 import { Duration, Effect, Fiber } from "effect";
-import { invokeHostRpc } from "./effect-host-client.js";
+import { invokeHostRpcUnchecked } from "./effect-host-client.js";
 import { readTextFileHttp, writeTextFileHttp } from "./text-file-http.js";
 
 async function runInvokePromise<T>(
-  effect: ReturnType<typeof invokeHostRpc>,
+  effect: Effect.Effect<T, HostRpcError>,
 ): Promise<T> {
   const outcome = await Effect.runPromise(
     effect.pipe(
@@ -197,26 +201,41 @@ export class WebHostTransport implements YaadeHostTransport {
     );
   }
 
-  async invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
+  async invoke<Name extends HostRouteName>(
+    channel: Name,
+    ...args: HostRouteArgs<Name>
+  ): Promise<HostRouteResult<Name>>;
+  async invoke(channel: string, ...args: unknown[]): Promise<unknown>;
+  async invoke(channel: string, ...args: unknown[]): Promise<unknown> {
     if (this.closed) {
       throw new Error("host transport closed");
     }
     const ac = new AbortController();
     this.pendingAborts.add(ac);
     try {
-      return await runInvokePromise<T>(
-        invokeHostRpc(this.clientId, channel, args, { signal: ac.signal }),
+      return await runInvokePromise(
+        invokeHostRpcUnchecked(this.clientId, channel, args, { signal: ac.signal }),
       );
     } finally {
       this.pendingAborts.delete(ac);
     }
   }
 
-  async invokeWithSignal<T>(
+  async invokeWithSignal<Name extends HostRouteName>(
+    channel: Name,
+    args: HostRouteArgs<Name>,
+    signal: AbortSignal,
+  ): Promise<HostRouteResult<Name>>;
+  async invokeWithSignal(
     channel: string,
     args: unknown[],
     signal: AbortSignal,
-  ): Promise<T> {
+  ): Promise<unknown>;
+  async invokeWithSignal(
+    channel: string,
+    args: unknown[],
+    signal: AbortSignal,
+  ): Promise<unknown> {
     if (this.closed) throw new Error("host transport closed");
     if (signal.aborted) throw requestAbortError(signal);
     const ac = new AbortController();
@@ -225,8 +244,8 @@ export class WebHostTransport implements YaadeHostTransport {
     this.pendingAborts.add(ac);
     try {
       try {
-        return await runInvokePromise<T>(
-          invokeHostRpc(this.clientId, channel, args, { signal: ac.signal }),
+        return await runInvokePromise(
+          invokeHostRpcUnchecked(this.clientId, channel, args, { signal: ac.signal }),
         );
       } catch (error) {
         if (signal.aborted) throw requestAbortError(signal);
@@ -254,18 +273,23 @@ export class WebHostTransport implements YaadeHostTransport {
     );
   }
 
-  invokeRealtime<T>(channel: string, ...args: unknown[]): Promise<T> | null {
+  invokeRealtime<Name extends HostRouteName>(
+    channel: Name,
+    ...args: HostRouteArgs<Name>
+  ): Promise<HostRouteResult<Name>> | null;
+  invokeRealtime(channel: string, ...args: unknown[]): Promise<unknown> | null;
+  invokeRealtime(channel: string, ...args: unknown[]): Promise<unknown> | null {
     if (this.closed || !isTerminalWsHotOp(channel)) return null;
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return null;
     const requestId = `${this.clientId}:${++this.realtimeRequestSequence}`;
-    return new Promise<T>((resolve, reject) => {
+    return new Promise<unknown>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pendingRealtime.delete(requestId);
         reject(new Error(`terminal realtime command timed out: ${channel}`));
       }, 10_000);
       this.pendingRealtime.set(requestId, {
-        resolve: (value) => resolve(value as T),
+        resolve,
         reject,
         timeout,
       });

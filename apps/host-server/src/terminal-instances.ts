@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSession } from "./database.js";
 import type { AgentEvent, AgentProvider } from "@yaade/agent-telemetry";
 import { tryDecodeProjectSessionPayload } from "@yaade/rpc";
-import { fileUriToPath } from "@yaade/shared";
+import { fileUriToPath, isCliProvider } from "@yaade/shared";
 
 export type TerminalInstanceState =
   | "starting"
@@ -96,17 +96,7 @@ function nowIso(): string {
 }
 
 function asProvider(value: string | null | undefined): AgentProvider | null {
-  switch (value) {
-    case "claude":
-    case "codex":
-    case "cursor":
-    case "opencode":
-    case "grok":
-    case "pi":
-      return value;
-    default:
-      return null;
-  }
+  return isCliProvider(value) ? value : null;
 }
 
 function state(value: string): TerminalInstanceState {
@@ -223,7 +213,7 @@ function boundedTranscript(output: string): {
 }
 
 function tableHasColumn(
-  db: DatabaseSync,
+  db: DatabaseSession,
   table: string,
   column: string,
 ): boolean {
@@ -240,7 +230,7 @@ export class TerminalInstanceService {
   >();
 
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseSession,
     private readonly emit: (event: TerminalInstanceEvent) => void,
   ) {
     db.exec(`

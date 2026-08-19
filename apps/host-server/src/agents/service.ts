@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite"
+import type { DatabaseSession } from "../database.js"
 import {
   getCliAgentDriver,
   makeProcessExitedEvent,
@@ -130,7 +130,7 @@ export class AgentTelemetryService {
   private persistCount = 0
 
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseSession,
     private readonly notifications: NotificationService,
     private readonly emit: EmitFn,
     /** Run lifecycle owns process truth; telemetry only enriches it. */

@@ -22,9 +22,17 @@ import {
   type ToolUseOutput,
   type ToolUseStatus,
 } from "@yaade/rpc";
-import type { HostRuntime } from "../host-runtime.js";
+import type { HostConfig } from "../config.js";
+import type { EventHub } from "../events.js";
+import type { ProjectDatabase } from "../persistence.js";
+import type { TerminalInstanceService } from "../terminal-instances.js";
+import type { ToolSessionStore } from "../tool-session-store.js";
 import { resolveToolContext } from "./context-resolver.js";
-import { ProcessToolDriver, processOutput } from "./process-driver.js";
+import {
+  ProcessToolDriver,
+  processOutput,
+  type ProcessDriverDependencies,
+} from "./process-driver.js";
 import { GitToolDriver } from "./git-driver.js";
 import { ToolRegistry } from "./registry.js";
 
@@ -54,14 +62,24 @@ function withoutPty(output: ProcessToolOutput): ProcessToolOutput {
   return ProcessToolOutput.make({ ...rest, replayAvailable: false });
 }
 
+export type ToolServiceDependencies = {
+  readonly config: HostConfig
+  readonly db: ProjectDatabase
+  readonly homeDir: string
+  readonly events: EventHub
+  readonly toolSessions: ToolSessionStore
+  readonly terminalInstances: TerminalInstanceService
+  readonly process: ProcessDriverDependencies
+}
+
 /** Single host-side mutator for ToolUse lifecycle and driver ownership. */
 export class ToolService {
   private readonly registry: ToolRegistry;
   private readonly operationTails = new Map<ToolUseId, Promise<void>>();
 
-  constructor(private readonly runtime: HostRuntime) {
+  constructor(private readonly deps: ToolServiceDependencies) {
     this.registry = new ToolRegistry([
-      new ProcessToolDriver(runtime),
+      new ProcessToolDriver(deps.process),
       new GitToolDriver(),
     ]);
   }
@@ -70,13 +88,13 @@ export class ToolService {
     this.assertInputPair(command);
     const context = await resolveToolContext(
       {
-        config: this.runtime.config,
-        db: this.runtime.db,
-        homeDir: this.runtime.homeDir,
+        config: this.deps.config,
+        db: this.deps.db,
+        homeDir: this.deps.homeDir,
       },
       command,
     );
-    const store = this.runtime.toolSessions;
+    const store = this.deps.toolSessions;
     const existingUses = command.tabId
       ? store.listToolUsesByTab(command.tabId)
       : store.listToolUses(command.sessionId);
@@ -136,9 +154,9 @@ export class ToolService {
       this.assertRevision(current, expectedRevision);
       const context = await resolveToolContext(
         {
-          config: this.runtime.config,
-          db: this.runtime.db,
-          homeDir: this.runtime.homeDir,
+          config: this.deps.config,
+          db: this.deps.db,
+          homeDir: this.deps.homeDir,
         },
         command,
       );
@@ -150,7 +168,7 @@ export class ToolService {
       }
 
       await this.stopLiveProcess(current);
-      const updated = this.runtime.toolSessions.updateToolUseContext(
+      const updated = this.deps.toolSessions.updateToolUseContext(
         useId,
         expectedRevision,
         context,
@@ -176,7 +194,7 @@ export class ToolService {
       .get(current.kind)
       .cancel(current)
       .pipe(Effect.runPromise);
-    const cancelled = this.runtime.toolSessions.compareAndSetToolUse(
+    const cancelled = this.deps.toolSessions.compareAndSetToolUse(
       useId,
       expectedRevision,
       {
@@ -196,7 +214,7 @@ export class ToolService {
     useId: ToolUseId,
     stopProcess: boolean,
   ): Promise<ToolUse> {
-    const existing = this.runtime.toolSessions.getToolUse(useId);
+    const existing = this.deps.toolSessions.getToolUse(useId);
     if (!existing) {
       throw new ToolUseNotFound({
         toolUseId: useId,
@@ -215,7 +233,7 @@ export class ToolService {
         .get(current.kind)
         .cancel(current)
         .pipe(Effect.runPromise);
-      current = this.runtime.toolSessions.compareAndSetToolUse(
+      current = this.deps.toolSessions.compareAndSetToolUse(
         useId,
         current.revision,
         { status: "cancelled", output },
@@ -223,12 +241,12 @@ export class ToolService {
       this.emitUpdated(current);
     }
 
-    const previousSession = this.runtime.toolSessions.getSession(current.sessionId);
+    const previousSession = this.deps.toolSessions.getSession(current.sessionId);
     const previousTab = current.tabId
-      ? this.runtime.toolSessions.getTab(current.tabId)
+      ? this.deps.toolSessions.getTab(current.tabId)
       : undefined;
-    const archived = this.runtime.toolSessions.archiveToolUse(useId);
-    this.runtime.events.emit("tools:event", [
+    const archived = this.deps.toolSessions.archiveToolUse(useId);
+    this.deps.events.emit("tools:event", [
       ToolUseArchived.make({
         eventId: eventId("tool-archived", archived.id),
         toolUseId: archived.id,
@@ -236,9 +254,9 @@ export class ToolService {
         occurredAt: archived.updatedAt,
       }),
     ]);
-    const nextSession = this.runtime.toolSessions.getSession(current.sessionId);
+    const nextSession = this.deps.toolSessions.getSession(current.sessionId);
     const nextTab = current.tabId
-      ? this.runtime.toolSessions.getTab(current.tabId)
+      ? this.deps.toolSessions.getTab(current.tabId)
       : undefined;
     if (nextTab && previousTab && nextTab.revision !== previousTab.revision) {
       this.emitTabUpdated(nextTab);
@@ -268,7 +286,7 @@ export class ToolService {
   ): Promise<ToolUse> {
     const current = this.require(useId);
     this.assertRevision(current, expectedRevision);
-    const starting = this.runtime.toolSessions.compareAndSetToolUse(
+    const starting = this.deps.toolSessions.compareAndSetToolUse(
       useId,
       expectedRevision,
       {
@@ -284,7 +302,7 @@ export class ToolService {
         .pipe(Effect.runPromise);
       const failed =
         output.kind === "process" && output.processState === "failed";
-      const result = this.runtime.toolSessions.compareAndSetToolUse(
+      const result = this.deps.toolSessions.compareAndSetToolUse(
         useId,
         starting.revision,
         {
@@ -296,9 +314,9 @@ export class ToolService {
       this.emitUpdated(result);
       return result;
     } catch (error) {
-      const currentAfterFailure = this.runtime.toolSessions.getToolUse(useId);
+      const currentAfterFailure = this.deps.toolSessions.getToolUse(useId);
       if (!currentAfterFailure || currentAfterFailure.archivedAt) throw error;
-      const failed = this.runtime.toolSessions.compareAndSetToolUse(
+      const failed = this.deps.toolSessions.compareAndSetToolUse(
         useId,
         starting.revision,
         {
@@ -315,19 +333,19 @@ export class ToolService {
     tabId: import("@yaade/rpc").SessionTabId,
     stopTools: boolean,
   ): Promise<import("@yaade/rpc").SessionTab> {
-    const tab = this.runtime.toolSessions.getTab(tabId);
+    const tab = this.deps.toolSessions.getTab(tabId);
     if (!tab) {
       throw new SessionTabNotFound({
         tabId,
         message: `tab not found: ${tabId}`,
       });
     }
-    const previousSession = this.runtime.toolSessions.getSession(tab.sessionId);
+    const previousSession = this.deps.toolSessions.getSession(tab.sessionId);
     if (tab.archivedAt) return tab;
-    for (const use of this.runtime.toolSessions.listToolUsesByTab(tabId)) {
+    for (const use of this.deps.toolSessions.listToolUsesByTab(tabId)) {
       try {
         await this.withToolLock(use.id, async () => {
-          const latest = this.runtime.toolSessions.getToolUse(use.id);
+          const latest = this.deps.toolSessions.getToolUse(use.id);
           if (!latest || latest.archivedAt) return;
           if (stopTools && isLiveStatus(latest.status)) {
             try {
@@ -342,10 +360,10 @@ export class ToolService {
         /* continue archiving the tab */
       }
     }
-    const visibleTabsBeforeArchive = this.runtime.toolSessions.listTabs(tab.sessionId);
-    const archived = this.runtime.toolSessions.archiveTab(tabId);
-    const session = this.runtime.toolSessions.getSession(tab.sessionId);
-    this.runtime.events.emit("tools:event", [
+    const visibleTabsBeforeArchive = this.deps.toolSessions.listTabs(tab.sessionId);
+    const archived = this.deps.toolSessions.archiveTab(tabId);
+    const session = this.deps.toolSessions.getSession(tab.sessionId);
+    this.deps.events.emit("tools:event", [
       SessionTabArchived.make({
         eventId: eventId("tab-archived", archived.id),
         revision: archived.revision ?? 1,
@@ -353,11 +371,11 @@ export class ToolService {
         tab: archived,
       }),
     ]);
-    const replacementTabs = this.runtime.toolSessions
+    const replacementTabs = this.deps.toolSessions
       .listTabs(tab.sessionId)
       .filter(candidate => !visibleTabsBeforeArchive.some(previous => previous.id === candidate.id));
     for (const replacement of replacementTabs) {
-      this.runtime.events.emit("tools:event", [
+      this.deps.events.emit("tools:event", [
         SessionTabCreated.make({
           eventId: eventId("tab-created", replacement.id),
           revision: replacement.revision ?? 1,
@@ -371,7 +389,7 @@ export class ToolService {
       (session.activeTabId !== previousSession?.activeTabId ||
         session.activeToolUseId !== previousSession?.activeToolUseId)
     ) {
-      this.runtime.events.emit("tools:event", [
+      this.deps.events.emit("tools:event", [
         SessionUpdated.make({
           eventId: eventId("session-tab-archived", session.id),
           revision: session.revision ?? 1,
@@ -388,9 +406,9 @@ export class ToolService {
     stopTools: boolean,
   ): Promise<import("@yaade/rpc").AppSession> {
     const visibleSessionIds = new Set(
-      this.runtime.toolSessions.listSessions().map(session => session.id),
+      this.deps.toolSessions.listSessions().map(session => session.id),
     );
-    for (const use of this.runtime.toolSessions.listToolUses(sessionId)) {
+    for (const use of this.deps.toolSessions.listToolUses(sessionId)) {
       if (
         stopTools &&
         (use.status === "created" ||
@@ -405,8 +423,8 @@ export class ToolService {
         }
       }
     }
-    const session = this.runtime.toolSessions.archiveSession(sessionId);
-    this.runtime.events.emit("tools:event", [
+    const session = this.deps.toolSessions.archiveSession(sessionId);
+    this.deps.events.emit("tools:event", [
       SessionArchived.make({
         eventId: eventId("session-archived", session.id),
         revision: session.revision ?? 1,
@@ -414,9 +432,9 @@ export class ToolService {
         session,
       }),
     ]);
-    for (const replacement of this.runtime.toolSessions.listSessions()) {
+    for (const replacement of this.deps.toolSessions.listSessions()) {
       if (visibleSessionIds.has(replacement.id)) continue;
-      this.runtime.events.emit("tools:event", [
+      this.deps.events.emit("tools:event", [
         SessionCreated.make({
           eventId: eventId("session-created", replacement.id),
           revision: replacement.revision ?? 1,
@@ -424,8 +442,8 @@ export class ToolService {
           session: replacement,
         }),
       ]);
-      for (const tab of this.runtime.toolSessions.listTabs(replacement.id)) {
-        this.runtime.events.emit("tools:event", [
+      for (const tab of this.deps.toolSessions.listTabs(replacement.id)) {
+        this.deps.events.emit("tools:event", [
           SessionTabCreated.make({
             eventId: eventId("tab-created", tab.id),
             revision: tab.revision ?? 1,
@@ -443,16 +461,16 @@ export class ToolService {
     sessionId: import("@yaade/rpc").SessionId,
     toolUseId: ToolUseId | null,
   ): import("@yaade/rpc").AppSession {
-    const previousSession = this.runtime.toolSessions.getSession(sessionId);
+    const previousSession = this.deps.toolSessions.getSession(sessionId);
     const previousTab = previousSession?.activeTabId
-      ? this.runtime.toolSessions.getTab(previousSession.activeTabId)
+      ? this.deps.toolSessions.getTab(previousSession.activeTabId)
       : undefined;
-    const session = this.runtime.toolSessions.setActiveToolUse(
+    const session = this.deps.toolSessions.setActiveToolUse(
       sessionId,
       toolUseId,
     );
     const activeTab = session.activeTabId
-      ? this.runtime.toolSessions.getTab(session.activeTabId)
+      ? this.deps.toolSessions.getTab(session.activeTabId)
       : undefined;
     if (activeTab && activeTab.revision !== previousTab?.revision) {
       this.emitTabUpdated(activeTab);
@@ -469,22 +487,22 @@ export class ToolService {
     ids: readonly ToolUseId[],
     tabId?: import("@yaade/rpc").SessionTabId,
   ): ToolUse[] {
-    const uses = this.runtime.toolSessions.reorderToolUses(sessionId, ids, tabId);
+    const uses = this.deps.toolSessions.reorderToolUses(sessionId, ids, tabId);
     for (const toolUse of uses) this.emitUpdated(toolUse);
     return uses;
   }
 
   onProcessExit(ptyId: string): void {
-    const instance = this.runtime.terminalInstances.byPtyId(ptyId);
+    const instance = this.deps.terminalInstances.byPtyId(ptyId);
     if (!instance) return;
     const use = instance.toolUseId
-      ? this.runtime.toolSessions.getToolUse(
+      ? this.deps.toolSessions.getToolUse(
           Schema.decodeUnknownSync(ToolUseId)(instance.toolUseId),
         )
       : null;
     if (!use) return;
     try {
-      const updated = this.runtime.toolSessions.compareAndSetToolUse(
+      const updated = this.deps.toolSessions.compareAndSetToolUse(
         use.id,
         use.revision,
         {
@@ -506,8 +524,8 @@ export class ToolService {
   }
 
   reconcile(): void {
-    for (const session of this.runtime.toolSessions.listSessions(false)) {
-      for (const use of this.runtime.toolSessions.listToolUses(session.id)) {
+    for (const session of this.deps.toolSessions.listSessions(false)) {
+      for (const use of this.deps.toolSessions.listToolUses(session.id)) {
         if (use.output.kind !== "process") continue;
         if (
           !(
@@ -517,7 +535,7 @@ export class ToolService {
           )
         )
           continue;
-        const instance = this.runtime.terminalInstances.get(
+        const instance = this.deps.terminalInstances.get(
           use.output.terminalInstanceId,
         );
         const processState = instance?.processState;
@@ -546,7 +564,7 @@ export class ToolService {
               : instance
                 ? processOutput(instance)
                 : use.output;
-          const updated = this.runtime.toolSessions.compareAndSetToolUse(
+          const updated = this.deps.toolSessions.compareAndSetToolUse(
             use.id,
             use.revision,
             {
@@ -618,11 +636,11 @@ export class ToolService {
     } catch {
       /* instance may already be gone */
     }
-    this.runtime.terminalInstances.unbindToolUse(current.id);
+    this.deps.terminalInstances.unbindToolUse(current.id);
   }
 
   private require(id: ToolUseId): ToolUse {
-    const use = this.runtime.toolSessions.getToolUse(id);
+    const use = this.deps.toolSessions.getToolUse(id);
     if (!use || use.archivedAt)
       throw new ToolUseNotFound({
         toolUseId: id,
@@ -643,7 +661,7 @@ export class ToolService {
   }
 
   private emitCreated(use: ToolUse): void {
-    this.runtime.events.emit("tools:event", [
+    this.deps.events.emit("tools:event", [
       ToolUseCreated.make({
         eventId: eventId("tool-created", use.id),
         toolUseId: use.id,
@@ -655,7 +673,7 @@ export class ToolService {
   }
 
   private emitUpdated(use: ToolUse): void {
-    this.runtime.events.emit("tools:event", [
+    this.deps.events.emit("tools:event", [
       ToolUseUpdated.make({
         eventId: eventId("tool-updated", use.id),
         toolUseId: use.id,
@@ -667,7 +685,7 @@ export class ToolService {
   }
 
   private emitTabUpdated(tab: import("@yaade/rpc").SessionTab): void {
-    this.runtime.events.emit("tools:event", [
+    this.deps.events.emit("tools:event", [
       SessionTabUpdated.make({
         eventId: eventId("tab-updated", tab.id),
         revision: tab.revision ?? 1,
@@ -678,7 +696,7 @@ export class ToolService {
   }
 
   private emitSessionUpdated(session: import("@yaade/rpc").AppSession): void {
-    this.runtime.events.emit("tools:event", [
+    this.deps.events.emit("tools:event", [
       SessionUpdated.make({
         eventId: eventId("session-updated", session.id),
         revision: session.revision ?? 1,

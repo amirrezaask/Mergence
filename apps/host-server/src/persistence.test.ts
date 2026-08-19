@@ -67,7 +67,7 @@ describe("ProjectDatabase session roster", () => {
     assert.equal(saved.modal?.sessionMode, "terminal")
     assert.deepEqual(db.getSessionRoster(), saved)
 
-    const row = db.raw()
+    const row = db.session()
       .prepare(
         "SELECT project_id, agent_title, has_user_input, has_meaningful_output FROM session_roster_entries WHERE tab_id=?",
       )
@@ -281,7 +281,7 @@ describe("ProjectDatabase session roster", () => {
 
     db = new ProjectDatabase(dbPath)
     const columns = db
-      .raw()
+      .session()
       .prepare("PRAGMA table_info(session_roster_entries)")
       .all() as unknown as Array<{ name: string }>
     assert.equal(columns.some(column => column.name === "has_user_input"), true)
@@ -529,7 +529,7 @@ describe("ProjectDatabase session roster", () => {
     })
     assert.equal(db.deleteProjectSession(session.id), true)
     const rows = db
-      .raw()
+      .session()
       .prepare("SELECT COUNT(*) AS count FROM editor_recovery_buffers")
       .get() as { count: number }
     assert.equal(rows.count, 0)

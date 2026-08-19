@@ -29,7 +29,7 @@ export const HostRpcFailure = Schema.Struct({
 });
 export type HostRpcFailure = Schema.Schema.Type<typeof HostRpcFailure>;
 
-export const HostRpcResponse = Schema.Union(HostRpcSuccess, HostRpcFailure);
+export const HostRpcResponse = Schema.Union(HostRpcFailure, HostRpcSuccess);
 export type HostRpcResponse = Schema.Schema.Type<typeof HostRpcResponse>;
 
 /** Realtime EventHub / WS /ws payload. */

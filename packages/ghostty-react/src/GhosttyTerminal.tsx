@@ -161,7 +161,7 @@ export const GhosttyTerminal = forwardRef<
   useEffect(() => {
     if (!surface) return
     void surface.setFont(font ?? {})
-  }, [surface, font?.family, font?.size])
+  }, [surface, font])
 
   useEffect(() => {
     surface?.setVisible(visible)

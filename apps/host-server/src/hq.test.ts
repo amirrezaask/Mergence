@@ -57,8 +57,8 @@ describe("HQ aggregation", () => {
       layout: emptyLayout,
       sessions: [{ ptyTabId: "agent-new", ptyId: "pty-shared", cwdRootUri: pathToFileUri(alpha), agentProvider: "codex", agentTitle: "Implement HQ" }],
     })
-    db.raw().prepare("UPDATE project_sessions SET updated_at=? WHERE id=?").run("2026-08-08T10:00:00.000Z", newest.id)
-    db.raw().prepare("UPDATE project_sessions SET updated_at=? WHERE id=?").run("2026-08-08T09:00:00.000Z", old.id)
+    db.session().prepare("UPDATE project_sessions SET updated_at=? WHERE id=?").run("2026-08-08T10:00:00.000Z", newest.id)
+    db.session().prepare("UPDATE project_sessions SET updated_at=? WHERE id=?").run("2026-08-08T09:00:00.000Z", old.id)
 
     const pending = db.createProjectSession({
       machine: "test-machine", projectPath: beta, cwdPath: beta, title: "Beta main",
@@ -72,7 +72,7 @@ describe("HQ aggregation", () => {
       ],
     })
 
-    const notifications = new NotificationService(db.raw())
+    const notifications = new NotificationService(db.session())
     const alphaProject = db.projects().find(project => project.name === "alpha")!
     notifications.bindSession({
       sessionId: "agent-new", projectId: alphaProject.id, projectName: alphaProject.name,
@@ -149,7 +149,7 @@ describe("HQ aggregation", () => {
     })
     const alphaProject = db.projects().find(project => project.name === "alpha-live")!
     assert.ok(alphaProject)
-    const notifications = new NotificationService(db.raw())
+    const notifications = new NotificationService(db.session())
     notifications.bindSession({
       sessionId: "term-cursor-1",
       projectId: alphaProject.id,

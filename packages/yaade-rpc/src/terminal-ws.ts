@@ -6,6 +6,8 @@
  * resize/ready) stays JSON — payloads are tiny.
  */
 
+import { getHostRoute, HOST_ROUTE_CHANNELS, type HostRouteName } from "./routes.js"
+
 /** Host → client: binary `terminal:data` frame type bytes. */
 export const TERMINAL_DATA_FRAME_TYPE_V1 = 0x01 as const;
 export const TERMINAL_DATA_FRAME_TYPE = 0x02 as const;
@@ -107,16 +109,21 @@ export function decodeTerminalDataFrame(
 }
 
 /** Client → host control ops over the event WebSocket (JSON text frames). */
-export const TERMINAL_WS_HOT_OPS = [
-  "terminal:write",
-  "terminal:writeBinary",
-  "terminal:ack",
-  "terminal:resize",
-  "terminal:ready",
-  "terminal:attach",
-] as const;
+export type TerminalWsHotOp = Extract<
+  HostRouteName,
+  | "terminal:write"
+  | "terminal:writeBinary"
+  | "terminal:ack"
+  | "terminal:resize"
+  | "terminal:ready"
+  | "terminal:attach"
+>
 
-export type TerminalWsHotOp = (typeof TERMINAL_WS_HOT_OPS)[number];
+/** Hot operations are selected from the canonical route registry. */
+export const TERMINAL_WS_HOT_OPS = HOST_ROUTE_CHANNELS.filter(
+  (channel): channel is TerminalWsHotOp =>
+    channel.startsWith("terminal:") && getHostRoute(channel)?.realtime === true,
+)
 
 export type TerminalWsCommand = {
   requestId: string;
@@ -134,13 +141,10 @@ export type TerminalWsResult = {
 
 export function isTerminalWsHotOp(value: unknown): value is TerminalWsHotOp {
   return (
-    value === "terminal:write" ||
-    value === "terminal:writeBinary" ||
-    value === "terminal:ack" ||
-    value === "terminal:resize" ||
-    value === "terminal:ready" ||
-    value === "terminal:attach"
-  );
+    typeof value === "string" &&
+    value.startsWith("terminal:") &&
+    getHostRoute(value)?.realtime === true
+  )
 }
 
 export function encodeTerminalWsCommand(

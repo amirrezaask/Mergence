@@ -133,7 +133,7 @@ function PanelSplitNode<TView>({
       layout[splitPanelDomId(path, index)] = ratios[index]! * 100
     })
     return layout
-  }, [children.length, path.join("."), ratios.join(",")])
+  }, [children, path, ratios])
 
   return (
     <ResizablePanelGroup

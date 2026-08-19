@@ -127,7 +127,7 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
             : null
   // Production default is on. node:test stays in-process unless a test opts in.
   const ptySupervisor =
-    supervisorExplicit ?? !Boolean(process.env.NODE_TEST_CONTEXT)
+    supervisorExplicit ?? !process.env.NODE_TEST_CONTEXT
   const killPtysOnShutdown =
     args["kill-ptys-on-exit"] === true ||
     process.env.JET_KILL_PTYS_ON_EXIT === "1" ||

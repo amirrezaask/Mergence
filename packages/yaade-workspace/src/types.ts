@@ -7,6 +7,7 @@ import type {
   GitStatusEntry,
   GitWorktree,
   PanelView,
+  CliProvider,
 } from "@yaade/shared";
 import type {
   EmptyTrashResult,
@@ -241,7 +242,7 @@ export type JetElectronTerminal = {
     checkoutKey?: string;
     checkoutPath?: string;
     title?: string;
-    provider?: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+    provider?: CliProvider;
     workspaceId?: string;
     launchRequestId?: string;
     args?: string[];
@@ -268,7 +269,7 @@ export type TerminalInstanceInfo = {
   checkoutKey: string;
   checkoutPath: string;
   title: string;
-  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null;
+  provider: CliProvider | null;
   launchRequestId: string | null;
   ptyId: string | null;
   nativeSessionId: string | null;
@@ -426,7 +427,7 @@ export type JetElectronNotifications = {
 export type JetElectronAgents = {
   listProviders(refresh?: boolean): Promise<
     Array<{
-      provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+      provider: CliProvider;
       available: boolean;
       binary: string;
       version: string | null;
@@ -436,7 +437,7 @@ export type JetElectronAgents = {
   >;
   launch(req: {
     launchRequestId: string;
-    provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+    provider: CliProvider;
     projectId: string;
     workspaceId: string;
     checkoutKey?: string;
@@ -510,7 +511,7 @@ export type AgentRunInfo = {
   runId: string;
   launchRequestId: string;
   generation: number;
-  provider: "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi";
+  provider: CliProvider;
   projectId: string;
   workspaceId: string;
   checkoutKey: string;
@@ -539,15 +540,23 @@ export type AgentRunInfo = {
   revision: number;
 };
 
-export type YaadeHostAPI = {
+/** Explicit domain ports consumed by the current Terminal + Git application. */
+export type YaadeHostPorts = {
   fs: JetElectronFS;
-  terminal?: JetElectronTerminal;
-  tasks?: JetElectronTasks;
-  git?: JetElectronGit;
-  shell?: JetElectronShell;
-  notifications?: JetElectronNotifications;
-  agents?: JetElectronAgents;
-  tools?: JetElectronTools;
+  terminal: JetElectronTerminal;
+  tasks: JetElectronTasks;
+  git: JetElectronGit;
+  shell: JetElectronShell;
+  notifications: JetElectronNotifications;
+  agents: JetElectronAgents;
+  tools: JetElectronTools;
+};
+
+/**
+ * Compatibility composition for legacy browser-global consumers.
+ * @deprecated Prefer YaadeHostPorts through the application's provider.
+ */
+export type YaadeHostAPI = YaadeHostPorts & {
   getLaunchConfig?(): Promise<LaunchConfig | null>;
   getHomeDir?(): Promise<string>;
   loadGlobalYaadercScanRoots?(): Promise<string[]>;

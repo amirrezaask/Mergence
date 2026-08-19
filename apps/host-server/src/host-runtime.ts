@@ -5,7 +5,10 @@ import {
   SupervisedTerminalHost,
   type TerminalHost,
 } from "@yaade/node-host";
-import type { NotificationStreamEvent } from "@yaade/shared";
+import {
+  isCliProvider,
+  type NotificationStreamEvent,
+} from "@yaade/shared";
 import type { AgentProvider } from "@yaade/agent-telemetry";
 import type { HostConfig } from "./config.js";
 import type { EventHub } from "./events.js";
@@ -26,7 +29,11 @@ import type { ProjectDatabase } from "./persistence.js";
 import { TerminalInstanceService } from "./terminal-instances.js";
 import { ToolSessionStore } from "./tool-session-store.js";
 import { discoverTerminalAgents } from "./terminal-agent-discovery.js";
-import { ToolService } from "./tools/service.js";
+import {
+  ToolService,
+  type ToolServiceDependencies,
+} from "./tools/service.js";
+import type { ProcessDriverDependencies } from "./tools/process-driver.js";
 
 export type RuntimeTerminal = TerminalHost | SupervisedTerminalHost;
 
@@ -44,7 +51,9 @@ export type HostRuntime = {
   agentRuns: AgentRunService;
   terminalInstances: TerminalInstanceService;
   toolSessions: ToolSessionStore;
-  toolService: ToolService | null;
+  /** Focused terminal/process port consumed by ToolService and dispatch. */
+  terminalExecution: ProcessDriverDependencies;
+  toolService: ToolService;
   hookQueueTimer: ReturnType<typeof setInterval>;
   reconcileTimer: ReturnType<typeof setInterval>;
   /** Request an event-driven foreground-process reconciliation for one PTY. */
@@ -64,17 +73,7 @@ function hasShellPromptMarker(data: string): boolean {
 function asAgentProvider(
   value: string | null | undefined,
 ): AgentProvider | null {
-  if (
-    value === "claude" ||
-    value === "codex" ||
-    value === "cursor" ||
-    value === "opencode" ||
-    value === "grok" ||
-    value === "pi"
-  ) {
-    return value;
-  }
-  return null;
+  return isCliProvider(value) ? value : null;
 }
 
 export function createRuntime(
@@ -93,7 +92,7 @@ export function createRuntime(
     ((streamEvent: NotificationStreamEvent) => {
       events.emit("notifications:event", [streamEvent]);
     });
-  const notifications = new NotificationService(db.raw(), emitNotification);
+  const notifications = new NotificationService(db.session(), emitNotification);
 
   const emitAgent = (streamEvent: AgentSnapshotStreamEvent) => {
     events.emit("agents:event", [streamEvent]);
@@ -101,7 +100,7 @@ export function createRuntime(
   let agentRuns: AgentRunService | null = null;
   let terminalInstances: TerminalInstanceService | null = null;
   const agents = new AgentTelemetryService(
-    db.raw(),
+    db.session(),
     notifications,
     emitAgent,
     (event) => {
@@ -120,19 +119,39 @@ export function createRuntime(
       );
     },
   );
-  const runService = new AgentRunService(db.raw(), (streamEvent) => {
+  const runService = new AgentRunService(db.session(), (streamEvent) => {
     events.emit("agents:event", [streamEvent]);
   });
   agentRuns = runService;
   const processInstances = new TerminalInstanceService(
-    db.raw(),
+    db.session(),
     (streamEvent) => {
       events.emit("terminal-instances:event", [streamEvent]);
     },
   );
   terminalInstances = processInstances;
   // Construct after terminal persistence so migration 15 can correlate existing PTYs.
-  const toolSessions = new ToolSessionStore(db.raw(), os.hostname());
+  const toolSessions = new ToolSessionStore(db.session(), os.hostname());
+  const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? "";
+  const terminalExecution: ProcessDriverDependencies = {
+    config,
+    db,
+    terminal,
+    terminalInstances: processInstances,
+    agentRuns: runService,
+    notifications,
+    agents,
+  };
+  const toolServiceDependencies: ToolServiceDependencies = {
+    config,
+    db,
+    homeDir,
+    events,
+    toolSessions,
+    terminalInstances: processInstances,
+    process: terminalExecution,
+  };
+  const toolService = new ToolService(toolServiceDependencies);
 
   // Foreground process changes have no portable child-process event in node-pty.
   // Reconcile on PTY command/output boundaries instead of polling all terminals.
@@ -241,12 +260,11 @@ export function createRuntime(
           ptyId,
           exitCode,
         );
-        runtime.toolService?.onProcessExit(ptyId);
+        toolService.onProcessExit(ptyId);
       });
     }
   });
 
-  const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? "";
   let hookQueueDrain: Promise<void> | null = null;
   const requestHookQueueDrain = () => {
     if (hookQueueDrain) return;
@@ -259,7 +277,7 @@ export function createRuntime(
   const hookQueueTimer = setInterval(requestHookQueueDrain, 5_000);
   hookQueueTimer.unref?.();
   const reconcileTimer = setInterval(() => {
-    runtime.toolService?.reconcile();
+    toolService.reconcile();
   }, 15_000);
   reconcileTimer.unref?.();
   const runtime: HostRuntime = {
@@ -275,14 +293,14 @@ export function createRuntime(
     agentRuns: runService,
     terminalInstances: processInstances,
     toolSessions,
-    toolService: null,
+    terminalExecution,
+    toolService,
     hookQueueTimer,
     reconcileTimer,
     requestTerminalAgentScan,
     stopTerminalAgentScan,
     pendingHookQueueDrain: () => hookQueueDrain,
   };
-  runtime.toolService = new ToolService(runtime);
   try {
     db.addProject(config.launchConfig.workspacePath);
   } catch {
@@ -308,7 +326,7 @@ export async function prepareLiveTerminals(runtime: HostRuntime): Promise<void> 
       }
     },
   );
-  runtime.toolService?.reconcile();
+  runtime.toolService.reconcile();
 }
 
 async function drainHookQueue(

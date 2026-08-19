@@ -51,6 +51,7 @@ import {
   ToolUseNotFound,
   InvalidToolInput,
   InvalidToolCommand,
+  InvalidRpcPayloadError,
   ProjectTargetUnavailable,
   CheckoutResolutionFailed,
   ToolUseConflict,
@@ -63,6 +64,9 @@ import {
   ToolUseUpdated,
   UpdateToolUseContext,
   ConflictError,
+  decodeHostRouteArgs,
+  decodeHostRouteResult,
+  isHostRouteName,
   OperationFailedError,
   FileChangedError,
   NotFoundError,
@@ -80,7 +84,7 @@ import type {
   MarkAllNotificationsReadRequest,
   NotificationPreferences,
 } from "@yaade/shared";
-import { fileUriToPath, pathToFileUri } from "@yaade/shared";
+import { fileUriToPath, isCliProvider, pathToFileUri } from "@yaade/shared";
 import { GitServiceLive, GitServiceTag } from "./effect/git.js";
 import { HostRuntimeTag } from "./effect/tags.js";
 import type { HostRuntime } from "./host-runtime.js";
@@ -97,7 +101,6 @@ export type { HostRuntime } from "./host-runtime.js";
 export { createRuntime, shutdownRuntime } from "./host-runtime.js";
 
 function requiredToolService(runtime: HostRuntime): ToolService {
-  if (!runtime.toolService) throw new Error("ToolService is not initialized");
   return runtime.toolService;
 }
 
@@ -119,6 +122,7 @@ export function mapDispatchError(
 ): HostRpcError {
   if (
     error instanceof ConflictError ||
+    error instanceof InvalidRpcPayloadError ||
     error instanceof FileChangedError ||
     error instanceof NotFoundError ||
     error instanceof PathOutsideRootsError ||
@@ -165,13 +169,34 @@ export function dispatch(
   _signal?: AbortSignal,
 ): Effect.Effect<unknown, HostRpcError, DispatchEnv> {
   return Effect.gen(function* () {
-    if (channel.startsWith("git:")) {
-      return yield* handleGitEffect(channel, args);
+    if (!isHostRouteName(channel)) {
+      return yield* Effect.fail(unknownChannel(channel));
     }
-    const runtime = yield* HostRuntimeTag;
-    return yield* Effect.tryPromise({
-      try: () => dispatchImpl(runtime, channel, args, clientId),
-      catch: (err) => mapDispatchError(channel, err),
+    const decodedArgs = yield* Effect.try({
+      try: () => decodeHostRouteArgs(channel, args),
+      catch: cause =>
+        new InvalidRpcPayloadError({
+          message: `invalid arguments for host route ${channel}`,
+          cause,
+        }),
+    });
+    let value: unknown
+    if (channel.startsWith("git:")) {
+      value = yield* handleGitEffect(channel, decodedArgs)
+    } else {
+      const runtime = yield* HostRuntimeTag
+      value = yield* Effect.tryPromise({
+        try: () => dispatchImpl(runtime, channel, decodedArgs, clientId),
+        catch: err => mapDispatchError(channel, err),
+      })
+    }
+    return yield* Effect.try({
+      try: () => decodeHostRouteResult(channel, value),
+      catch: cause =>
+        new InvalidRpcPayloadError({
+          message: `invalid result for host route ${channel}`,
+          cause,
+        }),
     });
   });
 }
@@ -1037,17 +1062,7 @@ async function handleAgents(
 function parseAgentProvider(
   value: string,
 ): "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null {
-  if (
-    value === "claude" ||
-    value === "codex" ||
-    value === "cursor" ||
-    value === "opencode" ||
-    value === "grok" ||
-    value === "pi"
-  ) {
-    return value;
-  }
-  return null;
+  return isCliProvider(value) ? value : null;
 }
 
 function instanceToAgentRunInfo(
@@ -1124,7 +1139,7 @@ async function createTerminalInstance(
   if (!checkoutPath)
     throw new Error("terminal:createInstance requires checkoutPath");
   return createSharedTerminalInstance(
-    runtime,
+    runtime.terminalExecution,
     {
       projectId: project.id,
       workspaceId: body.workspaceId,
@@ -1354,7 +1369,7 @@ async function handleTerminal(
       }
       const instance = runtime.terminalInstances.get(body.id);
       if (!instance || instance.generation !== body.generation) return instance;
-      return restartTerminalInstance(runtime, instance, [], clientId);
+      return restartTerminalInstance(runtime.terminalExecution, instance, [], clientId);
     }
     case "terminal:closeInstance": {
       const body = args[0] as { id?: string; generation?: number };

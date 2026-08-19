@@ -7,7 +7,7 @@ import {
   MainCheckout,
 } from "@yaade/rpc";
 import type { ToolCheckoutTarget } from "@yaade/workspace";
-import { CdOverlay } from "@yaade/ui";
+import { CdOverlay } from "@yaade/ui/project";
 import {
   Combobox,
   ComboboxEmpty,
@@ -65,16 +65,7 @@ export function ToolContextControls(props: ToolContextControlsProps) {
   const active = props.active !== false;
   const initialContext = useMemo(
     () => (props.use ? contextSelectionForUse(props.use) : props.initialContext),
-    [
-      props.initialContext,
-      props.use?.context.branch,
-      props.use?.context.checkoutKey,
-      props.use?.context.checkoutPath,
-      props.use?.context.project.projectId,
-      props.use?.context.project.projectName,
-      props.use?.context.project.projectPath,
-      props.use?.id,
-    ],
+    [props.initialContext, props.use],
   );
   const [project, setProject] = useState(initialContext.project);
   const [checkout, setCheckout] = useState<CheckoutTarget>(

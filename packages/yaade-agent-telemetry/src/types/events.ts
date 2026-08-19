@@ -1,12 +1,8 @@
 /** Provider-independent ADE telemetry event kinds. */
 
-export type AgentProvider =
-  | "claude"
-  | "codex"
-  | "cursor"
-  | "opencode"
-  | "grok"
-  | "pi"
+import type { CliProvider } from "@yaade/shared"
+
+export type AgentProvider = CliProvider
 
 export type AgentEventKind =
   | "process.started"

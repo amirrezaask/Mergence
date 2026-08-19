@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto"
 import { spawnSync } from "node:child_process"
 import fs from "node:fs"
 import path from "node:path"
-import type { DatabaseSync } from "node:sqlite"
+import type { DatabaseSession } from "../database.js"
+import { cliProviderDescriptor, isCliProvider } from "@yaade/shared"
 import {
   getCliAgentDriver,
   listCliAgentDrivers,
@@ -113,15 +114,6 @@ type AgentRunRow = {
   removed_at?: string | null
 }
 
-const PROVIDER_BINARIES: Record<AgentProvider, string> = {
-  claude: "claude",
-  codex: "codex",
-  cursor: "cursor-agent",
-  opencode: "opencode",
-  grok: "grok",
-  pi: "pi",
-}
-
 const TELEMETRY_GRACE_MS = 10_000
 const PROVIDER_CACHE_MS = 30_000
 
@@ -130,17 +122,7 @@ function nowIso(): string {
 }
 
 function asProvider(value: string): AgentProvider | null {
-  switch (value) {
-    case "claude":
-    case "codex":
-    case "cursor":
-    case "opencode":
-    case "grok":
-    case "pi":
-      return value
-    default:
-      return null
-  }
+  return isCliProvider(value) ? value : null
 }
 
 function asProcessState(value: string): AgentRunProcessState {
@@ -282,7 +264,7 @@ export class AgentRunService {
   private providerCache: { expiresAt: number; values: ProviderAvailability[] } | null = null
 
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseSession,
     private readonly emit: (event: AgentRunEvent) => void,
   ) {
     ensureAgentTelemetrySchema(db)
@@ -575,7 +557,7 @@ export class AgentRunService {
       return this.providerCache.values
     }
     const values = listCliAgentDrivers().map(driver => {
-      const binary = PROVIDER_BINARIES[driver.provider]
+      const binary = cliProviderDescriptor(driver.provider).binary
       const resolved = resolveBinary(binary)
       const detail = resolved ? versionFor(resolved) : { version: null, error: `${binary} is not on PATH` }
       return {
@@ -595,7 +577,7 @@ export class AgentRunService {
     return this.listProviders(true).find(item => item.provider === provider) ?? {
       provider,
       available: false,
-      binary: PROVIDER_BINARIES[provider],
+      binary: cliProviderDescriptor(provider).binary,
       version: null,
       capabilities: getCliAgentDriver(provider).getCapabilities(),
       error: "unknown provider",

@@ -69,7 +69,11 @@ export function PanelFloatingPopover({
   children,
 }: PanelFloatingPopoverProps) {
   const [anchorPoint, setAnchorPoint] = useState<CSSProperties | null>(null)
-  const mergedInset = { ...DEFAULT_INSET[corner], ...inset }
+  const defaultInset = DEFAULT_INSET[corner]
+  const insetTop = inset?.top ?? defaultInset.top
+  const insetRight = inset?.right ?? defaultInset.right
+  const insetBottom = inset?.bottom ?? defaultInset.bottom
+  const insetLeft = inset?.left ?? defaultInset.left
   const placement = popoverPlacement(corner)
 
   useLayoutEffect(() => {
@@ -80,12 +84,27 @@ export function PanelFloatingPopover({
     const measure = () => {
       const leaf = document.querySelector(`[data-yaade-panel-leaf="${panelId.id}"]`)
       if (!leaf) return
-      setAnchorPoint(anchorStyle(corner, leaf.getBoundingClientRect(), mergedInset))
+      setAnchorPoint(
+        anchorStyle(corner, leaf.getBoundingClientRect(), {
+          top: insetTop,
+          right: insetRight,
+          bottom: insetBottom,
+          left: insetLeft,
+        }),
+      )
     }
     measure()
     window.addEventListener("resize", measure)
     return () => window.removeEventListener("resize", measure)
-  }, [open, panelId.id, corner, mergedInset.top, mergedInset.right, mergedInset.bottom, mergedInset.left])
+  }, [
+    corner,
+    insetBottom,
+    insetLeft,
+    insetRight,
+    insetTop,
+    open,
+    panelId.id,
+  ])
 
   if (!open || !anchorPoint) return null
 

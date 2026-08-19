@@ -189,7 +189,7 @@ export function CdOverlay({
       window.clearTimeout(id)
       if (spinnerId !== undefined) window.clearTimeout(spinnerId)
     }
-  }, [open, completionCtx?.parentPath, showWorkspaceRoots, showFiles])
+  }, [completionCtx, open, showFiles, showWorkspaceRoots])
 
   const workspaceRootItems = useMemo(() => {
     if (!showWorkspaceRoots || !workspaceFolders) return []

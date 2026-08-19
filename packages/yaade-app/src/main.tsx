@@ -2,6 +2,7 @@ import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import "@yaade/ui/styles.css"
 import { AppRoot } from "./AppRoot.js"
+import { HostPortsProvider } from "./host-ports.js"
 import { AppErrorBoundary } from "./AppErrorBoundary.js"
 import { createYaadeApi, createWebTransport } from "@yaade/host-client"
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
@@ -13,16 +14,19 @@ startupWindow.__yaadeStartupBootstrapAt ??= performance.now()
 applyInitialAppearance()
 
 const transport = createWebTransport()
-/** Promise shim over Effect HostClient — kept for Electron / legacy call sites. */
-window.yaade = createYaadeApi(transport)
+/** Composition adapter kept only for the legacy browser-global seam. */
+const hostPorts = createYaadeApi(transport)
+window.yaade = hostPorts
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <AppErrorBoundary>
-      <SystemSignalsProvider>
-        <AppRoot />
-      </SystemSignalsProvider>
-    </AppErrorBoundary>
+    <HostPortsProvider ports={hostPorts}>
+      <AppErrorBoundary>
+        <SystemSignalsProvider>
+          <AppRoot />
+        </SystemSignalsProvider>
+      </AppErrorBoundary>
+    </HostPortsProvider>
   </StrictMode>,
 )
 

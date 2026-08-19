@@ -30,7 +30,7 @@ function invokeTerminalHot(
   channel: string,
   ...args: unknown[]
 ): Promise<void> {
-  const realtime = transport.invokeRealtime?.<unknown>(channel, ...args);
+  const realtime = transport.invokeRealtime?.(channel, ...args);
   if (realtime) return realtime.then(() => undefined);
   return transport.invoke(channel, ...args).then(() => undefined);
 }
@@ -101,17 +101,14 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     id: string,
     afterSequence?: number,
   ): Promise<TerminalAttachResult | null> => {
-    const args =
-      afterSequence === undefined ? [id] : [id, afterSequence];
-    const realtime = transport.invokeRealtime?.<TerminalAttachResult | null>(
-      "terminal:attach",
-      ...args,
-    );
+    const realtime =
+      afterSequence === undefined
+        ? transport.invokeRealtime?.("terminal:attach", id)
+        : transport.invokeRealtime?.("terminal:attach", id, afterSequence);
     if (realtime) return realtime;
-    return transport.invoke<TerminalAttachResult | null>(
-      "terminal:attach",
-      ...args,
-    );
+    return afterSequence === undefined
+      ? transport.invoke("terminal:attach", id)
+      : transport.invoke("terminal:attach", id, afterSequence);
   };
 
   const resyncTerminal = async (id: string, generation: number) => {
@@ -379,7 +376,9 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       discard: (rootUri, paths) =>
         transport.invoke("git:discard", rootUri, paths),
       commit: (rootUri, summary, body) =>
-        transport.invoke("git:commit", rootUri, summary, body),
+        body === undefined
+          ? transport.invoke("git:commit", rootUri, summary)
+          : transport.invoke("git:commit", rootUri, summary, body),
       checkout: (rootUri, branch) =>
         transport.invoke("git:checkout", rootUri, branch),
       fetch: (rootUri) => transport.invoke("git:fetch", rootUri),
@@ -387,8 +386,18 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       push: (rootUri) => transport.invoke("git:push", rootUri),
       history: (rootUri, limit) =>
         transport.invoke("git:history", rootUri, limit),
-      historyPage: (rootUri, cursor, pageSize) =>
-        transport.invoke("git:historyPage", rootUri, cursor, pageSize),
+      historyPage: (rootUri, cursor, pageSize) => {
+        if (cursor === undefined) {
+          if (pageSize === undefined) {
+            return transport.invoke("git:historyPage", rootUri)
+          }
+          return transport.invoke("git:historyPage", rootUri, null, pageSize)
+        }
+        if (pageSize === undefined) {
+          return transport.invoke("git:historyPage", rootUri, cursor)
+        }
+        return transport.invoke("git:historyPage", rootUri, cursor, pageSize)
+      },
       numstat: (rootUri) => transport.invoke("git:numstat", rootUri),
       commitFiles: (rootUri, hash) =>
         transport.invoke("git:commitFiles", rootUri, hash),
@@ -421,9 +430,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       markAllRead: (req) =>
         transport.invoke("notifications:markAllRead", req ?? {}),
       unreadBySession: () =>
-        transport.invoke<Record<string, number>>(
-          "notifications:unreadBySession",
-        ),
+        transport.invoke("notifications:unreadBySession"),
       markSessionUnread: (sessionId) =>
         transport.invoke("notifications:markSessionUnread", sessionId),
       getPreferences: () => transport.invoke("notifications:getPreferences"),
@@ -476,10 +483,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
           projectId,
         }),
       addProject: (rootPath) =>
-        transport.invoke<ProjectTarget>(
-          "tools:addProject",
-          rootPath,
-        ),
+        transport.invoke("tools:addProject", rootPath),
       onEvent: (callback) => {
         toolEventListeners.add(callback);
         return () => toolEventListeners.delete(callback);
@@ -512,8 +516,13 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       },
     },
     terminal: {
-      create: (cwdUri, launch) =>
-        transport.invoke("terminal:create", cwdUri, launch),
+      create: async (cwdUri, launch) => {
+        const result = await transport.invoke("terminal:create", cwdUri, launch);
+        return {
+          id: result.id,
+          ...(result.title ? { title: result.title } : {}),
+        };
+      },
       attach: async (id) => {
         const result = await attachTerminal(id);
         if (result) {
@@ -559,9 +568,9 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         invokeTerminalHot(transport, "terminal:ack", id, charCount),
       markReplayReady: (id) =>
         invokeTerminalHot(transport, "terminal:ready", id),
-      getCwd: (id) => transport.invoke<string | null>("terminal:getCwd", id),
+      getCwd: (id) => transport.invoke("terminal:getCwd", id),
       getForegroundProcess: (id) =>
-        transport.invoke<string | null>("terminal:getForegroundProcess", id),
+        transport.invoke("terminal:getForegroundProcess", id),
       onData: (id, callback) => {
         let set = terminalDataListeners.get(id);
         if (!set) {

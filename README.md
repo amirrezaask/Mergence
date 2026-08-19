@@ -83,6 +83,7 @@ Pass a workspace explicitly with `--workspace /path/to/project`. Desktop builds 
 pnpm install
 pnpm dev
 pnpm -r typecheck
+pnpm lint
 pnpm test
 pnpm test:e2e
 pnpm build

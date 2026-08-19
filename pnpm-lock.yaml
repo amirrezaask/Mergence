@@ -322,6 +322,12 @@ importers:
 
   packages/yaade-rpc:
     dependencies:
+      '@yaade/agent-telemetry':
+        specifier: workspace:*
+        version: link:../yaade-agent-telemetry
+      '@yaade/shared':
+        specifier: workspace:*
+        version: link:../yaade-shared
       effect:
         specifier: ^3.22.1
         version: 3.22.1

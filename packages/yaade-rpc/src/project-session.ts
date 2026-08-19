@@ -4,6 +4,9 @@ import {
   WorkspaceSessionEditorFile,
   WorkspaceSessionLayout,
   WorkspaceSessionLeaf,
+  asNonEmptyString,
+  parseSessionLayout,
+  parseSessionLeaf,
   type WorkspaceSessionEditorFile as WorkspaceSessionEditorFileType,
   type WorkspaceSessionLayout as WorkspaceSessionLayoutType,
   type WorkspaceSessionLeaf as WorkspaceSessionLeafType,
@@ -76,61 +79,6 @@ export const ProjectSession = Schema.Struct({
 })
 export type ProjectSession = Schema.Schema.Type<typeof ProjectSession>
 
-function asNonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim().length > 0 ? value : null
-}
-
-function parseLeaf(raw: unknown): ProjectSessionLeaf | null {
-  if (!raw || typeof raw !== "object") return null
-  const item = raw as Record<string, unknown>
-  const ptyTabId = asNonEmptyString(item.ptyTabId)
-  const cwdRootUri = asNonEmptyString(item.cwdRootUri)
-  if (!ptyTabId || !cwdRootUri) return null
-  let launchArgs: string[] | undefined
-  if (Array.isArray(item.launchArgs)) {
-    const filtered = item.launchArgs.filter(
-      (arg): arg is string => typeof arg === "string",
-    )
-    if (filtered.length > 0) launchArgs = filtered
-  }
-  return {
-    ptyTabId,
-    cwdRootUri,
-    ...(asNonEmptyString(item.ptyId) ? { ptyId: asNonEmptyString(item.ptyId)! } : {}),
-    ...(asNonEmptyString(item.liveCwdUri)
-      ? { liveCwdUri: asNonEmptyString(item.liveCwdUri)! }
-      : {}),
-    ...(asNonEmptyString(item.launchCommand)
-      ? { launchCommand: asNonEmptyString(item.launchCommand)! }
-      : {}),
-    ...(launchArgs ? { launchArgs } : {}),
-    ...(asNonEmptyString(item.label) ? { label: asNonEmptyString(item.label)! } : {}),
-    ...(asNonEmptyString(item.agentProvider)
-      ? { agentProvider: asNonEmptyString(item.agentProvider)! }
-      : {}),
-    ...(asNonEmptyString(item.agentTitle)
-      ? { agentTitle: asNonEmptyString(item.agentTitle)! }
-      : {}),
-  }
-}
-
-function parseLayout(raw: unknown): ProjectSessionLayout | null {
-  if (!raw || typeof raw !== "object") return null
-  const item = raw as Record<string, unknown>
-  if (item.tree == null || typeof item.tree !== "object") return null
-  const focusedPaneId =
-    typeof item.focusedPaneId === "number" && Number.isFinite(item.focusedPaneId)
-      ? item.focusedPaneId
-      : null
-  const zoomedPaneId =
-    typeof item.zoomedPaneId === "string" ? item.zoomedPaneId : null
-  return {
-    tree: item.tree,
-    focusedPaneId,
-    zoomedPaneId,
-  }
-}
-
 /**
  * Validate + normalize a project-session layout payload.
  * Returns `null` when structurally invalid.
@@ -141,13 +89,13 @@ export function tryDecodeProjectSessionPayload(
   if (!raw || typeof raw !== "object") return null
   const body = raw as Record<string, unknown>
   if (body.version !== 1 && body.version !== 2) return null
-  const layout = parseLayout(body.layout)
+  const layout = parseSessionLayout(body.layout)
   if (!layout) return null
   if (!Array.isArray(body.sessions)) return null
   const seen = new Set<string>()
   const sessions: ProjectSessionLeaf[] = []
   for (const item of body.sessions) {
-    const leaf = parseLeaf(item)
+    const leaf = parseSessionLeaf(item)
     if (!leaf || seen.has(leaf.ptyTabId)) continue
     seen.add(leaf.ptyTabId)
     sessions.push(leaf)

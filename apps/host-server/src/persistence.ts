@@ -1,7 +1,9 @@
-import { DatabaseSync } from "node:sqlite"
 import fs from "node:fs"
 import path from "node:path"
 import { createHash, randomUUID } from "node:crypto"
+import { DatabaseOwner, type DatabaseSession } from "./database.js"
+import { ensureAgentTelemetrySchema } from "./agents/schema.js"
+import { ensureNotificationSchema } from "./notifications/schema.js"
 import {
   EMPTY_SESSION_ROSTER,
   MAX_EDITOR_RECOVERY_BUFFER_BYTES,
@@ -194,8 +196,8 @@ export function parseSessionRosterBody(raw: unknown): SessionRoster | null {
 }
 
 export class ProjectDatabase {
-  readonly db: DatabaseSync
-  private closed = false
+  private readonly owner: DatabaseOwner
+  private readonly db: DatabaseSession
   private readonly maxEditorRecoveryBufferBytes: number
   private readonly maxEditorRecoverySessionBytes: number
 
@@ -212,25 +214,8 @@ export class ProjectDatabase {
     ) {
       throw new Error("invalid editor recovery limits")
     }
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true })
-    this.db = new DatabaseSync(dbPath)
-    this.db.exec(`
-      PRAGMA journal_mode=WAL;
-      PRAGMA foreign_keys=ON;
-      PRAGMA busy_timeout=5000;
-    `);
-    const integrity = this.db
-      .prepare("PRAGMA quick_check")
-      .get() as { quick_check?: string } | string | undefined;
-    const integrityText =
-      typeof integrity === "string"
-        ? integrity
-        : integrity && typeof integrity === "object"
-          ? String(Object.values(integrity)[0] ?? "")
-          : "";
-    if (integrityText && integrityText !== "ok") {
-      throw new Error(`sqlite integrity check failed: ${integrityText}`);
-    }
+    this.owner = new DatabaseOwner(dbPath)
+    this.db = this.owner.session
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS schema_migrations(version INTEGER PRIMARY KEY);
       INSERT OR IGNORE INTO schema_migrations(version) VALUES(1);
@@ -256,6 +241,16 @@ export class ProjectDatabase {
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
     `)
+    this.owner.migrate([
+      {
+        id: "notifications/schema-v1",
+        apply: session => ensureNotificationSchema(session),
+      },
+      {
+        id: "agents/schema-v1",
+        apply: session => ensureAgentTelemetrySchema(session),
+      },
+    ])
     this.ensureSessionRosterSchema()
     this.ensureWorkspaceSessionSchema()
     this.ensureProjectSessionSchema()
@@ -735,7 +730,8 @@ export class ProjectDatabase {
     `)
   }
 
-  raw(): DatabaseSync {
+  /** Domain repositories receive this restricted session, not the owner. */
+  session(): DatabaseSession {
     return this.db
   }
 
@@ -1741,13 +1737,7 @@ export class ProjectDatabase {
   }
 
   close(): void {
-    if (this.closed) return
-    this.closed = true
-    try {
-      this.db.close()
-    } catch {
-      /* already closed */
-    }
+    this.owner.close()
   }
 
   private canonicalizeCwdUri(cwdRootUri: string): string {

@@ -1,11 +1,18 @@
-import { Context, Effect, Layer } from "effect"
+import { Context, Effect, Layer, Schema } from "effect"
 import {
   CheckoutResolutionFailed,
   ConflictError,
   decodeHostRpcRequest,
+  decodeHostRouteArgs,
+  decodeHostRouteResult,
+  isHostRouteName,
+  type HostRouteArgs,
+  type HostRouteName,
+  type HostRouteResult,
   FileChangedError,
   HostDisconnectedError,
   HostRpcRequest,
+  HostRpcResponse,
   InvalidRpcPayloadError,
   InvalidToolCommand,
   InvalidToolInput,
@@ -103,16 +110,39 @@ function mapFetchError(
   return new OperationFailedError({ message })
 }
 
-/** Effect invoke over fetch + Schema request envelope. */
-export function invokeHostRpc(
+/** Effect invoke over fetch + the canonical route registry. */
+export function invokeHostRpc<Name extends HostRouteName>(
+  clientId: string,
+  channel: Name,
+  args: HostRouteArgs<Name> | readonly unknown[],
+  options?: { signal?: AbortSignal },
+): Effect.Effect<HostRouteResult<Name>, HostRpcError> {
+  return invokeHostRpcUnchecked(clientId, channel, args, options).pipe(
+    Effect.map(value => decodeHostRouteResult(channel, value)),
+  )
+}
+
+/** Internal adapter for legacy callers whose channel is not narrowed yet. */
+export function invokeHostRpcUnchecked(
   clientId: string,
   channel: string,
-  args: unknown[],
+  args: readonly unknown[],
   options?: { signal?: AbortSignal },
 ): Effect.Effect<unknown, HostRpcError> {
   return Effect.gen(function* () {
+    const routeArgs = yield* Effect.try({
+      try: () => {
+        if (!isHostRouteName(channel)) throw new Error(`unknown host channel: ${channel}`)
+        return decodeHostRouteArgs(channel, [...args])
+      },
+      catch: cause =>
+        new InvalidRpcPayloadError({
+          message: "invalid host RPC arguments",
+          cause,
+        }),
+    })
     const body = yield* Effect.mapError(
-      decodeHostRpcRequest({ channel, args, clientId }),
+      decodeHostRpcRequest({ channel, args: routeArgs, clientId }),
       cause =>
         new InvalidRpcPayloadError({
           message: "invalid host RPC request",
@@ -151,38 +181,39 @@ export function invokeHostRpc(
         })
       },
     })
-    const payload = (yield* Effect.tryPromise({
-      try: () => response.json() as Promise<{
-        value?: unknown
-        error?: {
-          message?: string
-          code?: string
-          details?: Record<string, unknown>
-        }
-      }>,
+    const payload = yield* Effect.tryPromise({
+      try: async () =>
+        Schema.decodeUnknownPromise(HostRpcResponse)(await response.json()),
       catch: err =>
         new OperationFailedError({
           message: err instanceof Error ? err.message : String(err),
           cause: err,
         }),
-    })) as {
-      value?: unknown
-      error?: {
-        message?: string
-        code?: string
-        details?: Record<string, unknown>
-      }
-    }
+    })
     if (!response.ok) {
+      const error = "error" in payload ? payload.error : undefined
       return yield* Effect.fail(
         mapFetchError(
-          payload.error?.message ?? `Jet API request failed (${response.status})`,
-          payload.error?.code,
-          payload.error?.details,
+          error?.message ?? `Jet API request failed (${response.status})`,
+          error?.code,
+          error?.details,
         ),
       )
     }
-    return payload.value
+    return yield* Effect.try({
+      try: () => {
+        if (!isHostRouteName(channel)) throw new Error(`unknown host channel: ${channel}`)
+        return decodeHostRouteResult(
+          channel,
+          "value" in payload ? payload.value : undefined,
+        )
+      },
+      catch: cause =>
+        new InvalidRpcPayloadError({
+          message: "invalid host RPC result",
+          cause,
+        }),
+    })
   })
 }
 
@@ -195,7 +226,7 @@ export function HostClientLive(transport: YaadeHostTransport): Layer.Layer<HostC
     invoke: (channel, ...args) =>
       // Prefer Schema path; fall back to transport for non-browser tests.
       typeof fetch === "function"
-        ? invokeHostRpc(clientId, channel, args)
+        ? invokeHostRpcUnchecked(clientId, channel, args)
         : Effect.tryPromise({
             try: () => transport.invoke(channel, ...args),
             catch: err =>

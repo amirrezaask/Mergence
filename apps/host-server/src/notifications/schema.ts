@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from "node:crypto"
-import type { DatabaseSync } from "node:sqlite"
+import type { DatabaseSession } from "../database.js"
 import type {
   AgentProvider,
   AppNotification,
@@ -39,7 +39,7 @@ export type NotificationRow = {
   content_hash: string | null
 }
 
-export function ensureNotificationSchema(db: DatabaseSync): void {
+export function ensureNotificationSchema(db: DatabaseSession): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_notifications (
       id TEXT PRIMARY KEY,
@@ -121,11 +121,6 @@ export function ensureNotificationSchema(db: DatabaseSync): void {
        SET run_id=session_id
      WHERE run_id IS NULL AND session_id LIKE 'run-%';
   `)
-  try {
-    db.prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(2)").run()
-  } catch {
-    /* migrations table may not exist in unit tests that use a bare DB */
-  }
 }
 
 export function rowToNotification(row: NotificationRow): AppNotification {

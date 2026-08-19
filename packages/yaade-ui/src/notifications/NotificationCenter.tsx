@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import type { AppNotification } from "@yaade/shared"
 import { Bell, CheckCheck, LoaderCircle } from "lucide-react"
@@ -59,10 +59,13 @@ export function NotificationCenter(props: NotificationCenterProps) {
   const panelRef = useRef<HTMLElement>(null)
   const [localSelected, setLocalSelected] = useState<string | null>(null)
   const activeSelected = selectedId ?? localSelected
-  const setSelected = (id: string | null) => {
-    onSelectedIdChange?.(id)
-    setLocalSelected(id)
-  }
+  const setSelected = useCallback(
+    (id: string | null) => {
+      onSelectedIdChange?.(id)
+      setLocalSelected(id)
+    },
+    [onSelectedIdChange],
+  )
 
   const groups = useMemo(() => groupNotificationsByTime(items), [items])
   const flatIds = useMemo(() => items.map(i => i.id), [items])
@@ -71,8 +74,7 @@ export function NotificationCenter(props: NotificationCenterProps) {
     if (!open) return
     if (activeSelected && flatIds.includes(activeSelected)) return
     setSelected(flatIds[0] ?? null)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, flatIds.join("|")])
+  }, [activeSelected, flatIds, open, setSelected])
 
   useEffect(() => {
     if (!open) return
@@ -153,6 +155,7 @@ export function NotificationCenter(props: NotificationCenterProps) {
     onMarkRead,
     onMarkUnread,
     onDismiss,
+    setSelected,
   ])
 
   if (!open || typeof document === "undefined") return null

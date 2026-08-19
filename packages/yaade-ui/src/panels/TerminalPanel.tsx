@@ -284,6 +284,16 @@ export function TerminalPanel({
   const [terminalError, setTerminalError] = useState<string | null>(null)
   const themeRef = useRef(theme)
   themeRef.current = theme
+  const statusRef = useRef(status)
+  statusRef.current = status
+  const exitCodeRef = useRef(exitCode)
+  exitCodeRef.current = exitCode
+  const focusedRef = useRef(focused)
+  focusedRef.current = focused
+  const isActiveRef = useRef(isActive)
+  isActiveRef.current = isActive
+  const visibleRef = useRef(visible)
+  visibleRef.current = visible
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
   const onPtyIdRef = useRef(onPtyId)
@@ -350,7 +360,7 @@ export function TerminalPanel({
       !initialOutput &&
       !readOnly &&
       !attachOnly &&
-      !((status === "failed" || status === "exited") && !launchCommandAtStart)
+      !((statusRef.current === "failed" || statusRef.current === "exited") && !launchCommandAtStart)
     const precreatedPty = shouldPrecreatePty
       ? Promise.resolve().then(() => terminalApi.create(cwdRootUri, launchForSize(80, 24)))
       : null
@@ -490,7 +500,7 @@ export function TerminalPanel({
       session.wantedCols = surface.cols
       session.wantedRows = surface.rows
       resizePty(session)
-      if (focused && isActive) focusTerminalInput(tabId)
+      if (focusedRef.current && isActiveRef.current) focusTerminalInput(tabId)
     }
 
     const createFreshPty = (prepared: typeof precreatedPty = null): void => {
@@ -608,17 +618,17 @@ export function TerminalPanel({
         shouldWaitForExistingPty({
           attachOnly,
           existingPtyId,
-          status,
+          status: statusRef.current,
         })
       ) {
         return
       }
       if (
         attachOnly ||
-        ((status === "failed" || status === "exited") && !launchCommandAtStart)
+        ((statusRef.current === "failed" || statusRef.current === "exited") && !launchCommandAtStart)
       ) {
-        setDisplayStatus(status === "failed" ? "failed" : "exited")
-        setDisplayExitCode(exitCode)
+        setDisplayStatus(statusRef.current === "failed" ? "failed" : "exited")
+        setDisplayExitCode(exitCodeRef.current)
         return
       }
       createFreshPty(prepared)
@@ -636,7 +646,7 @@ export function TerminalPanel({
         surface = await GhosttyTerminalSurface.create(container, {
           theme: terminalTheme(themeRef.current),
           font: { family: readTerminalFontFamily(), size: readRootFontSize() },
-          visible,
+          visible: visibleRef.current,
           onData: data => {
             onInputRef.current?.(tabId, data)
             enqueueTerminalInput(data)
@@ -772,7 +782,7 @@ export function TerminalPanel({
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
-    surface.setTheme(terminalTheme(theme))
+    surface.setTheme(terminalTheme(themeRef.current))
   }, [theme.id])
 
   useEffect(() => {
@@ -786,7 +796,7 @@ export function TerminalPanel({
       if (surfaceRef.current === surface) focusTerminalInput(tabId)
     })
     return () => cancelAnimationFrame(focusRaf)
-  }, [focused, isActive, tabId, theme.id])
+  }, [focused, isActive, tabId])
 
   if (!window.yaade?.terminal) {
     return (

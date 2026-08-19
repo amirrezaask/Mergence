@@ -264,7 +264,7 @@ export function Lister<T>({
     if (!treeState) return
     if (syncExpanded) treeState.setExpanded(initiallyExpanded ?? [])
     for (const id of initiallyExpanded ?? []) void treeState.ensureChildren(id)
-  }, [initiallyExpanded?.join("|"), treeState, syncExpanded])
+  }, [initiallyExpanded, syncExpanded, treeState])
 
   const treeRows: FlatEntry<T>[] = useMemo(() => {
     void treeRev

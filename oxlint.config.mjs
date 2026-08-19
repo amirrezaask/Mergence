@@ -1,4 +1,5 @@
 export default {
+  plugins: ["react", "unicorn", "typescript", "oxc"],
   ignorePatterns: [
     ".agent/**",
     ".agents/**",
@@ -24,6 +25,13 @@ export default {
     "eslint/no-unused-vars": "error",
     "react/jsx-no-constructed-context-values": "error",
     "react/no-object-type-as-default-prop": "error",
+    // Render callbacks receive row data by design; still reject component
+    // definitions created during render.
+    "react/no-unstable-nested-components": [
+      "error",
+      { allowAsProps: true },
+    ],
+    "react/exhaustive-deps": "error",
     "unicorn/prefer-set-has": "error",
     "anti-slop/no-chained-type-assertions": "error",
     "anti-slop/no-conditional-empty-object-spread": "error",

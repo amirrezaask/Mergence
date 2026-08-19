@@ -1,7 +1,7 @@
-import type { DatabaseSync } from "node:sqlite"
+import type { DatabaseSession } from "../database.js"
 
 /** Migration version 5 — ADE agent events + session snapshots. */
-export function ensureAgentTelemetrySchema(db: DatabaseSync): void {
+export function ensureAgentTelemetrySchema(db: DatabaseSession): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_events (
       id TEXT PRIMARY KEY,
@@ -91,9 +91,4 @@ export function ensureAgentTelemetrySchema(db: DatabaseSync): void {
             revision=revision+1
       WHERE process_state IN ('reserved','starting','running')`,
   ).run(new Date().toISOString())
-  try {
-    db.prepare("INSERT OR IGNORE INTO schema_migrations(version) VALUES(11)").run()
-  } catch {
-    /* migrations table may already have the row */
-  }
 }

@@ -29,22 +29,6 @@ async function waitFor(check: () => boolean, timeout = 5_000): Promise<void> {
   }
 }
 
-function makeFakeAgentBinDir(): string {
-  const binDir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-fake-agents-"));
-  const script = `#!/bin/sh
-if [ "$1" = "--version" ]; then
-  echo "fake-agent 1.0"
-  exit 0
-fi
-exit 0
-`;
-  for (const binary of ["claude", "codex"]) {
-    const file = path.join(binDir, binary);
-    fs.writeFileSync(file, script, { mode: 0o755 });
-  }
-  return binDir;
-}
-
 async function hostWithProject(extraArgs: string[] = []) {
   const parent = fs.mkdtempSync(
     path.join(os.tmpdir(), "yaade-process-driver-"),
@@ -85,12 +69,12 @@ describe("process Tool driver", () => {
         launchRequestId: "use-driver-test:1",
       };
       const first = await createTerminalInstance(
-        host.runtime,
+        host.runtime.terminalExecution,
         request,
         "process-test",
       );
       const duplicate = await createTerminalInstance(
-        host.runtime,
+        host.runtime.terminalExecution,
         request,
         "process-test",
       );
@@ -103,7 +87,7 @@ describe("process Tool driver", () => {
       );
 
       const restarted = await restartTerminalInstance(
-        host.runtime,
+        host.runtime.terminalExecution,
         first,
         [],
         "process-test",

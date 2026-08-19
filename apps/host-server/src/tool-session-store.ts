@@ -19,7 +19,8 @@ import {
   type ToolUseStatus,
   ToolKind,
 } from "@yaade/rpc";
-import type { DatabaseSync, SQLInputValue } from "node:sqlite";
+import type { SQLInputValue } from "node:sqlite";
+import type { DatabaseSession } from "./database.js";
 
 export class ToolSessionStorageError extends Data.TaggedError(
   "ToolSessionStorageError",
@@ -174,12 +175,12 @@ export type CreateToolUseRecord = {
 
 /**
  * Transactional owner for the v1 Session/ToolUse tables.
- * The class deliberately accepts DatabaseSync rather than ProjectDatabase so the
- * migration and store can be tested against a fresh SQLite database.
+ * The class accepts the domain DatabaseSession rather than the database owner;
+ * tests can still provide a fresh native SQLite connection through that port.
  */
 export class ToolSessionStore {
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseSession,
     private readonly machine = "default",
   ) {
     this.ensureSchema();

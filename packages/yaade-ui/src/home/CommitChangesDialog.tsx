@@ -65,6 +65,8 @@ export type CommitChangesDialogProps = {
   fontSize?: number
   /** Optional row metadata when already known from a history list. */
   commit?: Pick<GitCommit, "shortHash" | "author" | "authoredAt" | "subject">
+  /** Shared per-repository mutation seam owned by the parent review session. */
+  reviewController?: GitReviewController
 }
 
 type DiffContents = {
@@ -101,6 +103,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     theme,
     fontSize = 13,
     commit,
+    reviewController: parentReviewController,
   } = props
   const api = window.yaade?.git
   const fsApi = window.yaade?.fs
@@ -120,10 +123,11 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
   const [compactShowDiff, setCompactShowDiff] = useState(false)
   const detailRequest = useRef(0)
   const diffRequest = useRef(0)
-  const reviewController = useMemo(
+  const localReviewController = useMemo(
     () => (api ? new GitReviewController(api, rootUri) : null),
     [api, rootUri],
   )
+  const reviewController = parentReviewController ?? localReviewController
 
   useEffect(() => {
     const query = window.matchMedia("(max-width: 767px)")
@@ -300,9 +304,7 @@ export function CommitChangesDialog(props: CommitChangesDialogProps) {
     api,
     rootUri,
     hash,
-    selectedFile?.path,
-    selectedFile?.status,
-    selectedFile?.originalPath,
+    selectedFile,
     fsApi,
     workingTree,
     workingTreeEntries,

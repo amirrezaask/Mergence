@@ -1,4 +1,4 @@
-import type { DatabaseSync } from "node:sqlite"
+import type { DatabaseSession } from "../database.js"
 import type {
   AgentProvider,
   AppNotification,
@@ -107,7 +107,7 @@ export class NotificationService {
   private retentionScheduled = false
 
   constructor(
-    private readonly db: DatabaseSync,
+    private readonly db: DatabaseSession,
     emit?: EmitFn,
   ) {
     ensureNotificationSchema(db)

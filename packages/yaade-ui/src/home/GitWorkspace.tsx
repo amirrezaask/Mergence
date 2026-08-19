@@ -201,7 +201,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   const narrow = mobile || (containerWidth > 0 && containerWidth < 560)
 
   const loadHistoryPage = useCallback(async (cursor: string | null, reset = false) => {
-    if (!rootUri || !api) return
+    if (!rootUri || !reviewController) return
     const request = ++historyRequest.current
     setHistoryLoading(true)
     if (reset) {
@@ -210,24 +210,25 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       setHistoryError(null)
     }
     try {
-      const page = await api.historyPage(rootUri, cursor ?? undefined, 100)
+      await reviewController.loadHistoryPage(cursor, reset)
       if (request !== historyRequest.current) return
-      if (reset && page.commits[0] && pollFingerprint.current) {
+      const snapshot = reviewController.getSnapshot()
+      if (reset && snapshot.history[0] && pollFingerprint.current) {
         const parts = pollFingerprint.current.split("\0")
         if (parts.length >= 6) {
-          parts[4] = page.commits[0].hash
+          parts[4] = snapshot.history[0].hash
           pollFingerprint.current = parts.join("\0")
         }
       }
-      setHistory(current => reset ? page.commits : appendHistoryCommits(current, page.commits))
-      setHistoryCursor(page.nextCursor)
-      setHistoryError(null)
+      setHistory([...snapshot.history])
+      setHistoryCursor(snapshot.historyCursor)
+      setHistoryError(snapshot.error)
     } catch (error) {
       if (request === historyRequest.current) setHistoryError(errorMessage(error))
     } finally {
       if (request === historyRequest.current) setHistoryLoading(false)
     }
-  }, [api, rootUri])
+  }, [reviewController, rootUri])
 
   useEffect(() => {
     // Invalidate a late page from the previously selected worktree before its
@@ -239,7 +240,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
   }, [rootUri])
 
   const refresh = useCallback(async () => {
-    if (!rootUri || !api) {
+    if (!rootUri || !reviewController) {
       setIsRepo(false)
       setHistory([])
       setHistoryCursor(null)
@@ -250,37 +251,34 @@ export function GitWorkspace(props: GitWorkspaceProps) {
     refreshInFlight.current = true
     setLoading(true)
     try {
-      const repository = await api.isRepo(rootUri)
-      setIsRepo(repository)
-      if (!repository) return
-      const [nextEntries, nextSummary, nextBranches, nextNumstat] = await Promise.all([
-        api.status(rootUri),
-        api.summary(rootUri),
-        api.branches(rootUri),
-        api.numstat(rootUri).catch(() => [] as GitNumstatEntry[]),
-      ])
-      setEntries(nextEntries)
-      setSummary(nextSummary)
-      setBranches(nextBranches)
-      setNumstat(Object.fromEntries(nextNumstat.map(stat => [stat.path, stat])))
+      await reviewController.refresh()
+      const snapshot = reviewController.getSnapshot()
+      setIsRepo(snapshot.isRepo)
+      setEntries([...snapshot.entries])
+      setSummary(snapshot.summary)
+      setBranches([...snapshot.branches])
+      setNumstat(Object.fromEntries(snapshot.numstat))
+      setHistory([...snapshot.history])
+      setHistoryCursor(snapshot.historyCursor)
+      setHistoryError(snapshot.error)
+      if (!snapshot.isRepo) return
       pollFingerprint.current = [
-        nextSummary.branch ?? "",
-        nextSummary.upstream ?? "",
-        String(nextSummary.ahead),
-        String(nextSummary.behind),
-        "", // tip filled after history page; force tip reload below
-        nextEntries
+        snapshot.summary.branch ?? "",
+        snapshot.summary.upstream ?? "",
+        String(snapshot.summary.ahead),
+        String(snapshot.summary.behind),
+        snapshot.history[0]?.hash ?? "",
+        snapshot.entries
           .map(
             entry =>
               `${entry.path}:${entry.status}:${entry.indexStatus ?? ""}:${entry.worktreeStatus ?? ""}:${entry.staged ? 1 : 0}:${entry.unstaged ? 1 : 0}`,
           )
           .join("|"),
       ].join("\0")
-      void loadHistoryPage(null, true)
-      onBranchChange?.(nextSummary.branch)
+      onBranchChange?.(snapshot.summary.branch)
       setSelected(current => {
         if (current) {
-          const sameFile = nextEntries.find(entry => entry.path === current.path)
+          const sameFile = snapshot.entries.find(entry => entry.path === current.path)
           if (sameFile) {
             if (current.staged && sameFile.staged) return current
             if (!current.staged && sameFile.unstaged) return current
@@ -289,7 +287,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
           }
         }
         if (mobile) return null
-        const first = nextEntries.find(entry => entry.unstaged) ?? nextEntries.find(entry => entry.staged)
+        const first = snapshot.entries.find(entry => entry.unstaged) ?? snapshot.entries.find(entry => entry.staged)
         return first ? { path: first.path, staged: !first.unstaged && first.staged } : null
       })
     } catch (error) {
@@ -301,7 +299,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
       refreshInFlight.current = false
       setLoading(false)
     }
-  }, [api, loadHistoryPage, mobile, onBranchChange, rootUri])
+  }, [mobile, onBranchChange, reviewController, rootUri])
 
   useEffect(() => {
     void refresh()
@@ -753,6 +751,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
             theme={theme}
             fontSize={fontSize}
             commit={dialogCommit}
+            reviewController={reviewController ?? undefined}
           />
         </Suspense>
       ) : null}
@@ -771,6 +770,7 @@ export function GitWorkspace(props: GitWorkspaceProps) {
               setWorkingTreeDialogOpen(false)
               setCommitDialogOpen(true)
             }}
+            reviewController={reviewController ?? undefined}
             theme={theme}
             fontSize={fontSize}
           />
@@ -1757,17 +1757,6 @@ function HistoryRetry({ error, onRetry }: { error: string; onRetry: () => void }
       <Button type="button" variant="outline" size="xs" onClick={onRetry}>Retry</Button>
     </div>
   )
-}
-
-function appendHistoryCommits(current: GitCommit[], next: GitCommit[]): GitCommit[] {
-  if (next.length === 0) return current
-  const known = new Set(current.map(commit => commit.hash))
-  const appended = next.filter(commit => {
-    if (known.has(commit.hash)) return false
-    known.add(commit.hash)
-    return true
-  })
-  return appended.length === 0 ? current : [...current, ...appended]
 }
 
 function CenteredStatus({ label }: { label: string }) {

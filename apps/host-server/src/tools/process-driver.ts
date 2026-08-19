@@ -2,19 +2,36 @@ import fs from "node:fs"
 import path from "node:path"
 import { Effect, Stream } from "effect"
 import { getCliAgentDriver } from "@yaade/agent-telemetry"
-import { pathToFileUri } from "@yaade/shared"
+import { cliProviderDescriptor, isCliProvider, pathToFileUri } from "@yaade/shared"
 import type { AgentProvider } from "@yaade/agent-telemetry"
 import {
   ProcessToolOutput,
   type ToolUse,
   type ToolUseInput,
 } from "@yaade/rpc"
-import type { HostRuntime } from "../host-runtime.js"
+import type { HostConfig } from "../config.js"
+import type { AgentTelemetryService, AgentRunService } from "../agents/index.js"
+import type { NotificationService } from "../notifications/index.js"
+import type { ProjectDatabase } from "../persistence.js"
+import type { RuntimeTerminal } from "../host-runtime.js"
 import { installProjectHooksForProvider } from "../agents/index.js"
 import { pathAllowed } from "../sandbox.js"
-import type { TerminalInstance } from "../terminal-instances.js"
+import type {
+  TerminalInstance,
+  TerminalInstanceService,
+} from "../terminal-instances.js"
 import type { ToolDriver, ToolRuntimeEvent } from "./model.js"
 import { ToolDriverFailure } from "./errors.js"
+
+export type ProcessDriverDependencies = {
+  readonly config: HostConfig
+  readonly db: ProjectDatabase
+  readonly terminal: RuntimeTerminal
+  readonly terminalInstances: TerminalInstanceService
+  readonly agentRuns: AgentRunService
+  readonly notifications: NotificationService
+  readonly agents: AgentTelemetryService
+}
 
 export type ProcessLaunchRequest = {
   readonly projectId: string
@@ -29,17 +46,11 @@ export type ProcessLaunchRequest = {
 }
 
 function parseAgentProvider(value: string): AgentProvider | null {
-  if (
-    value === "claude" || value === "codex" || value === "cursor" ||
-    value === "opencode" || value === "grok" || value === "pi"
-  ) return value
-  return null
+  return isCliProvider(value) ? value : null
 }
 
 function providerTitle(provider: AgentProvider): string {
-  return provider === "opencode"
-    ? "OpenCode"
-    : `${provider.charAt(0).toUpperCase()}${provider.slice(1)}`
+  return cliProviderDescriptor(provider).label
 }
 
 export function processOutput(instance: TerminalInstance): ProcessToolOutput {
@@ -76,14 +87,14 @@ function processRequest(input: ToolUseInput): {
 
 /** Shared AgentTool/TerminalTool launch path. Terminal bytes stay on TerminalHost. */
 export async function createTerminalInstance(
-  runtime: HostRuntime,
+  deps: ProcessDriverDependencies,
   request: ProcessLaunchRequest,
   clientId: string,
 ): Promise<TerminalInstance> {
-  const project = runtime.db.project(request.projectId)
+  const project = deps.db.project(request.projectId)
   if (!project) throw new Error("project is unavailable")
   const checkoutPath = fs.realpathSync(path.resolve(request.checkoutPath))
-  if (!pathAllowed(checkoutPath, runtime.config.allowedRoots)) {
+  if (!pathAllowed(checkoutPath, deps.config.allowedRoots)) {
     throw new Error("terminal checkout path outside allowed roots")
   }
   const provider = request.provider ?? null
@@ -93,11 +104,11 @@ export async function createTerminalInstance(
     (provider ? providerTitle(provider) : "Terminal")
 
   if (request.launchRequestId) {
-    const existing = runtime.terminalInstances.byLaunchRequestId(request.launchRequestId)
+    const existing = deps.terminalInstances.byLaunchRequestId(request.launchRequestId)
     if (existing) return existing
   }
 
-  const instance = runtime.terminalInstances.reserve({
+  const instance = deps.terminalInstances.reserve({
     projectId: project.id,
     workspaceId: request.workspaceId ?? null,
     checkoutKey,
@@ -108,7 +119,7 @@ export async function createTerminalInstance(
     ...(request.generation == null ? {} : { generation: request.generation }),
   })
   try {
-    return await launchReservedTerminalInstance(runtime, instance, {
+    return await launchReservedTerminalInstance(deps, instance, {
       ...request,
       projectId: project.id,
       checkoutKey,
@@ -117,7 +128,7 @@ export async function createTerminalInstance(
       ...(provider ? { provider } : {}),
     }, clientId)
   } catch (error) {
-    runtime.terminalInstances.fail(
+    deps.terminalInstances.fail(
       instance.id,
       instance.generation,
       error instanceof Error ? error.message : String(error),
@@ -128,12 +139,12 @@ export async function createTerminalInstance(
 
 /** Launch a previously reserved instance, used by restart and the Tool runtime. */
 export async function launchReservedTerminalInstance(
-  runtime: HostRuntime,
+  deps: ProcessDriverDependencies,
   instance: TerminalInstance,
   request: ProcessLaunchRequest,
   clientId: string,
 ): Promise<TerminalInstance> {
-  const project = runtime.db.project(request.projectId)
+  const project = deps.db.project(request.projectId)
   if (!project) throw new Error("project is unavailable")
   const provider = request.provider ?? null
 
@@ -142,9 +153,9 @@ export async function launchReservedTerminalInstance(
       ? { args: [...request.args] }
       : null
     const created = await Promise.resolve(
-      runtime.terminal.create(pathToFileUri(request.checkoutPath), launch, clientId),
+      deps.terminal.create(pathToFileUri(request.checkoutPath), launch, clientId),
     )
-    return runtime.terminalInstances.bindPty(
+    return deps.terminalInstances.bindPty(
       instance.id, instance.generation, created.id, created.title, undefined, {
         osPid: created.osPid,
         osStartedAtMs: created.osStartedAtMs,
@@ -152,7 +163,7 @@ export async function launchReservedTerminalInstance(
     ) ?? instance
   }
 
-  const availability = runtime.agentRuns.providerAvailable(provider)
+  const availability = deps.agentRuns.providerAvailable(provider)
   if (!availability.available) {
     throw new Error(availability.error ?? `${availability.binary} is not available`)
   }
@@ -163,9 +174,9 @@ export async function launchReservedTerminalInstance(
   let launchEnv: Record<string, string> = {}
   let telemetryError: string | null = null
   try {
-    installProjectHooksForProvider(provider, project.rootPath, runtime.config.dataDir)
+    installProjectHooksForProvider(provider, project.rootPath, deps.config.dataDir)
     const driver = getCliAgentDriver(provider)
-    const origin = `http://${runtime.config.host}:${runtime.config.port}`
+    const origin = `http://${deps.config.host}:${deps.config.port}`
     const ingestUrl = new URL("/api/v1/notifications/ingest", origin)
     ingestUrl.searchParams.set("provider", provider)
     ingestUrl.searchParams.set("sessionId", instance.id)
@@ -181,12 +192,12 @@ export async function launchReservedTerminalInstance(
   } catch (error) {
     telemetryError = error instanceof Error ? error.message : String(error)
   }
-  const created = await Promise.resolve(runtime.terminal.create(pathToFileUri(request.checkoutPath), {
+  const created = await Promise.resolve(deps.terminal.create(pathToFileUri(request.checkoutPath), {
     command: availability.binary,
     args: [...launchArgs, ...(request.args ?? [])],
     env: launchEnv,
   }, clientId))
-  const bound = runtime.terminalInstances.bindPty(
+  const bound = deps.terminalInstances.bindPty(
     instance.id,
     instance.generation,
     created.id,
@@ -195,8 +206,8 @@ export async function launchReservedTerminalInstance(
     { osPid: created.osPid, osStartedAtMs: created.osStartedAtMs },
   )
   if (!bound) throw new Error("process binding was rejected")
-  runtime.db.recordSession(created.id, "terminal", "running", { title: created.title })
-  runtime.notifications.bindSession({
+  deps.db.recordSession(created.id, "terminal", "running", { title: created.title })
+  deps.notifications.bindSession({
     sessionId: bound.id,
     runId: bound.id,
     projectId: project.id,
@@ -205,7 +216,7 @@ export async function launchReservedTerminalInstance(
     provider,
     ptyId: created.id,
   })
-  runtime.agents.onProcessStarted({
+  deps.agents.onProcessStarted({
     provider,
     sessionId: bound.id,
     processId: created.id,
@@ -213,7 +224,7 @@ export async function launchReservedTerminalInstance(
     cwd: request.checkoutPath,
   })
   if (telemetryError) {
-    return runtime.terminalInstances.markTelemetryDegraded(
+    return deps.terminalInstances.markTelemetryDegraded(
       bound.id, bound.generation, telemetryError,
     ) ?? bound
   }
@@ -221,15 +232,15 @@ export async function launchReservedTerminalInstance(
 }
 
 export async function restartTerminalInstance(
-  runtime: HostRuntime,
+  deps: ProcessDriverDependencies,
   instance: TerminalInstance,
   args: readonly string[],
   clientId: string,
 ): Promise<TerminalInstance> {
-  if (instance.ptyId) await Promise.resolve(runtime.terminal.dispose(instance.ptyId))
-  const restarting = runtime.terminalInstances.beginRestart(instance.id, instance.generation)
+  if (instance.ptyId) await Promise.resolve(deps.terminal.dispose(instance.ptyId))
+  const restarting = deps.terminalInstances.beginRestart(instance.id, instance.generation)
   if (!restarting) throw new Error("terminal instance cannot be restarted")
-  return launchReservedTerminalInstance(runtime, restarting, {
+  return launchReservedTerminalInstance(deps, restarting, {
     projectId: restarting.projectId,
     checkoutKey: restarting.checkoutKey,
     checkoutPath: restarting.checkoutPath,
@@ -248,13 +259,13 @@ export function parseProcessProvider(value: string): AgentProvider | null {
 export class ProcessToolDriver implements ToolDriver {
   readonly kind = "terminal" as const
 
-  constructor(private readonly runtime: HostRuntime) {}
+  constructor(private readonly deps: ProcessDriverDependencies) {}
 
   create(toolUse: ToolUse, input: ToolUseInput): Effect.Effect<ProcessToolOutput, ToolDriverFailure> {
     return Effect.tryPromise({
       try: async () => {
         const request = processRequest(input)
-        const instance = await createTerminalInstance(this.runtime, {
+        const instance = await createTerminalInstance(this.deps, {
           projectId: toolUse.context.project.projectId,
           checkoutKey: toolUse.context.checkoutKey,
           checkoutPath: toolUse.context.checkoutPath,
@@ -263,7 +274,7 @@ export class ProcessToolDriver implements ToolDriver {
           ...request,
           launchRequestId: `${toolUse.id}:${toolUse.output.kind === "process" ? toolUse.output.generation : 1}`,
         }, toolUse.sessionId)
-        this.runtime.terminalInstances.bindToolUse(instance.id, toolUse.id)
+        this.deps.terminalInstances.bindToolUse(instance.id, toolUse.id)
         return processOutput(instance)
       },
       catch: cause => driverFailure(toolUse, "create", cause),
@@ -274,7 +285,7 @@ export class ProcessToolDriver implements ToolDriver {
     return Effect.tryPromise({
       try: async () => {
         const instance = toolUse.output.kind === "process"
-          ? this.runtime.terminalInstances.get(toolUse.output.terminalInstanceId)
+          ? this.deps.terminalInstances.get(toolUse.output.terminalInstanceId)
           : null
         const request = processRequest(toolUse.input)
         const sameHome = Boolean(
@@ -285,19 +296,19 @@ export class ProcessToolDriver implements ToolDriver {
         )
         if (instance && sameHome) {
           const restarted = await restartTerminalInstance(
-            this.runtime,
+            this.deps,
             instance,
             request.args,
             toolUse.sessionId,
           )
-          this.runtime.terminalInstances.bindToolUse(restarted.id, toolUse.id)
+          this.deps.terminalInstances.bindToolUse(restarted.id, toolUse.id)
           return processOutput(restarted)
         }
         if (instance) {
-          if (instance.ptyId) await Promise.resolve(this.runtime.terminal.dispose(instance.ptyId))
-          this.runtime.terminalInstances.close(instance.id, instance.generation, "")
+          if (instance.ptyId) await Promise.resolve(this.deps.terminal.dispose(instance.ptyId))
+          this.deps.terminalInstances.close(instance.id, instance.generation, "")
         }
-        const created = await createTerminalInstance(this.runtime, {
+        const created = await createTerminalInstance(this.deps, {
           projectId: toolUse.context.project.projectId,
           checkoutKey: toolUse.context.checkoutKey,
           checkoutPath: toolUse.context.checkoutPath,
@@ -307,7 +318,7 @@ export class ProcessToolDriver implements ToolDriver {
           generation: toolUse.output.kind === "process" ? toolUse.output.generation + 1 : 1,
           launchRequestId: `${toolUse.id}:${toolUse.output.kind === "process" ? toolUse.output.generation + 1 : 1}`,
         }, toolUse.sessionId)
-        this.runtime.terminalInstances.bindToolUse(created.id, toolUse.id)
+        this.deps.terminalInstances.bindToolUse(created.id, toolUse.id)
         return processOutput(created)
       },
       catch: cause => driverFailure(toolUse, "restart", cause),
@@ -318,14 +329,14 @@ export class ProcessToolDriver implements ToolDriver {
     return Effect.tryPromise({
       try: async () => {
         const instance = toolUse.output.kind === "process"
-          ? this.runtime.terminalInstances.get(toolUse.output.terminalInstanceId)
+          ? this.deps.terminalInstances.get(toolUse.output.terminalInstanceId)
           : null
         if (!instance) {
           if (toolUse.output.kind !== "process") throw new Error("process output is unavailable")
           return toolUse.output
         }
-        if (instance.ptyId) await Promise.resolve(this.runtime.terminal.dispose(instance.ptyId))
-        const closed = this.runtime.terminalInstances.close(instance.id, instance.generation, "")
+        if (instance.ptyId) await Promise.resolve(this.deps.terminal.dispose(instance.ptyId))
+        const closed = this.deps.terminalInstances.close(instance.id, instance.generation, "")
         return processOutput(closed ?? instance)
       },
       catch: cause => driverFailure(toolUse, "cancel", cause),

@@ -7,7 +7,6 @@ import {
   useState,
   useSyncExternalStore,
   lazy,
-  type ComponentType,
 } from "react";
 import {
   AnimatePresence,
@@ -66,7 +65,7 @@ import {
 import { focusRegisteredTerminal } from "@yaade/ui/terminal-registry";
 import { CHORD_TIMEOUT_MS, isPathUnderRoot } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
-import { toolRegistry } from "./tool-registry.js";
+import type { ToolRendererProps } from "./tool-registry.js";
 import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -77,6 +76,7 @@ import {
   useRunningAgents,
 } from "../hooks/useRunningAgents.js";
 import { createToolClient, type ToolClient } from "./tool-client.js";
+import { useHostPorts } from "../host-ports.js";
 import {
   chooseSession,
   chooseTab,
@@ -148,6 +148,16 @@ const MobileToolView = lazy(() =>
 );
 const ToolDndRoot = lazy(() => import("./ToolDndRoot.js"));
 const ToolTilingWorkspace = lazy(() => import("./ToolTilingWorkspace.js"));
+const TerminalToolRenderer = lazy(() =>
+  import("./renderers/ProcessToolView.js").then(({ ProcessToolView }) => ({
+    default: ProcessToolView,
+  })),
+);
+const GitToolRenderer = lazy(() =>
+  import("./renderers/GitToolView.js").then(({ GitToolView }) => ({
+    default: GitToolView,
+  })),
+);
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
 const EMPTY_TOOL_USE_IDS: readonly ToolUseId[] = [];
 
@@ -307,6 +317,7 @@ function markPerformance(name: string): void {
 }
 
 export function ToolSessionApp() {
+  const hostPorts = useHostPorts();
   const {
     activeTheme,
     appearanceSettings,
@@ -314,7 +325,9 @@ export function ToolSessionApp() {
     resetAppearanceSettings,
     setAppearanceSettings,
   } = useAppearanceSettings();
-  const [client] = useState<ToolClient>(() => createToolClient());
+  const [client] = useState<ToolClient>(() =>
+    createToolClient({ api: hostPorts.tools }),
+  );
   const snapshot = useSyncExternalStore(
     client.store.subscribe,
     client.store.getSnapshot,
@@ -367,7 +380,7 @@ export function ToolSessionApp() {
   }, [client]);
 
   useEffect(() => {
-    void window.yaade?.tools
+    void hostPorts.tools
       ?.listProjects?.()
       .then((next) => {
         setProjects(next);
@@ -378,7 +391,7 @@ export function ToolSessionApp() {
 
   const addKnownProject = useCallback(async (rootPath: string) => {
     try {
-      const addProject = window.yaade?.tools?.addProject;
+      const addProject = hostPorts.tools.addProject;
       if (!addProject) throw new Error("Project management is unavailable.");
       const project = await addProject(rootPath);
       setProjects((previous) => [
@@ -507,12 +520,14 @@ export function ToolSessionApp() {
   const activeTab = snapshot.activeTabId
     ? snapshot.tabsById.get(snapshot.activeTabId)
     : undefined;
+  const activeSessionId = activeSession?.id;
+  const activeTabId = activeTab?.id;
   const tabIds = useMemo(
     () =>
-      activeSession
-        ? (snapshot.visibleTabIdsBySession.get(activeSession.id) ?? EMPTY_TAB_IDS)
+      activeSessionId
+        ? (snapshot.visibleTabIdsBySession.get(activeSessionId) ?? EMPTY_TAB_IDS)
         : EMPTY_TAB_IDS,
-    [activeSession?.id, snapshot.visibleTabIdsBySession],
+    [activeSessionId, snapshot.visibleTabIdsBySession],
   );
   const visibleTabs = useMemo(
     () =>
@@ -523,10 +538,10 @@ export function ToolSessionApp() {
   );
   const useIds = useMemo(
     () =>
-      activeTab
-        ? (snapshot.useIdsByTab.get(activeTab.id) ?? EMPTY_TOOL_USE_IDS)
+      activeTabId
+        ? (snapshot.useIdsByTab.get(activeTabId) ?? EMPTY_TOOL_USE_IDS)
         : EMPTY_TOOL_USE_IDS,
-    [activeTab?.id, snapshot.useIdsByTab],
+    [activeTabId, snapshot.useIdsByTab],
   );
   const sessionTitlesById = useMemo(() => {
     const titles = new Map<SessionId, string>();
@@ -704,12 +719,12 @@ export function ToolSessionApp() {
 
   const splitFocusedToolPanel = useCallback(
     (edge: "right" | "bottom") => {
-      if (!activeTab) return;
-      updateToolWorkspace(activeTab.id, workspace =>
+      if (!activeTabId) return;
+      updateToolWorkspace(activeTabId, workspace =>
         splitToolPanel(workspace, workspace.focusedPanelId, edge),
       );
     },
-    [activeTab?.id, updateToolWorkspace],
+    [activeTabId, updateToolWorkspace],
   );
 
   const openToolInWorkspace = useCallback(
@@ -720,7 +735,7 @@ export function ToolSessionApp() {
         use.tabId ??
         current.sessionsById.get(use.sessionId)?.activeTabId ??
         current.visibleTabIdsBySession.get(use.sessionId)?.[0] ??
-        activeTab?.id;
+        activeTabId;
       if (!tabId) return;
       updateToolWorkspace(tabId, (workspace) =>
         target?.panelId === undefined
@@ -728,7 +743,7 @@ export function ToolSessionApp() {
           : openToolViewInPanel(workspace, target.panelId, use.id),
       );
     },
-    [activeTab?.id, client, updateToolWorkspace],
+    [activeTabId, client, updateToolWorkspace],
   );
 
   const selectSession = useCallback(
@@ -754,7 +769,7 @@ export function ToolSessionApp() {
       const current = client.store.getSnapshot().activeToolUseId;
       client.store.selectToolUse(use.id);
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
-      const request = window.yaade?.tools?.selectUse?.(use.sessionId, use.id);
+      const request = hostPorts.tools.selectUse?.(use.sessionId, use.id);
       if (request) {
         void request.catch(async error => {
           setActionError(errorMessage(error));
@@ -792,15 +807,15 @@ export function ToolSessionApp() {
     if (lastAutoOpenedToolRef.current === key) return;
     lastAutoOpenedToolRef.current = key;
     openToolInWorkspace(selected);
-  }, [openToolInWorkspace, selected?.id, selected?.sessionId]);
+  }, [openToolInWorkspace, selected]);
 
   useEffect(() => {
-    if (!activeTab) return;
+    if (!activeTabId) return;
     const liveIds = new Set(useIds);
-    updateToolWorkspace(activeTab.id, (workspace) =>
+    updateToolWorkspace(activeTabId, (workspace) =>
       removeMissingToolViews(workspace, liveIds),
     );
-  }, [activeTab?.id, updateToolWorkspace, useIds]);
+  }, [activeTabId, updateToolWorkspace, useIds]);
 
   const createTool = useCallback(
     async (
@@ -835,7 +850,7 @@ export function ToolSessionApp() {
       try {
         let nextProjects = projects;
         if (nextProjects.length === 0) {
-          nextProjects = (await window.yaade?.tools?.listProjects?.()) ?? [];
+          nextProjects = (await hostPorts.tools.listProjects?.()) ?? [];
           setProjects(nextProjects);
           setProjectsLoaded(true);
         }
@@ -881,7 +896,7 @@ export function ToolSessionApp() {
         ) {
           const liveTabIds =
             liveSnapshot.visibleTabIdsBySession.get(liveSession.id) ?? EMPTY_TAB_IDS;
-          const createdTab = await window.yaade?.tools?.createTab?.({
+          const createdTab = await hostPorts.tools.createTab?.({
             _tag: "CreateSessionTab",
             sessionId: liveSession.id,
             title: `Window ${liveTabIds.length + 1}`,
@@ -902,7 +917,7 @@ export function ToolSessionApp() {
           closingTabIdsRef.current.has(targetTab.id)
         ) {
           if (rollbackTab) {
-            const rollback = window.yaade?.tools?.archiveTab?.({
+            const rollback = hostPorts.tools.archiveTab?.({
               _tag: "ArchiveSessionTab",
               tabId: rollbackTab.id,
               mode: "stop-tools",
@@ -923,7 +938,7 @@ export function ToolSessionApp() {
           input,
         };
         try {
-          const created = await window.yaade?.tools?.createUse?.(command);
+          const created = await hostPorts.tools.createUse?.(command);
           if (created) client.store.replaceToolUse(created);
           await client.reconcileSession(liveSession.id);
           if (created) {
@@ -934,7 +949,7 @@ export function ToolSessionApp() {
           return created;
         } catch (error) {
           if (rollbackTab) {
-            const rollback = window.yaade?.tools?.archiveTab?.({
+            const rollback = hostPorts.tools.archiveTab?.({
               _tag: "ArchiveSessionTab",
               tabId: rollbackTab.id,
               mode: "stop-tools",
@@ -980,7 +995,7 @@ export function ToolSessionApp() {
       client.store.selectTab(tab.id);
       const nextUse = client.store.getSnapshot().activeToolUseId;
       writeToolSessionLocation(toolSessionUrl(session.id, tab.id, nextUse), "push");
-      const request = window.yaade?.tools?.selectTab?.({
+      const request = hostPorts.tools.selectTab?.({
         _tag: "SelectSessionTab",
         sessionId: tab.sessionId,
         tabId: tab.id,
@@ -1007,7 +1022,7 @@ export function ToolSessionApp() {
   const createTab = useCallback(async () => {
     if (!activeSession) return;
     try {
-      const tab = await window.yaade?.tools?.createTab?.({
+      const tab = await hostPorts.tools.createTab?.({
         _tag: "CreateSessionTab",
         sessionId: activeSession.id,
         title: "New tab",
@@ -1022,7 +1037,7 @@ export function ToolSessionApp() {
 
   const renameTab = useCallback(async (id: SessionTabId, title: string) => {
     try {
-      const tab = await window.yaade?.tools?.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
+      const tab = await hostPorts.tools.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
       if (tab) client.store.replaceTab(tab);
     } catch (error) {
       setActionError(errorMessage(error));
@@ -1032,7 +1047,7 @@ export function ToolSessionApp() {
   const reorderTabs = useCallback(async (ids: readonly SessionTabId[]) => {
     if (!activeSession) return;
     try {
-      await window.yaade?.tools?.reorderTabs?.({
+      await hostPorts.tools.reorderTabs?.({
         _tag: "ReorderSessionTabs",
         sessionId: activeSession.id,
         tabIds: ids,
@@ -1046,7 +1061,7 @@ export function ToolSessionApp() {
   const closeTab = useCallback(async (tab: SessionTab) => {
     closingTabIdsRef.current.add(tab.id);
     try {
-      await window.yaade?.tools?.archiveTab?.({
+      await hostPorts.tools.archiveTab?.({
         _tag: "ArchiveSessionTab",
         tabId: tab.id,
         mode: "stop-tools",
@@ -1061,7 +1076,7 @@ export function ToolSessionApp() {
 
   const createSession = useCallback(async () => {
     try {
-      const created = await window.yaade?.tools?.createSession?.("New session");
+      const created = await hostPorts.tools.createSession?.("New session");
       if (!created) return;
       await client.reconcile();
       selectSession(created.id);
@@ -1074,7 +1089,7 @@ export function ToolSessionApp() {
     async (action: "cancel" | "restart" | "archive", use: ToolUse) => {
       setActionError(undefined);
       try {
-        const api = window.yaade?.tools;
+        const api = hostPorts.tools;
         const result =
           action === "cancel"
             ? await api?.cancelUse?.(use.id, use.revision)
@@ -1097,7 +1112,7 @@ export function ToolSessionApp() {
   const closeSession = useCallback(
     async (sessionId: SessionId, mode: "keep-running" | "stop-tools") => {
       try {
-        const archived = await window.yaade?.tools?.archiveSession?.({
+        const archived = await hostPorts.tools.archiveSession?.({
           _tag: "ArchiveSession",
           sessionId,
           mode,
@@ -1136,7 +1151,7 @@ export function ToolSessionApp() {
 
   const renameSession = useCallback(
     async (id: SessionId, title: string) => {
-      const renamed = await window.yaade?.tools?.renameSession?.(id, title);
+      const renamed = await hostPorts.tools.renameSession?.(id, title);
       if (renamed) await client.reconcile();
     },
     [client],
@@ -1144,7 +1159,7 @@ export function ToolSessionApp() {
 
   const reorderSessions = useCallback(
     async (ids: readonly SessionId[]) => {
-      await window.yaade?.tools?.reorderSessions?.({
+      await hostPorts.tools.reorderSessions?.({
         _tag: "ReorderSessions",
         sessionIds: ids,
       });
@@ -1155,7 +1170,7 @@ export function ToolSessionApp() {
 
   const renameToolUse = useCallback(
     async (use: ToolUse, title: string) => {
-      const renamed = await window.yaade?.tools?.renameUse?.(use.id, title);
+      const renamed = await hostPorts.tools.renameUse?.(use.id, title);
       if (renamed) client.store.replaceToolUse(renamed);
     },
     [client],
@@ -1164,7 +1179,7 @@ export function ToolSessionApp() {
   const reorderToolUses = useCallback(
     async (ids: readonly ToolUseId[]) => {
       if (!activeSession || !activeTab) return;
-      await window.yaade?.tools?.reorderUses?.({
+      await hostPorts.tools.reorderUses?.({
         _tag: "ReorderToolUses",
         sessionId: activeSession.id,
         tabId: activeTab.id,
@@ -1273,6 +1288,7 @@ export function ToolSessionApp() {
       bridge.getPerfMeasures = previous.getPerfMeasures;
     };
   }, [
+    activeSession,
     closeSession,
     closeTab,
     createSession,
@@ -1407,6 +1423,7 @@ export function ToolSessionApp() {
       snapshot.usesById,
       splitFocusedToolPanel,
       toggleSidebars,
+      tabIds,
       updateToolWorkspace,
       useIds,
     ],
@@ -1436,6 +1453,7 @@ export function ToolSessionApp() {
   };
 
   useEffect(() => {
+    const keymapState = keymapStateRef.current;
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented) return;
       const target = event.target instanceof HTMLElement ? event.target : null;
@@ -1472,7 +1490,7 @@ export function ToolSessionApp() {
         const target = focusedToolUseRef.current ?? selectedToolRef.current;
         const ptyId =
           target?.output.kind === "process" ? target.output.ptyId : undefined;
-        if (ptyId) void window.yaade?.terminal?.write?.(ptyId, result.byte);
+        if (ptyId) void hostPorts.terminal.write?.(ptyId, result.byte);
         return;
       }
       if (result.type === "command") {
@@ -1489,7 +1507,7 @@ export function ToolSessionApp() {
         window.clearTimeout(prefixTimerRef.current);
         prefixTimerRef.current = undefined;
       }
-      clearToolSessionKeymapState(keymapStateRef.current);
+      clearToolSessionKeymapState(keymapState);
     };
   }, [clearPrefix, showPrefix]);
 
@@ -1535,7 +1553,7 @@ export function ToolSessionApp() {
     ) => {
       const latest = client.store.getSnapshot().usesById.get(use.id) ?? use;
       try {
-        const updated = await window.yaade?.tools?.updateUseContext?.({
+        const updated = await hostPorts.tools.updateUseContext?.({
           _tag: "UpdateToolUseContext",
           toolUseId: latest.id,
           revision: latest.revision,
@@ -1631,7 +1649,7 @@ export function ToolSessionApp() {
     const tabId = currentTab.id;
     const sessionId = currentTab.sessionId;
     const handle = window.setTimeout(() => {
-      const save = window.yaade?.tools?.saveTabLayout;
+      const save = hostPorts.tools.saveTabLayout;
       if (!save) return;
       const previous = layoutSaveTails.current.get(tabId) ?? Promise.resolve();
       const operation = previous
@@ -1688,7 +1706,7 @@ export function ToolSessionApp() {
       if (client.store.getSnapshot().activeToolUseId === use.id) return;
       client.store.selectToolUse(use.id);
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
-      const request = window.yaade?.tools?.selectUse?.(use.sessionId, use.id);
+      const request = hostPorts.tools.selectUse?.(use.sessionId, use.id);
       if (request) {
         void request.catch(async error => {
           setActionError(errorMessage(error));
@@ -1818,22 +1836,22 @@ export function ToolSessionApp() {
 
   const splitToolPanelAt = useCallback(
     (panelId: PanelId, edge: "right" | "bottom") => {
-      if (!activeTab) return;
-      updateToolWorkspace(activeTab.id, workspace =>
+      if (!activeTabId) return;
+      updateToolWorkspace(activeTabId, workspace =>
         splitToolPanel(workspace, panelId, edge),
       );
     },
-    [activeTab?.id, updateToolWorkspace],
+    [activeTabId, updateToolWorkspace],
   );
 
   const zoomToolPanel = useCallback(
     (panelId: PanelId) => {
-      if (!activeTab) return;
-      updateToolWorkspace(activeTab.id, workspace =>
+      if (!activeTabId) return;
+      updateToolWorkspace(activeTabId, workspace =>
         toggleToolPanelZoom(workspace, panelId),
       );
     },
-    [activeTab?.id, updateToolWorkspace],
+    [activeTabId, updateToolWorkspace],
   );
 
   const renderTool = useCallback(
@@ -2447,24 +2465,6 @@ function SidebarHoverToggle(props: {
   );
 }
 
-const lazyRenderers = new Map<
-  ToolKind,
-  ComponentType<import("./tool-registry.js").ToolRendererProps>
->();
-
-function rendererFor(
-  kind: ToolKind,
-): ComponentType<import("./tool-registry.js").ToolRendererProps> | null {
-  const existing = lazyRenderers.get(kind);
-  if (existing) return existing;
-  // Unknown tool kinds should keep a usable pane instead of rendering blank.
-  const entry = toolRegistry.get(kind) ?? toolRegistry.get("terminal");
-  if (!entry) return null;
-  const Lazy = lazy(entry.loadRenderer);
-  lazyRenderers.set(kind, Lazy);
-  return Lazy;
-}
-
 function SelectedToolUse(props: {
   use: ToolUse;
   theme: YaadeTheme;
@@ -2481,8 +2481,19 @@ function SelectedToolUse(props: {
   onTitleChange: (title: string) => void;
 }) {
   const { use } = props;
-  const Renderer = rendererFor(use.kind);
-  if (!Renderer) return null;
+  const rendererProps = {
+    use,
+    theme: props.theme,
+    fontSize: props.fontSize,
+    projects: props.projects,
+    onContextChange: props.onContextChange,
+    onCwdChange: props.onCwdChange,
+    onTitleChange: props.onTitleChange,
+    onAction: props.onAction,
+    visible: props.visible,
+    focused: props.focused,
+  } satisfies ToolRendererProps;
+
   return (
     <Suspense
       fallback={
@@ -2492,18 +2503,11 @@ function SelectedToolUse(props: {
         </div>
       }
     >
-      <Renderer
-        use={use}
-        theme={props.theme}
-        fontSize={props.fontSize}
-        projects={props.projects}
-        onContextChange={props.onContextChange}
-        onCwdChange={props.onCwdChange}
-        onTitleChange={props.onTitleChange}
-        onAction={props.onAction}
-        visible={props.visible}
-        focused={props.focused}
-      />
+      {use.kind === "git" ? (
+        <GitToolRenderer {...rendererProps} />
+      ) : (
+        <TerminalToolRenderer {...rendererProps} />
+      )}
     </Suspense>
   );
 }

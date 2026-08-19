@@ -40,7 +40,7 @@ describe("terminal agent discovery", () => {
     const started: string[] = []
     const exited: string[] = []
     const terminalInstances = new TerminalInstanceService(
-      db.raw(),
+      db.session(),
       () => undefined,
     )
     const terminal = {
@@ -64,7 +64,7 @@ describe("terminal agent discovery", () => {
       machineHostname: "test-machine",
       terminal,
       terminalInstances,
-      notifications: new NotificationService(db.raw()),
+      notifications: new NotificationService(db.session()),
       agents: {
         onProcessStarted(input) {
           started.push(input.sessionId)

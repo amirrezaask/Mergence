@@ -21,6 +21,7 @@ const SystemSignalsContext = createContext<NotificationCenterState | null>(null)
 
 export function SystemSignalsProvider({ children }: PropsWithChildren) {
   const notifications = useNotificationCenter()
+  const { setOpen } = notifications
   const onOpenNotification = useCallback(
     (notification: AppNotification) => {
       if (notification.sessionId) {
@@ -30,9 +31,9 @@ export function SystemSignalsProvider({ children }: PropsWithChildren) {
           }),
         )
       }
-      notifications.setOpen(false)
+      setOpen(false)
     },
-    [notifications.setOpen],
+    [setOpen],
   )
 
   return (
