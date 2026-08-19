@@ -121,7 +121,7 @@
   --yaade-palette-detail-row-height: 3rem;
   --yaade-quick-input-top: clamp(1rem, 7dvh, 4.5rem);
   /* Agent CLI picker rows contain a provider glyph plus two text lines.
-   * Keep the virtual slot rem-scaled so appearance zoom cannot clip or overlap
+   * Keep the virtual slot rem-scaled so the fixed UI scale cannot clip or overlap
    * the line boxes. Other palette rows retain their compact contract. */
   --yaade-agent-cli-row-height: 3.5rem;
   --yaade-overlay-list-max: 22rem;
@@ -785,42 +785,6 @@ body {
   }
 }
 
-:root[data-yaade-reduced-transparency="true"] :is(
-  [data-yaade-session-tabs],
-  [data-yaade-tool-tabs],
-  [data-yaade-tool-context],
-  [data-yaade-session-sidebar],
-  [data-yaade-tool-sidebar],
-  [data-yaade-single-sidebar]
-) {
-  background: var(--yaade-material-shell-fallback);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-:root[data-yaade-reduced-transparency="true"] :is(
-  [data-yaade-window-tabs],
-  [data-yaade-mux-pane-chrome],
-  [data-yaade-top-tabbar],
-  [data-yaade-app-header]
-) {
-  background: var(--yaade-material-chrome-fallback);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-:root[data-yaade-reduced-transparency="true"] [data-yaade-tool-workspace] [data-yaade-panel-leaf] {
-  background: var(--yaade-material-content-fallback);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-:root[data-yaade-reduced-transparency="true"]
-  [data-yaade-shell="tool-session"][data-yaade-session-layout="tabs"]
-  [data-yaade-window-tabs] {
-  background: transparent;
-}
-
 @media (prefers-contrast: more) {
   [data-yaade-tool-use][data-active="true"] {
     border-color: var(--sidebar-primary);
@@ -912,18 +876,6 @@ body {
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-}
-
-:root[data-yaade-reduced-transparency="true"] [data-yaade-island] {
-  background: var(--yaade-material-shell-fallback);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-:root[data-yaade-reduced-transparency="true"] [data-yaade-raised-surface] {
-  background: var(--yaade-material-chrome-fallback);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
 }
 
 [data-yaade-terminal-panel] canvas {

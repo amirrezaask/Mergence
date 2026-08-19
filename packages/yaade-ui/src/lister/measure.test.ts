@@ -10,7 +10,7 @@ import {
 } from "./measure.js"
 
 describe("resolveCssLengthPx", () => {
-  it("scales semantic rem row heights with the persisted UI font size", () => {
+  it("scales semantic rem row heights from the UI font size", () => {
     assert.equal(resolveCssLengthPx("3.5rem", 13, 3.5), 45.5)
     assert.equal(resolveCssLengthPx("3.5rem", 24, 3.5), 84)
   })

@@ -7,9 +7,7 @@
  *
  *   Tool Session (`/`)           canonical — edit TOOL_SESSION_* tables
  *
- * Browser-reserved chords stay unbound in normal keymaps. Appearance zoom is
- * the deliberate capture-phase exception because terminal inputs can consume
- * those chords before a bubbling handler sees them. Shell actions live behind Mod-k
+ * Browser-reserved chords stay unbound in normal keymaps. Shell actions live behind Mod-k
  * (⌘K on macOS, Ctrl+K elsewhere). Press the prefix twice in a terminal to
  * send ^K (kill-line). Mod-k is risky (Chrome omnibox) on purpose: Chromium
  * delivers it and preventDefault wins; it is the only free-enough multiplexer
@@ -63,62 +61,6 @@ export type ToolSessionCommand =
   | "settings.show";
 
 export type ToolSessionPrefixGroupId = "open" | "move" | "session";
-
-/** Global appearance zoom is resolved before terminal input gets the event. */
-export type AppearanceZoomAction = "in" | "out" | "reset";
-
-type AppearanceZoomKeyEvent = Pick<
-  KeyboardEvent,
-  "altKey" | "code" | "ctrlKey" | "isComposing" | "key" | "metaKey" | "shiftKey"
->;
-
-function hasPrimaryZoomModifier(event: AppearanceZoomKeyEvent): boolean {
-  // Accept either primary modifier because browser and Electron keyboard
-  // bridges can report the counterpart while a terminal owns focus.
-  return !event.altKey && event.metaKey !== event.ctrlKey;
-}
-
-function isZoomInKey(event: AppearanceZoomKeyEvent): boolean {
-  return (
-    event.key === "=" ||
-    event.key === "+" ||
-    event.key === "Equal" ||
-    event.code === "Equal" ||
-    event.code === "NumpadAdd"
-  );
-}
-
-function isZoomOutKey(event: AppearanceZoomKeyEvent): boolean {
-  return (
-    event.key === "-" ||
-    event.key === "_" ||
-    event.key === "Minus" ||
-    event.key === "Subtract" ||
-    event.code === "Minus" ||
-    event.code === "NumpadSubtract"
-  );
-}
-
-function isZoomResetKey(event: AppearanceZoomKeyEvent): boolean {
-  return (
-    !event.shiftKey &&
-    (event.key === "0" ||
-      event.key === "Digit0" ||
-      event.code === "Digit0" ||
-      event.code === "Numpad0")
-  );
-}
-
-/** Resolve zoom independently of the focused element. */
-export function resolveAppearanceZoomAction(
-  event: AppearanceZoomKeyEvent,
-): AppearanceZoomAction | null {
-  if (event.isComposing || !hasPrimaryZoomModifier(event)) return null;
-  if (isZoomInKey(event)) return "in";
-  if (isZoomOutKey(event)) return "out";
-  if (isZoomResetKey(event)) return "reset";
-  return null;
-}
 
 export type ToolSessionPrefixBinding = {
   readonly key: string;

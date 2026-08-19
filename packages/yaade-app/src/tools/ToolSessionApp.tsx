@@ -80,6 +80,7 @@ import {
   chooseSession,
   chooseTab,
   chooseToolUse,
+  isLiveSessionTab,
   parseToolSessionRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js";
@@ -335,6 +336,7 @@ export function ToolSessionApp() {
   const keymapStateRef = useRef(createToolSessionKeymapState());
   const prefixTimerRef = useRef<number | undefined>(undefined);
   const pendingToolPanelRequestsRef = useRef(new Set<string>());
+  const closingTabIdsRef = useRef(new Set<SessionTabId>());
   const toolUsesRef = useRef(snapshot.usesById);
   const isMobile = useIsMobile();
   const desktopPlatform = window.yaadeDesktop?.platform;
@@ -797,9 +799,15 @@ export function ToolSessionApp() {
       const targetTab = preferredTabId
         ? currentSnapshot.tabsById.get(preferredTabId)
         : undefined;
-      if (!targetSession || !targetTab) return undefined;
-      const targetUseIds =
-        currentSnapshot.useIdsByTab.get(targetTab.id) ?? EMPTY_TOOL_USE_IDS;
+      if (
+        !targetSession ||
+        !targetTab ||
+        !isLiveSessionTab(targetSession, targetTab) ||
+        closingTabIdsRef.current.has(targetTab.id)
+      ) {
+        return undefined;
+      }
+      let destinationTabId = targetTab.id;
       setActionError(undefined);
       try {
         let nextProjects = projects;
@@ -808,6 +816,22 @@ export function ToolSessionApp() {
           setProjects(nextProjects);
           setProjectsLoaded(true);
         }
+
+        // A new Window starts an async terminal creation. If that Window was
+        // closed while project discovery was in flight, do not send its stale
+        // tab id back to the host.
+        const liveSnapshot = client.store.getSnapshot();
+        const liveSession = liveSnapshot.sessionsById.get(targetSession.id);
+        const liveTab = liveSnapshot.tabsById.get(targetTab.id);
+        if (
+          !liveSession ||
+          !liveTab ||
+          !isLiveSessionTab(liveSession, liveTab) ||
+          closingTabIdsRef.current.has(targetTab.id)
+        ) {
+          return undefined;
+        }
+
         const nextProject = launchContext?.project ?? nextProjects[0];
         if (!nextProject) {
           setActionError("No project available.");
@@ -817,31 +841,57 @@ export function ToolSessionApp() {
           nextKind === "git"
             ? { _tag: "GitToolInput", kind: "git" }
             : { _tag: "TerminalToolInput", kind: "terminal" };
+        const targetUseIds =
+          liveSnapshot.useIdsByTab.get(liveTab.id) ?? EMPTY_TOOL_USE_IDS;
         const currentWorkspace =
-          toolWorkspaces.get(targetTab.id) ??
-          restoreToolWorkspace(targetTab.layoutJson, targetUseIds);
+          toolWorkspaces.get(liveTab.id) ??
+          restoreToolWorkspace(liveTab.layoutJson, targetUseIds);
         let hasEmptyPane = false;
         currentWorkspace.tree.visitLeaves(leaf => {
           if (leaf.view.kind === "empty") hasEmptyPane = true;
         });
-        let destinationTab = targetTab;
+        let destinationTab = liveTab;
         let rollbackTab: SessionTab | undefined;
         if (
           toolPaneCount(currentWorkspace) >= MAX_TOOL_TILES &&
           !hasEmptyPane
         ) {
+          const liveTabIds =
+            liveSnapshot.visibleTabIdsBySession.get(liveSession.id) ?? EMPTY_TAB_IDS;
           const createdTab = await window.yaade?.tools?.createTab?.({
             _tag: "CreateSessionTab",
-            sessionId: targetSession.id,
-            title: `Window ${targetTabIds.length + 1}`,
+            sessionId: liveSession.id,
+            title: `Window ${liveTabIds.length + 1}`,
           });
           if (!createdTab) throw new Error("Could not create another Window.");
           destinationTab = createdTab;
+          destinationTabId = createdTab.id;
           rollbackTab = createdTab;
         }
+
+        const requestSnapshot = client.store.getSnapshot();
+        const requestSession = requestSnapshot.sessionsById.get(liveSession.id);
+        const requestTargetTab = requestSnapshot.tabsById.get(targetTab.id);
+        if (
+          !requestSession ||
+          !requestTargetTab ||
+          !isLiveSessionTab(requestSession, requestTargetTab) ||
+          closingTabIdsRef.current.has(targetTab.id)
+        ) {
+          if (rollbackTab) {
+            const rollback = window.yaade?.tools?.archiveTab?.({
+              _tag: "ArchiveSessionTab",
+              tabId: rollbackTab.id,
+              mode: "stop-tools",
+            });
+            if (rollback) await rollback.catch(() => undefined);
+          }
+          return undefined;
+        }
+
         const command: CreateToolUse = {
           _tag: "CreateToolUse",
-          sessionId: targetSession.id,
+          sessionId: liveSession.id,
           tabId: destinationTab.id,
           kind: nextKind,
           project: nextProject,
@@ -852,7 +902,7 @@ export function ToolSessionApp() {
         try {
           const created = await window.yaade?.tools?.createUse?.(command);
           if (created) client.store.replaceToolUse(created);
-          await client.reconcileSession(targetSession.id);
+          await client.reconcileSession(liveSession.id);
           if (created) {
             const openTarget =
               target && destinationTab.id === target.tabId ? target : undefined;
@@ -871,6 +921,18 @@ export function ToolSessionApp() {
           throw error;
         }
       } catch (error) {
+        const failedSnapshot = client.store.getSnapshot();
+        const failedSession = failedSnapshot.sessionsById.get(targetSession.id);
+        const failedTab = failedSnapshot.tabsById.get(destinationTabId);
+        // Closing a Window can race the automatic terminal creation above.
+        // The failed request is expected in that case, not an app error.
+        if (
+          closingTabIdsRef.current.has(targetTab.id) ||
+          closingTabIdsRef.current.has(destinationTabId) ||
+          !isLiveSessionTab(failedSession, failedTab)
+        ) {
+          return undefined;
+        }
         setActionError(errorMessage(error));
         return undefined;
       }
@@ -880,11 +942,21 @@ export function ToolSessionApp() {
 
   const selectTab = useCallback(
     (tab: SessionTab) => {
+      const currentSnapshot = client.store.getSnapshot();
+      const session = currentSnapshot.sessionsById.get(tab.sessionId);
+      const currentTab = currentSnapshot.tabsById.get(tab.id);
+      if (
+        !session ||
+        !currentTab ||
+        !isLiveSessionTab(session, currentTab) ||
+        closingTabIdsRef.current.has(tab.id)
+      ) {
+        return;
+      }
       markPerformance("yaade:tab-switch");
       client.store.selectTab(tab.id);
-      const session = client.store.getSnapshot().sessionsById.get(tab.sessionId);
       const nextUse = client.store.getSnapshot().activeToolUseId;
-      if (session) history.pushState(null, "", toolSessionUrl(session.id, tab.id, nextUse));
+      history.pushState(null, "", toolSessionUrl(session.id, tab.id, nextUse));
       const request = window.yaade?.tools?.selectTab?.({
         _tag: "SelectSessionTab",
         sessionId: tab.sessionId,
@@ -892,6 +964,15 @@ export function ToolSessionApp() {
       });
       if (request) {
         void request.catch(async error => {
+          const failedSnapshot = client.store.getSnapshot();
+          const failedSession = failedSnapshot.sessionsById.get(tab.sessionId);
+          const failedTab = failedSnapshot.tabsById.get(tab.id);
+          if (
+            closingTabIdsRef.current.has(tab.id) ||
+            !isLiveSessionTab(failedSession, failedTab)
+          ) {
+            return;
+          }
           setActionError(errorMessage(error));
           await client.reconcileSession(tab.sessionId).catch(() => undefined);
         });
@@ -940,6 +1021,7 @@ export function ToolSessionApp() {
   }, [activeSession, client]);
 
   const closeTab = useCallback(async (tab: SessionTab) => {
+    closingTabIdsRef.current.add(tab.id);
     try {
       await window.yaade?.tools?.archiveTab?.({
         _tag: "ArchiveSessionTab",
@@ -949,6 +1031,8 @@ export function ToolSessionApp() {
       await client.reconcileSession(tab.sessionId);
     } catch (error) {
       setActionError(errorMessage(error));
+    } finally {
+      closingTabIdsRef.current.delete(tab.id);
     }
   }, [client]);
 

@@ -1,10 +1,11 @@
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
 import { Schema } from "effect"
-import { AppSession, SessionId, SessionTabId, ToolUseId } from "@yaade/rpc"
+import { AppSession, SessionId, SessionTab, SessionTabId, ToolUseId } from "@yaade/rpc"
 import {
   chooseSession,
   chooseToolUse,
+  isLiveSessionTab,
   parseToolSessionRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js"
@@ -33,5 +34,22 @@ describe("tool session routing", () => {
     const active = AppSession.make({ ...sessionA, activeToolUseId: useId })
     assert.equal(chooseToolUse(undefined, active, [useId]), useId)
     assert.equal(chooseToolUse(undefined, sessionA, [useId]), useId)
+  })
+
+  it("rejects archived or cross-session tabs as tool targets", () => {
+    const tab = SessionTab.make({
+      id: Schema.decodeUnknownSync(SessionTabId)("tab-a"),
+      sessionId: sessionA.id,
+      title: "Window 1",
+      position: 0,
+      createdAt: sessionA.createdAt,
+      updatedAt: sessionA.updatedAt,
+    })
+    assert.equal(isLiveSessionTab(sessionA, tab), true)
+    assert.equal(isLiveSessionTab(sessionB, tab), false)
+    assert.equal(
+      isLiveSessionTab(sessionA, { ...tab, archivedAt: "2026-01-04" }),
+      false,
+    )
   })
 })

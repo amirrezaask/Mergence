@@ -410,13 +410,6 @@
   }
 }
 
-:root[data-yaade-reduced-transparency="true"] [data-yaade-glass-surface] {
-  background: var(--yaade-glass-fallback, var(--card));
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
-}
-
-:root[data-yaade-reduced-transparency="true"] [data-yaade-glass-surface]::before,
 :root[data-yaade-interface-material="classic"] [data-yaade-glass-surface]::before {
   content: none;
 }

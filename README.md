@@ -50,9 +50,6 @@ Prefix: **`Mod-k`** (`⌘K` on macOS, `Ctrl+K` elsewhere). Press it twice in a t
 | `Mod-k x` | Close tool |
 | `Mod-k Shift-X` | Close Session |
 | `Mod-k ,` or `Mod-,` | Settings |
-| `Mod-=` / `Mod-Shift-=` | Increase UI and terminal font |
-| `Mod--` / `Mod-Shift--` | Decrease UI and terminal font |
-| `Mod-0` | Reset UI and terminal font |
 
 ## Desktop app
 

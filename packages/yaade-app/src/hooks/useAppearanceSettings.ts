@@ -14,14 +14,6 @@ import {
   type SessionLayout,
   applyColorScheme,
 } from "@yaade/ui/appearance"
-import {
-  adjustFontSize,
-  clampFontSize,
-  DEFAULT_FONT_SIZE,
-  MAX_FONT_SIZE,
-  MIN_FONT_SIZE,
-} from "../appearance-zoom.js"
-import { resolveAppearanceZoomAction } from "../keybindings.js"
 
 type ColorScheme = "dark" | "light"
 type PersistedAppearanceValue = string | number | boolean | null | undefined
@@ -36,8 +28,8 @@ function isStringValue(value: PersistedAppearanceValue): value is string {
 
 const THEME_ID_STORAGE_KEY = "jet-theme-id"
 const COLOR_SCHEME_KEY = "jet-color-scheme"
-const FONT_SIZE_STORAGE_KEY = "jet-font-size"
 const APPEARANCE_STORAGE_KEY = "jet-appearance-settings"
+export const DEFAULT_UI_FONT_SIZE = 13
 export const DEFAULT_SIDEBAR_WIDTH = 300
 export const MIN_SIDEBAR_WIDTH = 240
 export const MAX_SIDEBAR_WIDTH = 480
@@ -45,8 +37,6 @@ export const MAX_SIDEBAR_WIDTH = 480
 export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
   themeId: defaultThemeId,
   colorSchemeMode: "system",
-  reducedTransparency: false,
-  fontSize: DEFAULT_FONT_SIZE,
   monoFontFamily: DEFAULT_MONO_FONT_NAME,
   sessionLayout: "tabs",
   sidebarCollapsed: false,
@@ -121,18 +111,6 @@ function normalizeProjectFilterPath(value: PersistedAppearanceValue): string | n
   return trimmed
 }
 
-function loadStoredFontSize(): number {
-  try {
-    const raw = localStorage.getItem(FONT_SIZE_STORAGE_KEY)
-    if (!raw) return DEFAULT_FONT_SIZE
-    const n = parseFloat(raw)
-    if (!Number.isFinite(n) || n <= 0) return DEFAULT_FONT_SIZE
-    return clampFontSize(n)
-  } catch {
-    return DEFAULT_FONT_SIZE
-  }
-}
-
 function preferredColorScheme(): ColorScheme {
   return window.matchMedia("(prefers-color-scheme: dark)").matches
     ? "dark"
@@ -195,7 +173,6 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
   const base: JetAppearanceSettings = {
     ...DEFAULT_APPEARANCE_SETTINGS,
     ...storedTheme,
-    fontSize: loadStoredFontSize(),
   }
   try {
     const raw = localStorage.getItem(APPEARANCE_STORAGE_KEY)
@@ -236,17 +213,6 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         preferredColorScheme(),
       ),
       colorSchemeMode,
-      reducedTransparency:
-        parsed.reducedTransparency === true ||
-        parsed.reducedTransparency === false
-          ? parsed.reducedTransparency
-          : base.reducedTransparency,
-      fontSize: clampNumber(
-        parsed.fontSize,
-        base.fontSize,
-        MIN_FONT_SIZE,
-        MAX_FONT_SIZE,
-      ),
       monoFontFamily: normalizeMonoFontFamily(
         parsed.monoFontFamily ?? base.monoFontFamily,
       ),
@@ -273,7 +239,6 @@ function persistAppearanceSettings(settings: JetAppearanceSettings): void {
   try {
     localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(settings))
     localStorage.setItem(THEME_ID_STORAGE_KEY, settings.themeId)
-    localStorage.setItem(FONT_SIZE_STORAGE_KEY, String(settings.fontSize))
     localStorage.setItem(COLOR_SCHEME_KEY, settings.colorSchemeMode)
   } catch {
     /* ignore */
@@ -283,7 +248,7 @@ function persistAppearanceSettings(settings: JetAppearanceSettings): void {
 /** Apply persisted appearance tokens onto :root. */
 export function applyAppearanceCss(settings: JetAppearanceSettings): void {
   const root = document.documentElement
-  root.style.fontSize = `${settings.fontSize}px`
+  root.style.fontSize = `${DEFAULT_UI_FONT_SIZE}px`
   root.style.setProperty("--font-sans", DEFAULT_UI_FONT_FAMILY)
   root.style.setProperty(
     "--font-mono",
@@ -295,10 +260,9 @@ export function applyAppearanceCss(settings: JetAppearanceSettings): void {
   root.style.setProperty("--yaade-terminal-cursor-blink", "1")
   root.dataset.jetDensity = "compact"
   root.dataset.yaadeReducedMotion = "false"
-  root.dataset.yaadeReducedTransparency = String(settings.reducedTransparency)
-  // Chrome uses the translucent material treatment consistently. The setting
-  // was intentionally removed; reduced transparency remains the accessibility
-  // escape hatch without exposing a second visual mode.
+  delete root.dataset.yaadeReducedTransparency
+  // Keep the authored UI scale and liquid material treatment fixed. System-level
+  // reduced-transparency preferences remain handled by the stylesheet.
   root.dataset.yaadeInterfaceMaterial = "liquid-glass"
   root.dataset.yaadeSessionLayout = settings.sessionLayout
 }
@@ -371,38 +335,6 @@ export function useAppearanceSettings() {
     }
   }, [appearanceSettings])
 
-  const handleZoom = useCallback((delta: number) => {
-    setAppearanceSettings(prev => {
-      const fontSize = adjustFontSize(prev.fontSize, delta)
-      return fontSize === prev.fontSize ? prev : { ...prev, fontSize }
-    })
-  }, [])
-
-  const setFontSize = useCallback((px: number) => {
-    setAppearanceSettings(prev => {
-      const fontSize = clampFontSize(px)
-      return fontSize === prev.fontSize ? prev : { ...prev, fontSize }
-    })
-  }, [])
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent) => {
-      if (event.defaultPrevented) return
-      const action = resolveAppearanceZoomAction(event)
-      if (action === null) return
-
-      // Capture before Ghostty's terminal textarea. Otherwise its key encoder
-      // can consume Ctrl/Command +/- and the appearance never updates.
-      event.preventDefault()
-      event.stopPropagation()
-      if (action === "in") handleZoom(1)
-      else if (action === "out") handleZoom(-1)
-      else setFontSize(DEFAULT_FONT_SIZE)
-    }
-    window.addEventListener("keydown", onKeyDown, true)
-    return () => window.removeEventListener("keydown", onKeyDown, true)
-  }, [handleZoom, setFontSize])
-
   const resetAppearanceSettings = useCallback(() => {
     setAppearanceSettings({
       ...DEFAULT_APPEARANCE_SETTINGS,
@@ -431,9 +363,7 @@ export function useAppearanceSettings() {
     setAppearanceSettings,
     activeTheme,
     colorScheme,
-    fontSize: appearanceSettings.fontSize,
-    handleZoom,
-    setFontSize,
+    fontSize: DEFAULT_UI_FONT_SIZE,
     resetAppearanceSettings,
     setThemeId,
   }

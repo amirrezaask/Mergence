@@ -36,14 +36,24 @@ test("material gallery exposes named chrome and matte content surfaces", async (
       const style = getComputedStyle(element)
       const color = style.backgroundColor
       const match = color.match(/rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/)
+      const oklchAlpha = color.match(/\/\s*([\d.]+)\s*\)/)?.[1]
       return {
         color,
-        alpha: match?.[4] == null ? 1 : Number(match[4]),
+        alpha:
+          match?.[4] == null
+            ? oklchAlpha == null
+              ? 1
+              : Number(oklchAlpha)
+            : Number(match[4]),
         boxShadow: style.boxShadow,
+        prefersReducedTransparency: window.matchMedia(
+          "(prefers-reduced-transparency: reduce)",
+        ).matches,
       }
     })
   expect(fill.alpha).toBeGreaterThan(0)
-  expect(fill.alpha).toBeLessThan(0.4)
+  if (fill.prefersReducedTransparency) expect(fill.alpha).toBe(1)
+  else expect(fill.alpha).toBeLessThan(0.4)
   expect(fill.boxShadow).toMatch(/inset/)
 
   const contentComputed = await page
@@ -76,7 +86,7 @@ test("material gallery exposes named chrome and matte content surfaces", async (
   )
 })
 
-test("settings keep the default material treatment without a material switch", async ({ launchApp }) => {
+test("settings keep fixed material and typography while allowing font selection", async ({ launchApp }) => {
   const { page } = await launchApp()
   await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
   await page.keyboard.press(
@@ -89,11 +99,26 @@ test("settings keep the default material treatment without a material switch", a
     "data-yaade-interface-material",
     "liquid-glass",
   )
-  await page.locator('[data-yaade-reduced-transparency-toggle=""]').click()
-  await expect(page.locator("html")).toHaveAttribute(
+  await expect(page.locator('[data-yaade-reduced-transparency-toggle=""]')).toHaveCount(0)
+  await expect(page.locator("#yaade-ui-font-size")).toHaveCount(0)
+  await expect(page.locator("html")).not.toHaveAttribute(
     "data-yaade-reduced-transparency",
-    "true",
   )
+
+  const fontInput = page.locator("#yaade-mono-font")
+  const initialFont = await fontInput.inputValue()
+  await fontInput.click()
+  const fontOptions = page.locator("[data-yaade-mono-font-option]")
+  await expect(fontOptions.first()).toBeVisible()
+  const availableFonts = await fontOptions.evaluateAll(elements =>
+    elements
+      .map(element => element.getAttribute("data-yaade-mono-font-option"))
+      .filter((font): font is string => Boolean(font)),
+  )
+  const nextFont = availableFonts.find(font => font !== initialFont)
+  if (!nextFont) throw new Error("The font picker did not expose another font.")
+  await fontOptions.filter({ hasText: nextFont }).click()
+  await expect(fontInput).toHaveValue(nextFont)
 })
 
 test("top Window tabs use disconnected pills with a raised active surface", async ({ launchApp }) => {

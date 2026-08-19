@@ -35,7 +35,6 @@ import {
   FieldGroup,
   FieldLabel,
 } from "@/components/ui/field.js"
-import { Input } from "@/components/ui/input.js"
 import { ScrollArea } from "@/components/ui/scroll-area.js"
 import { Separator } from "@/components/ui/separator.js"
 import {
@@ -61,9 +60,6 @@ export type ColorSchemeMode = "system" | "light" | "dark"
 export type JetAppearanceSettings = {
   themeId: string
   colorSchemeMode: ColorSchemeMode
-  /** Disable translucency and blur while preserving material geometry. */
-  reducedTransparency: boolean
-  fontSize: number
   /** Primary monospace face name (CSS stack built via `buildMonoFontStack`). */
   monoFontFamily: string
   /** Session and ToolUse navigation chrome. */
@@ -92,17 +88,6 @@ export type SettingsOverlayProps = {
   ) => void
 }
 
-function parseNumber(
-  value: string,
-  fallback: number,
-  min: number,
-  max: number,
-): number {
-  const n = Number.parseFloat(value)
-  if (!Number.isFinite(n)) return fallback
-  return Math.max(min, Math.min(max, n))
-}
-
 function settingPatch(
   settings: JetAppearanceSettings,
   patch: Partial<JetAppearanceSettings>,
@@ -125,6 +110,8 @@ function MonoFontPicker({
   onChange: (family: string) => void
 }) {
   const [fonts, setFonts] = useState<string[]>([DEFAULT_MONO_FONT_NAME])
+  const [popupContainer, setPopupContainer] =
+    useState<HTMLDivElement | null>(null)
 
   useEffect(() => {
     let cancelled = false
@@ -145,12 +132,16 @@ function MonoFontPicker({
   })()
 
   return (
-    <div data-yaade-mono-font-picker="" className="w-full min-w-0">
+    <div
+      ref={setPopupContainer}
+      data-yaade-mono-font-picker=""
+      className="w-full min-w-0"
+    >
       <Combobox
         items={items}
         value={value.trim() || DEFAULT_MONO_FONT_NAME}
         onValueChange={next => {
-          if (typeof next === "string" && next.trim()) onChange(next.trim())
+          if (next && next.trim()) onChange(next.trim())
         }}
         itemToStringValue={item => String(item)}
       >
@@ -163,7 +154,10 @@ function MonoFontPicker({
           inputClassName="font-mono"
           aria-label="Terminal font"
         />
-        <ComboboxPopup className="w-(--anchor-width)">
+        <ComboboxPopup
+          className="w-(--anchor-width)"
+          portalContainer={popupContainer}
+        >
           <ComboboxEmpty>No monospace fonts found.</ComboboxEmpty>
           <ComboboxList>
             {(item: string) => (
@@ -227,6 +221,10 @@ function ThemeButton({
 }
 
 type SettingsCategory = "appearance" | "notifications"
+
+function isSettingsCategory(value: string): value is SettingsCategory {
+  return value === "appearance" || value === "notifications"
+}
 
 const SETTINGS_CATEGORIES = {
   appearance: {
@@ -331,7 +329,9 @@ export function SettingsOverlay({
         </DialogHeader>
         <Tabs
           value={category}
-          onValueChange={(value) => setCategory(value as SettingsCategory)}
+          onValueChange={value => {
+            if (isSettingsCategory(value)) setCategory(value)
+          }}
           orientation={compactNavigation ? "horizontal" : "vertical"}
           className="min-h-0 flex-1 flex-col gap-0 md:flex-row"
           data-yaade-settings-tabs=""
@@ -492,36 +492,6 @@ export function SettingsOverlay({
                         </ToggleGroupItem>
                       </ToggleGroup>
                     </Field>
-                    <Field
-                      orientation="responsive"
-                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
-                    >
-                      <FieldContent className="min-w-0">
-                        <FieldLabel
-                          htmlFor="yaade-reduced-transparency"
-                          className="text-sm font-medium leading-snug text-foreground"
-                        >
-                          Reduced transparency
-                        </FieldLabel>
-                        <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Use opaque surfaces when translucency is distracting or expensive.
-                        </FieldDescription>
-                      </FieldContent>
-                      <div className="flex justify-start sm:justify-end">
-                        <Checkbox
-                          id="yaade-reduced-transparency"
-                          checked={settings.reducedTransparency}
-                          onCheckedChange={checked =>
-                            onSettingsChange(
-                              settingPatch(settings, {
-                                reducedTransparency: checked === true,
-                              }),
-                            )
-                          }
-                          data-yaade-reduced-transparency-toggle=""
-                        />
-                      </div>
-                    </Field>
                     <div className="grid gap-4">
                       {Array.from(
                         themes.reduce((map, theme) => {
@@ -560,40 +530,6 @@ export function SettingsOverlay({
                   </FieldGroup>
                   <Separator />
                   <FieldGroup className="divide-y divide-border gap-0">
-                    <Field
-                      orientation="responsive"
-                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
-                    >
-                      <FieldContent className="min-w-0">
-                        <FieldLabel
-                          htmlFor="yaade-ui-font-size"
-                          className="text-sm font-medium leading-snug text-foreground"
-                        >
-                          UI font size
-                        </FieldLabel>
-                      </FieldContent>
-                      <Input
-                        id="yaade-ui-font-size"
-                        type="number"
-                        min={10}
-                        max={24}
-                        step={1}
-                        value={settings.fontSize}
-                        onChange={(event) =>
-                          onSettingsChange(
-                            settingPatch(settings, {
-                              fontSize: parseNumber(
-                                event.target.value,
-                                settings.fontSize,
-                                10,
-                                24,
-                              ),
-                            }),
-                          )
-                        }
-                        className="h-8 font-mono"
-                      />
-                    </Field>
                     <Field
                       orientation="responsive"
                       className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"

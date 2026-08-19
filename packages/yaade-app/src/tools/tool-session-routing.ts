@@ -102,6 +102,19 @@ export function chooseSession(
   )
 }
 
+export function isLiveSessionTab(
+  session: AppSession | undefined,
+  tab: SessionTab | undefined,
+): boolean {
+  return Boolean(
+    session &&
+      !session.archivedAt &&
+      tab &&
+      !tab.archivedAt &&
+      tab.sessionId === session.id,
+  )
+}
+
 export function chooseTab(
   requested: SessionTabId | undefined,
   session: AppSession | undefined,

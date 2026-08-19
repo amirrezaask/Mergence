@@ -33,6 +33,67 @@ test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) 
   await expect(hud).not.toContainText("Neovim")
 })
 
+test("closing a new Window during automatic terminal creation stays quiet", async ({
+  launchApp,
+}) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+    // The intentionally delayed create races tab archival; the host rejects
+    // that stale command while the UI must treat it as an expected close.
+    expectedHttpErrors: [{ method: "POST", path: "/api/v1/rpc", status: 400 }],
+  })
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
+
+  await page.evaluate(() => {
+    const tools = window.yaade?.tools
+    if (!tools?.createUse) throw new Error("tool API is not ready")
+    const selectTab = tools.selectTab
+    tools.selectTab = async command => {
+      document.documentElement.dataset.yaadeTestSelectState = "started"
+      try {
+        return await selectTab(command)
+      } finally {
+        document.documentElement.dataset.yaadeTestSelectState = "settled"
+      }
+    }
+    const createUse = tools.createUse
+    tools.createUse = async command => {
+      const released = new Promise<void>(resolve => {
+        window.addEventListener("yaade:test-release-create", () => resolve(), {
+          once: true,
+        })
+      })
+      document.documentElement.dataset.yaadeTestCreateState = "started"
+      await released
+      try {
+        return await createUse(command)
+      } finally {
+        document.documentElement.dataset.yaadeTestCreateState = "settled"
+      }
+    }
+  })
+
+  const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]")
+  await expect(windowTabs).toHaveCount(1)
+  await page.getByRole("button", { name: "New tab" }).click()
+  await expect(windowTabs).toHaveCount(2)
+  await expect
+    .poll(() => page.locator("html").getAttribute("data-yaade-test-create-state"))
+    .toBe("started")
+  await expect
+    .poll(() => page.locator("html").getAttribute("data-yaade-test-select-state"))
+    .toBe("settled")
+
+  const newTab = windowTabs.filter({ hasText: "New tab" })
+  await newTab.getByRole("button", { name: "Close New tab" }).click()
+  await expect(windowTabs).toHaveCount(1)
+  await page.evaluate(() => window.dispatchEvent(new Event("yaade:test-release-create")))
+  await expect
+    .poll(() => page.locator("html").getAttribute("data-yaade-test-create-state"))
+    .toBe("settled")
+  await expect(page.getByRole("alert").filter({ hasText: "Action failed" })).toHaveCount(0)
+})
+
 test("tool context adds a project with folder-path completion", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
@@ -205,52 +266,6 @@ test("split shortcuts split the focused pane in both directions", async ({ launc
 
   await page.keyboard.press(`${modifier}+Shift+d`)
   await expect(page.locator("[data-yaade-mux-pane-chrome]")).toHaveCount(3)
-})
-
-test("appearance zoom works while the terminal input owns focus", async ({ launchApp }) => {
-  const { page } = await launchApp({
-    workspaceRel: "fixtures/sample-workspace",
-  })
-  await focusTerminal(page)
-  await expect(
-    page.locator("[data-yaade-terminal-panel] [data-ghostty-terminal-input]").first(),
-  ).toBeFocused()
-
-  const initial = await page.evaluate(() => ({
-    fontSize: document.documentElement.style.fontSize,
-    cellHeight: window.__yaadeAgent?.getTerminalCellHeight() ?? 0,
-  }))
-  expect(initial.fontSize).toBe("13px")
-  expect(initial.cellHeight).toBeGreaterThan(0)
-
-  const modifier = process.platform === "darwin" ? "Meta" : "Control"
-  await page.keyboard.press(`${modifier}+Equal`)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
-    .toBe("15px")
-  await expect
-    .poll(() => page.evaluate(() => window.__yaadeAgent?.getTerminalCellHeight() ?? 0))
-    .toBeGreaterThan(initial.cellHeight)
-
-  await page.keyboard.press(`${modifier}+Shift+Equal`)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
-    .toBe("17px")
-
-  await page.keyboard.press(`${modifier}+Minus`)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
-    .toBe("15px")
-
-  await page.keyboard.press(`${modifier}+Shift+Minus`)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
-    .toBe("13px")
-
-  await page.keyboard.press(`${modifier}+Digit0`)
-  await expect
-    .poll(() => page.evaluate(() => document.documentElement.style.fontSize))
-    .toBe("13px")
 })
 
 test("split controls open Terminal by default and the picker with a modifier", async ({ launchApp }) => {
