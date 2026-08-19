@@ -10,6 +10,7 @@ import { pressShellPrefix } from "./_launch.js"
 
 async function openToolSessionShell(page: ShellDriver): Promise<void> {
   await page.evaluate(() => {
+    localStorage.removeItem("yaade:last-tool-session-route")
     history.pushState(null, "", "/")
     window.dispatchEvent(new Event("popstate"))
   })
@@ -70,6 +71,20 @@ test("Git History is available as a Session tool", async ({ launchApp }) => {
   )
 })
 
+test("Git explains when the active checkout is not a repository", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/non-git-search",
+  })
+  await openToolSessionShell(page)
+  await pressShellPrefix(page)
+  await page.keyboard.press("g")
+
+  await expect(page.getByText("No Git repository", { exact: true })).toBeVisible({
+    timeout: 30_000,
+  })
+  await expect(page.getByText("Open a session inside a Git repository", { exact: false })).toBeVisible()
+})
+
 test("commits staged changes from the Git commit dialog", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
@@ -109,11 +124,60 @@ test("commits staged changes from the Git commit dialog", async ({ launchApp }) 
   ).toBe("")
 })
 
-test("mobile Git drills from commits to files to an on-demand diff", async ({ launchApp }) => {
+test("Git working-tree review stages and unstages files from its dialog", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
   })
-  await page.setViewportSize({ width: 390, height: 844 })
+  const projectPath = await ensureGitRepository(page)
+  fs.writeFileSync(path.join(projectPath, "history-seed.txt"), "changed by Git UI\n")
+  await openToolSessionShell(page)
+  await pressShellPrefix(page)
+  await page.keyboard.press("g")
+
+  await expect(page.locator('[data-yaade-git-workspace]')).toBeVisible({
+    timeout: 30_000,
+  })
+  const workingTree = page.locator('[data-yaade-git-working-tree=""]')
+  await expect(workingTree).toBeVisible({ timeout: 30_000 })
+  await workingTree.click()
+
+  const dialog = page.locator('[data-yaade-commit-changes-dialog=""]')
+  await expect(dialog).toBeVisible({ timeout: 30_000 })
+  const changedFiles = dialog.locator(
+    '[data-yaade-pierre-file-tree] [role="treeitem"]',
+  )
+  await expect(changedFiles).toHaveCount(1)
+  await expect(changedFiles.first()).toBeVisible()
+
+  const stageAll = dialog.locator('[data-yaade-commit-changes-stage-all=""]')
+  await expect(stageAll).toBeEnabled()
+  await stageAll.click()
+  const unstageAll = dialog.locator('[data-yaade-commit-changes-unstage-all=""]')
+  await expect(unstageAll).toBeEnabled({ timeout: 30_000 })
+  expect(
+    execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: projectPath,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("history-seed.txt")
+
+  await unstageAll.click()
+  await expect(dialog.locator('[data-yaade-commit-changes-stage-all=""]')).toBeEnabled({
+    timeout: 30_000,
+  })
+  expect(
+    execFileSync("git", ["diff", "--cached", "--name-only"], {
+      cwd: projectPath,
+      encoding: "utf8",
+    }).trim(),
+  ).toBe("")
+})
+
+test("mobile Git drills from commits to files to an on-demand diff", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+    mobile: true,
+  })
   await ensureGitRepository(page)
   await openToolSessionShell(page)
 

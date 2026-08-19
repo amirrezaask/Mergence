@@ -21,17 +21,15 @@ test.describe("terminal compatibility", () => {
     await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
     await page.evaluate(() => window.__yaadeAgent!.waitForReady())
 
-    const missingTerminalError = await page.evaluate(async () => {
+    const unknownTerminalWrite = await page.evaluate(async () => {
       const terminal = window.yaade?.terminal
       if (!terminal) throw new Error("terminal API missing")
-      try {
-        await terminal.write("", "x")
-        return null
-      } catch (error) {
-        return error instanceof Error ? error.message : String(error)
-      }
+      await terminal.write("", "x")
+      return "ignored"
     })
-    expect(missingTerminalError).toContain("missing id")
+    // Unknown terminal ids are an idempotent no-op so stale UI cleanup cannot
+    // turn a late write into an unhandled browser error.
+    expect(unknownTerminalWrite).toBe("ignored")
 
     const toolUseId = await page.evaluate(async () => {
       const tools = window.yaade?.tools
@@ -52,9 +50,11 @@ test.describe("terminal compatibility", () => {
       return created.id
     })
 
-    await expect(page.locator("[data-ghostty-terminal-canvas]")).toBeVisible({
-      timeout: 30_000,
-    })
+    await expect(
+      page.locator(
+        `[data-yaade-tool-tile="${toolUseId}"] [data-ghostty-terminal-canvas]`,
+      ),
+    ).toBeVisible({ timeout: 30_000 })
     await expect
       .poll(
         () =>

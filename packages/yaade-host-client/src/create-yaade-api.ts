@@ -496,7 +496,10 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       launch: (req) => transport.invoke("agents:launch", req),
       stop: (req) => transport.invoke("agents:stop", req),
       close: (req) => transport.invoke("agents:close", req),
-      listLive: (projectId) => transport.invoke("agents:listLive", projectId),
+      listLive: (projectId) =>
+        projectId === undefined
+          ? transport.invoke("agents:listLive")
+          : transport.invoke("agents:listLive", projectId),
       listProject: (projectId) =>
         transport.invoke("agents:listProject", projectId),
       get: (runId) => transport.invoke("agents:get", runId),

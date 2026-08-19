@@ -28,6 +28,25 @@ test("encodes a missing history cursor as null when requesting a sized page", as
   ])
 })
 
+test("omits an absent agent project filter from the RPC tuple", async () => {
+  const calls: Array<{ channel: string; args: unknown[] }> = []
+  const transport: YaadeHostTransport = {
+    invoke: async (channel: string, ...args: unknown[]) => {
+      calls.push({ channel, args })
+      decodeHostRouteArgs(channel, args)
+      throw new Error("stop after validating args")
+    },
+    on: () => () => undefined,
+  }
+
+  await assert.rejects(
+    () => createYaadeApi(transport).agents.listLive(),
+    /stop after validating args/,
+  )
+
+  assert.deepEqual(calls, [{ channel: "agents:listLive", args: [] }])
+})
+
 test("omits an absent commit body from the RPC tuple", async () => {
   const calls: Array<{ channel: string; args: unknown[] }> = []
   const transport: YaadeHostTransport = {

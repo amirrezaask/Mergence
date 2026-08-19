@@ -35,6 +35,81 @@ test("Session shell exposes only Terminal and Git tools", async ({ launchApp }) 
   await expect(hud).not.toContainText("Neovim")
 })
 
+test("session switcher creates and archives a session", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  const switcher = page.getByRole("button", { name: /Switch session/ })
+  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(1, {
+    timeout: 30_000,
+  })
+
+  await switcher.click()
+  const popover = page.locator('[data-yaade-session-switcher-popover=""]')
+  await expect(popover).toBeVisible()
+  const newSessionButton = popover.locator('[data-yaade-new-session=""]')
+  await expect(newSessionButton).toBeVisible()
+  await newSessionButton.focus()
+  await page.keyboard.press("Enter")
+  await expect(
+    page.getByRole("button", { name: "Switch session, current New session" }),
+  ).toBeVisible({ timeout: 30_000 })
+
+  await page.getByRole("button", { name: /Switch session/ }).click()
+  await popover.getByRole("button", { name: "Close New session" }).click()
+  await expect(page.getByRole("dialog", { name: "Close session?" })).toBeVisible()
+  await page.getByRole("button", { name: "Stop tools and archive" }).click()
+  await expect(
+    page.getByRole("button", { name: "Switch session, current Session 1" }),
+  ).toBeVisible({ timeout: 30_000 })
+})
+
+test("terminal output is replayed after a browser reload", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  const marker = "YAADE_DURABLE_REPLAY"
+
+  await focusTerminal(page)
+  await page.keyboard.type(`printf '${marker}\\n'`)
+  await page.keyboard.press("Enter")
+
+  const terminalText = () =>
+    page.evaluate(() => {
+      const id = window.__yaadeAgent?.getState().activeToolUseId
+      return id ? window.__yaadeAgent?.getTerminalText?.(id) ?? "" : ""
+    })
+  await expect.poll(terminalText, { timeout: 15_000 }).toContain(marker)
+
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
+  await page.evaluate(() => window.__yaadeAgent!.waitForReady())
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible()
+  await expect.poll(terminalText, { timeout: 15_000 }).toContain(marker)
+})
+
+test("Windows and pane state survive a browser reload", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]")
+
+  await expect(windowTabs).toHaveCount(1)
+  await page.getByRole("button", { name: "New tab" }).click()
+  await expect(windowTabs).toHaveCount(2)
+  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(1, {
+    timeout: 30_000,
+  })
+
+  await page.reload({ waitUntil: "domcontentloaded" })
+  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
+  await page.evaluate(() => window.__yaadeAgent!.waitForReady())
+  await expect(windowTabs).toHaveCount(2)
+  await expect(page.locator("[data-yaade-tool-tile]")).toHaveCount(1, {
+    timeout: 30_000,
+  })
+})
+
 test("closing a new Window during automatic terminal creation stays quiet", async ({
   launchApp,
 }) => {
@@ -243,6 +318,48 @@ test("agent sidebar selection focuses its tool pane", async ({ launchApp }) => {
   await expect(
     page.locator(`[data-yaade-tool-tile="${created.firstId}"][data-focused]`),
   ).toBeVisible()
+})
+
+test("mobile Terminal exposes accessory keys and keeps its surface mounted", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+    mobile: true,
+  })
+  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible({
+    timeout: 30_000,
+  })
+  await page.evaluate(() => {
+    localStorage.removeItem("yaade:last-tool-session-route")
+    history.pushState(null, "", "/")
+    window.dispatchEvent(new Event("popstate"))
+  })
+  const session = page.locator("[data-yaade-mobile-session-group]").first()
+  await expect(session).toBeVisible()
+
+  await session.locator("[data-yaade-mobile-new-tool]").first().click()
+  await page.locator('[data-yaade-mobile-new-tool-kind="terminal"]').click()
+  await expect(page.locator('[data-yaade-mobile-tool-detail=""]')).toBeVisible({
+    timeout: 30_000,
+  })
+  await expect(
+    page.locator(
+      '[data-yaade-mobile-retained-terminal][data-active="true"] [data-yaade-terminal-panel]',
+    ),
+  ).toBeVisible({ timeout: 30_000 })
+
+  const keys = page.locator("[data-yaade-mobile-terminal-keys]")
+  await expect(keys).toBeVisible()
+  const ctrl = keys.getByRole("button", { name: "Ctrl", exact: true })
+  await ctrl.click()
+  await expect(ctrl).toHaveAttribute("aria-pressed", "true")
+  await keys.getByRole("button", { name: "Arrow left", exact: true }).click()
+  await expect(ctrl).toHaveAttribute("aria-pressed", "false")
+
+  await page.getByRole("button", { name: "Back to tools" }).click()
+  await expect(page.locator('[data-yaade-mobile-shell][data-yaade-mobile-view="tools"]')).toBeVisible()
+  await expect(
+    page.locator(`[data-yaade-mobile-tool][data-tool-kind="terminal"]`),
+  ).toHaveCount(2)
 })
 
 test("split shortcuts split the focused pane in both directions", async ({ launchApp }) => {

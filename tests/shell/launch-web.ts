@@ -32,6 +32,8 @@ function resolveTsxCli(): string {
 
 export type LaunchWebOptions = {
   workspaceRel?: string
+  /** Launch Chromium with touch/coarse-pointer media queries enabled. */
+  mobile?: boolean
   env?: Record<string, string>
   userDataDir?: string
   launchWithoutWorkspace?: boolean
@@ -230,6 +232,9 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
       String(port),
       "--data-dir",
       serverData,
+      "--pty-supervisor",
+      "0",
+      "--kill-ptys-on-exit",
       ...(options.launchWithoutWorkspace ? [] : [workspace]),
     ],
     {
@@ -260,11 +265,17 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
 
   const contextOptions: Parameters<typeof chromium.launchPersistentContext>[1] = {
     headless: process.env.YAADE_HEADED !== "1",
-    viewport: { width: 1440, height: 900 },
+    viewport: options.mobile
+      ? { width: 390, height: 844 }
+      : { width: 1440, height: 900 },
     deviceScaleFactor: 1,
     locale: "en-US",
     timezoneId: "UTC",
     colorScheme: "dark",
+  }
+  if (options.mobile) {
+    contextOptions.hasTouch = true
+    contextOptions.isMobile = true
   }
   if (process.env.YAADE_PLAYWRIGHT_CHANNEL) {
     contextOptions.channel = process.env.YAADE_PLAYWRIGHT_CHANNEL
@@ -351,7 +362,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
         )
         if (unexpected.length > 0) {
           throw new Error(
-            `Unexpected browser failures:\n${unexpected.map(formatBrowserFailure).join("\n")}`,
+            `Unexpected browser failures:\n${unexpected.map(formatBrowserFailure).join("\n")}\nServer logs:\n${jetLogs()}`,
           )
         }
       },

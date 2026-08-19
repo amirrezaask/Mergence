@@ -6,6 +6,7 @@ import type { LaunchShellResult, ShellDriver } from "../shell/driver.js"
 export type { ShellDriver }
 export type LaunchJetOptions = {
   workspaceRel?: string
+  mobile?: boolean
   env?: Record<string, string>
   userDataDir?: string
   launchWithoutWorkspace?: boolean
