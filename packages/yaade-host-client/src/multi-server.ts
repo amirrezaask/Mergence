@@ -579,7 +579,10 @@ export class MultiServerHostClient {
     this.projectOwners.set(projectId, projectOwner)
     const output = this.scopeProcessOutput(owner.serverId, use.output)
     if (use.output.kind === "process" && use.output.ptyId) {
-      this.ptyOwners.set(this.scopePtyId(owner.serverId, use.output.ptyId), owner)
+      this.ptyOwners.set(this.scopePtyId(owner.serverId, use.output.ptyId), {
+        serverId: owner.serverId,
+        localId: use.output.ptyId,
+      })
     }
     return {
       ...use,
@@ -617,7 +620,10 @@ export class MultiServerHostClient {
     const id = scopedTerminalId(owner.serverId, owner.localId)
     this.terminalInstanceOwners.set(id, owner)
     if (instance.ptyId) {
-      this.ptyOwners.set(this.scopePtyId(owner.serverId, instance.ptyId), owner)
+      this.ptyOwners.set(this.scopePtyId(owner.serverId, instance.ptyId), {
+        serverId: owner.serverId,
+        localId: instance.ptyId,
+      })
     }
     return {
       ...instance,
@@ -684,7 +690,7 @@ export class MultiServerHostClient {
         if (event.output.kind === "process" && event.output.ptyId) {
           this.ptyOwners.set(this.scopePtyId(connection.definition.id, event.output.ptyId), {
             serverId: connection.definition.id,
-            localId: event.toolUseId,
+            localId: event.output.ptyId,
           })
         }
         return {

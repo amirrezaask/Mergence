@@ -186,6 +186,34 @@ describe("ToolClient", () => {
     client.dispose()
   })
 
+  it("re-fetches through the API for runtime snapshots", async () => {
+    const use = makeUse(1)
+    const recovered = makeUse(4)
+    const session = AppSession.make({
+      id: "ses-client-test",
+      title: "Session",
+      position: 0,
+      activeToolUseId: use.id,
+      createdAt: use.createdAt,
+      updatedAt: use.createdAt,
+    })
+    const api = makeApi({ session, toolUses: [use] }, () => recovered)
+    let listCalls = 0
+    api.listSessions = async () => {
+      listCalls += 1
+      return [{ session, toolUses: [listCalls === 1 ? use : recovered] }]
+    }
+    const window = new FakeWindow()
+    const client = new ToolClient({ api, window })
+    client.start()
+    await client.hydrate()
+    window.dispatch("yaade:runtime-snapshot")
+    await new Promise(resolve => setTimeout(resolve, 0))
+    assert.equal(listCalls, 2)
+    assert.equal(client.store.getSnapshot().usesById.get(use.id)?.revision, 4)
+    client.dispose()
+  })
+
   it("reconciles all snapshots after a host reconnect", async () => {
     const use = makeUse(1)
     const session = AppSession.make({

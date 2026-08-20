@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import { NodeRuntime } from "@effect/platform-node"
+import * as NodeRuntime from "@effect/platform-node/NodeRuntime"
 import { Effect } from "effect"
 import { applyLoginShellEnv } from "@yaade/node-host"
 import { loadConfig } from "./config.js"

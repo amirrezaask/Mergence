@@ -36,6 +36,10 @@ type PendingRequest = {
 const RECONNECT_DELAY_MS = 250
 const MAX_RECONNECT_DELAY_MS = 5_000
 
+function isLegacyHandshakeError(error: Error): boolean {
+  return error instanceof Error && error.message === "unknown supervisor op: handshake"
+}
+
 export class SupervisedTerminalHost {
   private readonly dataDir: string
   private socketPath: string
@@ -239,16 +243,26 @@ export class SupervisedTerminalHost {
     })
     socket.on("close", () => this.handleSocketLost(socket))
 
-    const handshake = await this.rpc("handshake", [], false) as {
-      protocolVersion?: number
-      supervisorEpoch?: string
-    }
-    if (handshake.protocolVersion !== 1 || !handshake.supervisorEpoch) {
-      socket.destroy()
-      throw new Error("SUPERVISOR_PROTOCOL_INCOMPATIBLE")
+    let supervisorEpoch: string
+    try {
+      const handshake = await this.rpc("handshake", [], false) as {
+        protocolVersion?: number
+        supervisorEpoch?: string
+      }
+      if (handshake.protocolVersion !== 1 || !handshake.supervisorEpoch) {
+        socket.destroy()
+        throw new Error("SUPERVISOR_PROTOCOL_INCOMPATIBLE")
+      }
+      supervisorEpoch = handshake.supervisorEpoch
+    } catch (error) {
+      // Supervisors created before the durable protocol do not know about
+      // handshake yet, but their existing PTYs are still compatible with the
+      // request surface. Keep them alive instead of failing every host start.
+      if (!(error instanceof Error) || !isLegacyHandshakeError(error)) throw error
+      supervisorEpoch = manifest?.supervisorEpoch ?? `legacy:${this.socketPath}`
     }
     const previousEpoch = this.supervisorEpoch
-    this.supervisorEpoch = handshake.supervisorEpoch
+    this.supervisorEpoch = supervisorEpoch
     this.reconnectAttempt = 0
     const epochChanged = Boolean(previousEpoch && previousEpoch !== this.supervisorEpoch)
     if (epochChanged) {
