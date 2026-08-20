@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vite-plus/test"
 import { createTerminalOutputWriter } from "./terminal-output-writer.js"
 
 test("coalesces multiple enqueues into one write per flush", () => {

@@ -10,7 +10,7 @@ import {
 } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { pathToFileURL } from "node:url"
 import {
   exists,

@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import { describe, it, beforeEach, afterEach } from "node:test"
+import { describe, it, beforeEach, afterEach } from "vite-plus/test"
 import { NotificationService } from "./service.js"
 import {
   parseOscNotifications,

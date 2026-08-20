@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vite-plus/test"
 import { EventHub } from "./events.js"
 
 test("event replay is bounded by both count and serialized bytes", () => {

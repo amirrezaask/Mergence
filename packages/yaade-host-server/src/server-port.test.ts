@@ -3,7 +3,7 @@ import { createServer } from "node:http"
 import net from "node:net"
 import os from "node:os"
 import path from "node:path"
-import { afterEach, describe, it } from "node:test"
+import { afterEach, describe, it } from "vite-plus/test"
 import { loadConfig } from "./config.js"
 import { startHostServer } from "./server.js"
 

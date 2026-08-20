@@ -13,13 +13,12 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json --noEmit false",
-    "test": "tsx --test \"src/**/*.test.ts\""
+    "test": "vp test"
   },
   "dependencies": {
     "@yaade/shared": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }
 }

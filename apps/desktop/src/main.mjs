@@ -22,9 +22,9 @@ import {
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOOPBACK_HOST = "127.0.0.1"
 const HOST_ENTRY = path.join("packages", "yaade-host-server", "src", "cli.ts")
-const VITE_ENTRY = path.join("apps", "web", "node_modules", "vite", "bin", "vite.js")
-const HOISTED_VITE_ENTRY = path.join("node_modules", "vite", "bin", "vite.js")
-const TSX_ENTRY = path.join("node_modules", "tsx", "dist", "cli.mjs")
+const RUN_TS_ENTRY = path.join("scripts", "run-ts.mjs")
+const VP_ENTRY = path.join("apps", "web", "node_modules", "vite-plus", "bin", "vp")
+const HOISTED_VP_ENTRY = path.join("node_modules", "vite-plus", "bin", "vp")
 const CHILD_READY_TIMEOUT_MS = 45_000
 // Keep the native overlay aligned with --yaade-tab-bar-height (3.5rem at the
 // app's 13px root font size). The renderer owns the visual titlebar; Electron
@@ -179,7 +179,7 @@ function resolveRuntimeRoot() {
   if (required.every(isFile)) return runtimeRoot
 
   throw new Error(
-    `Packaged YAADE runtime is missing from ${runtimeRoot}. Run pnpm build:desktop before packaging.`,
+    `Packaged YAADE runtime is missing from ${runtimeRoot}. Run vp run build:desktop before packaging.`,
   )
 }
 
@@ -335,11 +335,7 @@ async function launchHost(repoRoot, workspace) {
     cwd = path.join(runtimeRoot, "backend")
   } else {
     command = resolveNodeBinary()
-    commandArgs = [
-      path.join(repoRoot, TSX_ENTRY),
-      path.join(repoRoot, HOST_ENTRY),
-      ...args,
-    ]
+    commandArgs = [path.join(repoRoot, RUN_TS_ENTRY), path.join(repoRoot, HOST_ENTRY), ...args]
     cwd = repoRoot
   }
 
@@ -389,16 +385,13 @@ async function launchHost(repoRoot, workspace) {
 async function launchVite(repoRoot, hostPort) {
   const port = 0
   const command = resolveNodeBinary()
-  const viteCandidates = [
-    path.join(repoRoot, VITE_ENTRY),
-    path.join(repoRoot, HOISTED_VITE_ENTRY),
-  ]
-  const viteEntry = viteCandidates.find(isFile)
-  if (!viteEntry) {
-    throw new Error(`Vite entry is missing; run pnpm install`)
+  const vpCandidates = [path.join(repoRoot, VP_ENTRY), path.join(repoRoot, HOISTED_VP_ENTRY)]
+  const vpEntry = vpCandidates.find(isFile)
+  if (!vpEntry) {
+    throw new Error(`Vite+ entry is missing; run vp install`)
   }
 
-  const child = spawn(command, [viteEntry], {
+  const child = spawn(command, [vpEntry, "dev"], {
     cwd: path.join(repoRoot, "apps", "web"),
     env: childEnvironment({
       JET_HOST: LOOPBACK_HOST,
@@ -413,7 +406,7 @@ async function launchVite(repoRoot, hostPort) {
     windowsHide: true,
   })
   let observedPort = 0
-  observeChildOutput(child, "vite", line => {
+  observeChildOutput(child, "vite+", line => {
     const match = /Local:\s+http:\/\/[^:]+:(\d+)/.exec(line)
     if (match) observedPort = Number(match[1])
   })
@@ -422,7 +415,7 @@ async function launchVite(repoRoot, hostPort) {
     await waitForHttp(
       () => (observedPort > 0 ? `http://${LOOPBACK_HOST}:${observedPort}/` : null),
       child,
-      "Vite server",
+      "Vite+ server",
     )
   } catch (error) {
     await stopChild(child)
@@ -643,7 +636,7 @@ async function handleBootFailure(error) {
   if (app.isReady()) {
     dialog.showErrorBox(
       "YAADE could not start",
-      "The local host could not be started. Run pnpm dev:desktop from a checkout or reinstall the desktop app.",
+      "The local host could not be started. Run vp run dev:desktop from a checkout or reinstall the desktop app.",
     )
   }
   await requestQuit()

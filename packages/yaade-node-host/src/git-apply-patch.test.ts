@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { after, before, describe, test } from "node:test"
+import { afterAll, beforeAll, describe, test } from "vite-plus/test"
 import { pathToFileUri } from "@yaade/shared"
 
 import { gitApplyPatch, gitDiff, gitStatus } from "./git.js"
@@ -12,7 +12,7 @@ describe("gitApplyPatch", () => {
   let root: string
   let rootUri: string
 
-  before(() => {
+  beforeAll(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-git-apply-"))
     rootUri = pathToFileUri(root)
     const run = (args: string[]) =>
@@ -25,7 +25,7 @@ describe("gitApplyPatch", () => {
     run(["commit", "-m", "init"])
   })
 
-  after(() => {
+  afterAll(() => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 

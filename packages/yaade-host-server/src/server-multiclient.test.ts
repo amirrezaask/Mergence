@@ -3,7 +3,7 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { pathToFileURL } from "node:url"
-import test from "node:test"
+import { test } from "vite-plus/test"
 import WebSocket from "ws"
 import {
   decodeTerminalDataFrame,

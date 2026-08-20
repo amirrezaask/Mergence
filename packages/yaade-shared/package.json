@@ -13,10 +13,9 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc -p tsconfig.json",
-    "test": "tsx --test src/rad-scroll.test.ts src/wheel-delta.test.ts src/language-id.test.ts src/theme/theme-types.test.ts src/uri.test.ts"
+    "test": "vp test"
   },
   "devDependencies": {
-    "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }
 }

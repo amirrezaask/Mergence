@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vite-plus/test"
 import { appendBoundedTaskOutput } from "./tasks.js"
 
 test("task output remains bounded and keeps the newest complete UTF-8 text", () => {

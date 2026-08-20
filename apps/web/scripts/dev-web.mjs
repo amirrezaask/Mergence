@@ -2,7 +2,7 @@
 /**
  * Start only the web application.
  *
- * The host is a separate application. Run `pnpm dev:server` in another
+ * The host is a separate application. Run `vp run @yaade/server#dev` in another
  * terminal and point the Vite proxy at it with JET_PORT when it is not on the
  * default port.
  */
@@ -54,8 +54,8 @@ if (!isLoopbackHost(host)) {
   }
 }
 
-const viteBin = path.join(appDir, "node_modules", ".bin", process.platform === "win32" ? "vite.cmd" : "vite")
-const vite = spawn(viteBin, process.argv.slice(2), {
+const vpBin = path.join(appDir, "node_modules", ".bin", process.platform === "win32" ? "vp.cmd" : "vp")
+const vite = spawn(vpBin, ["dev", ...process.argv.slice(2)], {
   cwd: appDir,
   stdio: "inherit",
   env: {

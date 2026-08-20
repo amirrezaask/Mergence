@@ -10,19 +10,17 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: voidzero-dev/setup-vp@v1.17.0
         with:
-          version: 9
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm build:web
-      - run: pnpm exec playwright install --with-deps chromium
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
-      - run: pnpm test:web:e2e
+          node-version: 22.18.0
+          run-install: false
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp run build:web
+      - run: vp exec playwright install --with-deps chromium
+      - run: vp run typecheck
+      - run: vp run test
+      - run: vp run build
+      - run: vp run test:web:e2e
         env:
           YAADE_E2E_RUN_FLAKY: "1"

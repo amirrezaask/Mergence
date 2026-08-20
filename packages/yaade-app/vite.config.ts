@@ -1,10 +1,10 @@
-import { defineConfig } from "vite"
-import react from "@vitejs/plugin-react"
-import tailwindcss from "@tailwindcss/vite"
-import path from "node:path"
+import { defineConfig, lazyPlugins } from "vite-plus";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
+import path from "node:path";
 
 export default defineConfig({
-  plugins: [react(), tailwindcss()],
+  plugins: lazyPlugins(() => [react(), tailwindcss()]),
   // Pierre @pierre/diffs worker is an ES module (code-splitting); iife fails the build.
   worker: {
     format: "es",
@@ -18,12 +18,18 @@ export default defineConfig({
   build: {
     outDir: "dist",
     emptyOutDir: true,
-    rollupOptions: {
+    rolldownOptions: {
       output: {
-        manualChunks(id) {
-          if (id.includes("@pierre/diffs") || id.includes("shiki")) return "git-diff"
+        codeSplitting: {
+          groups: [
+            {
+              name: "git-diff",
+              test: (id) => id.includes("@pierre/diffs") || id.includes("shiki"),
+              includeDependenciesRecursively: false,
+            },
+          ],
         },
       },
     },
   },
-})
+});

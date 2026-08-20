@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { DatabaseSync } from "node:sqlite"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { AgentRunService } from "./runs.js"
 
 function event(runId: string, processId: string) {

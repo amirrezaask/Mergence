@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { LatestRootTaskQueue } from "./latest-root-task-queue.js"
 
 function deferredTask(label: string, events: string[]) {

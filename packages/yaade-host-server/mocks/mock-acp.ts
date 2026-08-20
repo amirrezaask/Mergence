@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * Deterministic ACP v1 stdio peer used for exercising Yaade's agent transport.
  *
@@ -7,7 +7,7 @@
  * scenario names, message shapes and CLI flags are kept compatible so the ACP
  * matrix tests and E2E specs observe identical behavior.
  *
- * Usage: tsx packages/yaade-host-server/mocks/mock-acp.ts --scenario echo
+ * Usage: node scripts/run-ts.mjs packages/yaade-host-server/mocks/mock-acp.ts --scenario echo
  */
 import fs from "node:fs"
 import path from "node:path"

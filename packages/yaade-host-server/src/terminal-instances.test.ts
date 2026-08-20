@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import { DatabaseSync } from "node:sqlite"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { TerminalInstanceService } from "./terminal-instances.js"
 
 function withService(test: (service: TerminalInstanceService, db: DatabaseSync) => void): void {

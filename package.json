@@ -2,24 +2,25 @@
   "name": "yaade",
   "private": true,
   "scripts": {
-    "build": "pnpm build:server && pnpm build:web && pnpm build:desktop -- --skip-web",
-    "build:server": "pnpm --filter @yaade/server build",
-    "build:web": "pnpm --filter @yaade/web build",
-    "build:desktop": "pnpm --filter @yaade/desktop build",
-    "dev:server": "pnpm --filter @yaade/server dev",
-    "dev:web": "pnpm --filter @yaade/web dev",
-    "dev:web:lan": "pnpm --filter @yaade/web dev -- --host 0.0.0.0",
-    "dev:desktop": "pnpm --filter @yaade/desktop dev",
-    "test:server": "pnpm --filter @yaade/server test",
-    "test:web": "pnpm --filter @yaade/web test && pnpm --filter @yaade/app test",
-    "test:desktop": "pnpm --filter @yaade/desktop test",
-    "test:web:e2e": "playwright test --project=web-e2e",
-    "package:desktop": "pnpm --filter @yaade/desktop package",
-    "make:desktop": "pnpm --filter @yaade/desktop make",
-    "typecheck": "turbo run typecheck",
-    "lint": "oxlint --config oxlint.config.mjs --disable-nested-config .",
-    "test": "turbo run test --concurrency=3",
-    "test:bench": "playwright test --project=bench",
+    "build": "vp run build:server && vp run build:web && vp run build:desktop -- --skip-web",
+    "build:server": "vp run --filter @yaade/server build",
+    "build:web": "vp run --filter @yaade/web build",
+    "build:desktop": "vp run --filter @yaade/desktop build",
+    "dev": "vp run --parallel --filter @yaade/server --filter @yaade/web dev",
+    "dev:server": "vp run @yaade/server#dev",
+    "dev:web": "vp run --filter @yaade/web dev",
+    "dev:web:lan": "vp run --filter @yaade/web dev -- --host 0.0.0.0",
+    "dev:desktop": "vp run --filter @yaade/desktop dev",
+    "test:server": "vp test packages/yaade-host-server",
+    "test:web": "vp test apps/web packages/yaade-app",
+    "test:desktop": "vp test apps/desktop",
+    "test:web:e2e": "vp exec playwright test --project=web-e2e",
+    "package:desktop": "vp run --filter @yaade/desktop package",
+    "make:desktop": "vp run --filter @yaade/desktop make",
+    "typecheck": "vp run -r typecheck",
+    "lint": "vp lint",
+    "test": "vp test",
+    "test:bench": "vp exec playwright test --project=bench",
     "extract:vscode-keybindings": "node scripts/extract-vscode-mac-keybindings.mjs && node scripts/generate-default-keybindings.mjs",
     "validate:keybindings": "node scripts/validate-yaade-keybindings.mjs",
     "postinstall": "node packages/yaade-node-host/scripts/fix-node-pty-perms.mjs",
@@ -30,11 +31,22 @@
     "@playwright/test": "^1.61.1",
     "@types/node": "^22.15.29",
     "effect": "3.22.1",
-    "esbuild": "0.28.1",
-    "oxlint": "1.79.0",
-    "tsx": "^4.23.0",
-    "turbo": "^2.10.4",
-    "typescript": "^7.0.2"
+    "typescript": "^7.0.2",
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   },
-  "packageManager": "pnpm@9.15.0"
+  "packageManager": "pnpm@9.15.0",
+  "pnpm": {
+    "overrides": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@0.2.9"
+    },
+    "peerDependencyRules": {
+      "allowAny": [
+        "vite"
+      ],
+      "allowedVersions": {
+        "vite": "*"
+      }
+    }
+  }
 }

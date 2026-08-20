@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * Deterministic Claude Agent SDK stream-json peer used by E2E specs.
  *
@@ -6,7 +6,7 @@
  * (apps/server/src/bin/yaade-mock_claude_sdk.rs). Emits the same
  * `control_request` / `control_response` / `stream_event` / `result` envelopes.
  *
- * Usage: tsx packages/yaade-host-server/mocks/mock-claude-sdk.ts
+ * Usage: node scripts/run-ts.mjs packages/yaade-host-server/mocks/mock-claude-sdk.ts
  */
 
 type JsonPrimitive = string | number | boolean | null | undefined

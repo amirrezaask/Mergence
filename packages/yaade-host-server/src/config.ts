@@ -141,13 +141,14 @@ export async function loadConfig(
           : process.env.JET_PTY_SUPERVISOR === "0"
             ? false
             : null
-  // Production default is on. node:test stays in-process unless a test opts in.
-  const ptySupervisor =
-    supervisorExplicit ?? !process.env.NODE_TEST_CONTEXT
+  // Production default is on. Tests stay in-process unless they opt in.
+  const runningTests =
+    Boolean(process.env.NODE_TEST_CONTEXT) || process.env.VITEST === "true"
+  const ptySupervisor = supervisorExplicit ?? !runningTests
   const killPtysOnShutdown =
     args["kill-ptys-on-exit"] === true ||
     process.env.JET_KILL_PTYS_ON_EXIT === "1" ||
-    Boolean(process.env.NODE_TEST_CONTEXT)
+    runningTests
 
   return {
     host,

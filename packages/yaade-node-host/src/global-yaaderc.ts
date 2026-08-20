@@ -38,8 +38,8 @@ async function loadJetrcTs(jetDir: string): Promise<string[]> {
   const collected: string[] = []
   try {
     await fs.access(tsPath)
-    const { register } = await import("tsx/esm/api")
-    register()
+    // Node 22.18+ strips TypeScript types natively; no second transpiler is
+    // needed for the small user configuration module.
     const mod = (await import(pathToFileURL(tsPath).href)) as {
       default?: (ctx: JetGlobalConfigContext) => void | Promise<void>
       setup?: (ctx: JetGlobalConfigContext) => void | Promise<void>

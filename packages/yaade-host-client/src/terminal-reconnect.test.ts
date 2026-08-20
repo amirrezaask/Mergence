@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vite-plus/test"
 import type { YaadeHostTransport } from "./transport.js"
 import { createYaadeApi } from "./create-yaade-api.js"
 

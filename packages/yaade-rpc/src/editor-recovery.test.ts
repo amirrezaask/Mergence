@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { test } from "node:test"
+import { test } from "vite-plus/test"
 import {
   MAX_EDITOR_RECOVERY_BUFFER_BYTES,
   MAX_EDITOR_RECOVERY_SESSION_BYTES,

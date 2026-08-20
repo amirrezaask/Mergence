@@ -2,6 +2,6 @@
 # Thin launcher for the TypeScript mock Claude Agent SDK peer.
 set -euo pipefail
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_tsx.sh
-source "$BIN_DIR/_tsx.sh"
-exec_tsx "$BIN_DIR/../mock-claude-sdk.ts" "$@"
+# shellcheck source=./_run-ts.sh
+source "$BIN_DIR/_run-ts.sh"
+exec_run_ts "$BIN_DIR/../mock-claude-sdk.ts" "$@"

@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { Schema } from "effect"
 import { ToolUseId } from "@yaade/rpc"
 import type { AgentRunInfo } from "@yaade/workspace"

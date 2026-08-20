@@ -3,6 +3,6 @@
 # Kept executable-shaped so YAADE_MOCK_ACP_BIN can point straight at it.
 set -euo pipefail
 BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_tsx.sh
-source "$BIN_DIR/_tsx.sh"
-exec_tsx "$BIN_DIR/../mock-acp.ts" "$@"
+# shellcheck source=./_run-ts.sh
+source "$BIN_DIR/_run-ts.sh"
+exec_run_ts "$BIN_DIR/../mock-acp.ts" "$@"

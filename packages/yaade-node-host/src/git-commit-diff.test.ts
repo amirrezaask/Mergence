@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { after, before, describe, test } from "node:test"
+import { afterAll, beforeAll, describe, test } from "vite-plus/test"
 import { pathToFileUri } from "@yaade/shared"
 import {
   gitCommitFileContents,
@@ -17,7 +17,7 @@ describe("gitCommitFileContents", () => {
   let rootUri: string
   let hash: string
 
-  before(() => {
+  beforeAll(() => {
     root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-git-commit-diff-"))
     rootUri = pathToFileUri(root)
     const run = (args: string[]) =>
@@ -41,7 +41,7 @@ describe("gitCommitFileContents", () => {
     hash = commits
   })
 
-  after(() => {
+  afterAll(() => {
     fs.rmSync(root, { recursive: true, force: true })
   })
 

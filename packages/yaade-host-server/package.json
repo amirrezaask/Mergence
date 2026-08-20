@@ -9,10 +9,10 @@
     "./cli": "./src/cli.ts"
   },
   "scripts": {
-    "dev": "tsx watch src/bin.ts",
-    "start": "tsx src/bin.ts",
+    "dev": "node ../../scripts/run-ts.mjs src/bin.ts",
+    "start": "node ../../scripts/run-ts.mjs src/bin.ts",
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/database.test.ts src/hq.test.ts src/events.test.ts src/notifications/service.test.ts src/persistence.test.ts src/security.test.ts src/notification-pubsub.test.ts src/persistence-git-effect.test.ts src/agents/service.test.ts src/agents/runs.test.ts src/agents/project-hooks.test.ts src/agents/hook-queue.test.ts src/terminal-instances.test.ts src/terminal-agent-discovery.test.ts src/tool-session-store.test.ts src/tools/context-resolver.test.ts src/tools/process-driver.test.ts src/config.test.ts src/server-port.test.ts src/server-replay.test.ts src/server-multiclient.test.ts src/server-auth.test.ts src/project-open-http.test.ts src/worktree-path.test.ts"
+    "test": "vp test"
   },
   "dependencies": {
     "@effect/platform": "0.97.1",
@@ -28,7 +28,6 @@
     "@msgpack/msgpack": "^3.1.3",
     "@types/node": "^22.15.29",
     "@types/ws": "^8.5.13",
-    "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }
 }

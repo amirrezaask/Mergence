@@ -8,14 +8,12 @@
  * stageServerPack below.
  */
 import { spawnSync } from "node:child_process"
-import { createRequire } from "node:module"
 import fs from "node:fs"
 import https from "node:https"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
-const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const webSrc = path.join(repoRoot, "apps/web/dist")
 
@@ -32,47 +30,52 @@ function run(command, args, cwd = repoRoot) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
-function resolveEsbuild() {
-  require.resolve("esbuild/package.json", { paths: [repoRoot] })
-  return require("esbuild")
+function resolveVpBin() {
+  const binName = process.platform === "win32" ? "vp.cmd" : "vp"
+  const vpBin = path.join(repoRoot, "node_modules", ".bin", binName)
+  if (!fs.existsSync(vpBin)) throw new Error(`Vite+ CLI missing at ${vpBin}; run vp install`)
+  return vpBin
+}
+
+function packBackendEntry(backendDir, entryPoint, outputName, clean) {
+  const generatedName = `${path.basename(entryPoint).replace(/\.[^.]+$/, "")}.mjs`
+  const args = [
+    "pack",
+    entryPoint,
+    "--platform",
+    "node",
+    "--format",
+    "esm",
+    "--out-dir",
+    backendDir,
+    "--no-dts",
+    "--no-report",
+  ]
+  if (!clean) args.push("--no-clean")
+  run(resolveVpBin(), args)
+
+  const generatedPath = path.join(backendDir, generatedName)
+  if (!fs.existsSync(generatedPath)) {
+    throw new Error(`Vite+ pack did not produce ${generatedName} for ${entryPoint}`)
+  }
+  fs.renameSync(generatedPath, path.join(backendDir, outputName))
+  console.log(`Bundled ${outputName}`)
 }
 
 export async function bundleBackends(
   backendDir,
   entryPoint = path.join(repoRoot, "packages/yaade-host-server/src/cli.ts"),
 ) {
-  const esbuild = resolveEsbuild()
+  fs.rmSync(backendDir, { recursive: true, force: true })
   fs.mkdirSync(backendDir, { recursive: true })
-  for (const stale of ["host-server.mjs", "agent-server.mjs", "host-server.cjs", "agent-server.cjs"]) {
-    fs.rmSync(path.join(backendDir, stale), { force: true })
-  }
-  const banner = {
-    js: `import { createRequire as __yaadeCreateRequire } from "node:module";
-const require = __yaadeCreateRequire(import.meta.url);
-`,
-  }
-  const common = {
-    bundle: true,
-    platform: "node",
-    format: "esm",
-    target: "node22",
-    packages: "bundle",
-    banner,
-    // These modules contain native binaries or resolve platform packages at runtime.
-    external: [
-      "node-pty",
-      "@ff-labs/fff-node",
-      "@ff-labs/fff-node/*",
-      "@vscode/ripgrep",
-    ],
-    logLevel: "warning",
-  }
-  await esbuild.build({
-    ...common,
-    entryPoints: [entryPoint],
-    outfile: path.join(backendDir, "host-server.mjs"),
-  })
-  console.log("Bundled host-server.mjs")
+
+  packBackendEntry(backendDir, entryPoint, "host-server.mjs", true)
+  packBackendEntry(
+    backendDir,
+    path.join(repoRoot, "packages/yaade-node-host/src/pty-supervisor-bin.ts"),
+    "pty-supervisor.mjs",
+    false,
+  )
 }
 
 function writeBackendPackageJson(backendDir) {
@@ -210,7 +213,7 @@ async function ensureNodeRuntime(packDir, nodeDest) {
 
 function copyWebDist(source, destination) {
   if (!fs.existsSync(path.join(source, "index.html"))) {
-    throw new Error(`Frontend dist missing at ${source}; run pnpm build:web first`)
+    throw new Error(`Frontend dist missing at ${source}; run vp run build:web first`)
   }
   fs.rmSync(destination, { recursive: true, force: true })
   fs.cpSync(source, destination, { recursive: true })
@@ -267,7 +270,7 @@ export async function stageServerPack(packDir = path.join(repoRoot, "dist/server
     launcherName: "yaade-server",
     includeWeb: false,
     webSource: null,
-    entryPoint: path.join(repoRoot, "apps/server/src/bin.ts"),
+    entryPoint: path.join(repoRoot, "apps/server/src/index.ts"),
   })
 }
 

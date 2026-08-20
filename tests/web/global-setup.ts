@@ -2,8 +2,9 @@ import { execFileSync } from "node:child_process"
 import { readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 
-// Playwright runs global setup with cwd at the repo root (`pnpm test:web:e2e`).
+// Playwright runs global setup with cwd at the repo root (`vp run test:web:e2e`).
 const repoRoot = process.cwd()
+const vpBin = join(repoRoot, "node_modules", ".bin", process.platform === "win32" ? "vp.cmd" : "vp")
 
 const IGNORED_DIRS = new Set(["node_modules", "dist", ".git", ".turbo", "coverage"])
 
@@ -57,5 +58,5 @@ export default function globalSetup(): void {
     console.log("[global-setup] apps/web/dist is newer than sources; skipping SPA build")
     return
   }
-  execFileSync("pnpm", ["--filter", "@yaade/web", "build"], { stdio: "inherit" })
+  execFileSync(vpBin, ["run", "--filter", "@yaade/web", "build"], { stdio: "inherit" })
 }

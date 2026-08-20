@@ -10,25 +10,7 @@ import type { LaunchShellResult } from "./driver.js"
 
 const REPO_ROOT = path.resolve(__dirname, "../..")
 const HOST_SERVER_ENTRY = path.join(REPO_ROOT, "packages/yaade-host-server/src/cli.ts")
-
-function resolveTsxCli(): string {
-  const candidates = [
-    process.env.YAADE_TSX_CLI,
-    path.join(REPO_ROOT, "node_modules/tsx/dist/cli.mjs"),
-  ]
-  for (const c of candidates) {
-    if (c && fs.existsSync(c)) return c
-  }
-  const pnpmDir = path.join(REPO_ROOT, "node_modules/.pnpm")
-  if (fs.existsSync(pnpmDir)) {
-    for (const name of fs.readdirSync(pnpmDir)) {
-      if (!name.startsWith("tsx@")) continue
-      const candidate = path.join(pnpmDir, name, "node_modules/tsx/dist/cli.mjs")
-      if (fs.existsSync(candidate)) return candidate
-    }
-  }
-  throw new Error(`tsx CLI missing; run pnpm install from repo root`)
-}
+const RUN_TS_ENTRY = path.join(REPO_ROOT, "scripts/run-ts.mjs")
 
 export type LaunchWebOptions = {
   workspaceRel?: string
@@ -199,7 +181,9 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   if (!fs.existsSync(HOST_SERVER_ENTRY)) {
     throw new Error(`Host server entry missing at ${HOST_SERVER_ENTRY}`)
   }
-  const tsxCli = resolveTsxCli()
+  if (!fs.existsSync(RUN_TS_ENTRY)) {
+    throw new Error(`Vite+ TypeScript runner missing at ${RUN_TS_ENTRY}; run vp install`)
+  }
 
   const sharedEnv: NodeJS.ProcessEnv = {
     ...process.env,
@@ -224,7 +208,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   const server: TestServerProcess = spawn(
     process.execPath,
     [
-      tsxCli,
+      RUN_TS_ENTRY,
       HOST_SERVER_ENTRY,
       "--host",
       "127.0.0.1",

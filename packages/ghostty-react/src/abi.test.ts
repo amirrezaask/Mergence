@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs"
 import { strict as assert } from "node:assert"
-import { test } from "node:test"
+import { test } from "vite-plus/test"
 
 const wasmPath = new URL("./vendor/ghostty-vt.wasm", import.meta.url)
 const trampolinePath = new URL("./vendor/ghostty-write-pty.wasm", import.meta.url)

@@ -30,18 +30,21 @@ Keep package imports acyclic. Lower layers must not import React.
 ## Commands
 
 ```bash
-pnpm install
-pnpm typecheck
-pnpm test:server
-pnpm test:web
-pnpm test:desktop
-pnpm lint
-pnpm build:server
-pnpm build:web
-pnpm build:desktop
+vp install
+vp run typecheck
+vp run test:server
+vp run test:web
+vp run test:desktop
+vp run lint
+vp run build:server
+vp run build:web
+vp run build:desktop
 ```
 
-Tests use `node:test` through `tsx`, not Vitest. App tests must be listed in `packages/yaade-app/package.json`.
+Tests run through Vite+ (`vp test`) with Vitest. App tests must be listed in `packages/yaade-app/package.json`.
+
+The web dev server runs through Vite+; start the Bun-backed host with
+`vp run @yaade/server#dev` (or `vp run dev:server`).
 
 ## Application isolation
 

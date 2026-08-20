@@ -3,9 +3,9 @@
 The historical `tests/electron/` directory contains the shared product scenarios; the name is retained to avoid a noisy move. The suite drives Chromium against a separately launched server application.
 
 ```bash
-pnpm test:web:e2e
-YAADE_HEADED=1 pnpm test:web:e2e
-pnpm test:bench
+vp run test:web:e2e
+YAADE_HEADED=1 vp run test:web:e2e
+vp run test:bench
 ```
 
 Global setup builds the React frontend. Every scenario launches one TypeScript host-server process on a free loopback port with a temporary data directory. Browser scenarios use an in-process PTY host and kill it during teardown; detached-supervisor durability is covered by the node-host/process-driver tests. Test projects are restricted to repository fixtures through `JET_ALLOWED_ROOTS`.
@@ -24,10 +24,10 @@ The suite is split by the boundary it protects rather than by implementation fil
 A product change is not covered until the relevant boundary test exists. Run the complete gates with:
 
 ```bash
-pnpm typecheck
-pnpm lint
-pnpm test:server
-pnpm test:web
-pnpm test:desktop
-pnpm test:web:e2e
+vp run typecheck
+vp run lint
+vp run test:server
+vp run test:web
+vp run test:desktop
+vp run test:web:e2e
 ```

@@ -3,7 +3,6 @@ import fs from "node:fs"
 import path from "node:path"
 import { spawn, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
-import { createRequire } from "node:module"
 import { TerminalHost, type TerminalLaunch } from "./terminal.js"
 import { isProcessAlive } from "./process-identity.js"
 
@@ -290,14 +289,23 @@ async function canPingSupervisor(socketPath: string): Promise<boolean> {
   })
 }
 
-function resolveTsxCli(): string | null {
-  const specifiers = [import.meta.url, path.join(process.cwd(), "package.json")]
-  for (const spec of specifiers) {
-    try {
-      return createRequire(spec).resolve("tsx/cli")
-    } catch {
-      /* try the next resolver */
-    }
+function resolveSupervisorArgs(
+  socketPath: string,
+  pidPath: string,
+): string[] | null {
+  const entry = fileURLToPath(new URL("./pty-supervisor-bin.ts", import.meta.url))
+  const compiled = entry.replace(/\.ts$/, ".js")
+  const packaged = path.join(path.dirname(fileURLToPath(import.meta.url)), "pty-supervisor.mjs")
+  const runTs = path.resolve(path.dirname(entry), "../../../scripts/run-ts.mjs")
+
+  if (fs.existsSync(packaged)) {
+    return [packaged, "--socket", socketPath, "--pid-file", pidPath]
+  }
+  if (fs.existsSync(runTs) && fs.existsSync(entry)) {
+    return [runTs, entry, "--socket", socketPath, "--pid-file", pidPath]
+  }
+  if (fs.existsSync(compiled)) {
+    return [compiled, "--socket", socketPath, "--pid-file", pidPath]
   }
   return null
 }
@@ -307,16 +315,9 @@ function spawnSupervisorProcess(
   socketPath: string,
   pidPath: string,
 ): ChildProcess {
-  const entry = fileURLToPath(new URL("./pty-supervisor-bin.ts", import.meta.url))
-  const compiled = entry.replace(/\.ts$/, ".js")
-  const tsxCli = resolveTsxCli()
-  const args = tsxCli
-    ? [tsxCli, entry, "--socket", socketPath, "--pid-file", pidPath]
-    : fs.existsSync(compiled)
-      ? [compiled, "--socket", socketPath, "--pid-file", pidPath]
-      : null
+  const args = resolveSupervisorArgs(socketPath, pidPath)
   if (!args) {
-    throw new Error("cannot spawn pty supervisor: tsx is not installed")
+    throw new Error("cannot spawn pty supervisor: Vite+ TypeScript runner is unavailable")
   }
   const child = spawn(process.execPath, args, {
     detached: true,

@@ -36,5 +36,5 @@ The vendored Ghostty assets are pinned by `src/vendor/VERSION`. Rebuild them
 with:
 
 ```sh
-pnpm --filter @yaade/ghostty-react build:ghostty-wasm
+vp run --filter @yaade/ghostty-react build:ghostty-wasm
 ```

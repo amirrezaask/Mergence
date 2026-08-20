@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { claudeDriver } from "../drivers/claude.js"
 import { codexDriver } from "../drivers/codex.js"
 import { cursorDriver } from "../drivers/cursor.js"

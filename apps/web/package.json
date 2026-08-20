@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/dev-web.mjs",
-    "test": "node --test scripts/register-local-host.test.mjs",
-    "build": "vite build && node scripts/verify-startup-graph.mjs && node scripts/compress-assets.mjs",
+    "test": "vp test --root ../.. apps/web/scripts/register-local-host.test.mjs",
+    "build": "vp build && node scripts/verify-startup-graph.mjs && node scripts/compress-assets.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
@@ -17,10 +17,11 @@
     "@types/node": "^22.15.29",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.5.2",
-    "babel-plugin-react-compiler": "^1.0.0",
+    "@vitejs/plugin-react": "^6.1.0",
+    "oxc-transform-react": "0.145.0",
     "tailwindcss": "^4.1.8",
     "typescript": "^7.0.2",
-    "vite": "^6.3.5"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

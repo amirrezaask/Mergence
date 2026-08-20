@@ -1,4 +1,4 @@
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import assert from "node:assert/strict"
 import { filterTreeRows } from "./filter-tree.js"
 import { ListerTreeState } from "./tree-state.js"

@@ -12,7 +12,7 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "tsx --test src/*.test.ts"
+    "test": "vp test"
   },
   "dependencies": {
     "@yaade/agent-telemetry": "workspace:*",
@@ -20,7 +20,6 @@
     "effect": "^3.22.1"
   },
   "devDependencies": {
-    "tsx": "^4.23.0",
     "typescript": "^7.0.2"
   }
 }

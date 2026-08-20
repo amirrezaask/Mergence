@@ -5,8 +5,8 @@
   "type": "module",
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build": "vite build",
-    "test": "tsx --test src/hooks/useAppearanceSettings.test.ts src/hooks/useRunningAgents.test.ts src/build-branding.test.ts src/keybindings.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-session-keymap.test.ts src/tools/tool-tiling.test.ts"
+    "build": "vp build",
+    "test": "vp test src/hooks/useAppearanceSettings.test.ts src/hooks/useRunningAgents.test.ts src/build-branding.test.ts src/keybindings.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-session-keymap.test.ts src/tools/tool-tiling.test.ts"
   },
   "dependencies": {
     "@effect/platform": "0.97.1",
@@ -27,10 +27,10 @@
     "@tailwindcss/vite": "^4.1.8",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
-    "@vitejs/plugin-react": "^4.5.2",
+    "@vitejs/plugin-react": "^6.1.0",
     "tailwindcss": "^4.1.8",
-    "tsx": "^4.19.4",
     "typescript": "^7.0.2",
-    "vite": "^6.3.5"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

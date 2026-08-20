@@ -1,4 +1,4 @@
-#!/usr/bin/env tsx
+#!/usr/bin/env node
 /**
  * Deterministic newline-delimited JSON-RPC peer standing in for the Codex
  * app-server during tests.
@@ -7,7 +7,7 @@
  * (apps/server/src/bin/yaade-mock_line_rpc.rs). Message shapes and control
  * flow are preserved so E2E specs observe identical behavior.
  *
- * Usage: tsx packages/yaade-host-server/mocks/mock-line-rpc.ts
+ * Usage: node scripts/run-ts.mjs packages/yaade-host-server/mocks/mock-line-rpc.ts
  */
 
 type JsonPrimitive = string | number | boolean | null | undefined

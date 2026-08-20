@@ -117,7 +117,7 @@ Host routes to keep even after a later cut: `git:*`, `fs:*` (if Git overlay stil
 ### Repo conventions
 
 - ESM `.js` imports, Effect Schema in `@yaade/rpc`, no `any`
-- Tests: `node:test` via `tsx`, listed in the package's `package.json`
+- Tests: Vite+ Vitest via `vp test`, discoverable from the package and root test configs
 - UI: `@yaade/ui/primitives`, semantic tokens (`packages/yaade-ui/AGENTS.md`)
 - Do not add Agent/Search/Editor ToolKinds (`AGENTS.md`)
 - Do not commit unless asked
@@ -129,8 +129,8 @@ Host routes to keep even after a later cut: `git:*`, `fs:*` (if Git overlay stil
 | Herdr version | `herdr --version` | `herdr 0.7.4` or newer with the same protocol 16 methods |
 | Schema dump | `herdr api schema --json` | JSON with `protocol` and `schemas.request` |
 | Snapshot | `herdr api snapshot` | Live workspaces/tabs/panes (Herdr server must be running) |
-| Typecheck | `pnpm -r typecheck` | exit 0 |
-| Unit tests | `pnpm test` | all pass |
+| Typecheck | `vp run -r typecheck` | exit 0 |
+| Unit tests | `vp test` | all pass |
 | herdr-web typecheck | `(cd /Users/amirrezaask/dev/herdr-web && pnpm typecheck)` | exit 0 if that repo is present |
 
 ## Suggested executor toolkit
@@ -270,7 +270,7 @@ Verdict meanings:
 
 Set `plans/README.md` row 001 to `DONE` or `BLOCKED (reason)`.
 
-**Verify**: `pnpm -r typecheck` still exits 0 (you should not have changed app code). `git status` shows only `plans/` and optionally `scripts/herdr-mux-spike.mjs` and `packages/yaade-rpc/src/herdr.ts`.
+**Verify**: `vp run -r typecheck` still exits 0 (you should not have changed app code). `git status` shows only `plans/` and optionally `scripts/herdr-mux-spike.mjs` and `packages/yaade-rpc/src/herdr.ts`.
 
 ## Test plan
 
@@ -278,7 +278,7 @@ Set `plans/README.md` row 001 to `DONE` or `BLOCKED (reason)`.
 - If you add `scripts/herdr-mux-spike.mjs`, it must be runnable with `node scripts/herdr-mux-spike.mjs` and exit non-zero when the socket is missing.
 - Do not add herdr-web tests into this repo.
 
-Verification: `pnpm test` still passes (unchanged). `node scripts/herdr-mux-spike.mjs` exits 0 when Herdr is up, if the script was created.
+Verification: `vp test` still passes (unchanged). `node scripts/herdr-mux-spike.mjs` exits 0 when Herdr is up, if the script was created.
 
 ## Done criteria
 
@@ -286,7 +286,7 @@ Verification: `pnpm test` still passes (unchanged). `node scripts/herdr-mux-spik
 - [ ] Spike report section exists in this file with round-trip ms and the six-row manual table
 - [ ] Verdict is exactly `FIRST_CLASS`, `VIEWER`, or `NO_GO`
 - [ ] No changes to `ToolSessionApp`, `tool-session-store`, `terminal.ts`, or `routes.ts`
-- [ ] `pnpm -r typecheck` exits 0
+- [ ] `vp run -r typecheck` exits 0
 - [ ] `plans/README.md` status row updated
 
 ## STOP conditions

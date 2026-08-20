@@ -47,7 +47,7 @@ async function startRemoteHost(): Promise<{
   const child = spawn(
     process.execPath,
     [
-      path.join(process.cwd(), "node_modules/tsx/dist/cli.mjs"),
+      path.join(process.cwd(), "scripts/run-ts.mjs"),
       path.join(process.cwd(), "packages/yaade-host-server/src/cli.ts"),
       root,
       "--host",

@@ -102,7 +102,7 @@ function rebuildMacosAlias(packagerNode) {
 }
 
 if (!fs.existsSync(forgeCli)) {
-  console.error(`Electron Forge CLI is missing at ${forgeCli}; run pnpm install first.`)
+  console.error(`Electron Forge CLI is missing at ${forgeCli}; run vp install first.`)
   process.exit(1)
 }
 

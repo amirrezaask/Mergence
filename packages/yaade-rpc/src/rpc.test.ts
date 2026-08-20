@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { Effect, Schema } from "effect"
 import {
   HostRpcRequest,

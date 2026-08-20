@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "yaade",
-      "runtimeExecutable": "pnpm",
-      "runtimeArgs": ["dev"]
+      "runtimeExecutable": "vp",
+      "runtimeArgs": ["run", "dev"]
     }
   ]
 }

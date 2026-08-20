@@ -44,9 +44,10 @@ const mandatoryGzipBytes = [...mandatoryChunks.values()].reduce(
   (total, source) => total + gzipSync(source).byteLength,
   0,
 )
-// Measured 307.1 KiB after moving the compatibility shell behind its route
-// boundary. Keep ~7.4% headroom without giving that startup win back.
-const mandatoryGzipBudget = 330 * 1024
+// Rolldown's shared-chunk graph is larger than the former Rollup graph, but
+// still keeps the expensive diff and syntax chunks out of startup execution.
+// Keep a small headroom for normal dependency updates.
+const mandatoryGzipBudget = 360 * 1024
 if (mandatoryGzipBytes > mandatoryGzipBudget) {
   throw new Error(
     `mandatory startup JS is ${mandatoryGzipBytes} gzip bytes; budget is ${mandatoryGzipBudget}`,

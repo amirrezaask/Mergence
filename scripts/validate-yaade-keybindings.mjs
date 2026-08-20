@@ -37,14 +37,14 @@ async function main() {
     )
     if (!pattern.test(src)) {
       console.error(
-        `MISSING active bind(${row.key}, cmd.${fn}) for ${row.vscode} — run pnpm extract:vscode-keybindings`,
+        `MISSING active bind(${row.key}, cmd.${fn}) for ${row.vscode} — run vp run extract:vscode-keybindings`,
       )
       failed = true
     }
   }
 
   if (!/^\s*bind\("Cmd-n", cmd\.newFile\b/m.test(src)) {
-    console.error("MISSING active bind(Cmd-n, cmd.newFile) — run pnpm extract:vscode-keybindings")
+    console.error("MISSING active bind(Cmd-n, cmd.newFile) — run vp run extract:vscode-keybindings")
     failed = true
   }
 

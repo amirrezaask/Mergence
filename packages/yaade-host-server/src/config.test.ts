@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import { loadConfig } from "./config.js"
 
 describe("loadConfig launch workspace", () => {
@@ -38,7 +38,7 @@ describe("loadConfig launch workspace", () => {
     )
   })
 
-  it("keeps the PTY supervisor off under node:test unless requested", async () => {
+  it("keeps the PTY supervisor off under tests unless requested", async () => {
     const implicit = await loadConfig(["--host", "127.0.0.1", "--port", "0"])
     assert.equal(implicit.ptySupervisor, false)
     const enabled = await loadConfig([

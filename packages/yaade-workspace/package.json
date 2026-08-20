@@ -12,7 +12,7 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "tsc --emitDeclarationOnly --outDir dist",
-    "test": "tsx --test 'src/**/*.test.ts'"
+    "test": "vp test"
   },
   "dependencies": {
     "@yaade/agent-telemetry": "workspace:*",
@@ -21,7 +21,6 @@
     "@yaade/panels": "workspace:*"
   },
   "devDependencies": {
-    "tsx": "^4.19.4",
     "typescript": "^7.0.2"
   }
 }

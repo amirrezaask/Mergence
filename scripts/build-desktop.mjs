@@ -7,6 +7,12 @@ import { fileURLToPath } from "node:url"
 import { stageRuntimePack } from "./stage-runtime-pack.mjs"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
+const vpBin = path.join(
+  repoRoot,
+  "node_modules",
+  ".bin",
+  process.platform === "win32" ? "vp.cmd" : "vp",
+)
 const skipWeb = new Set(process.argv.slice(2)).has("--skip-web")
 
 function run(command, args, cwd = repoRoot) {
@@ -18,6 +24,6 @@ function run(command, args, cwd = repoRoot) {
   if (result.status !== 0) process.exit(result.status ?? 1)
 }
 
-if (!skipWeb) run("pnpm", ["build:web"])
+if (!skipWeb) run(vpBin, ["run", "build:web"])
 await stageRuntimePack(path.join(repoRoot, "dist/runtime"))
-run("pnpm", ["--filter", "@yaade/desktop", "make"])
+run(vpBin, ["run", "--filter", "@yaade/desktop", "make"])

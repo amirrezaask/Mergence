@@ -1,4 +1,4 @@
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import assert from "node:assert/strict"
 import { computeDropSites, hitTestSites, siteToAction } from "./panel-drop-zones.js"
 

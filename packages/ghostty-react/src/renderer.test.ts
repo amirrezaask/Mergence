@@ -1,5 +1,5 @@
 import { strict as assert } from "node:assert"
-import { test } from "node:test"
+import { test } from "vite-plus/test"
 import { GHOSTTY_CELL_WIDE } from "./render-model.js"
 import type { GhosttyCell, GhosttySnapshot } from "./core.js"
 import {

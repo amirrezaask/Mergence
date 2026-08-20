@@ -65,24 +65,30 @@ YAADE has three isolated applications. Shared implementation lives in
 wiring and packaging.
 
 - **Server** — `apps/server`, the HTTP/WebSocket host and PTY runtime.
-- **Web** — `apps/web`, the Vite browser application.
+- **Web** — `apps/web`, the Vite+ browser application.
 - **Desktop** — `apps/desktop`, the sandboxed Electron wrapper.
 
-Run one application at a time during development:
+Start the web and server development processes together with hot reload:
 
 ```bash
-pnpm dev:server   # server only; defaults to port 4747
-pnpm dev:web      # web/Vite only; start dev:server separately when needed
-pnpm dev:desktop  # Electron application
+vp run dev             # web + server
+```
+
+Run an application individually when needed:
+
+```bash
+vp run @yaade/server#dev # server only; defaults to port 4747
+vp run dev:web           # web/Vite+ only
+vp run dev:desktop       # Electron application
 ```
 
 Build each isolated release artifact independently:
 
 ```bash
-pnpm build:server   # dist/yaade-server, standalone server runtime
-pnpm build:web      # apps/web/dist, standalone static web artifact
-pnpm build:desktop  # Electron ZIP/DMG for the current platform
-pnpm build          # all three artifacts, in order
+vp run build:server   # dist/yaade-server, standalone server runtime
+vp run build:web      # apps/web/dist, standalone static web artifact
+vp run build:desktop  # Electron ZIP/DMG for the current platform
+vp run build          # all three artifacts, in order
 ```
 
 The desktop development application starts its own local runtime so it can be
@@ -91,8 +97,8 @@ run independently. It does not change the server or web development commands.
 Package a desktop app directly after `build:desktop` with:
 
 ```bash
-pnpm package:desktop
-pnpm make:desktop
+vp run package:desktop
+vp run make:desktop
 ```
 
 The macOS DMG is written under `apps/desktop/out/make/`. The desktop window uses the top Session/Window tab bar as its custom titlebar while retaining native window controls.
@@ -101,15 +107,20 @@ Pass a workspace explicitly with `--workspace /path/to/project`. Desktop builds 
 
 ## Development
 
+Vite+ (`vp`) is the frontend/tooling runner. Use Node.js 22.18+ and install the CLI
+once with `curl -fsSL https://vite.plus | bash`. Install Bun for the server
+runtime. Vite+ provides dependency installation, Vite/Rolldown builds, Vitest
+tests, Oxlint checks, and workspace task execution.
+
 ```bash
-pnpm install
-pnpm typecheck
-pnpm lint
-pnpm test:server
-pnpm test:web
-pnpm test:desktop
-pnpm test:web:e2e
-pnpm build
+vp install
+vp run typecheck
+vp run lint
+vp run test:server
+vp run test:web
+vp run test:desktop
+vp run test:web:e2e
+vp run build
 ```
 
 The internal material gallery is available at `/__yaade/glass-gallery`.
@@ -119,13 +130,13 @@ The internal material gallery is available at `/__yaade/glass-gallery`.
 A remote host bound outside loopback must be started with a bearer token, for example:
 
 ```bash
-YAADE_HOST_TOKEN=replace-me pnpm dev:server -- --host 0.0.0.0 --token replace-me
+YAADE_HOST_TOKEN=replace-me vp run @yaade/server#dev -- --host 0.0.0.0 --token replace-me
 ```
 
 Token-authenticated hosts allow browser and desktop clients to connect from another origin. Configure explicit origins with `YAADE_CORS_ORIGINS` when you want to restrict that access further.
 
 ## Deployment warning
 
-The host API is unauthenticated on loopback by default and requires a bearer token for non-loopback binds. Do not expose an unauthenticated host to an untrusted network. To expose the web development server on a trusted LAN, run `pnpm dev:web -- --host 0.0.0.0` and configure the separately running server with its own host/token options.
+The host API is unauthenticated on loopback by default and requires a bearer token for non-loopback binds. Do not expose an unauthenticated host to an untrusted network. To expose the web development server on a trusted LAN, run `vp run dev:web -- --host 0.0.0.0` and configure the separately running server with its own host/token options. The web uses Vite+; the server development task runs directly on Bun with hot reload.
 
 See [AGENTS.md](AGENTS.md) for architecture and contribution rules.

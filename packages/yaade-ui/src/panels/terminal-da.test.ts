@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import test from "node:test"
+import { test } from "vite-plus/test"
 import { stripDa1Responses } from "./terminal-da.js"
 
 test("strips DA1 responses and leaves queries and other bytes", () => {

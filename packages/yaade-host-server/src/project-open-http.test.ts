@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { afterEach, beforeEach, describe, it } from "node:test"
+import { afterEach, beforeEach, describe, it } from "vite-plus/test"
 import { loadConfig } from "./config.js"
 import { startHostServer } from "./server.js"
 

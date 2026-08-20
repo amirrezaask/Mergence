@@ -1,4 +1,4 @@
-import { describe, it } from "node:test"
+import { describe, it } from "vite-plus/test"
 import assert from "node:assert/strict"
 import type { PanelNode } from "@yaade/panels"
 import type { PanelView } from "@yaade/shared"
