@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 import {
+  isAllowedCorsOrigin,
   isAllowedWebSocketOrigin,
   isAuthorizedRequest,
   isLoopbackHostname,
@@ -51,6 +52,13 @@ test("websocket origin permits local browser clients and non-browser clients", (
   assert.equal(isAllowedWebSocketOrigin("https://example.com"), false)
   assert.equal(isAllowedWebSocketOrigin("file:///tmp/index.html"), false)
   assert.equal(isAllowedWebSocketOrigin("not a url"), false)
+})
+
+test("CORS origin matching keeps local clients and explicit origins available", () => {
+  assert.equal(isAllowedCorsOrigin("http://127.0.0.1:5174"), true)
+  assert.equal(isAllowedCorsOrigin("https://client.example", ["https://client.example"]), true)
+  assert.equal(isAllowedCorsOrigin("https://client.example", ["https://other.example"]), false)
+  assert.equal(isAllowedCorsOrigin("https://client.example", ["*"]), true)
 })
 
 test("websocket origin permits an exact remote same-origin deployment", () => {

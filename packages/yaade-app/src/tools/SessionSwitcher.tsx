@@ -26,6 +26,7 @@ export type SessionSwitcherProps = {
   readonly onClose?: (id: SessionId) => void
   readonly onRename?: (id: SessionId, title: string) => void
   readonly toolCounts?: ReadonlyMap<SessionId, number>
+  readonly serverNamesBySessionId?: ReadonlyMap<SessionId, string>
   readonly className?: string
 }
 
@@ -105,6 +106,7 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
               const active = session.id === props.activeSessionId
               const editing = editingId === session.id
               const count = props.toolCounts?.get(session.id) ?? 0
+              const serverName = props.serverNamesBySessionId?.get(session.id)
               return (
                 <div
                   key={session.id}
@@ -151,8 +153,15 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
                       >
                         {active ? <Check className="size-3.5" /> : null}
                       </span>
-                      <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                        {session.title}
+                      <span className="flex min-w-0 flex-1 flex-col justify-center">
+                        <span className="truncate text-xs font-medium">
+                          {session.title}
+                        </span>
+                        {serverName ? (
+                          <span className="truncate text-3xs text-muted-foreground">
+                            {serverName}
+                          </span>
+                        ) : null}
                       </span>
                       {count > 0 ? (
                         <span className="shrink-0 font-mono text-3xs tabular-nums text-muted-foreground">

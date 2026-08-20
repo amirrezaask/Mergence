@@ -6,7 +6,9 @@ import {
   app,
   BrowserWindow,
   dialog,
+  ipcMain,
   Menu,
+  safeStorage,
   session,
   shell,
 } from "electron"
@@ -30,6 +32,8 @@ const CHILD_READY_TIMEOUT_MS = 45_000
 const TITLE_BAR_HEIGHT = 46
 /** @type {"hidden"} */
 const TITLE_BAR_STYLE = "hidden"
+const SERVER_DEFINITIONS_FILE = "server-definitions.bin"
+const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/
 
 /** @typedef {import("node:child_process").ChildProcess} ChildProcess */
 /** @typedef {import("electron").WebContents} WebContents */
@@ -59,6 +63,84 @@ function isFile(candidate) {
   } catch {
     return false
   }
+}
+
+/** @param {import("electron").IpcMainInvokeEvent} event */
+function trustedIpcSender(event) {
+  return Boolean(mainWindow && event.sender === mainWindow.webContents)
+}
+
+/** @param {unknown} value */
+function sanitizeServerDefinitions(value) {
+  if (!Array.isArray(value)) return []
+  const seen = new Set()
+  const urls = new Set()
+  const servers = []
+  for (const candidate of value) {
+    if (!candidate || typeof candidate !== "object") continue
+    const id = typeof candidate.id === "string" ? candidate.id.trim() : ""
+    const name = typeof candidate.name === "string" ? candidate.name.trim() : ""
+    const rawUrl = typeof candidate.url === "string" ? candidate.url.trim() : ""
+    if (!id || !SERVER_ID_PATTERN.test(id) || !name || seen.has(id)) continue
+    let url
+    try {
+      const parsed = new URL(rawUrl)
+      if (
+        (parsed.protocol !== "http:" && parsed.protocol !== "https:") ||
+        parsed.username ||
+        parsed.password ||
+        parsed.search ||
+        parsed.hash
+      ) continue
+      url = `${parsed.protocol}//${parsed.host}`
+    } catch {
+      continue
+    }
+    if (urls.has(url)) continue
+    const token = typeof candidate.token === "string" ? candidate.token.trim() : ""
+    seen.add(id)
+    urls.add(url)
+    servers.push({ id, name, url, ...(token ? { token } : {}) })
+  }
+  return servers
+}
+
+async function loadServerDefinitions() {
+  if (!safeStorage.isEncryptionAvailable()) return []
+  try {
+    const encoded = await fs.promises.readFile(
+      path.join(app.getPath("userData"), SERVER_DEFINITIONS_FILE),
+      "utf8",
+    )
+    const decoded = safeStorage.decryptString(Buffer.from(encoded, "base64"))
+    return sanitizeServerDefinitions(JSON.parse(decoded))
+  } catch {
+    return []
+  }
+}
+
+/** @param {unknown} value */
+async function saveServerDefinitions(value) {
+  if (!safeStorage.isEncryptionAvailable()) return
+  const servers = sanitizeServerDefinitions(value)
+  const userData = app.getPath("userData")
+  await fs.promises.mkdir(userData, { recursive: true })
+  const target = path.join(userData, SERVER_DEFINITIONS_FILE)
+  const temporary = `${target}.${process.pid}.tmp`
+  const encrypted = safeStorage.encryptString(JSON.stringify(servers)).toString("base64")
+  await fs.promises.writeFile(temporary, encrypted, "utf8")
+  await fs.promises.rename(temporary, target)
+}
+
+function installServerStorageIpc() {
+  ipcMain.handle("yaade:servers:load", event => {
+    if (!trustedIpcSender(event)) return []
+    return loadServerDefinitions()
+  })
+  ipcMain.handle("yaade:servers:save", async (event, value) => {
+    if (!trustedIpcSender(event)) throw new Error("untrusted renderer")
+    await saveServerDefinitions(value)
+  })
 }
 
 function resolveNodeBinary() {
@@ -219,7 +301,21 @@ async function launchHost(repoRoot, workspace) {
   const dataDir = path.join(app.getPath("userData"), "host")
   await fs.promises.mkdir(dataDir, { recursive: true })
 
-  const args = ["--host", LOOPBACK_HOST, "--port", String(port), "--data-dir", dataDir, "--kill-ptys-on-exit"]
+  const args = [
+    "--host",
+    LOOPBACK_HOST,
+    "--port",
+    String(port),
+    "--data-dir",
+    dataDir,
+    "--kill-ptys-on-exit",
+  ]
+  // The packaged backend is a single bundle and does not include the source
+  // entry point used by the standalone PTY supervisor. The desktop host owns
+  // the app lifetime and already kills PTYs on shutdown, so keep PTYs in this
+  // process instead of asking the packaged bundle to spawn the unavailable
+  // supervisor.
+  if (runtimeRoot) args.push("--pty-supervisor", "0")
   let command
   let commandArgs
   let cwd
@@ -535,6 +631,7 @@ async function boot() {
     services = await startServices(workspace)
     installSessionSecurity(services.origins)
     installAppWebContentsHook(services.origins)
+    installServerStorageIpc()
     createMainWindow(services.url)
   })()
   return bootPromise
@@ -546,7 +643,7 @@ async function handleBootFailure(error) {
   if (app.isReady()) {
     dialog.showErrorBox(
       "YAADE could not start",
-      "The local host could not be started. Run pnpm desktop:dev from a checkout or reinstall the desktop app.",
+      "The local host could not be started. Run pnpm dev:desktop from a checkout or reinstall the desktop app.",
     )
   }
   await requestQuit()

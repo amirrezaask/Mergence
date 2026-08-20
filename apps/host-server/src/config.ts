@@ -17,6 +17,8 @@ export type HostConfig = {
   staticDir: string | null
   /** Shared bearer token. Required when binding off loopback. */
   authToken: string | null
+  /** Browser origins allowed to use this host from another origin. */
+  corsOrigins?: string[]
   /** Own PTYs in a detached supervisor so API restarts do not kill agents. */
   ptySupervisor: boolean
   /** When true, shutdown kills PTYs (desktop). Server default is detach. */
@@ -54,6 +56,18 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
   const authToken = String(
     args.token ?? process.env.YAADE_HOST_TOKEN ?? process.env.JET_HOST_TOKEN ?? "",
   ).trim() || null
+  const configuredCorsOrigins = String(
+    args["cors-origins"] ?? process.env.YAADE_CORS_ORIGINS ?? process.env.JET_CORS_ORIGINS ?? "",
+  )
+    .split(",")
+    .map(value => value.trim())
+    .filter(Boolean)
+  const corsOrigins =
+    configuredCorsOrigins.length > 0
+      ? configuredCorsOrigins
+      : authToken
+        ? ["*"]
+        : []
   if (!isLoopbackHostname(host) && !authToken) {
     throw new Error(
       `binding to ${host} requires --token or YAADE_HOST_TOKEN so the host API is not open on the network`,
@@ -143,6 +157,7 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
     launchConfig,
     staticDir,
     authToken,
+    corsOrigins,
     ptySupervisor,
     killPtysOnShutdown,
   }

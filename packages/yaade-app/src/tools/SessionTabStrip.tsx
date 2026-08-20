@@ -57,6 +57,7 @@ export type SessionTabStripProps = {
   readonly onCreate: () => void;
   readonly onRename: (id: SessionId, title: string) => void;
   readonly onReorder: (ids: readonly SessionId[]) => void;
+  readonly serverNamesBySessionId?: ReadonlyMap<SessionId, string>;
   readonly layout?: SessionNavigationLayout;
   readonly collapsed?: boolean;
   readonly sidebarOrientation?: "horizontal" | "vertical";
@@ -126,6 +127,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
   const sessionItems = props.sessions.map((session, index) => {
     const active = session.id === props.activeSessionId;
     const editing = editingId === session.id;
+    const serverName = props.serverNamesBySessionId?.get(session.id);
     return (
       <MotionDiv
         key={session.id}
@@ -187,7 +189,14 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           />
         ) : (
           <span className="flex min-h-8 min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 transition-colors group-data-[active=true]:text-sidebar-accent-foreground">
-            <span className="min-w-0 flex-1 truncate">{session.title}</span>
+            <span className="flex min-w-0 flex-1 flex-col justify-center">
+              <span className="truncate">{session.title}</span>
+              {serverName ? (
+                <span className="truncate text-3xs text-sidebar-foreground/50">
+                  {serverName}
+                </span>
+              ) : null}
+            </span>
           </span>
         )}
         <Button
@@ -320,6 +329,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         {props.sessions.map((session, index) => {
           const active = session.id === props.activeSessionId;
           const editing = editingId === session.id;
+          const serverName = props.serverNamesBySessionId?.get(session.id);
           return (
             <div
               key={session.id}
@@ -373,7 +383,14 @@ export function SessionTabStrip(props: SessionTabStripProps) {
                 />
               ) : (
                 <span className="flex min-h-full min-w-0 flex-1 items-center overflow-hidden px-1.5 text-left text-xs font-medium text-muted-foreground transition-colors group-data-[active=true]:text-foreground">
-                  <span className="truncate">{session.title}</span>
+                  <span className="flex min-w-0 flex-col">
+                    <span className="truncate">{session.title}</span>
+                    {serverName ? (
+                      <span className="truncate text-3xs text-muted-foreground">
+                        {serverName}
+                      </span>
+                    ) : null}
+                  </span>
                 </span>
               )}
               <Button

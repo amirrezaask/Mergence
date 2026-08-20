@@ -117,6 +117,7 @@ export {
   type ColorSchemeMode,
   type JetAppearanceSettings,
   type SessionLayout,
+  type SettingsOverlayProps,
 } from "./components/SettingsOverlay.js"
 export {
   DEFAULT_UI_FONT_FAMILY,

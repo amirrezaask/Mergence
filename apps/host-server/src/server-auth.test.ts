@@ -48,6 +48,21 @@ describe("host token gate", () => {
       const body = (await allowed.json()) as { value: string }
       assert.equal(typeof body.value, "string")
 
+      const crossOrigin = await fetch(`${origin}/api/v1/rpc`, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          authorization: "Bearer s3cret",
+          origin: "https://client.example",
+        },
+        body: JSON.stringify({ channel: "yaade:getHomeDir", args: [] }),
+      })
+      assert.equal(crossOrigin.status, 200)
+      assert.equal(
+        crossOrigin.headers.get("access-control-allow-origin"),
+        "https://client.example",
+      )
+
       const wsDenied = await new Promise<number | string>(resolve => {
         const socket = new WebSocket(`ws://127.0.0.1:${started.port}/ws`)
         socket.on("unexpected-response", (_req, res) => {

@@ -50,14 +50,33 @@ function isLocalBrowserHostname(hostname: string): boolean {
 export function isAllowedWebSocketOrigin(
   origin: string | undefined,
   requestHost?: string,
+  allowedOrigins: readonly string[] = [],
 ): boolean {
   if (!origin) return true
   try {
     const url = new URL(origin)
     if (url.protocol !== "http:" && url.protocol !== "https:") return false
     if (isLocalBrowserHostname(url.hostname)) return true
+    if (allowedOrigins.includes("*")) return true
+    if (allowedOrigins.some(candidate => candidate === origin)) return true
     return Boolean(requestHost && url.host.toLowerCase() === requestHost.trim().toLowerCase())
   } catch {
     return false
   }
+}
+
+export function isAllowedCorsOrigin(
+  origin: string | undefined,
+  allowedOrigins: readonly string[] = [],
+): boolean {
+  if (!origin) return false
+  try {
+    const url = new URL(origin)
+    if (url.protocol !== "http:" && url.protocol !== "https:") return false
+    if (isLocalBrowserHostname(url.hostname)) return true
+  } catch {
+    return false
+  }
+  if (allowedOrigins.includes("*")) return true
+  return allowedOrigins.includes(origin)
 }

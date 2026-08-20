@@ -8,6 +8,7 @@ import {
   readHostAuthToken,
   subscribeRealtimeWake,
   websocketUrl,
+  normalizeHostBaseUrl,
 } from "./web-transport.js"
 import {
   decodeRealtimeHostEvent,
@@ -40,6 +41,26 @@ test("websocket URL follows the page origin and carries replay sequence", () => 
       "secret token",
     ),
     "wss://yaade.example/ws?since=3&clientId=c1&token=secret%20token",
+  )
+})
+
+test("normalizes configured server origins and rejects credentials", () => {
+  assert.equal(normalizeHostBaseUrl("https://devbox.example.com/"), "https://devbox.example.com")
+  assert.equal(normalizeHostBaseUrl("http://127.0.0.1:4747/path"), "http://127.0.0.1:4747")
+  assert.throws(() => normalizeHostBaseUrl("ftp://devbox.example.com"), /http or https/)
+  assert.throws(() => normalizeHostBaseUrl("https://user:pass@devbox.example.com"), /credentials/)
+})
+
+test("websocket URL can target a configured remote server", () => {
+  assert.equal(
+    websocketUrl(
+      { protocol: "http:", host: "client.example" } as Location,
+      0,
+      "client",
+      "token",
+      "https://server.example:8443",
+    ),
+    "wss://server.example:8443/ws?since=0&clientId=client&token=token",
   )
 })
 

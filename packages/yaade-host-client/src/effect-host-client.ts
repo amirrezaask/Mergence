@@ -115,7 +115,11 @@ export function invokeHostRpc<Name extends HostRouteName>(
   clientId: string,
   channel: Name,
   args: HostRouteArgs<Name> | readonly unknown[],
-  options?: { signal?: AbortSignal },
+  options?: {
+    signal?: AbortSignal
+    baseUrl?: string
+    authToken?: string | null
+  },
 ): Effect.Effect<HostRouteResult<Name>, HostRpcError> {
   return invokeHostRpcUnchecked(clientId, channel, args, options).pipe(
     Effect.map(value => decodeHostRouteResult(channel, value)),
@@ -127,7 +131,11 @@ export function invokeHostRpcUnchecked(
   clientId: string,
   channel: string,
   args: readonly unknown[],
-  options?: { signal?: AbortSignal },
+  options?: {
+    signal?: AbortSignal
+    baseUrl?: string
+    authToken?: string | null
+  },
 ): Effect.Effect<unknown, HostRpcError> {
   return Effect.gen(function* () {
     const routeArgs = yield* Effect.try({
@@ -149,12 +157,18 @@ export function invokeHostRpcUnchecked(
           cause,
         }),
     )
-    const token = readHostAuthToken()
+    const token =
+      options?.authToken === undefined
+        ? readHostAuthToken()
+        : options.authToken
     const headers: Record<string, string> = { "content-type": "application/json" }
     if (token) headers.authorization = `Bearer ${token}`
+    const rpcUrl = options?.baseUrl
+      ? `${options.baseUrl}/api/v1/rpc`
+      : "/api/v1/rpc"
     const response = yield* Effect.tryPromise({
       try: () =>
-        fetch("/api/v1/rpc", {
+        fetch(rpcUrl, {
           method: "POST",
           headers,
           body: JSON.stringify(body satisfies HostRpcRequest),

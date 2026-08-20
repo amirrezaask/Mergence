@@ -15,6 +15,8 @@ type FetchLike = (
 type HttpRequestOptions = {
   signal?: AbortSignal
   fetcher?: FetchLike
+  baseUrl?: string
+  authToken?: string | null
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -82,8 +84,11 @@ function requestUrl(uri: string, writeOptions?: TextFileWriteOptions): string {
   return `${TEXT_FILE_ROUTE}?${params}`
 }
 
-function authHeaders(extra?: Record<string, string>): Record<string, string> {
-  const token = readHostAuthToken()
+function authHeaders(
+  authToken: string | null | undefined,
+  extra?: Record<string, string>,
+): Record<string, string> {
+  const token = authToken === undefined ? readHostAuthToken() : authToken
   return {
     ...extra,
     ...(token ? { authorization: `Bearer ${token}` } : {}),
@@ -95,9 +100,10 @@ export async function readTextFileHttp(
   options: HttpRequestOptions = {},
 ): Promise<TextFileReadResult> {
   const fetcher = options.fetcher ?? fetch
-  const response = await fetcher(requestUrl(uri), {
+  const baseUrl = options.baseUrl ?? ""
+  const response = await fetcher(`${baseUrl}${requestUrl(uri)}`, {
     signal: options.signal,
-    headers: authHeaders(),
+    headers: authHeaders(options.authToken),
   })
   if (!response.ok) throw await responseError(response)
   const metadata = resultHeaders(response)
@@ -115,9 +121,10 @@ export async function writeTextFileHttp(
   options: HttpRequestOptions = {},
 ): Promise<TextFileWriteResult> {
   const fetcher = options.fetcher ?? fetch
-  const response = await fetcher(requestUrl(uri, writeOptions), {
+  const baseUrl = options.baseUrl ?? ""
+  const response = await fetcher(`${baseUrl}${requestUrl(uri, writeOptions)}`, {
     method: "PUT",
-    headers: authHeaders({ "content-type": "text/plain; charset=utf-8" }),
+    headers: authHeaders(options.authToken, { "content-type": "text/plain; charset=utf-8" }),
     body: content,
     signal: options.signal,
   })

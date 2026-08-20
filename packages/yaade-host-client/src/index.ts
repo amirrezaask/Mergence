@@ -5,6 +5,8 @@ export {
   websocketUrl,
   hostRealtimeReconnectDelay,
   readHostAuthToken,
+  normalizeHostBaseUrl,
+  type WebHostTransportOptions,
 } from "./web-transport.js";
 export {
   HostClient,
@@ -24,3 +26,14 @@ export {
   writeTextFileHttp,
 } from "./text-file-http.js";
 export type { YaadeHostTransport } from "./transport.js";
+export {
+  MultiServerHostClient,
+  createMultiServerHostClient,
+  decodeStoredServerDefinitions,
+  loadStoredServerDefinitions,
+  normalizeServerDefinition,
+  saveStoredServerDefinitions,
+  type MultiServerGlobalTarget,
+  type MultiServerSnapshot,
+  type ServerTestResult,
+} from "./multi-server.js";

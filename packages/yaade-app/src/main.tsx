@@ -4,29 +4,46 @@ import "@yaade/ui/styles.css"
 import { AppRoot } from "./AppRoot.js"
 import { HostPortsProvider } from "./host-ports.js"
 import { AppErrorBoundary } from "./AppErrorBoundary.js"
-import { createYaadeApi, createWebTransport } from "@yaade/host-client"
+import {
+  createMultiServerHostClient,
+  loadStoredServerDefinitions,
+} from "@yaade/host-client"
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
 import { SystemSignalsProvider } from "./system-signals/SystemSignalsProvider.js"
 import { registerPwa } from "./pwa.js"
+import { ServerConnectionsProvider } from "./server-connections.js"
 
 const startupWindow = window as Window & { __yaadeStartupBootstrapAt?: number }
 startupWindow.__yaadeStartupBootstrapAt ??= performance.now()
 applyInitialAppearance()
 
-const transport = createWebTransport()
-/** Composition adapter kept only for the legacy browser-global seam. */
-const hostPorts = createYaadeApi(transport)
-window.yaade = hostPorts
+const currentServer = {
+  id: "current-host",
+  name: "This client",
+  url: window.location.origin,
+}
+const serverConnections = createMultiServerHostClient({
+  currentServer,
+  servers: window.yaadeDesktop ? [] : loadStoredServerDefinitions(),
+  globalTarget: {
+    setYaade: value => {
+      window.yaade = value
+    },
+  },
+})
+window.yaade = serverConnections.ports
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <HostPortsProvider ports={hostPorts}>
-      <AppErrorBoundary>
-        <SystemSignalsProvider>
-          <AppRoot />
-        </SystemSignalsProvider>
-      </AppErrorBoundary>
-    </HostPortsProvider>
+    <ServerConnectionsProvider manager={serverConnections}>
+      <HostPortsProvider ports={serverConnections.ports}>
+        <AppErrorBoundary>
+          <SystemSignalsProvider>
+            <AppRoot />
+          </SystemSignalsProvider>
+        </AppErrorBoundary>
+      </HostPortsProvider>
+    </ServerConnectionsProvider>
   </StrictMode>,
 )
 

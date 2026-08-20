@@ -77,6 +77,7 @@ import {
 } from "../hooks/useRunningAgents.js";
 import { createToolClient, type ToolClient } from "./tool-client.js";
 import { useHostPorts } from "../host-ports.js";
+import { useServerConnections } from "../server-connections.js";
 import {
   chooseSession,
   chooseTab,
@@ -318,6 +319,7 @@ function markPerformance(name: string): void {
 
 export function ToolSessionApp() {
   const hostPorts = useHostPorts();
+  const serverConnections = useServerConnections();
   const {
     activeTheme,
     appearanceSettings,
@@ -334,6 +336,7 @@ export function ToolSessionApp() {
     client.store.getSnapshot,
   );
   const [projects, setProjects] = useState<readonly ProjectTarget[]>([]);
+  const [projectsServerId, setProjectsServerId] = useState<string | undefined>();
   const [projectsLoaded, setProjectsLoaded] = useState(false);
   const [projectCandidate, setProjectCandidate] =
     useState<ProjectCandidate | null>(null);
@@ -380,20 +383,35 @@ export function ToolSessionApp() {
   }, [client]);
 
   useEffect(() => {
-    void hostPorts.tools
-      ?.listProjects?.()
+    if (serverConnections.snapshot.generation === 0) return;
+    void client.reconcile().catch(() => undefined);
+  }, [client, serverConnections.snapshot.generation]);
+
+  useEffect(() => {
+    let cancelled = false;
+    const serverId = serverConnections.snapshot.activeServerId;
+    setProjects([]);
+    setProjectsServerId(undefined);
+    setProjectsLoaded(false);
+    void hostPorts.tools.listProjects()
       .then((next) => {
+        if (cancelled) return;
         setProjects(next);
+        setProjectsServerId(serverId);
         setProjectsLoaded(true);
       })
       .catch(() => undefined);
-  }, []);
+    return () => {
+      cancelled = true;
+    };
+  }, [hostPorts.tools, serverConnections.snapshot.activeServerId]);
 
   const addKnownProject = useCallback(async (rootPath: string) => {
     try {
       const addProject = hostPorts.tools.addProject;
       if (!addProject) throw new Error("Project management is unavailable.");
       const project = await addProject(rootPath);
+      setProjectsServerId(serverConnections.snapshot.activeServerId);
       setProjects((previous) => [
         project,
         ...previous.filter((item) => item.projectId !== project.projectId),
@@ -405,7 +423,7 @@ export function ToolSessionApp() {
       setActionError(errorMessage(error));
       return undefined;
     }
-  }, []);
+  }, [hostPorts.tools, serverConnections.snapshot.activeServerId]);
 
   const observeTerminalCwd = useCallback(
     (useId: ToolUseId, cwdPath: string) => {
@@ -481,12 +499,18 @@ export function ToolSessionApp() {
     const useId = mobileListRoute
       ? undefined
       : chooseToolUse(route.toolUseId, tab, ids);
-    if (snapshot.activeSessionId !== session.id)
+    if (snapshot.activeSessionId !== session.id) {
+      serverConnections.manager.selectSession(session.id);
       client.store.selectSession(session.id);
-    if (tab && snapshot.activeTabId !== tab.id)
+    }
+    if (tab && snapshot.activeTabId !== tab.id) {
+      serverConnections.manager.selectTab(tab.id);
       client.store.selectTab(tab.id);
-    if (useId && snapshot.activeToolUseId !== useId)
+    }
+    if (useId && snapshot.activeToolUseId !== useId) {
+      serverConnections.manager.selectToolUse(useId);
       client.store.selectToolUse(useId);
+    }
     const url = toolSessionUrl(session.id, tab?.id, useId);
     persistToolSessionRoute(url, localStorage);
     if (location.href !== new URL(url, location.origin).href)
@@ -503,6 +527,7 @@ export function ToolSessionApp() {
     snapshot.useIdsByTab,
     routeRevision,
     isMobile,
+    serverConnections.manager,
   ]);
 
   const visibleSessions = useMemo(
@@ -514,6 +539,14 @@ export function ToolSessionApp() {
         ),
     [snapshot.sessionsById, snapshot.visibleSessionIds],
   );
+  const serverNamesBySessionId = useMemo(() => {
+    const names = new Map<SessionId, string>();
+    for (const session of visibleSessions) {
+      const server = serverConnections.manager.serverForSession(session.id);
+      if (server) names.set(session.id, server.name);
+    }
+    return names;
+  }, [serverConnections.manager, visibleSessions]);
   const activeSession = snapshot.activeSessionId
     ? snapshot.sessionsById.get(snapshot.activeSessionId)
     : undefined;
@@ -749,6 +782,7 @@ export function ToolSessionApp() {
   const selectSession = useCallback(
     (id: SessionId) => {
       markPerformance("yaade:session-switch");
+      serverConnections.manager.selectSession(id);
       client.store.selectSession(id);
       const session = client.store.getSnapshot().sessionsById.get(id);
       const nextTab = session?.activeTabId
@@ -759,7 +793,7 @@ export function ToolSessionApp() {
         "push",
       );
     },
-    [client],
+    [client, serverConnections.manager],
   );
 
   const selectTool = useCallback(
@@ -767,6 +801,7 @@ export function ToolSessionApp() {
       markPerformance("yaade:tool-switch");
       openToolInWorkspace(use, target);
       const current = client.store.getSnapshot().activeToolUseId;
+      serverConnections.manager.selectToolUse(use.id);
       client.store.selectToolUse(use.id);
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
       const request = hostPorts.tools.selectUse?.(use.sessionId, use.id);
@@ -784,7 +819,7 @@ export function ToolSessionApp() {
         writeToolSessionLocation(nextUrl, "push", { yaadeMobileTool: use.id });
       }
     },
-    [client, openToolInWorkspace],
+    [client, openToolInWorkspace, serverConnections.manager],
   );
 
   const focusRunningAgent = useCallback(
@@ -848,10 +883,12 @@ export function ToolSessionApp() {
       let destinationTabId = targetTab.id;
       setActionError(undefined);
       try {
-        let nextProjects = projects;
+        const activeServerId = serverConnections.snapshot.activeServerId;
+        let nextProjects = projectsServerId === activeServerId ? projects : [];
         if (nextProjects.length === 0) {
-          nextProjects = (await hostPorts.tools.listProjects?.()) ?? [];
+          nextProjects = await hostPorts.tools.listProjects();
           setProjects(nextProjects);
+          setProjectsServerId(activeServerId);
           setProjectsLoaded(true);
         }
 
@@ -975,7 +1012,16 @@ export function ToolSessionApp() {
         return undefined;
       }
     },
-    [activeSession, client, projects, selectTool, toolWorkspaces],
+    [
+      activeSession,
+      client,
+      hostPorts.tools,
+      projects,
+      projectsServerId,
+      selectTool,
+      serverConnections.snapshot.activeServerId,
+      toolWorkspaces,
+    ],
   );
 
   const selectTab = useCallback(
@@ -992,6 +1038,7 @@ export function ToolSessionApp() {
         return;
       }
       markPerformance("yaade:tab-switch");
+      serverConnections.manager.selectTab(tab.id);
       client.store.selectTab(tab.id);
       const nextUse = client.store.getSnapshot().activeToolUseId;
       writeToolSessionLocation(toolSessionUrl(session.id, tab.id, nextUse), "push");
@@ -1016,7 +1063,7 @@ export function ToolSessionApp() {
         });
       }
     },
-    [client],
+    [client, serverConnections.manager],
   );
 
   const createTab = useCallback(async () => {
@@ -1490,7 +1537,7 @@ export function ToolSessionApp() {
         const target = focusedToolUseRef.current ?? selectedToolRef.current;
         const ptyId =
           target?.output.kind === "process" ? target.output.ptyId : undefined;
-        if (ptyId) void hostPorts.terminal.write?.(ptyId, result.byte);
+        if (ptyId) void window.yaade?.terminal.write?.(ptyId, result.byte);
         return;
       }
       if (result.type === "command") {
@@ -1704,6 +1751,7 @@ export function ToolSessionApp() {
   const activateDockedTool = useCallback(
     (use: ToolUse) => {
       if (client.store.getSnapshot().activeToolUseId === use.id) return;
+      serverConnections.manager.selectToolUse(use.id);
       client.store.selectToolUse(use.id);
       const tabId = use.tabId ?? client.store.getSnapshot().activeTabId;
       const request = hostPorts.tools.selectUse?.(use.sessionId, use.id);
@@ -1718,7 +1766,7 @@ export function ToolSessionApp() {
         "replace",
       );
     },
-    [client],
+    [client, serverConnections.manager],
   );
 
   const toolTabDnd = useMemo((): TabDndHandlers => {
@@ -2029,6 +2077,7 @@ export function ToolSessionApp() {
                   onClose={requestCloseSession}
                   onRename={(id, title) => void renameSession(id, title)}
                   toolCounts={toolCounts}
+                  serverNamesBySessionId={serverNamesBySessionId}
                   className="max-w-52"
                 />
                 <SessionWindowTabStrip
@@ -2097,6 +2146,7 @@ export function ToolSessionApp() {
                   onCreate={() => void createSession()}
                   onRename={(id, title) => void renameSession(id, title)}
                   onReorder={(ids) => void reorderSessions(ids)}
+                  serverNamesBySessionId={serverNamesBySessionId}
                 />
               ) : singleSidebarLayout ? (
                 <MotionAside
@@ -2132,6 +2182,7 @@ export function ToolSessionApp() {
                     onCreate={() => void createSession()}
                     onRename={(id, title) => void renameSession(id, title)}
                     onReorder={(ids) => void reorderSessions(ids)}
+                    serverNamesBySessionId={serverNamesBySessionId}
                   />
                   <ToolUseTabStrip
                     useIds={useIds}
@@ -2342,6 +2393,11 @@ export function ToolSessionApp() {
               onSettingsChange={setAppearanceSettings}
               themes={bundledThemeList}
               onReset={resetAppearanceSettings}
+              servers={serverConnections.servers}
+              serverConnections={serverConnections.snapshot.connections}
+              currentServerId="current-host"
+              onServersChange={serverConnections.updateServers}
+              onTestServer={serverConnections.testServer}
             />
           </Suspense>
         ) : null}

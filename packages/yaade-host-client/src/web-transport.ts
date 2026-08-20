@@ -46,16 +46,32 @@ export function acceptHostEvent(
   );
 }
 
+export function normalizeHostBaseUrl(baseUrl?: string): string {
+  const fallback =
+    typeof window === "undefined" ? "http://localhost" : window.location.origin;
+  const url = new URL(baseUrl ?? fallback, fallback);
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("YAADE server URL must use http or https");
+  }
+  if (url.username || url.password) {
+    throw new Error("YAADE server URLs cannot contain credentials");
+  }
+  return `${url.protocol}//${url.host}`;
+}
+
 export function websocketUrl(
   location: Pick<Location, "protocol" | "host">,
   since = 0,
   clientId?: string,
   token?: string | null,
+  baseUrl?: string,
 ): string {
-  const protocol = location.protocol === "https:" ? "wss:" : "ws:";
+  const base = baseUrl ? new URL(normalizeHostBaseUrl(baseUrl)) : undefined;
+  const protocol = (base?.protocol ?? location.protocol) === "https:" ? "wss:" : "ws:";
+  const host = base?.host ?? location.host;
   const client = clientId ? `&clientId=${encodeURIComponent(clientId)}` : "";
   const auth = token ? `&token=${encodeURIComponent(token)}` : "";
-  return `${protocol}//${location.host}/ws?since=${since}${client}${auth}`;
+  return `${protocol}//${host}/ws?since=${since}${client}${auth}`;
 }
 
 export function readHostAuthToken(
@@ -99,6 +115,12 @@ type RealtimeWakeTarget = {
 };
 type RealtimeWakeDocument = RealtimeWakeTarget & {
   readonly visibilityState: DocumentVisibilityState;
+};
+
+export type WebHostTransportOptions = {
+  readonly baseUrl?: string;
+  /** `undefined` uses the legacy query/session token; `null` sends no token. */
+  readonly authToken?: string | null;
 };
 
 /**
@@ -162,6 +184,8 @@ export function subscribeRealtimeWake(
  * - In-flight HTTP invokes aborted with `HostDisconnectedError` on WS drop / close
  */
 export class WebHostTransport implements YaadeHostTransport {
+  private readonly baseUrl: string;
+  private readonly authToken: string | null | undefined;
   private readonly listeners = new Map<
     string,
     Set<(...args: unknown[]) => void>
@@ -187,7 +211,9 @@ export class WebHostTransport implements YaadeHostTransport {
   private preservePendingOnReconnect = false;
   private readonly disposeRealtimeWake: (() => void) | null;
 
-  constructor() {
+  constructor(options: WebHostTransportOptions = {}) {
+    this.baseUrl = normalizeHostBaseUrl(options.baseUrl);
+    this.authToken = options.authToken;
     this.disposeRealtimeWake =
       typeof document === "undefined" || typeof window === "undefined"
         ? null
@@ -214,7 +240,11 @@ export class WebHostTransport implements YaadeHostTransport {
     this.pendingAborts.add(ac);
     try {
       return await runInvokePromise(
-        invokeHostRpcUnchecked(this.clientId, channel, args, { signal: ac.signal }),
+        invokeHostRpcUnchecked(this.clientId, channel, args, {
+          signal: ac.signal,
+          baseUrl: this.baseUrl,
+          authToken: this.authToken,
+        }),
       );
     } finally {
       this.pendingAborts.delete(ac);
@@ -245,7 +275,11 @@ export class WebHostTransport implements YaadeHostTransport {
     try {
       try {
         return await runInvokePromise(
-          invokeHostRpcUnchecked(this.clientId, channel, args, { signal: ac.signal }),
+          invokeHostRpcUnchecked(this.clientId, channel, args, {
+            signal: ac.signal,
+            baseUrl: this.baseUrl,
+            authToken: this.authToken,
+          }),
         );
       } catch (error) {
         if (signal.aborted) throw requestAbortError(signal);
@@ -259,7 +293,11 @@ export class WebHostTransport implements YaadeHostTransport {
 
   readTextFile(uri: string): Promise<TextFileReadResult> {
     return this.runTextFileRequest((signal) =>
-      readTextFileHttp(uri, { signal }),
+      readTextFileHttp(uri, {
+        signal,
+        baseUrl: this.baseUrl,
+        authToken: this.authToken,
+      }),
     );
   }
 
@@ -269,7 +307,11 @@ export class WebHostTransport implements YaadeHostTransport {
     options: TextFileWriteOptions,
   ): Promise<TextFileWriteResult> {
     return this.runTextFileRequest((signal) =>
-      writeTextFileHttp(uri, content, options, { signal }),
+      writeTextFileHttp(uri, content, options, {
+        signal,
+        baseUrl: this.baseUrl,
+        authToken: this.authToken,
+      }),
     );
   }
 
@@ -428,7 +470,10 @@ export class WebHostTransport implements YaadeHostTransport {
               window.location,
               self.lastSequence,
               self.clientId,
-              readHostAuthToken(),
+              self.authToken === undefined
+                ? readHostAuthToken()
+                : self.authToken,
+              self.baseUrl,
             ),
           );
           socket.binaryType = "arraybuffer";

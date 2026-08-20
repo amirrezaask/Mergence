@@ -28,6 +28,8 @@ Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. 
 - Add projects from any ToolUse context with folder-path autocomplete; terminals offer to remember a newly visited folder after `cd`.
 - Mobile uses a list-first Terminal/Git shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal by default; hold Cmd/Ctrl while clicking to choose a tool.
+- Settings → **Servers** lets you add multiple remote host URLs and optional access tokens. Sessions from every reachable host appear in the same session switcher; each session keeps its host context when you work in it.
+- The client host is shown automatically, while remote servers are optional. A new client can therefore start with no remote servers configured.
 
 ## Keyboard
 
@@ -91,8 +93,18 @@ pnpm build
 
 The internal material gallery is available at `/__yaade/glass-gallery`.
 
+### Remote host connections
+
+A remote host bound outside loopback must be started with a bearer token, for example:
+
+```bash
+YAADE_HOST_TOKEN=replace-me pnpm dev:host-server -- --host 0.0.0.0 --token replace-me
+```
+
+Token-authenticated hosts allow browser and desktop clients to connect from another origin. Configure explicit origins with `YAADE_CORS_ORIGINS` when you want to restrict that access further.
+
 ## Deployment warning
 
-YAADE currently has no HTTP or WebSocket authentication. The default bind is loopback-only. Do not expose it to an untrusted network. `pnpm dev:lan` is intended only for trusted LANs.
+The host API is unauthenticated on loopback by default and requires a bearer token for non-loopback binds. Do not expose an unauthenticated host to an untrusted network. `pnpm dev:lan` is intended only for trusted LANs.
 
 See [AGENTS.md](AGENTS.md) for architecture and contribution rules.

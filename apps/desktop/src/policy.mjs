@@ -77,7 +77,19 @@ export function contentSecurityPolicy(allowedOrigins, development) {
   const scriptSources = development
     ? "'self' 'unsafe-inline' 'unsafe-eval' 'wasm-unsafe-eval'"
     : "'self' 'unsafe-inline' 'wasm-unsafe-eval'"
-  const connectSources = ["'self'", ...allowedOrigins, ...socketOrigins].join(" ")
+  // Remote host definitions are user-controlled and may be added after the
+  // window boots. Keep scripts, frames, and navigation allowlisted while
+  // allowing the app's typed host client to reach an explicitly configured
+  // HTTP(S)/WebSocket endpoint.
+  const connectSources = [
+    "'self'",
+    ...allowedOrigins,
+    ...socketOrigins,
+    "http:",
+    "https:",
+    "ws:",
+    "wss:",
+  ].join(" ")
 
   return [
     "default-src 'self'",

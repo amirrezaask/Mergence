@@ -37,7 +37,11 @@ import { makeHostLayers, type HostLayerServices } from "./effect/layers.js";
 import { HostRuntimeTag } from "./effect/tags.js";
 import { shutdownRuntime, type HostRuntime } from "./host-runtime.js";
 import { pathAllowed, pathStaysWithin } from "./sandbox.js";
-import { isAllowedWebSocketOrigin, isAuthorizedRequest } from "./security.js";
+import {
+  isAllowedCorsOrigin,
+  isAllowedWebSocketOrigin,
+  isAuthorizedRequest,
+} from "./security.js";
 import { normalizeProviderHookRequest } from "./notifications/index.js";
 
 const VERSION = "0.0.1";
@@ -123,7 +127,13 @@ export async function startHostServer(
   });
 
   server.on("upgrade", (req, socket, head) => {
-    if (!isAllowedWebSocketOrigin(req.headers.origin, req.headers.host)) {
+    if (
+      !isAllowedWebSocketOrigin(
+        req.headers.origin,
+        req.headers.host,
+        runtime.config.corsOrigins,
+      )
+    ) {
       socket.write("HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -280,6 +290,19 @@ async function handleHttp(
     `http://${req.headers.host ?? "localhost"}`,
   );
   const { pathname } = url;
+  const origin = typeof req.headers.origin === "string" ? req.headers.origin : undefined;
+  const corsAllowed = isAllowedCorsOrigin(origin, runtime.config.corsOrigins);
+  if (origin && corsAllowed) {
+    res.setHeader("access-control-allow-origin", origin);
+    res.setHeader("vary", "Origin");
+    res.setHeader("access-control-allow-headers", "content-type, authorization, x-yaade-token");
+    res.setHeader("access-control-allow-methods", "GET, POST, PUT, OPTIONS");
+  }
+  if (req.method === "OPTIONS" && pathname.startsWith("/api")) {
+    res.writeHead(corsAllowed ? 204 : 403);
+    res.end();
+    return;
+  }
 
   if (req.method === "GET" && pathname === "/health") {
     sendJson(res, 200, { status: "ok", version: VERSION });
