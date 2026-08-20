@@ -18,7 +18,7 @@ The suite is split by the boundary it protects rather than by implementation fil
 
 - **Host/server tests** cover SQLite migrations and recovery, project/checkouts, ToolUse revisions, PTY lifecycle and supervisor reattach, flow control, binary terminal frames, WebSocket replay/gaps, authorization, notifications, agent telemetry, Git commands, and the two-client live PTY fan-out (`packages/yaade-host-server/src/server-multiclient.test.ts`).
 - **Host-client/RPC tests** cover route schemas, typed errors, HTTP text-file versioning, realtime decoding, reconnect backoff, delta replay, and optional-argument serialization.
-- **Package tests** cover session routing/state, tiling, keymaps, terminal rendering/input, Git review mutation queues and hunk patching, themes, panels, telemetry reduction, and desktop security policy.
+- **Package tests** cover session routing/state, tiling, keyboard handling, terminal rendering/input, Git review mutation queues and hunk patching, themes, panels, telemetry reduction, and desktop security policy.
 - **Browser journeys** cover release boot, shell chrome, settings/focus restoration, terminal input and replay after reload, durable Windows/panes, project discovery, split/zoom controls, mobile terminal accessory keys, Git history/no-repository/working-tree staging/commit/mobile diff, DA1 compatibility, and a long-running agent with permission attention.
 
 A product change is not covered until the relevant boundary test exists. Run the complete gates with:

@@ -5,7 +5,6 @@ import {
   isBrowserReservedChord,
   isBrowserRiskyChord,
 } from "./browser-reserved-keys.js"
-import { KeymapService, bind } from "./keymaps.js"
 
 describe("isBrowserReservedChord", () => {
   it("flags chords the browser consumes before the page", () => {
@@ -71,21 +70,5 @@ describe("findReservedBindings", () => {
       ]),
       ["Mod-w", "Mod-t"],
     )
-  })
-})
-
-describe("KeymapService reserved-chord guard", () => {
-  it("rejects reserved chords instead of registering a silent no-op", () => {
-    const keymaps = new KeymapService()
-    assert.throws(
-      () => keymaps.registerUser([bind("Mod-w", () => {})]),
-      /browser-reserved/,
-    )
-  })
-
-  it("accepts prefix chords built from reserved keys", () => {
-    const keymaps = new KeymapService()
-    keymaps.registerUser([bind("Ctrl-a t", () => {})])
-    assert.equal(keymaps.allBindings().length, 1)
   })
 })

@@ -2,7 +2,6 @@ export * from "./types.js";
 export * from "./workspace.js";
 export * from "./workspace-manager.js";
 export * from "./commands.js";
-export * from "./keymaps.js";
 export * from "./context-keys.js";
 export * from "./browser-reserved-keys.js";
 export * from "./file-index.js";

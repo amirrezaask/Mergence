@@ -3,21 +3,11 @@ dist
 .turbo
 *.log
 .DS_Store
-apps/jet-desktop/dist-electron
-apps/jet-desktop/release
 apps/desktop/out
-packages/jet-app/dist-electron
-.4coder
 .vscode
-.4coder_fleury
-.raddebugger
 test-results
-.t3code
-.synara
 .pnpm-store
 **/target
-apps/yaade/src-tauri/generated
-apps/jet-tauri/src-tauri/capabilities/e2e.json
 .yaade
 .yaade/**
 

@@ -5,12 +5,9 @@
   "type": "module",
   "exports": {
     ".": "./src/index.ts",
-    "./bin": "./src/bin.ts",
     "./cli": "./src/cli.ts"
   },
   "scripts": {
-    "dev": "node ../../scripts/run-ts.mjs src/bin.ts",
-    "start": "node ../../scripts/run-ts.mjs src/bin.ts",
     "typecheck": "tsc --noEmit",
     "test": "vp test"
   },

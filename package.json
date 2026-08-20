@@ -21,9 +21,6 @@
     "lint": "vp lint",
     "test": "vp test",
     "test:bench": "vp exec playwright test --project=bench",
-    "extract:vscode-keybindings": "node scripts/extract-vscode-mac-keybindings.mjs && node scripts/generate-default-keybindings.mjs",
-    "validate:keybindings": "node scripts/validate-yaade-keybindings.mjs",
-    "postinstall": "node packages/yaade-node-host/scripts/fix-node-pty-perms.mjs",
     "rebuild:native": "node packages/yaade-node-host/scripts/fix-node-pty-perms.mjs"
   },
   "devDependencies": {

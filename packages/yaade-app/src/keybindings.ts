@@ -22,8 +22,6 @@
  *   Overlay        Escape closes; CdOverlay confirms with Mod-Enter
  *   Terminal PTY   packages/yaade-ui/src/panels/terminal-keybindings.ts
  *                  (Shift-Enter, Escape, mac Option/Cmd arrows + Backspace)
- *   Dead dump      packages/yaade-workspace/src/default-keybindings.ts
- *                  (VS Code leftover; layer 0 is empty in the live app)
  */
 
 import {

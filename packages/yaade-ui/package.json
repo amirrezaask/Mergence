@@ -71,7 +71,6 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "build:ghostty-wasm": "vp run --filter @yaade/ghostty-react build:ghostty-wasm",
     "test": "vp test"
   },
   "dependencies": {
