@@ -43,6 +43,7 @@ export type ProcessLaunchRequest = {
   readonly launchRequestId?: string
   readonly generation?: number
   readonly args?: readonly string[]
+  readonly restartPolicy?: "never" | "manual" | "resume-on-daemon-start"
 }
 
 function parseAgentProvider(value: string): AgentProvider | null {
@@ -116,6 +117,16 @@ export async function createTerminalInstance(
     title,
     provider,
     launchRequestId: request.launchRequestId ?? null,
+    launchProfile: {
+      schemaVersion: 1,
+      provider,
+      args: [...(request.args ?? [])],
+      cwd: checkoutPath,
+      projectId: project.id,
+      workspaceId: request.workspaceId ?? null,
+      restartPolicy: request.restartPolicy ?? "manual",
+    },
+    restartPolicy: request.restartPolicy ?? "manual",
     ...(request.generation == null ? {} : { generation: request.generation }),
   })
   try {
@@ -156,10 +167,13 @@ export async function launchReservedTerminalInstance(
       deps.terminal.create(pathToFileUri(request.checkoutPath), launch, clientId),
     )
     return deps.terminalInstances.bindPty(
-      instance.id, instance.generation, created.id, created.title, undefined, {
-        osPid: created.osPid,
-        osStartedAtMs: created.osStartedAtMs,
-      },
+      instance.id,
+      instance.generation,
+      created.id,
+      created.title,
+      undefined,
+      created.processIdentity,
+      created.terminalEpoch,
     ) ?? instance
   }
 
@@ -203,7 +217,8 @@ export async function launchReservedTerminalInstance(
     created.id,
     created.title,
     processOnly ? "process_only" : "connecting",
-    { osPid: created.osPid, osStartedAtMs: created.osStartedAtMs },
+    created.processIdentity,
+    created.terminalEpoch,
   )
   if (!bound) throw new Error("process binding was rejected")
   deps.db.recordSession(created.id, "terminal", "running", { title: created.title })
@@ -229,6 +244,45 @@ export async function launchReservedTerminalInstance(
     ) ?? bound
   }
   return bound
+}
+
+export async function resumeTerminalInstance(
+  deps: ProcessDriverDependencies,
+  instance: TerminalInstance,
+  clientId: string,
+): Promise<TerminalInstance> {
+  if (!instance.provider || !instance.nativeSessionRef) {
+    throw new Error("NATIVE_RESUME_UNSUPPORTED")
+  }
+  const driver = getCliAgentDriver(instance.provider)
+  if (!driver.buildResumeLaunch || !driver.validateNativeSessionRef) {
+    throw new Error("NATIVE_RESUME_UNSUPPORTED")
+  }
+  const valid = await driver.validateNativeSessionRef(instance.nativeSessionRef, {
+    projectRoot: instance.checkoutPath,
+    cwd: instance.checkoutPath,
+  })
+  if (!valid) throw new Error("NATIVE_SESSION_INVALID")
+  const launch = await driver.buildResumeLaunch(instance.nativeSessionRef, {
+    projectRoot: instance.checkoutPath,
+    cwd: instance.checkoutPath,
+    executable: instance.launchProfile?.executable,
+    args: instance.launchProfile?.args,
+  })
+  const restarting = deps.terminalInstances.beginRestart(instance.id, instance.generation)
+  if (!restarting) throw new Error("terminal instance cannot be restored")
+  return launchReservedTerminalInstance(deps, restarting, {
+    projectId: restarting.projectId,
+    checkoutKey: restarting.checkoutKey,
+    checkoutPath: restarting.checkoutPath,
+    title: restarting.title,
+    provider: restarting.provider ?? undefined,
+    args: [
+      ...launch.args,
+      ...(restarting.launchProfile?.args ?? []),
+    ],
+    launchRequestId: `${restarting.id}:${restarting.generation}:resume`,
+  }, clientId)
 }
 
 export async function restartTerminalInstance(

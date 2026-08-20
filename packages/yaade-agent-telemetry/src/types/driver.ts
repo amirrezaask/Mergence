@@ -9,6 +9,8 @@ export interface AgentDriverCapabilities {
   subagents: boolean
   compaction: boolean
   fileEvents: "native" | "derived" | "unsupported"
+  /** Provider exposes a tested native conversation resume command. */
+  nativeResume?: boolean
 }
 
 export interface AgentDriverDetection {
@@ -38,6 +40,27 @@ export interface HookInstallationResult {
   writtenPaths?: string[]
 }
 
+export type NativeAgentSessionRef = {
+  provider: AgentProvider
+  kind: string
+  value: string
+  capturedAt: string
+  driverVersion: number
+}
+
+export type NativeResumeContext = {
+  projectRoot: string
+  cwd: string
+  executable?: string
+  args?: readonly string[]
+}
+
+export type NativeResumeLaunch = {
+  command: string
+  args: string[]
+  env?: Record<string, string>
+}
+
 export interface NativeHookInput {
   /** Raw provider JSON body (private to driver). */
   payload: unknown
@@ -64,4 +87,19 @@ export interface CliAgentDriver {
   classifyTool(nativeToolName: string, nativeInput?: unknown): AgentToolCategory
 
   getCapabilities(): AgentDriverCapabilities
+
+  detectNativeSessionRef?(context: {
+    nativeSessionId?: string | null
+    payload?: unknown
+  }): Promise<NativeAgentSessionRef | null>
+
+  validateNativeSessionRef?(
+    ref: NativeAgentSessionRef,
+    context: NativeResumeContext,
+  ): Promise<boolean>
+
+  buildResumeLaunch?(
+    ref: NativeAgentSessionRef,
+    context: NativeResumeContext,
+  ): Promise<NativeResumeLaunch>
 }

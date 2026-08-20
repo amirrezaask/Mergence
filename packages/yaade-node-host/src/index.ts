@@ -71,13 +71,29 @@ export {
   TERMINAL_FLOW_LOW_WATERMARK_CHARS,
 } from "./terminal.js";
 export { makeTerminalHostScoped } from "./effect-terminal.js";
+export {
+  BasicTerminalStateRecorder,
+  type TerminalCheckpoint,
+  type TerminalStateRecorder,
+} from "./terminal-state/recorder.js";
 export { SupervisedTerminalHost } from "./terminal-supervisor-client.js";
 export {
   ensureTerminalSupervisor,
   listenTerminalSupervisor,
+  supervisorLockPath,
+  supervisorManifestPath,
   supervisorSocketPath,
+  supervisorPidPath,
+  type SupervisorManifest,
 } from "./terminal-supervisor.js";
-export { isProcessAlive } from "./process-identity.js";
+export {
+  captureProcessIdentity,
+  isProcessAlive,
+  matchesProcessIdentity,
+  signalVerifiedProcess,
+  signalVerifiedProcessGroup,
+  type ProcessIdentity,
+} from "./process-identity.js";
 export { PTY_SANITIZED_ENV_KEYS, sanitizePtyEnv } from "./terminal-env.js";
 export { openInApp, revealInFolder } from "./shell.js";
 export {

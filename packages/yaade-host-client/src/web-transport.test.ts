@@ -62,6 +62,17 @@ test("websocket URL can target a configured remote server", () => {
     ),
     "wss://server.example:8443/ws?since=0&clientId=client&token=token",
   )
+  assert.equal(
+    websocketUrl(
+      { protocol: "https:", host: "client.example" } as Location,
+      0,
+      "client",
+      "token",
+      "https://server.example:8443",
+      2,
+    ),
+    "wss://server.example:8443/ws?since=0&clientId=client&protocol=2",
+  )
 })
 
 test("readHostAuthToken prefers the query token and remembers it", () => {

@@ -7,7 +7,22 @@ export type YaadeServerDefinition = {
   readonly token?: string
 }
 
-export type YaadeServerStatus = "connecting" | "connected" | "offline"
+export type YaadeServerStatus =
+  | "connecting"
+  | "authenticating"
+  | "synchronizing"
+  | "connected"
+  | "offline"
+  | "incompatible"
+  | "revoked"
+
+export type ServerRef = {
+  readonly serverId: string
+}
+
+export type RemoteResourceRef<Id extends string = string> = ServerRef & {
+  readonly id: Id
+}
 
 export type YaadeServerConnection = {
   readonly id: string

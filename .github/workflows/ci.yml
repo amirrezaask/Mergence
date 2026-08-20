@@ -24,3 +24,21 @@ jobs:
       - run: vp run test:web:e2e
         env:
           YAADE_E2E_RUN_FLAKY: "1"
+
+  runtime-platform:
+    name: Runtime (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-14, windows-2022]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: voidzero-dev/setup-vp@v1.17.0
+        with:
+          node-version: 22.18.0
+          run-install: false
+          cache: true
+      - run: vp install --frozen-lockfile
+      - run: vp run typecheck
+      - run: vp test packages/yaade-node-host packages/yaade-host-server packages/yaade-host-client

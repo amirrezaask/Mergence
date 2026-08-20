@@ -96,10 +96,27 @@ export function ProcessToolView({
 
   if (use.output.kind !== "process") return null;
   const status =
-    use.output.processState === "disconnected"
-      ? "failed"
-      : use.output.processState;
-  const waitingForPty = !use.output.ptyId && status === "starting";
+    use.output.processState === "starting" ||
+    use.output.processState === "running" ||
+    use.output.processState === "exited" ||
+    use.output.processState === "failed"
+      ? use.output.processState
+      : "failed";
+  const processState = use.output.processState;
+  const waitingForPty =
+    !use.output.ptyId &&
+    (processState === "starting" ||
+      processState === "restoring" ||
+      processState === "interrupted" ||
+      processState === "orphaned");
+  const statusMessage =
+    processState === "restoring"
+      ? "Restoring conversation…"
+      : processState === "interrupted"
+        ? "Agent interrupted — resume or restart"
+        : processState === "orphaned"
+          ? "Process unavailable — identity could not be verified"
+          : "Starting terminal…";
   return (
     <div className="flex h-full min-h-0 flex-1 flex-col">
       {waitingForPty ? (
@@ -108,8 +125,10 @@ export function ProcessToolView({
           data-yaade-terminal-starting=""
           role="status"
         >
-          <LoaderCircle className="mr-2 size-4 animate-spin" />
-          Starting terminal…
+          {(processState === "starting" || processState === "restoring") && (
+            <LoaderCircle className="mr-2 size-4 animate-spin" />
+          )}
+          {statusMessage}
         </div>
       ) : (
         <Suspense

@@ -56,6 +56,7 @@ import {
   CheckoutResolutionFailed,
   ToolUseConflict,
   ToolRuntimeFailure,
+  TerminalLeaseError,
   SessionCreated,
   SessionRestored,
   SessionUpdated,
@@ -94,6 +95,7 @@ import { installProjectHooksForProvider } from "./agents/index.js";
 import {
   createTerminalInstance as createSharedTerminalInstance,
   restartTerminalInstance,
+  resumeTerminalInstance,
 } from "./tools/process-driver.js";
 import { ToolDriverFailure } from "./tools/errors.js";
 
@@ -136,7 +138,8 @@ export function mapDispatchError(
     error instanceof ProjectTargetUnavailable ||
     error instanceof CheckoutResolutionFailed ||
     error instanceof ToolUseConflict ||
-    error instanceof ToolRuntimeFailure
+    error instanceof ToolRuntimeFailure ||
+    error instanceof TerminalLeaseError
   ) {
     return error;
   }
@@ -893,6 +896,7 @@ async function handleAgents(
         checkoutPath?: string;
         title?: string;
         args?: string[];
+        restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
       };
       if (
         !body?.launchRequestId ||
@@ -915,6 +919,7 @@ async function handleAgents(
           provider: body.provider,
           launchRequestId: body.launchRequestId,
           args: body.args,
+          restartPolicy: body.restartPolicy,
         },
         clientId,
       );
@@ -1085,6 +1090,8 @@ function instanceToAgentRunInfo(
     toolUseId: instance.toolUseId,
     ptyId: instance.ptyId,
     nativeSessionId: instance.nativeSessionId,
+    processIdentity: instance.processIdentity,
+    terminalEpoch: instance.terminalEpoch,
     processState:
       instance.processState === "failed"
         ? ("exited" as const)
@@ -1116,6 +1123,7 @@ async function createTerminalInstance(
     workspaceId?: string;
     launchRequestId?: string;
     args?: string[];
+    restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
   };
   if (!body.projectId)
     throw new Error("terminal:createInstance requires projectId");
@@ -1149,6 +1157,7 @@ async function createTerminalInstance(
       ...(provider ? { provider } : {}),
       launchRequestId: body.launchRequestId,
       args: body.args,
+      restartPolicy: body.restartPolicy,
     },
     clientId,
   );
@@ -1371,6 +1380,15 @@ async function handleTerminal(
       if (!instance || instance.generation !== body.generation) return instance;
       return restartTerminalInstance(runtime.terminalExecution, instance, [], clientId);
     }
+    case "terminal:resumeInstance": {
+      const body = args[0] as { id?: string; generation?: number };
+      if (!body?.id || body.generation == null) {
+        throw new Error("terminal:resumeInstance requires id and generation");
+      }
+      const instance = runtime.terminalInstances.get(body.id);
+      if (!instance || instance.generation !== body.generation) return instance;
+      return resumeTerminalInstance(runtime.terminalExecution, instance, clientId);
+    }
     case "terminal:closeInstance": {
       const body = args[0] as { id?: string; generation?: number };
       if (!body?.id || body.generation == null) {
@@ -1404,8 +1422,33 @@ async function handleTerminal(
       });
       return created;
     }
+    case "terminal:acquireLease": {
+      const mode = args[1] === "observer" ? "observer" : "writer";
+      return runtime.leases.acquire(str(args[0], "id"), clientId, mode);
+    }
+    case "terminal:renewLease":
+      return runtime.leases.renew(
+        str(args[0], "id"),
+        str(args[1], "leaseId"),
+        clientId,
+      );
+    case "terminal:releaseLease":
+      runtime.leases.release(str(args[0], "id"), str(args[1], "leaseId"), clientId);
+      return null;
+    case "terminal:requestControl":
+      return runtime.leases.requestControl(str(args[0], "id"), clientId);
+    case "terminal:transferControl":
+      return runtime.leases.transfer(
+        str(args[0], "id"),
+        str(args[1], "leaseId"),
+        clientId,
+        str(args[2], "targetClientId"),
+      );
+    case "terminal:listViewers":
+      return runtime.leases.listViewers(str(args[0], "id"));
     case "terminal:write": {
       const id = str(args[0], "id");
+      if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       const data = String(args[1] ?? "");
       const result = await Promise.resolve(runtime.terminal.write(id, data));
       // Enter starts a foreground command; Ctrl-C/Ctrl-D can return an agent
@@ -1425,18 +1468,24 @@ async function handleTerminal(
       }
       return result;
     }
-    case "terminal:writeBinary":
+    case "terminal:writeBinary": {
+      const id = str(args[0], "id");
+      if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       return Promise.resolve(
-        runtime.terminal.writeBinary(str(args[0], "id"), String(args[1] ?? "")),
+        runtime.terminal.writeBinary(id, String(args[1] ?? "")),
       );
-    case "terminal:resize":
+    }
+    case "terminal:resize": {
+      const id = str(args[0], "id");
+      if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       return Promise.resolve(
         runtime.terminal.resize(
-          str(args[0], "id"),
+          id,
           typeof args[1] === "number" ? args[1] : undefined,
           typeof args[2] === "number" ? args[2] : undefined,
         ),
       );
+    }
     case "terminal:ack":
       return Promise.resolve(
         runtime.terminal.acknowledgeData(

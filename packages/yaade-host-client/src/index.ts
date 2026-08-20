@@ -1,5 +1,11 @@
 export { createYaadeApi } from "./create-yaade-api.js";
 export {
+  createDeviceIdentity,
+  loadDeviceIdentity,
+  saveDeviceIdentity,
+  type DeviceIdentity,
+} from "./device-auth.js";
+export {
   createWebTransport,
   WebHostTransport,
   websocketUrl,

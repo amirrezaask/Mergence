@@ -240,7 +240,29 @@ export class ProjectDatabase {
         PRIMARY KEY(project_id, machine, surface),
         FOREIGN KEY(project_id) REFERENCES projects(id) ON DELETE CASCADE
       );
+      CREATE TABLE IF NOT EXISTS host_identity(
+        singleton INTEGER PRIMARY KEY CHECK(singleton = 1),
+        server_id TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS terminal_recovery_snapshots(
+        terminal_instance_id TEXT PRIMARY KEY,
+        terminal_epoch TEXT NOT NULL,
+        sequence INTEGER NOT NULL,
+        path TEXT NOT NULL,
+        byte_size INTEGER NOT NULL,
+        created_at TEXT NOT NULL,
+        encrypted INTEGER NOT NULL DEFAULT 0
+      );
     `)
+    const identity = this.db
+      .prepare("SELECT server_id FROM host_identity WHERE singleton=1")
+      .get() as { server_id: string } | undefined
+    if (!identity?.server_id) {
+      this.db
+        .prepare("INSERT OR IGNORE INTO host_identity(singleton, server_id, created_at) VALUES(1, ?, ?)")
+        .run(randomUUID(), new Date().toISOString())
+    }
     this.owner.migrate([
       {
         id: "notifications/schema-v1",
@@ -728,6 +750,15 @@ export class ProjectDatabase {
         WHERE tab_id IS NOT NULL
           AND tab_id NOT IN (SELECT tab_id FROM session_roster_entries);
     `)
+  }
+
+  /** The installation-scoped identity. It is stable across API restarts. */
+  serverId(): string {
+    const row = this.db
+      .prepare("SELECT server_id FROM host_identity WHERE singleton=1")
+      .get() as { server_id: string } | undefined
+    if (!row?.server_id) throw new Error("host identity is missing")
+    return row.server_id
   }
 
   /** Domain repositories receive this restricted session, not the owner. */

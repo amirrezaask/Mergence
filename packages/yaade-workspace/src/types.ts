@@ -36,6 +36,7 @@ import type {
   ArchiveSession,
   RestoreSession,
   ArchiveToolUse,
+  TerminalLease,
 } from "@yaade/rpc";
 
 export type {
@@ -187,6 +188,17 @@ export type JetElectronTerminal = {
   attach(id: string): Promise<{
     id: string;
     title?: string;
+    terminalEpoch?: string;
+    checkpoint?: {
+      checkpointVersion: 1;
+      terminalEpoch: string;
+      sequence: number;
+      cols: number;
+      rows: number;
+      createdAt: string;
+      syntheticAnsi: string;
+    };
+    replayQuality?: "exact" | "checkpoint" | "degraded";
     /** Ring segments for attach replay (preferred). */
     outputChunks?: string[];
     /** Legacy joined form; may be empty when outputChunks is set. */
@@ -251,6 +263,10 @@ export type JetElectronTerminal = {
     id: string;
     generation: number;
   }): Promise<TerminalInstanceInfo | null>;
+  resumeInstance(req: {
+    id: string;
+    generation: number;
+  }): Promise<TerminalInstanceInfo | null>;
   closeInstance(req: {
     id: string;
     generation: number;
@@ -259,6 +275,12 @@ export type JetElectronTerminal = {
     id: string,
   ): Promise<{ output: string; truncated: boolean } | null>;
   onInstanceEvent(callback: (event: TerminalInstanceEvent) => void): () => void;
+  acquireLease(id: string, mode?: "writer" | "observer"): Promise<TerminalLease | null>;
+  renewLease(id: string, leaseId: string): Promise<TerminalLease | null>;
+  releaseLease(id: string, leaseId: string): Promise<void>;
+  requestControl(id: string): Promise<TerminalLease | null>;
+  transferControl(id: string, leaseId: string, targetClientId: string): Promise<TerminalLease | null>;
+  listViewers(id: string): Promise<string[]>;
 };
 
 export type TerminalInstanceInfo = {
@@ -273,7 +295,15 @@ export type TerminalInstanceInfo = {
   launchRequestId: string | null;
   ptyId: string | null;
   nativeSessionId: string | null;
-  processState: "starting" | "running" | "exited" | "failed" | "disconnected";
+  processState:
+    | "starting"
+    | "running"
+    | "exited"
+    | "failed"
+    | "disconnected"
+    | "interrupted"
+    | "restoring"
+    | "orphaned";
   activityState:
     | "starting"
     | "working"
@@ -444,6 +474,7 @@ export type JetElectronAgents = {
     checkoutPath?: string;
     title?: string;
     args?: string[];
+    restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
   }): Promise<{
     run: AgentRunInfo;
     pty: { id: string; title: string | null } | null;
@@ -520,7 +551,26 @@ export type AgentRunInfo = {
   toolUseId?: string | null;
   ptyId: string | null;
   nativeSessionId: string | null;
-  processState: "reserved" | "starting" | "running" | "exited" | "disconnected";
+  processIdentity?: {
+    pid: number;
+    platform: "linux" | "darwin" | "windows";
+    bootId?: string;
+    startToken: string;
+    executablePath?: string;
+  } | null;
+  terminalEpoch?: string | null;
+  launchProfile?: unknown;
+  nativeSessionRef?: unknown;
+  restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
+  processState:
+    | "reserved"
+    | "starting"
+    | "running"
+    | "exited"
+    | "disconnected"
+    | "interrupted"
+    | "restoring"
+    | "orphaned";
   activityState:
     | "starting"
     | "working"

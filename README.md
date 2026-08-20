@@ -23,8 +23,10 @@ Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. 
 - Sessions contain Windows; Windows contain tiled Terminal and Git ToolUses.
 - Empty Windows open a Terminal automatically; empty panes use the same Terminal fallback.
 - Layout, project, checkout, and ToolUse metadata persist across reloads.
-- PTYs survive browser reloads and tab switches while the host remains running.
-- Closing a Terminal ToolUse stops its PTY.
+- PTYs are owned by the detached supervisor, not by a browser/Electron window; browser reloads, disconnects, API restarts, and normal Electron close leave agents running.
+- Closing a Terminal ToolUse is the explicit destructive action that stops its PTY.
+- Reconnects use a persistent server identity, per-runtime epoch, authoritative snapshot, and per-terminal replay/checkpoint sequence.
+- Multiple viewers can attach to one terminal. Modern clients use a writer lease for input and resize; observers continue receiving output.
 - Add projects from any ToolUse context with folder-path autocomplete; terminals offer to remember a newly visited folder after `cd`.
 - Mobile uses a list-first Terminal/Git shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal by default; hold Cmd/Ctrl while clicking to choose a tool.
@@ -82,6 +84,22 @@ vp run dev:web           # web/Vite+ only
 vp run dev:desktop       # Electron application
 ```
 
+The standalone server can be installed as a user-level service (systemd user
+on Linux, LaunchAgent on macOS, and a least-privilege scheduled task on
+Windows):
+
+```bash
+yaade-server install
+yaade-server start
+yaade-server status
+yaade-server doctor
+yaade-server pair
+yaade-server stop
+yaade-server uninstall
+```
+
+Use the packaged artifact's actual command name when running these commands.
+
 Build each isolated release artifact independently:
 
 ```bash
@@ -91,8 +109,10 @@ vp run build:desktop  # Electron ZIP/DMG for the current platform
 vp run build          # all three artifacts, in order
 ```
 
-The desktop development application starts its own local runtime so it can be
-run independently. It does not change the server or web development commands.
+The desktop development application starts (or discovers) a local daemon so it can
+run independently. Closing the Electron window detaches from the daemon; it does
+not stop the daemon or its PTYs. The local runtime manifest is stored beside the
+host database, and the packaged runtime includes the PTY supervisor artifact.
 
 Package a desktop app directly after `build:desktop` with:
 
@@ -125,6 +145,23 @@ vp run build
 
 The internal material gallery is available at `/__yaade/glass-gallery`.
 
+### Durability and recovery
+
+YAADE makes these guarantees explicit:
+
+| Operation | Agent process |
+| --- | --- |
+| Browser refresh/offline | Continues; snapshot and terminal replay converge on reconnect |
+| Electron close/renderer crash | Continues; reopening reattaches |
+| API restart | Continues under the detached supervisor; the client receives a new epoch snapshot |
+| Supervisor crash | May be lost; the UI reports **Interrupted**, never Running |
+| Machine reboot | The arbitrary process does not survive; persisted layout returns and supported provider-native resume may launch a new generation |
+
+Terminal replay is bounded. Recent output is retained separately from the control
+plane, and the supervisor records a bounded synthetic screen checkpoint before
+raw history rotates. Checkpoints are a recovery aid, not proof that a process is
+still alive.
+
 ### Remote host connections
 
 A remote host bound outside loopback must be started with a bearer token, for example:
@@ -133,7 +170,12 @@ A remote host bound outside loopback must be started with a bearer token, for ex
 YAADE_HOST_TOKEN=replace-me vp run @yaade/server#dev -- --host 0.0.0.0 --token replace-me
 ```
 
-Token-authenticated hosts allow browser and desktop clients to connect from another origin. Configure explicit origins with `YAADE_CORS_ORIGINS` when you want to restrict that access further.
+Token-authenticated hosts allow browser and desktop clients to connect from another origin. Modern WebSocket connections authenticate in-band rather than placing the token in the WebSocket URL. Browser server metadata is persisted in localStorage, while legacy bearer tokens are kept only for the current session during migration. Configure explicit origins with `YAADE_CORS_ORIGINS` when you want to restrict that access further.
+
+Authenticated administrators can create one-time device pairing codes at
+`POST /api/v1/security/pairing-code`. A paired device signs a short-lived
+challenge; devices can be listed and revoked through `/api/v1/security/devices`.
+
 
 ## Deployment warning
 

@@ -28,6 +28,7 @@ const CAPABILITIES: AgentDriverCapabilities = {
   subagents: true,
   compaction: true,
   fileEvents: "derived",
+  nativeResume: true,
 }
 
 function hookName(raw: Record<string, unknown>): string {
@@ -130,6 +131,39 @@ export const claudeDriver: CliAgentDriver = {
       launchArgs: ["--settings", settings],
       env,
       driver: "hook",
+    }
+  },
+
+  async detectNativeSessionRef(context: {
+    nativeSessionId?: string | null
+    payload?: unknown
+  }) {
+    const value = context.nativeSessionId?.trim()
+    return value
+      ? {
+          provider: "claude" as const,
+          kind: "session",
+          value,
+          capturedAt: new Date().toISOString(),
+          driverVersion: 1,
+        }
+      : null
+  },
+
+  async validateNativeSessionRef(ref: { provider: string; value: string }) {
+    return ref.provider === "claude" && ref.value.trim().length > 0
+  },
+
+  async buildResumeLaunch(
+    ref: { provider: string; value: string },
+    context: { executable?: string; args?: readonly string[] },
+  ) {
+    if (ref.provider !== "claude" || !ref.value.trim()) {
+      throw new Error("invalid Claude native session reference")
+    }
+    return {
+      command: context.executable ?? "claude",
+      args: ["--resume", ref.value, ...(context.args ?? [])],
     }
   },
 

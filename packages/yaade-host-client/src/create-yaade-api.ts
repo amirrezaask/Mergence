@@ -14,6 +14,17 @@ const MAX_BUFFERED_TERMINAL_CHARS = 64 * 1024;
 type TerminalAttachResult = {
   id: string;
   title?: string;
+  terminalEpoch?: string;
+  checkpoint?: {
+    checkpointVersion: 1;
+    terminalEpoch: string;
+    sequence: number;
+    cols: number;
+    rows: number;
+    createdAt: string;
+    syntheticAnsi: string;
+  };
+  replayQuality?: "exact" | "checkpoint" | "degraded";
   outputChunks?: string[];
   output: string;
   replayTruncated?: boolean;
@@ -140,6 +151,27 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       terminalReplayFloors.set(id, result.lastSequence);
       terminalResyncing.delete(id);
       let firstReplayChunk = true;
+      if (result.checkpoint?.syntheticAnsi) {
+        const checkpoint = result.checkpoint.syntheticAnsi;
+        if (
+          !deliverTerminalData(
+            id,
+            checkpoint,
+            true,
+            result.replayNeedsQueryResponses === true,
+            false,
+          )
+        ) {
+          bufferTerminalData(
+            id,
+            checkpoint,
+            0,
+            true,
+            result.replayNeedsQueryResponses === true,
+            false,
+          );
+        }
+      }
       for (const chunk of chunks) {
         const replayTruncated =
           firstReplayChunk && result.replayTruncated === true;
@@ -224,7 +256,14 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     );
   });
 
-  transport.on("fs:changed", (...args: unknown[]) => {
+  transport.on("runtime:snapshot", (...args: unknown[]) => {
+    if (typeof window === "undefined") return;
+    window.dispatchEvent(
+      new CustomEvent("yaade:runtime-snapshot", { detail: args[0] }),
+    );
+  });
+
+  transport.on("fs:changed",  (...args: unknown[]) => {
     const uri = args[0] as string;
     const rawKind = args[1];
     const kind: WorkspaceFileChangeKind =
@@ -616,6 +655,8 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       createInstance: (req) => transport.invoke("terminal:createInstance", req),
       restartInstance: (req) =>
         transport.invoke("terminal:restartInstance", req),
+      resumeInstance: (req) =>
+        transport.invoke("terminal:resumeInstance", req),
       closeInstance: (req) => transport.invoke("terminal:closeInstance", req),
       getInstanceTranscript: (id) =>
         transport.invoke("terminal:getInstanceTranscript", id),
@@ -623,6 +664,18 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         terminalInstanceListeners.add(callback);
         return () => terminalInstanceListeners.delete(callback);
       },
+      acquireLease: (id, mode) =>
+        mode === undefined
+          ? transport.invoke("terminal:acquireLease", id)
+          : transport.invoke("terminal:acquireLease", id, mode),
+      renewLease: (id, leaseId) =>
+        transport.invoke("terminal:renewLease", id, leaseId),
+      releaseLease: (id, leaseId) =>
+        transport.invoke("terminal:releaseLease", id, leaseId),
+      requestControl: id => transport.invoke("terminal:requestControl", id),
+      transferControl: (id, leaseId, targetClientId) =>
+        transport.invoke("terminal:transferControl", id, leaseId, targetClientId),
+      listViewers: id => transport.invoke("terminal:listViewers", id),
     },
     getLaunchConfig: () => transport.invoke("yaade:getLaunchConfig"),
     getHomeDir: () => transport.invoke("yaade:getHomeDir"),

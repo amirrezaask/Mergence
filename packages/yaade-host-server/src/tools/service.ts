@@ -546,7 +546,10 @@ export class ToolService {
               : "failed"
             : processState === "failed"
               ? "failed"
-              : processState === "disconnected" || !instance
+              : processState === "disconnected" ||
+                  processState === "interrupted" ||
+                  processState === "orphaned" ||
+                  !instance
                 ? "disconnected"
                 : use.status;
         if (

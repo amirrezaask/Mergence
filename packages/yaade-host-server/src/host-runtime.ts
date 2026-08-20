@@ -1,6 +1,6 @@
 import os from "node:os";
+import { randomUUID } from "node:crypto";
 import {
-  isProcessAlive,
   PerfHost,
   SupervisedTerminalHost,
   type TerminalHost,
@@ -12,6 +12,7 @@ import {
 import type { AgentProvider } from "@yaade/agent-telemetry";
 import type { HostConfig } from "./config.js";
 import type { EventHub } from "./events.js";
+import type { RuntimeSnapshot, ServerIdentity } from "@yaade/rpc";
 import {
   NotificationService,
   parseOscStreamChunk,
@@ -27,18 +28,24 @@ import {
 } from "./agents/index.js";
 import type { ProjectDatabase } from "./persistence.js";
 import { TerminalInstanceService } from "./terminal-instances.js";
+import { TerminalLeaseService } from "./terminal-leases.js";
+import { DeviceAuthService } from "./device-auth.js";
 import { ToolSessionStore } from "./tool-session-store.js";
 import { discoverTerminalAgents } from "./terminal-agent-discovery.js";
 import {
   ToolService,
   type ToolServiceDependencies,
 } from "./tools/service.js";
-import type { ProcessDriverDependencies } from "./tools/process-driver.js";
+import {
+  resumeTerminalInstance,
+  type ProcessDriverDependencies,
+} from "./tools/process-driver.js";
 
 export type RuntimeTerminal = TerminalHost | SupervisedTerminalHost;
 
 export type HostRuntime = {
   config: HostConfig;
+  identity: ServerIdentity;
   events: EventHub;
   db: ProjectDatabase;
   terminal: RuntimeTerminal;
@@ -50,6 +57,8 @@ export type HostRuntime = {
   agents: AgentTelemetryService;
   agentRuns: AgentRunService;
   terminalInstances: TerminalInstanceService;
+  leases: TerminalLeaseService;
+  devices: DeviceAuthService;
   toolSessions: ToolSessionStore;
   /** Focused terminal/process port consumed by ToolService and dispatch. */
   terminalExecution: ProcessDriverDependencies;
@@ -84,8 +93,17 @@ export function createRuntime(
   options?: {
     /** When set, notification stream events go here (e.g. PubSub → EventHub bridge). */
     emitNotification?: (event: NotificationStreamEvent) => void;
+    /** Identity is supplied by the daemon boot sequence. */
+    identity?: ServerIdentity;
   },
 ): HostRuntime {
+  const identity = options?.identity ?? {
+    serverId: db.serverId(),
+    serverEpoch: randomUUID(),
+    protocolVersion: 2 as const,
+    runtimeVersion: "0.0.1",
+    startedAt: new Date().toISOString(),
+  };
   const terminalOscBuffers = new Map<string, string>();
   const emitNotification =
     options?.emitNotification ??
@@ -130,6 +148,8 @@ export function createRuntime(
     },
   );
   terminalInstances = processInstances;
+  const leases = new TerminalLeaseService();
+  const devices = new DeviceAuthService(db.session());
   // Construct after terminal persistence so migration 15 can correlate existing PTYs.
   const toolSessions = new ToolSessionStore(db.session(), os.hostname());
   const homeDir = process.env.HOME ?? config.allowedRoots[0] ?? "";
@@ -282,6 +302,7 @@ export function createRuntime(
   reconcileTimer.unref?.();
   const runtime: HostRuntime = {
     config,
+    identity,
     events,
     db,
     terminal,
@@ -292,6 +313,8 @@ export function createRuntime(
     agents,
     agentRuns: runService,
     terminalInstances: processInstances,
+    leases,
+    devices,
     toolSessions,
     terminalExecution,
     toolService,
@@ -308,25 +331,95 @@ export function createRuntime(
   }
   requestHookQueueDrain();
   requestTerminalAgentScan();
+  if (terminal instanceof SupervisedTerminalHost) {
+    terminal.onState(state => {
+      events.emit("connection:status", [state]);
+      if (state === "lost") {
+        processInstances.markSupervisorInterrupted("supervisor_epoch_changed");
+        runtime.toolService.reconcile();
+      } else if (state === "reconnecting" || state === "degraded") {
+        processInstances.markSupervisorDisconnected("supervisor_unavailable");
+        runtime.toolService.reconcile();
+      } else if (state === "healthy") {
+        void Promise.resolve(terminal.listRunning()).then(live => {
+          processInstances.markSupervisorRecovered(new Set(live.map(item => item.id)));
+          runtime.toolService.reconcile();
+        });
+      }
+    });
+  }
 
   return runtime;
+}
+
+/**
+ * Build the control-plane snapshot used after every modern realtime handshake.
+ * PTY bytes are intentionally absent; terminals have their own attach/replay
+ * sequence and are reattached only after this snapshot is applied.
+ */
+export function buildRuntimeSnapshot(runtime: HostRuntime): RuntimeSnapshot {
+  const projects = runtime.db.projects().map(project => ({
+    projectId: project.id,
+    projectPath: project.rootPath,
+    projectName: project.name,
+  }));
+  const sessions = runtime.toolSessions.listSessions(false).map(session => ({
+    session,
+    tabs: runtime.toolSessions.listTabs(session.id),
+    toolUses: runtime.toolSessions.listToolUses(session.id),
+  }));
+  const generatedAt = new Date().toISOString();
+  return {
+    type: "runtime:snapshot",
+    schemaVersion: 1,
+    identity: runtime.identity,
+    cursor: {
+      serverEpoch: runtime.identity.serverEpoch,
+      sequence: runtime.events.lastSequence,
+    },
+    generatedAt,
+    projects,
+    sessions,
+    terminalInstances: runtime.terminalInstances.listAll(),
+    agents: runtime.terminalInstances.listAll().filter(instance => instance.provider),
+    notifications: runtime.notifications.counts(),
+    leases: runtime.leases.listAll(),
+  };
 }
 
 export async function prepareLiveTerminals(runtime: HostRuntime): Promise<void> {
   const live = await Promise.resolve(runtime.terminal.listRunning());
   runtime.terminalInstances.reconcileHostStart(
     new Set(live.map((item) => item.id)),
-    (pid) => {
-      if (isProcessAlive(pid)) {
-        try {
-          process.kill(pid, "SIGKILL");
-        } catch {
-          /* ignore */
-        }
-      }
-    },
   );
   runtime.toolService.reconcile();
+
+  const recoverable = runtime.terminalInstances
+    .listAll()
+    .filter(
+      instance =>
+        instance.processState === "interrupted" &&
+        instance.restartPolicy === "resume-on-daemon-start" &&
+        instance.provider &&
+        instance.nativeSessionRef,
+    );
+  await Promise.all(
+    recoverable.map(async instance => {
+      try {
+        await resumeTerminalInstance(
+          runtime.terminalExecution,
+          instance,
+          "daemon-restore",
+        );
+      } catch (error) {
+        runtime.terminalInstances.markRestoreFailed(
+          instance.id,
+          instance.generation,
+          error instanceof Error ? error.message : String(error),
+        );
+      }
+    }),
+  );
 }
 
 async function drainHookQueue(

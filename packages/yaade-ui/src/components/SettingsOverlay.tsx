@@ -338,6 +338,14 @@ function serverStatusLabel(status: YaadeServerConnection["status"] | "testing"):
       return "Connected"
     case "offline":
       return "Offline"
+    case "incompatible":
+      return "Incompatible"
+    case "revoked":
+      return "Access revoked"
+    case "authenticating":
+      return "Authenticating"
+    case "synchronizing":
+      return "Synchronizing"
     case "testing":
       return "Testing"
     default:

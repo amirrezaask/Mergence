@@ -1,4 +1,5 @@
 import { Effect, Schema } from "effect";
+import { AppSession, ProjectTarget, SessionTab, ToolUse } from "./tool-session.js";
 
 /** Host RPC request envelope (POST /api/v1/rpc). */
 export const HostRpcRequest = Schema.Struct({
@@ -32,14 +33,117 @@ export type HostRpcFailure = Schema.Schema.Type<typeof HostRpcFailure>;
 export const HostRpcResponse = Schema.Union(HostRpcFailure, HostRpcSuccess);
 export type HostRpcResponse = Schema.Schema.Type<typeof HostRpcResponse>;
 
-/** Realtime EventHub / WS /ws payload. */
-export const HostEvent = Schema.Struct({
+/**
+ * The identity of one installed YAADE host. `serverId` survives API and
+ * daemon restarts; `serverEpoch` changes every API runtime start.
+ */
+export const ServerIdentity = Schema.Struct({
+  serverId: Schema.String,
+  serverEpoch: Schema.String,
+  protocolVersion: Schema.Literal(2),
+  runtimeVersion: Schema.String,
+  startedAt: Schema.String,
+});
+export type ServerIdentity = Schema.Schema.Type<typeof ServerIdentity>;
+
+export const EventCursor = Schema.Struct({
+  serverEpoch: Schema.String,
+  sequence: Schema.Number,
+});
+export type EventCursor = Schema.Schema.Type<typeof EventCursor>;
+
+export const ServerCapabilities = Schema.Struct({
+  serverId: Schema.String,
+  serverEpoch: Schema.String,
+  protocolVersions: Schema.Array(Schema.Number),
+  preferredProtocolVersion: Schema.Number,
+  runtimeVersion: Schema.String,
+  platform: Schema.Literal("linux", "darwin", "windows"),
+  features: Schema.Struct({
+    runtimeSnapshot: Schema.Boolean,
+    terminalCheckpoints: Schema.Boolean,
+    writerLeases: Schema.Boolean,
+    nativeAgentResume: Schema.Boolean,
+    deviceAuthentication: Schema.Boolean,
+    persistedTerminalHistory: Schema.Boolean,
+  }),
+  limits: Schema.Struct({
+    maxTerminals: Schema.Number,
+    maxReplayBytes: Schema.Number,
+    maxWsPayloadBytes: Schema.Number,
+  }),
+});
+export type ServerCapabilities = Schema.Schema.Type<typeof ServerCapabilities>;
+
+export const RuntimeHealth = Schema.Struct({
+  status: Schema.Literal("healthy", "degraded", "unhealthy"),
+  database: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
+  supervisor: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
+  eventLoop: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
+  storage: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
+  connectedClients: Schema.Number,
+  runningTerminals: Schema.Number,
+});
+export type RuntimeHealth = Schema.Schema.Type<typeof RuntimeHealth>;
+
+/** Realtime EventHub / WS /ws payload. Version 1 remains decodable during the migration. */
+export const HostEventV1 = Schema.Struct({
   protocolVersion: Schema.Literal(1),
   sequence: Schema.Number,
   channel: Schema.String,
   args: Schema.Array(Schema.Unknown),
 });
+export type HostEventV1 = Schema.Schema.Type<typeof HostEventV1>;
+
+export const HostEventV2 = Schema.Struct({
+  protocolVersion: Schema.Literal(2),
+  serverId: Schema.String,
+  serverEpoch: Schema.String,
+  sequence: Schema.Number,
+  channel: Schema.String,
+  args: Schema.Array(Schema.Unknown),
+});
+export type HostEventV2 = Schema.Schema.Type<typeof HostEventV2>;
+
+export const HostEvent = Schema.Union(HostEventV1, HostEventV2);
 export type HostEvent = Schema.Schema.Type<typeof HostEvent>;
+
+/** Frames sent before a modern realtime connection is synchronized. */
+export const ProtocolHello = Schema.Struct({
+  type: Schema.Literal("protocol:hello"),
+  identity: ServerIdentity,
+  capabilities: ServerCapabilities,
+});
+export type ProtocolHello = Schema.Schema.Type<typeof ProtocolHello>;
+
+export const ProtocolAuthRequired = Schema.Struct({
+  type: Schema.Literal("protocol:auth-required"),
+});
+export const ProtocolAuth = Schema.Struct({
+  type: Schema.Literal("protocol:auth"),
+  token: Schema.String,
+});
+
+export const RuntimeSnapshot = Schema.Struct({
+  type: Schema.Literal("runtime:snapshot"),
+  schemaVersion: Schema.Literal(1),
+  identity: ServerIdentity,
+  cursor: EventCursor,
+  generatedAt: Schema.String,
+  projects: Schema.Array(ProjectTarget),
+  sessions: Schema.Array(
+    Schema.Struct({
+      session: AppSession,
+      tabs: Schema.Array(SessionTab),
+      toolUses: Schema.Array(ToolUse),
+    }),
+  ),
+  terminalInstances: Schema.Array(Schema.Unknown),
+  agents: Schema.Array(Schema.Unknown),
+  notifications: Schema.Unknown,
+  leases: Schema.Array(Schema.Unknown),
+});
+export type RuntimeSnapshot = Schema.Schema.Type<typeof RuntimeSnapshot>;
 
 export const HostEventChannels = [
   "terminal:data",
@@ -141,6 +245,29 @@ export const TerminalResizeArgs = Schema.Tuple(
   Schema.Number,
 );
 
+export const TerminalCheckpoint = Schema.Struct({
+  checkpointVersion: Schema.Literal(1),
+  terminalEpoch: Schema.String,
+  sequence: Schema.Number,
+  cols: Schema.Number,
+  rows: Schema.Number,
+  createdAt: Schema.String,
+  syntheticAnsi: Schema.String,
+});
+export type TerminalCheckpoint = Schema.Schema.Type<typeof TerminalCheckpoint>;
+
+export const TerminalLease = Schema.Struct({
+  terminalId: Schema.String,
+  terminalEpoch: Schema.String,
+  leaseId: Schema.String,
+  clientId: Schema.String,
+  mode: Schema.Literal("writer", "observer"),
+  acquiredAt: Schema.String,
+  expiresAt: Schema.String,
+  revision: Schema.Number,
+});
+export type TerminalLease = Schema.Schema.Type<typeof TerminalLease>;
+
 export const decodeHostRpcRequest = Schema.decodeUnknown(HostRpcRequest);
 export const encodeHostRpcSuccess = Schema.encode(HostRpcSuccess);
 export const encodeHostEvent = Schema.encode(HostEvent);
@@ -156,7 +283,7 @@ export function isHotPathHostEvent(raw: unknown): raw is HostEvent {
   if (raw === null || typeof raw !== "object") return false;
   const message = raw as Record<string, unknown>;
   return (
-    message.protocolVersion === 1 &&
+    (message.protocolVersion === 1 || message.protocolVersion === 2) &&
     typeof message.sequence === "number" &&
     Number.isFinite(message.sequence) &&
     (message.channel === "terminal:data" ||

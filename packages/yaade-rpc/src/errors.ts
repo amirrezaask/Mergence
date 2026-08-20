@@ -11,6 +11,11 @@ export type HostErrorCode =
   | "FILE_CHANGED"
   | "PAYLOAD_TOO_LARGE"
   | "HOST_DISCONNECTED"
+  | "WRITER_LEASE_REQUIRED"
+  | "WRITER_LEASE_STALE"
+  | "TERMINAL_INTERRUPTED"
+  | "SERVER_EPOCH_CHANGED"
+  | "SUPERVISOR_UNAVAILABLE"
 
 export class PathOutsideRootsError extends Data.TaggedError("PathOutsideRoots")<{
   readonly message: string
@@ -98,6 +103,24 @@ export class HostDisconnectedError extends Data.TaggedError("HostDisconnected")<
   readonly code = "HOST_DISCONNECTED" as const
 }
 
+export class TerminalLeaseError extends Data.TaggedError("TerminalLeaseError")<{
+  readonly message: string
+  readonly terminalId: string
+  readonly leaseId?: string
+}> {
+  readonly code: "WRITER_LEASE_REQUIRED" | "WRITER_LEASE_STALE"
+
+  constructor(args: {
+    readonly message: string
+    readonly terminalId: string
+    readonly leaseId?: string
+    readonly code: "WRITER_LEASE_REQUIRED" | "WRITER_LEASE_STALE"
+  }) {
+    super(args)
+    this.code = args.code
+  }
+}
+
 /** Git CLI failed (non-zero exit / spawn error). Wire code stays OPERATION_FAILED. */
 export class GitCommandFailedError extends Data.TaggedError("GitCommandFailed")<{
   readonly message: string
@@ -117,6 +140,7 @@ export type HostRpcError =
   | LspCrashedError
   | InvalidRpcPayloadError
   | HostDisconnectedError
+  | TerminalLeaseError
   | GitCommandFailedError
   | ToolSessionError
 
@@ -133,6 +157,8 @@ export function hostErrorHttpStatus(error: HostRpcError): number {
       return 413
     case "HostDisconnected":
       return 503
+    case "TerminalLeaseError":
+      return 409
     default:
       return 400
   }

@@ -215,6 +215,8 @@ function discoverAgentInstance(
     inspected.id,
     title,
     telemetryState,
+    inspected.processIdentity,
+    inspected.terminalEpoch,
   )
   return { instance: bound ?? reserved, started: true }
 }

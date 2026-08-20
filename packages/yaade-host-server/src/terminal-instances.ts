@@ -3,13 +3,20 @@ import type { DatabaseSession } from "./database.js";
 import type { AgentEvent, AgentProvider } from "@yaade/agent-telemetry";
 import { tryDecodeProjectSessionPayload } from "@yaade/rpc";
 import { fileUriToPath, isCliProvider } from "@yaade/shared";
+import {
+  matchesProcessIdentity,
+  type ProcessIdentity,
+} from "@yaade/node-host";
 
 export type TerminalInstanceState =
   | "starting"
   | "running"
   | "exited"
   | "failed"
-  | "disconnected";
+  | "disconnected"
+  | "interrupted"
+  | "restoring"
+  | "orphaned";
 
 export type TerminalInstanceActivityState =
   | "starting"
@@ -26,6 +33,25 @@ export type TerminalInstanceTelemetryState =
   | "degraded"
   | "process_only";
 
+export type TerminalLaunchProfile = {
+  schemaVersion: 1
+  provider: AgentProvider | null
+  executable?: string
+  args: string[]
+  cwd: string
+  projectId: string
+  workspaceId: string | null
+  restartPolicy: "never" | "manual" | "resume-on-daemon-start"
+}
+
+export type NativeAgentSessionRef = {
+  provider: AgentProvider
+  kind: string
+  value: string
+  capturedAt: string
+  driverVersion: number
+}
+
 export type TerminalInstance = {
   id: string;
   generation: number;
@@ -39,6 +65,11 @@ export type TerminalInstance = {
   launchRequestId: string | null;
   ptyId: string | null;
   nativeSessionId: string | null;
+  processIdentity: ProcessIdentity | null;
+  terminalEpoch: string | null;
+  launchProfile: TerminalLaunchProfile | null;
+  nativeSessionRef: NativeAgentSessionRef | null;
+  restartPolicy: "never" | "manual" | "resume-on-daemon-start";
   processState: TerminalInstanceState;
   activityState: TerminalInstanceActivityState;
   telemetryState: TerminalInstanceTelemetryState;
@@ -75,6 +106,11 @@ type TerminalInstanceRow = {
   launch_request_id: string | null;
   pty_id: string | null;
   native_session_id: string | null;
+  process_identity_json: string | null;
+  terminal_epoch: string | null;
+  launch_profile_json: string | null;
+  native_session_ref_json: string | null;
+  restart_policy: string;
   process_state: string;
   activity_state: string;
   telemetry_state: string;
@@ -106,10 +142,110 @@ function state(value: string): TerminalInstanceState {
     case "exited":
     case "failed":
     case "disconnected":
+    case "interrupted":
+    case "restoring":
+    case "orphaned":
       return value;
     default:
-      return "disconnected";
+      return "interrupted";
   }
+}
+
+function processIdentity(value: string | null | undefined): ProcessIdentity | null {
+  if (!value) return null;
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
+    const record = parsed as Record<string, unknown>;
+    if (
+      typeof record.pid !== "number" ||
+      typeof record.platform !== "string" ||
+      typeof record.startToken !== "string"
+    ) return null;
+    if (
+      record.platform !== "linux" &&
+      record.platform !== "darwin" &&
+      record.platform !== "windows"
+    ) return null;
+    return {
+      pid: record.pid,
+      platform: record.platform,
+      startToken: record.startToken,
+      ...(typeof record.bootId === "string" ? { bootId: record.bootId } : {}),
+      ...(typeof record.executablePath === "string"
+        ? { executablePath: record.executablePath }
+        : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function launchProfile(value: string | null | undefined): TerminalLaunchProfile | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    if (
+      record.schemaVersion !== 1 ||
+      typeof record.cwd !== "string" ||
+      typeof record.projectId !== "string" ||
+      !Array.isArray(record.args)
+    ) return null
+    const policy = record.restartPolicy
+    if (policy !== "never" && policy !== "manual" && policy !== "resume-on-daemon-start") return null
+    const provider =
+      record.provider === null
+        ? null
+        : typeof record.provider === "string"
+          ? asProvider(record.provider)
+          : undefined
+    if (provider === undefined) return null
+    return {
+      schemaVersion: 1,
+      provider,
+      ...(typeof record.executable === "string" ? { executable: record.executable } : {}),
+      args: record.args.filter((item): item is string => typeof item === "string"),
+      cwd: record.cwd,
+      projectId: record.projectId,
+      workspaceId: typeof record.workspaceId === "string" ? record.workspaceId : null,
+      restartPolicy: policy,
+    }
+  } catch {
+    return null
+  }
+}
+
+function nativeSessionRef(value: string | null | undefined): NativeAgentSessionRef | null {
+  if (!value) return null
+  try {
+    const parsed: unknown = JSON.parse(value)
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null
+    const record = parsed as Record<string, unknown>
+    const provider =
+      typeof record.provider === "string" ? asProvider(record.provider) : null
+    if (
+      !provider ||
+      typeof record.kind !== "string" ||
+      typeof record.value !== "string" ||
+      typeof record.capturedAt !== "string" ||
+      typeof record.driverVersion !== "number"
+    ) return null
+    return {
+      provider,
+      kind: record.kind,
+      value: record.value,
+      capturedAt: record.capturedAt,
+      driverVersion: record.driverVersion,
+    }
+  } catch {
+    return null
+  }
+}
+
+function restartPolicy(value: string | null | undefined): TerminalInstance["restartPolicy"] {
+  return value === "never" || value === "resume-on-daemon-start" ? value : "manual"
 }
 
 function asActivityState(
@@ -183,6 +319,11 @@ function toInstance(row: TerminalInstanceRow): TerminalInstance {
     launchRequestId: row.launch_request_id,
     ptyId: row.pty_id,
     nativeSessionId: row.native_session_id,
+    processIdentity: processIdentity(row.process_identity_json),
+    terminalEpoch: row.terminal_epoch,
+    launchProfile: launchProfile(row.launch_profile_json),
+    nativeSessionRef: nativeSessionRef(row.native_session_ref_json),
+    restartPolicy: restartPolicy(row.restart_policy),
     processState: state(row.process_state),
     activityState: asActivityState(row.activity_state),
     telemetryState: asTelemetryState(row.telemetry_state),
@@ -268,31 +409,44 @@ export class TerminalInstanceService {
   }
 
   /**
-   * After the PTY owner is reachable, keep live ids and disconnect the rest.
-   * Orphan pids from a dead supervisor are reaped when `reapPid` is provided.
+   * Reconcile durable rows against the PTY supervisor's authoritative list.
+   * A missing identity is never used to signal a numeric PID. Rows whose
+   * process may still exist but no longer have an owner are explicitly marked
+   * interrupted/orphaned instead of being reported as running.
    */
-  reconcileHostStart(
-    livePtyIds: ReadonlySet<string>,
-    reapPid?: (pid: number) => void,
-  ): void {
+  reconcileHostStart(livePtyIds: ReadonlySet<string>): void {
     const rows = this.db
       .prepare(
-        `SELECT id, pty_id, os_pid FROM terminal_instances
-         WHERE removed_at IS NULL AND process_state IN ('starting','running')`,
+        `SELECT id, pty_id, provider, native_session_ref_json, process_identity_json
+           FROM terminal_instances
+          WHERE removed_at IS NULL AND process_state IN ('starting','running')`,
       )
-      .all() as Array<{ id: string; pty_id: string | null; os_pid: number | null }>;
+      .all() as Array<{
+      id: string
+      pty_id: string | null
+      provider: string | null
+      native_session_ref_json: string | null
+      process_identity_json: string | null
+    }>;
     const now = nowIso();
     for (const row of rows) {
       if (row.pty_id && livePtyIds.has(row.pty_id)) continue;
-      if (row.os_pid != null) reapPid?.(row.os_pid);
+      const identity = processIdentity(row.process_identity_json);
+      const nextState = identity
+        ? matchesProcessIdentity(identity)
+          ? "interrupted"
+          : "orphaned"
+        : row.provider && row.native_session_ref_json
+          ? "interrupted"
+          : "disconnected";
       this.db
         .prepare(
           `UPDATE terminal_instances
-           SET process_state='disconnected', ended_at=COALESCE(ended_at, ?),
-               end_reason=COALESCE(end_reason, 'host_restart'), revision=revision+1
-           WHERE id=?`,
+              SET process_state=?, ended_at=COALESCE(ended_at, ?),
+                  end_reason=COALESCE(end_reason, 'host_restart'), revision=revision+1
+            WHERE id=?`,
         )
-        .run(now, row.id);
+        .run(nextState, now, row.id);
       this.updated(row.id, "instance.updated");
     }
   }
@@ -300,6 +454,84 @@ export class TerminalInstanceService {
   dispose(): void {
     for (const timer of this.telemetryTimers.values()) clearTimeout(timer);
     this.telemetryTimers.clear();
+  }
+
+  /** A supervisor connection can be temporarily unavailable while the PTY remains owned. */
+  markSupervisorDisconnected(reason: string): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM terminal_instances
+           WHERE removed_at IS NULL AND process_state IN ('starting','running')`,
+      )
+      .all() as Array<{ id: string }>;
+    for (const row of rows) {
+      const changed = this.db
+        .prepare(
+          `UPDATE terminal_instances
+              SET process_state='disconnected', end_reason=?, revision=revision+1
+            WHERE id=? AND removed_at IS NULL
+              AND process_state IN ('starting','running')`,
+        )
+        .run(reason.slice(0, 512), row.id);
+      if (Number(changed.changes) > 0) this.updated(row.id, "instance.updated");
+    }
+  }
+
+  markSupervisorRecovered(livePtyIds: ReadonlySet<string>): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id, pty_id FROM terminal_instances
+           WHERE removed_at IS NULL AND process_state='disconnected'`,
+      )
+      .all() as Array<{ id: string; pty_id: string | null }>;
+    for (const row of rows) {
+      if (!row.pty_id || !livePtyIds.has(row.pty_id)) continue;
+      const changed = this.db
+        .prepare(
+          `UPDATE terminal_instances
+              SET process_state='running', ended_at=NULL, end_reason=NULL, revision=revision+1
+            WHERE id=? AND process_state='disconnected'`,
+        )
+        .run(row.id);
+      if (Number(changed.changes) > 0) this.updated(row.id, "instance.updated");
+    }
+  }
+
+  markRestoreFailed(id: string, generation: number, reason: string): TerminalInstance | null {
+    const changed = this.db
+      .prepare(
+        `UPDATE terminal_instances
+            SET process_state='failed', ended_at=COALESCE(ended_at, ?),
+                end_reason=?, telemetry_error=?, revision=revision+1
+          WHERE id=? AND generation=? AND removed_at IS NULL
+            AND process_state IN ('interrupted','restoring','starting')`,
+      )
+      .run(nowIso(), reason.slice(0, 512), reason.slice(0, 512), id, generation);
+    return Number(changed.changes) === 0
+      ? this.get(id)
+      : this.updated(id, "instance.ended");
+  }
+
+  markSupervisorInterrupted(reason: string): void {
+    const rows = this.db
+      .prepare(
+        `SELECT id FROM terminal_instances
+           WHERE removed_at IS NULL AND process_state IN ('starting','running','disconnected')`,
+      )
+      .all() as Array<{ id: string }>;
+    const message = reason.slice(0, 512);
+    for (const row of rows) {
+      const changed = this.db
+        .prepare(
+          `UPDATE terminal_instances
+              SET process_state='interrupted', ended_at=COALESCE(ended_at, ?),
+                  end_reason=COALESCE(end_reason, ?), revision=revision+1
+            WHERE id=? AND removed_at IS NULL
+              AND process_state IN ('starting','running','disconnected')`,
+        )
+        .run(nowIso(), message, row.id);
+      if (Number(changed.changes) > 0) this.updated(row.id, "instance.updated");
+    }
   }
 
   reserve(input: {
@@ -314,6 +546,9 @@ export class TerminalInstanceService {
     launchRequestId?: string | null;
     activityState?: TerminalInstanceActivityState;
     telemetryState?: TerminalInstanceTelemetryState;
+    launchProfile?: TerminalLaunchProfile | null;
+    nativeSessionRef?: NativeAgentSessionRef | null;
+    restartPolicy?: TerminalInstance["restartPolicy"];
   }): TerminalInstance {
     if (input.launchRequestId) {
       const existing = this.byLaunchRequestId(input.launchRequestId);
@@ -351,6 +586,20 @@ export class TerminalInstanceService {
         if (raced) return raced;
       }
       throw error;
+    }
+    if (input.launchProfile || input.nativeSessionRef || input.restartPolicy) {
+      this.db
+        .prepare(
+          `UPDATE terminal_instances
+              SET launch_profile_json=?, native_session_ref_json=?, restart_policy=?, revision=revision+1
+            WHERE id=?`,
+        )
+        .run(
+          input.launchProfile ? JSON.stringify(input.launchProfile) : null,
+          input.nativeSessionRef ? JSON.stringify(input.nativeSessionRef) : null,
+          input.restartPolicy ?? input.launchProfile?.restartPolicy ?? "manual",
+          id,
+        );
     }
     const instance = this.get(id);
     if (!instance)
@@ -435,7 +684,8 @@ export class TerminalInstanceService {
     ptyId: string,
     title?: string | null,
     telemetryState?: TerminalInstanceTelemetryState,
-    identity?: { osPid?: number | null; osStartedAtMs?: number },
+    identity?: ProcessIdentity | null,
+    terminalEpoch?: string,
   ): TerminalInstance | null {
     const current = this.get(id);
     if (!current || current.generation !== generation) return null;
@@ -450,7 +700,7 @@ export class TerminalInstanceService {
           activity_state=CASE WHEN provider IS NOT NULL THEN 'starting' ELSE activity_state END,
           telemetry_state=?, started_at=?, last_activity_at=?, ended_at=NULL,
           exit_code=NULL, end_reason=NULL, transcript='', transcript_truncated=0,
-          telemetry_error=NULL, os_pid=?, os_started_at_ms=?, revision=revision+1
+          telemetry_error=NULL, os_pid=?, os_started_at_ms=?, process_identity_json=?, terminal_epoch=?, revision=revision+1
         WHERE id=? AND generation=? AND removed_at IS NULL AND process_state='starting'`,
       )
       .run(
@@ -459,8 +709,10 @@ export class TerminalInstanceService {
         nextTelemetry,
         timestamp,
         timestamp,
-        identity?.osPid ?? null,
-        identity?.osStartedAtMs ?? null,
+        identity?.pid ?? null,
+        null,
+        identity ? JSON.stringify(identity) : null,
+        terminalEpoch ?? null,
         id,
         generation,
       );
@@ -536,6 +788,7 @@ export class TerminalInstanceService {
       .prepare(
         `UPDATE terminal_instances
           SET native_session_id=COALESCE(NULLIF(?, ''), native_session_id),
+              native_session_ref_json=CASE WHEN NULLIF(?, '') IS NULL THEN native_session_ref_json ELSE ? END,
               telemetry_state=CASE WHEN telemetry_state='process_only' THEN telemetry_state ELSE 'connected' END,
               activity_state=CASE WHEN process_state IN ('exited','disconnected','failed') THEN activity_state ELSE COALESCE(?, activity_state) END,
               last_activity_at=?, revision=revision+1
@@ -543,6 +796,16 @@ export class TerminalInstanceService {
       )
       .run(
         event.nativeSessionId ?? null,
+        event.nativeSessionId ?? null,
+        event.nativeSessionId
+          ? JSON.stringify({
+              provider: current.provider,
+              kind: "session",
+              value: event.nativeSessionId,
+              capturedAt: event.receivedAt || nowIso(),
+              driverVersion: 1,
+            })
+          : null,
         activity,
         event.receivedAt || nowIso(),
         current.id,
@@ -594,14 +857,14 @@ export class TerminalInstanceService {
     const changed = this.db
       .prepare(
         `UPDATE terminal_instances SET generation=generation+1, pty_id=NULL,
-          process_state='starting',
+          terminal_epoch=NULL, process_state='starting',
           activity_state=CASE WHEN provider IS NOT NULL THEN 'starting' ELSE activity_state END,
           telemetry_state=CASE WHEN provider IS NOT NULL THEN 'connecting' ELSE telemetry_state END,
           started_at=NULL, last_activity_at=NULL, ended_at=NULL,
           exit_code=NULL, end_reason=NULL, transcript='', transcript_truncated=0,
           telemetry_error=NULL, revision=revision+1
         WHERE id=? AND generation=? AND removed_at IS NULL
-          AND process_state IN ('starting','running','exited','failed','disconnected')`,
+          AND process_state IN ('starting','running','exited','failed','disconnected','interrupted','restoring','orphaned')`,
       )
       .run(id, generation);
     return Number(changed.changes) === 0
@@ -672,6 +935,17 @@ export class TerminalInstanceService {
         ORDER BY created_at DESC, id DESC`,
       )
       .all(projectId) as TerminalInstanceRow[];
+    return rows.map(toInstance);
+  }
+
+  listAll(): TerminalInstance[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM terminal_instances
+           WHERE removed_at IS NULL
+           ORDER BY created_at DESC, id DESC`,
+      )
+      .all() as TerminalInstanceRow[];
     return rows.map(toInstance);
   }
 
@@ -782,6 +1056,11 @@ export class TerminalInstanceService {
       ["telemetry_error", "TEXT"],
       ["os_pid", "INTEGER"],
       ["os_started_at_ms", "INTEGER"],
+      ["process_identity_json", "TEXT"],
+      ["terminal_epoch", "TEXT"],
+      ["launch_profile_json", "TEXT"],
+      ["native_session_ref_json", "TEXT"],
+      ["restart_policy", "TEXT NOT NULL DEFAULT 'manual'"],
     ];
     for (const [column, decl] of additions) {
       if (!tableHasColumn(this.db, "terminal_instances", column)) {

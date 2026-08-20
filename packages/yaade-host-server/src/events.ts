@@ -1,5 +1,12 @@
+export type EventHubIdentity = {
+  readonly serverId: string
+  readonly serverEpoch: string
+}
+
 export type HostEvent = {
   protocolVersion: number
+  serverId?: string
+  serverEpoch?: string
   sequence: number
   channel: string
   args: unknown[]
@@ -43,20 +50,35 @@ export class EventHub {
   private readonly listeners = new Set<Listener>()
   private readonly capacity: number
   private readonly maxHistoryBytes: number
+  private readonly identity: EventHubIdentity | null
 
-  constructor(capacity = 1024, maxHistoryBytes = 16 * 1024 * 1024) {
+  constructor(
+    capacity = 1024,
+    maxHistoryBytes = 16 * 1024 * 1024,
+    identity: EventHubIdentity | null = null,
+  ) {
     this.capacity = capacity
     this.maxHistoryBytes = maxHistoryBytes
+    this.identity = identity
   }
 
   emit(channel: string, args: unknown[]): HostEvent {
     this.sequence += 1
-    const event: HostEvent = {
-      protocolVersion: 1,
-      sequence: this.sequence,
-      channel,
-      args,
-    }
+    const event: HostEvent = this.identity
+      ? {
+          protocolVersion: 2,
+          serverId: this.identity.serverId,
+          serverEpoch: this.identity.serverEpoch,
+          sequence: this.sequence,
+          channel,
+          args,
+        }
+      : {
+          protocolVersion: 1,
+          sequence: this.sequence,
+          channel,
+          args,
+        }
     if (!EPHEMERAL_CHANNELS.has(channel)) {
       const eventBytes = estimateHostEventBytes(event)
       this.history.push({ event, bytes: eventBytes })
@@ -127,5 +149,9 @@ export class EventHub {
 
   get lastSequence(): number {
     return this.sequence
+  }
+
+  get eventIdentity(): EventHubIdentity | null {
+    return this.identity
   }
 }

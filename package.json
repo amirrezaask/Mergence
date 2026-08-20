@@ -34,9 +34,6 @@
   },
   "packageManager": "pnpm@9.15.0",
   "pnpm": {
-    "overrides": {
-      "vite": "npm:@voidzero-dev/vite-plus-core@0.2.9"
-    },
     "peerDependencyRules": {
       "allowAny": [
         "vite"
@@ -44,6 +41,21 @@
       "allowedVersions": {
         "vite": "*"
       }
+    }
+  },
+  "overrides": {
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.2.9"
+  },
+  "workspaces": {
+    "packages": [
+      "apps/desktop",
+      "apps/web",
+      "apps/server",
+      "packages/*"
+    ],
+    "catalog": {
+      "vite": "npm:@voidzero-dev/vite-plus-core@0.2.9",
+      "vite-plus": "0.2.9"
     }
   }
 }

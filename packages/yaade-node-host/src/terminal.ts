@@ -1,13 +1,21 @@
 import * as pty from "node-pty"
+import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { pathToUri, uriToPath } from "./paths.js"
 import {
-  isProcessAlive,
-  signalProcess,
-  signalProcessGroup,
+  captureProcessIdentity,
+  matchesProcessIdentity,
+  signalVerifiedProcess,
+  signalVerifiedProcessGroup,
+  type ProcessIdentity,
 } from "./process-identity.js"
+import {
+  BasicTerminalStateRecorder,
+  type TerminalCheckpoint,
+  type TerminalStateRecorder,
+} from "./terminal-state/recorder.js"
 import { sanitizePtyEnv } from "./terminal-env.js"
 import { cwdOfForeground, foregroundProcessOf } from "./terminal-cwd.js"
 import {
@@ -27,6 +35,8 @@ import {
  * parser/mode state; the attach response marks that case explicitly.
  */
 const MAX_TERMINAL_REPLAY = 2 * 1024 * 1024
+const CHECKPOINT_BYTES = 512 * 1024
+const CHECKPOINT_INTERVAL_MS = 2_000
 /** Shrink ring after exit so disposed-but-reattachable PTYs do not keep 2 MB. */
 const EXITED_TERMINAL_REPLAY = 256 * 1024
 const MAX_WRITE_BYTES = 1024 * 1024
@@ -72,12 +82,18 @@ export type TerminalCreateResult = {
   id: string
   title: string | null
   osPid: number | null
+  /** Legacy diagnostic timestamp; cleanup uses processIdentity instead. */
   osStartedAtMs: number
+  processIdentity: ProcessIdentity | null
+  terminalEpoch: string
 }
 
 export type TerminalAttachSnapshot = {
   id: string
   title: string | null
+  terminalEpoch: string
+  checkpoint?: TerminalCheckpoint
+  replayQuality: "exact" | "checkpoint" | "degraded"
   /**
    * Ring segments for attach replay. Prefer enqueueing these one-by-one so
    * neither host nor client materializes a single 2 MB contiguous string.
@@ -110,6 +126,8 @@ export type TerminalInspectSnapshot = {
   /** Absolute spawn-time cwd. */
   spawnCwd: string
   osPid: number | null
+  processIdentity?: ProcessIdentity | null
+  terminalEpoch?: string
 }
 
 type EmitFn = (channel: string, args: unknown[]) => void
@@ -131,6 +149,7 @@ type TerminalEntry = {
   lastAttachAt: number
   osPid: number | null
   osStartedAtMs: number
+  processIdentity: ProcessIdentity | null
   /** Absolute spawn-time cwd (fallback when live process cwd is unavailable). */
   spawnCwd: string
   /** Custom launch command when not the default shell; null for interactive shells. */
@@ -159,6 +178,12 @@ type TerminalEntry = {
   exitWaiters: Array<(result: { exitCode: number | null; signal?: string }) => void>
   /** Incomplete DA1 prefix (`ESC` / `ESC[` / `ESC[0`) spanning PTY reads. */
   da1Scanner: Da1Scanner
+  terminalEpoch: string
+  recorder: TerminalStateRecorder
+  checkpoint: TerminalCheckpoint | null
+  checkpointSequence: number
+  bytesSinceCheckpoint: number
+  lastCheckpointAt: number
 }
 
 function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
@@ -350,6 +375,8 @@ export class TerminalHost {
   private readonly entries = new Map<string, TerminalEntry>()
   private seqCounter = 0
   private readonly titleCounts = new Map<string, number>()
+  /** Supervisor-epoch idempotency for create retries after a lost response. */
+  private readonly createRequests = new Map<string, TerminalCreateResult>()
   private emit: EmitFn = () => {}
   /** Cap concurrent entries; overridable in tests. */
   private readonly maxEntries: number
@@ -395,7 +422,16 @@ export class TerminalHost {
     for (const victim of victims) this.dispose(victim.id)
   }
 
-  create(cwdUri: string, launch: TerminalLaunch | null | undefined, clientId: string): TerminalCreateResult {
+  create(
+    cwdUri: string,
+    launch: TerminalLaunch | null | undefined,
+    clientId: string,
+    requestId?: string,
+  ): TerminalCreateResult {
+    if (requestId) {
+      const previous = this.createRequests.get(requestId)
+      if (previous) return previous
+    }
     if (this.entries.size >= this.maxEntries) {
       // Reclaim retained exit snapshots, but never kill a running terminal to
       // make room for a new one.
@@ -472,7 +508,9 @@ export class TerminalHost {
     }
 
     const osPid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : null
+    const processIdentity = osPid === null ? null : captureProcessIdentity(osPid)
     const osStartedAtMs = Date.now()
+    const terminalEpoch = randomUUID()
     const entry: TerminalEntry = {
       id,
       title,
@@ -482,6 +520,7 @@ export class TerminalHost {
       lastAttachAt: 0,
       osPid,
       osStartedAtMs,
+      processIdentity,
       spawnCwd: cwd,
       spawnCommand: custom?.command ?? null,
       liveCwd: null,
@@ -505,6 +544,16 @@ export class TerminalHost {
       exitDisposable: null,
       exitWaiters: [],
       da1Scanner: createDa1Scanner(),
+      terminalEpoch,
+      recorder: new BasicTerminalStateRecorder(
+        initialSize.cols,
+        initialSize.rows,
+        terminalEpoch,
+      ),
+      checkpoint: null,
+      checkpointSequence: 0,
+      bytesSinceCheckpoint: 0,
+      lastCheckpointAt: Date.now(),
     }
     this.entries.set(id, entry)
 
@@ -529,6 +578,17 @@ export class TerminalHost {
       }
       entry.sequence += 1
       const dataBytes = Buffer.byteLength(data, "utf8")
+      entry.recorder.write(data)
+      entry.bytesSinceCheckpoint += dataBytes
+      if (
+        entry.bytesSinceCheckpoint >= CHECKPOINT_BYTES ||
+        Date.now() - entry.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS
+      ) {
+        entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
+        entry.checkpointSequence = entry.sequence
+        entry.bytesSinceCheckpoint = 0
+        entry.lastCheckpointAt = Date.now()
+      }
       entry.output.push(data)
       entry.outputBytes += dataBytes
       trimReplay(entry)
@@ -545,6 +605,8 @@ export class TerminalHost {
       flushPendingOutput(entry, this.emit)
       entry.status = "exited"
       entry.exitCode = exitCode
+      entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
+      entry.checkpointSequence = entry.sequence
       entry.signal = signal ?? null
       entry.proc = null
       trimReplay(entry, EXITED_TERMINAL_REPLAY)
@@ -555,7 +617,23 @@ export class TerminalHost {
       this.scheduleDisposeAfterExit(entry)
     })
 
-    return { id, title, osPid, osStartedAtMs }
+    const result = {
+      id,
+      title,
+      osPid,
+      osStartedAtMs,
+      processIdentity,
+      terminalEpoch,
+    }
+    if (requestId) {
+      this.createRequests.set(requestId, result)
+      while (this.createRequests.size > 1024) {
+        const oldest = this.createRequests.keys().next().value
+        if (typeof oldest !== "string") break
+        this.createRequests.delete(oldest)
+      }
+    }
+    return result
   }
 
   private scheduleDisposeAfterExit(entry: TerminalEntry): void {
@@ -628,6 +706,8 @@ export class TerminalHost {
       spawnCommand: entry.spawnCommand,
       spawnCwd: entry.spawnCwd,
       osPid: entry.osPid,
+      processIdentity: entry.processIdentity,
+      terminalEpoch: entry.terminalEpoch,
     }
   }
 
@@ -645,6 +725,8 @@ export class TerminalHost {
         spawnCommand: entry.spawnCommand,
         spawnCwd: entry.spawnCwd,
         osPid: entry.osPid,
+        processIdentity: entry.processIdentity,
+        terminalEpoch: entry.terminalEpoch,
       })
     }
     return out
@@ -676,7 +758,15 @@ export class TerminalHost {
     if (id.length > 256) return null
     const size = normalizeTerminalSize(cols, rows)
     if (!size) return null
-    this.entries.get(id)?.proc?.resize(size.cols, size.rows)
+    const entry = this.entries.get(id)
+    entry?.proc?.resize(size.cols, size.rows)
+    if (entry && !entry.disposed) {
+      entry.recorder.resize(size.cols, size.rows)
+      entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
+      entry.checkpointSequence = entry.sequence
+      entry.bytesSinceCheckpoint = 0
+      entry.lastCheckpointAt = Date.now()
+    }
     return null
   }
 
@@ -788,16 +878,28 @@ export class TerminalHost {
     const requestedSequence = hasRequestedSequence
       ? Math.max(0, Math.trunc(afterSequence!))
       : replayFloor - 1
-    const replayTruncated =
-      entry.replayTruncated &&
-      (!hasRequestedSequence || requestedSequence < replayFloor - 1)
+    const checkpoint =
+      entry.checkpoint &&
+      (!hasRequestedSequence || requestedSequence < entry.checkpointSequence)
+        ? entry.checkpoint
+        : undefined
+    const rawRequestedSequence = checkpoint
+      ? Math.max(requestedSequence, checkpoint.sequence)
+      : requestedSequence
+    const replayTruncated = checkpoint
+      ? entry.replayTruncated
+      : entry.replayTruncated &&
+        (!hasRequestedSequence || requestedSequence < replayFloor - 1)
     const replayOffset = Math.min(
       outputChunks.length,
-      Math.max(0, requestedSequence + 1 - replayFloor),
+      Math.max(0, rawRequestedSequence + 1 - replayFloor),
     )
     return {
       id: entry.id,
       title: entry.title,
+      terminalEpoch: entry.terminalEpoch,
+      ...(checkpoint ? { checkpoint } : {}),
+      replayQuality: checkpoint ? "checkpoint" : replayTruncated ? "degraded" : "exact",
       outputChunks: outputChunks.slice(replayOffset),
       output: "",
       replayTruncated,
@@ -849,13 +951,13 @@ export class TerminalHost {
 
   private beginKill(entry: TerminalEntry): void {
     this.clearKillTimers(entry)
-    const pid =
-      entry.osPid ??
-      (typeof entry.proc?.pid === "number" ? entry.proc.pid : null)
+    const identity = entry.processIdentity
     const proc = entry.proc
-    if (pid && pid !== process.pid) {
-      signalProcessGroup(pid, "SIGHUP")
-      signalProcess(pid, "SIGHUP")
+    // The live node-pty handle is safe to close directly. Numeric PID/group
+    // signals are only allowed after revalidating the OS start token.
+    if (identity) {
+      signalVerifiedProcessGroup(identity, "SIGHUP")
+      signalVerifiedProcess(identity, "SIGHUP")
     }
     try {
       proc?.kill("SIGHUP")
@@ -868,20 +970,20 @@ export class TerminalHost {
     } catch {
       /* ignore */
     }
-    if (!pid || pid === process.pid) {
+    if (!identity) {
       entry.proc = null
       return
     }
     const grace = this.killGraceMs
     const termTimer = setTimeout(() => {
-      if (!isProcessAlive(pid)) return
-      signalProcessGroup(pid, "SIGTERM")
-      signalProcess(pid, "SIGTERM")
+      if (!matchesProcessIdentity(identity)) return
+      signalVerifiedProcessGroup(identity, "SIGTERM")
+      signalVerifiedProcess(identity, "SIGTERM")
     }, grace)
     const killTimer = setTimeout(() => {
-      if (!isProcessAlive(pid)) return
-      signalProcessGroup(pid, "SIGKILL")
-      signalProcess(pid, "SIGKILL")
+      if (!matchesProcessIdentity(identity)) return
+      signalVerifiedProcessGroup(identity, "SIGKILL")
+      signalVerifiedProcess(identity, "SIGKILL")
     }, grace * 2)
     termTimer.unref?.()
     killTimer.unref?.()
@@ -902,6 +1004,7 @@ export class TerminalHost {
     resumePtyForFlowControl(entry)
     entry.dataDisposable?.dispose()
     entry.dataDisposable = null
+    entry.recorder.dispose()
     for (const resolve of entry.exitWaiters.splice(0)) resolve({ exitCode: null, signal: "disposed" })
     if (entry.titleKey) {
       const n = (this.titleCounts.get(entry.titleKey) ?? 1) - 1

@@ -1,8 +1,8 @@
+import { AppSession, RuntimeSnapshot, SessionTab, ToolUse } from "@yaade/rpc"
+import { Schema } from "effect"
 import type {
-  AppSession,
   SessionId,
   SessionTabId,
-  ToolUse,
   ToolUseId,
 } from "@yaade/rpc"
 import type { JetElectronTools, ToolSessionSnapshot } from "@yaade/workspace"
@@ -17,6 +17,28 @@ type ToolClientOptions = {
   readonly api?: ToolApi
   readonly store?: ToolSessionStore
   readonly window?: Pick<Window, "addEventListener" | "removeEventListener">
+}
+
+function decodeRuntimeSnapshots(value: unknown): ToolSessionSnapshot[] | null {
+  try {
+    const snapshot = Schema.decodeUnknownSync(RuntimeSnapshot)(value)
+    const decoded: ToolSessionSnapshot[] = []
+    for (const raw of snapshot.sessions) {
+      if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null
+      const record = raw as Record<string, unknown>
+      const session = Schema.decodeUnknownSync(AppSession)(record.session)
+      const tabs = Array.isArray(record.tabs)
+        ? record.tabs.map(tab => Schema.decodeUnknownSync(SessionTab)(tab))
+        : []
+      const toolUses = Array.isArray(record.toolUses)
+        ? record.toolUses.map(use => Schema.decodeUnknownSync(ToolUse)(use))
+        : []
+      decoded.push({ session, tabs, toolUses })
+    }
+    return decoded
+  } catch {
+    return null
+  }
 }
 
 function toolApi(api?: ToolApi): ToolApi {
@@ -55,12 +77,21 @@ export class ToolClient {
     const disposeToolEvents = this.api.onEvent(event => this.store.apply(event))
     const onReconnect = () => { void this.reconcile() }
     const onReplayGap = () => { void this.reconcile() }
+    const onRuntimeSnapshot = (event: Event) => {
+      if (!(event instanceof CustomEvent)) return
+      const snapshots = decodeRuntimeSnapshots(event.detail)
+      if (!snapshots || this.disposed) return
+      this.replaceSnapshotsAuthoritatively(snapshots)
+      this.store.setConnection("connected")
+    }
     this.eventWindow.addEventListener("yaade:host-reconnected", onReconnect)
     this.eventWindow.addEventListener("yaade:host-replay-gap", onReplayGap)
+    this.eventWindow.addEventListener("yaade:runtime-snapshot", onRuntimeSnapshot)
     this.disposeEvents = () => {
       disposeToolEvents()
       this.eventWindow.removeEventListener("yaade:host-reconnected", onReconnect)
       this.eventWindow.removeEventListener("yaade:host-replay-gap", onReplayGap)
+      this.eventWindow.removeEventListener("yaade:runtime-snapshot", onRuntimeSnapshot)
       this.disposeEvents = undefined
     }
     return this.disposeEvents
@@ -126,6 +157,17 @@ export class ToolClient {
       // Reconciliation is best effort; a dropped host connection will trigger
       // the next full snapshot instead of an unhandled rejection.
     }
+  }
+
+  private replaceSnapshotsAuthoritatively(
+    snapshots: readonly ToolSessionSnapshot[],
+  ): void {
+    const hasTabs = snapshots.some(snapshot => snapshot.tabs !== undefined)
+    this.store.replace(
+      snapshots.map(snapshot => snapshot.session),
+      snapshots.flatMap(snapshot => snapshot.toolUses),
+      hasTabs ? snapshots.flatMap(snapshot => snapshot.tabs ?? []) : [],
+    )
   }
 
   private replaceSnapshots(

@@ -38,11 +38,14 @@ async function runInvokePromise<T>(
 export function acceptHostEvent(
   lastSequence: number,
   message: HostEvent,
+  identity?: { readonly serverId: string; readonly serverEpoch: string },
 ): boolean {
-  return (
-    message.protocolVersion === 1 &&
-    Array.isArray(message.args) &&
-    message.sequence > lastSequence
+  if (!Array.isArray(message.args) || message.sequence <= lastSequence) return false;
+  if (message.protocolVersion === 1) return true;
+  return Boolean(
+    identity &&
+      message.serverId === identity.serverId &&
+      message.serverEpoch === identity.serverEpoch,
   );
 }
 
@@ -65,13 +68,17 @@ export function websocketUrl(
   clientId?: string,
   token?: string | null,
   baseUrl?: string,
+  protocolVersion = 1,
 ): string {
   const base = baseUrl ? new URL(normalizeHostBaseUrl(baseUrl)) : undefined;
   const protocol = (base?.protocol ?? location.protocol) === "https:" ? "wss:" : "ws:";
   const host = base?.host ?? location.host;
   const client = clientId ? `&clientId=${encodeURIComponent(clientId)}` : "";
-  const auth = token ? `&token=${encodeURIComponent(token)}` : "";
-  return `${protocol}//${host}/ws?since=${since}${client}${auth}`;
+  // Modern connections authenticate in-band after the socket opens. Legacy
+  // URLs retain the compatibility token path until device auth is negotiated.
+  const auth = token && protocolVersion < 2 ? `&token=${encodeURIComponent(token)}` : "";
+  const protocolQuery = protocolVersion >= 2 ? `&protocol=${protocolVersion}` : "";
+  return `${protocol}//${host}/ws?since=${since}${client}${auth}${protocolQuery}`;
 }
 
 export function readHostAuthToken(
@@ -193,6 +200,9 @@ export class WebHostTransport implements YaadeHostTransport {
   private socket: WebSocket | null = null;
   private reconnectAttempt = 0;
   private lastSequence = 0;
+  private serverId: string | null = null;
+  private serverEpoch: string | null = null;
+  private synchronized = false;
   private closed = false;
   private readonly clientId = createClientId();
   private readonly pendingAborts = new Set<AbortController>();
@@ -474,6 +484,7 @@ export class WebHostTransport implements YaadeHostTransport {
                 ? readHostAuthToken()
                 : self.authToken,
               self.baseUrl,
+              2,
             ),
           );
           socket.binaryType = "arraybuffer";
@@ -501,7 +512,17 @@ export class WebHostTransport implements YaadeHostTransport {
             };
             socket.addEventListener("open", () => {
               self.reconnectAttempt = 0;
-              self.dispatch("connection:status", "connected");
+              self.synchronized = false;
+              self.dispatch("connection:status", "synchronizing");
+              const token =
+                self.authToken === undefined ? readHostAuthToken() : self.authToken;
+              if (token) {
+                try {
+                  socket.send(JSON.stringify({ type: "protocol:auth", token }));
+                } catch {
+                  socket.close();
+                }
+              }
             });
             socket.addEventListener("message", (event) => {
               if (typeof event.data !== "string") {
@@ -515,6 +536,7 @@ export class WebHostTransport implements YaadeHostTransport {
                 self.dispatch("protocol:error", "Invalid realtime message");
                 return;
               }
+              if (self.handleProtocolControl(raw)) return;
               const terminalResult = tryDecodeTerminalWsResult(raw);
               if (terminalResult) {
                 self.resolveRealtime(terminalResult);
@@ -528,7 +550,11 @@ export class WebHostTransport implements YaadeHostTransport {
                 );
                 return;
               }
-              if (!acceptHostEvent(self.lastSequence, message)) return;
+              const identity =
+                self.serverId && self.serverEpoch
+                  ? { serverId: self.serverId, serverEpoch: self.serverEpoch }
+                  : undefined;
+              if (!acceptHostEvent(self.lastSequence, message, identity)) return;
               self.lastSequence = message.sequence;
               if (message.channel === "server:shuttingDown") {
                 self.rejectPending(
@@ -539,7 +565,12 @@ export class WebHostTransport implements YaadeHostTransport {
               }
               self.dispatch(message.channel, ...message.args);
             });
-            socket.addEventListener("close", finish);
+            socket.addEventListener("close", event => {
+              if (event.code === 4003) {
+                self.dispatch("protocol:error", "access revoked or authentication failed");
+              }
+              finish();
+            });
             socket.addEventListener("error", () => {
               try {
                 socket.close();
@@ -560,6 +591,70 @@ export class WebHostTransport implements YaadeHostTransport {
     );
   }
 
+  private handleProtocolControl(raw: unknown): boolean {
+    if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return false;
+    const record = raw as Record<string, unknown>;
+    if (record.type === "protocol:auth-required") {
+      const token = this.authToken === undefined ? readHostAuthToken() : this.authToken;
+      if (!token) {
+        this.dispatch("protocol:error", "authentication required");
+        this.socket?.close(4003, "authentication required");
+      }
+      return true;
+    }
+    if (record.type === "protocol:hello") {
+      const identity = record.identity;
+      if (identity === null || typeof identity !== "object" || Array.isArray(identity)) {
+        this.dispatch("protocol:error", "Invalid protocol hello");
+        return true;
+      }
+      const value = identity as Record<string, unknown>;
+      if (typeof value.serverId !== "string" || typeof value.serverEpoch !== "string") {
+        this.dispatch("protocol:error", "Invalid server identity");
+        return true;
+      }
+      const changed =
+        this.serverId !== null &&
+        (this.serverId !== value.serverId || this.serverEpoch !== value.serverEpoch);
+      this.serverId = value.serverId;
+      this.serverEpoch = value.serverEpoch;
+      if (changed) {
+        this.lastSequence = 0;
+        this.rejectRealtime(new Error("SERVER_EPOCH_CHANGED"));
+      }
+      this.dispatch("protocol:hello", raw);
+      return true;
+    }
+    if (record.type !== "runtime:snapshot") return false;
+    const identity = record.identity;
+    const cursor = record.cursor;
+    if (
+      identity === null || typeof identity !== "object" || Array.isArray(identity) ||
+      cursor === null || typeof cursor !== "object" || Array.isArray(cursor)
+    ) {
+      this.dispatch("protocol:error", "Invalid runtime snapshot");
+      return true;
+    }
+    const identityRecord = identity as Record<string, unknown>;
+    const cursorRecord = cursor as Record<string, unknown>;
+    if (
+      typeof identityRecord.serverId !== "string" ||
+      typeof identityRecord.serverEpoch !== "string" ||
+      identityRecord.serverId !== this.serverId ||
+      identityRecord.serverEpoch !== this.serverEpoch ||
+      typeof cursorRecord.sequence !== "number" ||
+      cursorRecord.serverEpoch !== this.serverEpoch
+    ) {
+      this.dispatch("protocol:error", "Snapshot identity does not match connection");
+      return true;
+    }
+    this.lastSequence = cursorRecord.sequence;
+    this.synchronized = true;
+    this.dispatch("runtime:snapshot", raw);
+    this.dispatch("connection:status", "connected");
+    return true;
+  }
+
   private handleBinaryMessage(data: unknown): void {
     // Prefer zero-copy views — decodeTerminalDataFrame accepts ArrayBufferView.
     // Avoid TypedArray.buffer.slice() which allocated on every terminal:data frame.
@@ -575,13 +670,26 @@ export class WebHostTransport implements YaadeHostTransport {
       this.dispatch("protocol:error", "Unsupported realtime binary message");
       return;
     }
-    const message: HostEvent = {
-      protocolVersion: 1,
-      sequence: decoded.eventSequence,
-      channel: "terminal:data",
-      args: [decoded.id, decoded.data, decoded.terminalSequence],
-    };
-    if (!acceptHostEvent(this.lastSequence, message)) return;
+    const message: HostEvent = this.serverId && this.serverEpoch
+      ? {
+          protocolVersion: 2,
+          serverId: this.serverId,
+          serverEpoch: this.serverEpoch,
+          sequence: decoded.eventSequence,
+          channel: "terminal:data",
+          args: [decoded.id, decoded.data, decoded.terminalSequence],
+        }
+      : {
+          protocolVersion: 1,
+          sequence: decoded.eventSequence,
+          channel: "terminal:data",
+          args: [decoded.id, decoded.data, decoded.terminalSequence],
+        };
+    const identity =
+      this.serverId && this.serverEpoch
+        ? { serverId: this.serverId, serverEpoch: this.serverEpoch }
+        : undefined;
+    if (!acceptHostEvent(this.lastSequence, message, identity)) return;
     this.lastSequence = message.sequence;
     this.dispatch(message.channel, ...message.args);
   }

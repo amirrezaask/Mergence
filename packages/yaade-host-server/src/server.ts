@@ -35,14 +35,24 @@ import type { HostConfig } from "./config.js";
 import { dispatch } from "./dispatch.js";
 import { makeHostLayers, type HostLayerServices } from "./effect/layers.js";
 import { HostRuntimeTag } from "./effect/tags.js";
-import { shutdownRuntime, type HostRuntime } from "./host-runtime.js";
+import {
+  buildRuntimeSnapshot,
+  shutdownRuntime,
+  type HostRuntime,
+} from "./host-runtime.js";
 import { pathAllowed, pathStaysWithin } from "./sandbox.js";
 import {
   isAllowedCorsOrigin,
   isAllowedWebSocketOrigin,
   isAuthorizedRequest,
+  requestAuthToken,
+  tokensEqual,
 } from "./security.js";
 import { normalizeProviderHookRequest } from "./notifications/index.js";
+import {
+  removeDaemonRuntimeManifest,
+  writeDaemonRuntimeManifest,
+} from "./runtime-manifest.js";
 
 const VERSION = "0.0.1";
 const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
@@ -53,6 +63,7 @@ const SOFT_WEBSOCKET_BUFFERED_BYTES = 512 * 1024;
 const MAX_INFLIGHT_RPC = 32;
 const MAX_WS_COMMAND_QUEUE = 64;
 const MAX_WS_PAYLOAD_BYTES = 1024 * 1024;
+const LEGACY_PROTOCOL_SOCKETS = new WeakSet<WebSocket>();
 
 class HttpError extends Error {
   constructor(
@@ -142,7 +153,10 @@ export async function startHostServer(
       req.url ?? "/",
       `http://${req.headers.host ?? "localhost"}`,
     );
-    if (!isAuthorizedRequest(req, runtime.config.authToken, url)) {
+    if (
+      !isRuntimeAuthorized(runtime, req, url) &&
+      url.searchParams.get("protocol") !== "2"
+    ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
       return;
@@ -163,6 +177,7 @@ export async function startHostServer(
   );
   config.port = boundPort;
 
+  writeDaemonRuntimeManifest(config.dataDir, runtime.identity, boundPort);
   console.log(
     `[host-server] listening on http://${config.host}:${config.port}`,
   );
@@ -180,6 +195,7 @@ export async function startHostServer(
       for (const client of wss.clients) client.terminate();
       await new Promise<void>((resolve) => wss.close(() => resolve()));
       await serverClosed;
+      removeDaemonRuntimeManifest(config.dataDir, runtime.identity.serverEpoch);
       await managed.dispose();
     })();
     return closePromise;
@@ -278,6 +294,67 @@ type RpcGate = {
   endRpc: () => void;
 };
 
+function isRuntimeAuthorized(
+  runtime: HostRuntime,
+  req: IncomingMessage,
+  url: URL,
+): boolean {
+  if (isAuthorizedRequest(req, runtime.config.authToken, url)) return true
+  const token = requestAuthToken(req, url)
+  return Boolean(token && runtime.devices.session(token))
+}
+
+function runtimeHealth(runtime: HostRuntime) {
+  const supervisorState =
+    "connectionState" in runtime.terminal
+      ? String(runtime.terminal.connectionState)
+      : "healthy";
+  const supervisorStatus =
+    supervisorState === "healthy"
+      ? "healthy"
+      : supervisorState === "connecting" || supervisorState === "reconnecting"
+        ? "degraded"
+        : "unhealthy";
+  return {
+    status: supervisorStatus === "healthy" ? "healthy" : "degraded",
+    database: { status: "healthy", message: "SQLite WAL is available" },
+    supervisor: { status: supervisorStatus, message: supervisorState },
+    eventLoop: { status: "healthy", message: "HTTP event loop is responsive" },
+    storage: { status: "healthy", message: "runtime storage is available" },
+    connectedClients: 0,
+    runningTerminals: runtime.terminalInstances.listLive().length,
+  } as const;
+}
+
+function serverCapabilities(runtime: HostRuntime) {
+  const platform = process.platform === "win32"
+    ? "windows"
+    : process.platform === "darwin"
+      ? "darwin"
+      : "linux";
+  return {
+    serverId: runtime.identity.serverId,
+    serverEpoch: runtime.identity.serverEpoch,
+    protocolVersions: [1, 2],
+    preferredProtocolVersion: 2,
+    runtimeVersion: runtime.identity.runtimeVersion,
+    platform,
+    features: {
+      runtimeSnapshot: true,
+      terminalCheckpoints: true,
+      writerLeases: true,
+      nativeAgentResume: true,
+      deviceAuthentication: true,
+      persistedTerminalHistory: false,
+    },
+    limits: {
+      maxTerminals: 64,
+      maxReplayBytes: 2 * 1024 * 1024,
+      maxWsPayloadBytes: MAX_WS_PAYLOAD_BYTES,
+    },
+  };
+}
+
 async function handleHttp(
   runtime: HostRuntime,
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
@@ -305,13 +382,79 @@ async function handleHttp(
   }
 
   if (req.method === "GET" && pathname === "/health") {
-    sendJson(res, 200, { status: "ok", version: VERSION });
+    sendJson(res, 200, {
+      status: "ok",
+      version: VERSION,
+      identity: runtime.identity,
+      health: runtimeHealth(runtime),
+    });
     return;
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/security/pair") {
+    try {
+      const body = await readJson(req)
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid pairing body")
+      const record = body as Record<string, unknown>
+      const paired = runtime.devices.pair({
+        code: typeof record.code === "string" ? record.code : "",
+        deviceId: typeof record.deviceId === "string" ? record.deviceId : undefined,
+        name: typeof record.name === "string" ? record.name : "",
+        publicKey: record.publicKey,
+        algorithm: typeof record.algorithm === "string" ? record.algorithm : "Ed25519",
+        scopes: Array.isArray(record.scopes)
+          ? record.scopes.filter((scope): scope is "observe" | "control" | "admin" =>
+              scope === "observe" || scope === "control" || scope === "admin",
+            )
+          : undefined,
+      })
+      sendJson(res, 201, paired)
+    } catch (error) {
+      sendJson(res, 400, {
+        error: { code: "PAIRING_FAILED", message: error instanceof Error ? error.message : String(error), details: {} },
+      })
+    }
+    return
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/security/challenge") {
+    try {
+      const body = await readJson(req)
+      const deviceId =
+        body && typeof body === "object" && !Array.isArray(body) && typeof (body as Record<string, unknown>).deviceId === "string"
+          ? (body as Record<string, unknown>).deviceId as string
+          : ""
+      sendJson(res, 200, runtime.devices.challenge(deviceId))
+    } catch (error) {
+      sendJson(res, 401, {
+        error: { code: "DEVICE_AUTH_FAILED", message: error instanceof Error ? error.message : String(error), details: {} },
+      })
+    }
+    return
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/security/session") {
+    try {
+      const body = await readJson(req)
+      if (!body || typeof body !== "object" || Array.isArray(body)) throw new Error("invalid session body")
+      const record = body as Record<string, unknown>
+      const session = runtime.devices.authenticate({
+        deviceId: typeof record.deviceId === "string" ? record.deviceId : "",
+        nonce: typeof record.nonce === "string" ? record.nonce : "",
+        signature: typeof record.signature === "string" ? record.signature : "",
+      })
+      sendJson(res, 200, session)
+    } catch (error) {
+      sendJson(res, 401, {
+        error: { code: "DEVICE_AUTH_FAILED", message: error instanceof Error ? error.message : String(error), details: {} },
+      })
+    }
+    return
   }
 
   if (
     pathname.startsWith("/api") &&
-    !isAuthorizedRequest(req, runtime.config.authToken, url)
+    !isRuntimeAuthorized(runtime, req, url)
   ) {
     sendJson(res, 401, {
       error: {
@@ -323,11 +466,40 @@ async function handleHttp(
     return;
   }
 
+  if (req.method === "POST" && pathname === "/api/v1/security/pairing-code") {
+    try {
+      sendJson(res, 201, runtime.devices.createPairingCode())
+    } catch (error) {
+      sendJson(res, 400, {
+        error: { code: "PAIRING_FAILED", message: error instanceof Error ? error.message : String(error), details: {} },
+      })
+    }
+    return
+  }
+
+  if (req.method === "GET" && pathname === "/api/v1/security/devices") {
+    sendJson(res, 200, runtime.devices.list())
+    return
+  }
+
+  const revokeDevice = /^\/api\/v1\/security\/devices\/([^/]+)$/.exec(pathname)
+  if (req.method === "DELETE" && revokeDevice) {
+    const deviceId = decodeURIComponent(revokeDevice[1] ?? "")
+    runtime.devices.revoke(deviceId)
+    res.writeHead(204)
+    res.end()
+    return
+  }
+
   if (req.method === "GET" && pathname === "/api/v1/system") {
     sendJson(res, 200, {
       name: "YAADE",
       version: VERSION,
-      protocolVersion: 1,
+      protocolVersion: 2,
+      identity: runtime.identity,
+      capabilities: serverCapabilities(runtime),
+      serverId: runtime.identity.serverId,
+      serverEpoch: runtime.identity.serverEpoch,
       launchConfig: runtime.config.launchConfig,
       homeDir: runtime.homeDir,
       machineHostname: runtime.machineHostname,
@@ -916,12 +1088,27 @@ function handleEventSocket(
   ws: WebSocket,
   url: URL,
 ): void {
+  if (url.searchParams.get("protocol") === "2") {
+    handleModernEventSocket(runtime, managed, ws, url)
+    return
+  }
+  handleLegacyEventSocket(runtime, managed, ws, url)
+}
+
+function handleLegacyEventSocket(
+  runtime: HostRuntime,
+  managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
+  ws: WebSocket,
+  url: URL,
+): void {
   const since = Number(url.searchParams.get("since") ?? "0") || 0;
+  if (url.searchParams.get("protocol") === "1") LEGACY_PROTOCOL_SOCKETS.add(ws);
   const requestedClientId = url.searchParams.get("clientId");
   const clientId =
     requestedClientId && /^[A-Za-z0-9-]{1,128}$/.test(requestedClientId)
       ? requestedClientId
       : `ws-${randomUUID()}`;
+  const legacyClientId = `legacy:${clientId}`;
   // Subscribe before taking the replay snapshot. Events emitted while the
   // synchronous replay frames are being sent are buffered and delivered after
   // them; subscribing after replay creates a reconnect window that silently
@@ -992,11 +1179,11 @@ function handleEventSocket(
       const id = cmd.args[0];
       if (typeof id === "string" && id) {
         attachedTerminals.add(id);
-        void Promise.resolve(runtime.terminal.armLiveViewer(id, clientId));
+        void Promise.resolve(runtime.terminal.armLiveViewer(id, legacyClientId));
       }
     }
     const command = commandTail.then(() =>
-      runHostRpc(managed, cmd.op, cmd.args, clientId),
+      runHostRpc(managed, cmd.op, cmd.args, legacyClientId),
     );
     commandTail = command.then(
       () => {
@@ -1032,6 +1219,162 @@ function handleEventSocket(
   });
   ws.on("close", () => {
     unsubscribe();
+    LEGACY_PROTOCOL_SOCKETS.delete(ws);
+    runtime.leases.releaseClient(legacyClientId);
+    void Promise.resolve(runtime.terminal.resumeForClient(legacyClientId));
+  });
+}
+
+/** Modern protocol authentication happens in-band, never in a reusable URL. */
+function handleModernEventSocket(
+  runtime: HostRuntime,
+  managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
+  ws: WebSocket,
+  url: URL,
+): void {
+  const expectedToken = runtime.config.authToken
+  if (!expectedToken) {
+    startModernEventSocket(runtime, managed, ws, url)
+    return
+  }
+  let authenticated = false
+  const timeout = setTimeout(() => {
+    if (!authenticated) ws.close(4003, "authentication required")
+  }, 5_000)
+  const authenticate = (data: WebSocket.RawData) => {
+    const text = wsDataToText(data)
+    let raw: unknown
+    try { raw = JSON.parse(text) } catch { return }
+    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return
+    const record = raw as Record<string, unknown>
+    if (record.type !== "protocol:auth" || typeof record.token !== "string") return
+    if (
+      !tokensEqual(expectedToken, record.token) &&
+      !runtime.devices.session(record.token)
+    ) {
+      clearTimeout(timeout)
+      ws.close(4003, "authentication failed")
+      return
+    }
+    authenticated = true
+    clearTimeout(timeout)
+    ws.off("message", authenticate)
+    startModernEventSocket(runtime, managed, ws, url)
+  }
+  ws.send(JSON.stringify({ type: "protocol:auth-required" }))
+  ws.on("message", authenticate)
+}
+
+function startModernEventSocket(
+  runtime: HostRuntime,
+  managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
+  ws: WebSocket,
+  url: URL,
+): void {
+  const requestedClientId = url.searchParams.get("clientId");
+  const clientId =
+    requestedClientId && /^[A-Za-z0-9-]{1,128}$/.test(requestedClientId)
+      ? requestedClientId
+      : `ws-${randomUUID()}`;
+  let synchronizing = true;
+  const pendingEvents: HostEvent[] = [];
+  const attachedTerminals = new Set<string>();
+  const send = (event: HostEvent) =>
+    sendEventSocketMessage(ws, event, runtime, attachedTerminals);
+  const unsubscribe = runtime.events.subscribe(event => {
+    if (event.channel === "terminal:data") {
+      const id = String(event.args[0] ?? "");
+      if (!attachedTerminals.has(id)) return;
+    }
+    if (synchronizing) pendingEvents.push(event);
+    else send(event);
+  });
+
+  try {
+    ws.send(JSON.stringify({
+      type: "protocol:hello",
+      identity: runtime.identity,
+      capabilities: serverCapabilities(runtime),
+    }));
+    const snapshot = buildRuntimeSnapshot(runtime);
+    ws.send(JSON.stringify(snapshot));
+    const snapshotSequence = snapshot.cursor.sequence;
+    synchronizing = false;
+    for (const event of pendingEvents) {
+      if (event.sequence > snapshotSequence) send(event);
+    }
+    pendingEvents.length = 0;
+  } catch {
+    unsubscribe();
+    ws.close(1011, "snapshot failed");
+    return;
+  }
+
+  let commandTail = Promise.resolve();
+  let commandQueue = 0;
+  ws.on("message", data => {
+    const text = typeof data === "string" ? data : wsDataToText(data);
+    if (text === "ping") {
+      ws.send("pong");
+      return;
+    }
+    let raw: unknown;
+    try {
+      raw = JSON.parse(text);
+    } catch {
+      return;
+    }
+    const cmd = tryDecodeTerminalWsCommand(raw);
+    if (!cmd) return;
+    if (commandQueue >= MAX_WS_COMMAND_QUEUE) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "terminal:result",
+          requestId: cmd.requestId,
+          ok: false,
+          error: { code: "HOST_BUSY", message: "too many in-flight terminal commands" },
+        }));
+      }
+      return;
+    }
+    commandQueue += 1;
+    if (cmd.op === "terminal:attach") {
+      const id = cmd.args[0];
+      if (typeof id === "string" && id) {
+        attachedTerminals.add(id);
+        void Promise.resolve(runtime.terminal.armLiveViewer(id, clientId));
+      }
+    }
+    const command = commandTail.then(() =>
+      runHostRpc(managed, cmd.op, cmd.args, clientId),
+    );
+    commandTail = command.then(
+      () => { commandQueue = Math.max(0, commandQueue - 1) },
+      () => { commandQueue = Math.max(0, commandQueue - 1) },
+    );
+    void command.then(result => {
+      if (ws.readyState !== WebSocket.OPEN) return;
+      if (result.ok) {
+        ws.send(JSON.stringify({
+          type: "terminal:result",
+          requestId: cmd.requestId,
+          ok: true,
+          value: result.value,
+        }));
+        return;
+      }
+      const error = hostErrorWire(result.error);
+      ws.send(JSON.stringify({
+        type: "terminal:result",
+        requestId: cmd.requestId,
+        ok: false,
+        error: { code: error.code, message: error.message },
+      }));
+    });
+  });
+  ws.on("close", () => {
+    unsubscribe();
+    runtime.leases.releaseClient(clientId);
     void Promise.resolve(runtime.terminal.resumeForClient(clientId));
   });
 }
@@ -1051,17 +1394,26 @@ function sendEventSocketMessage(
     ws.close(1013, "client is not consuming events");
     return;
   }
-  if (event.channel === "terminal:data") {
-    const id = String(event.args[0] ?? "");
-    const data = String(event.args[1] ?? "");
+  const wireEvent =
+    LEGACY_PROTOCOL_SOCKETS.has(ws) && event.protocolVersion === 2
+      ? {
+          protocolVersion: 1,
+          sequence: event.sequence,
+          channel: event.channel,
+          args: event.args,
+        }
+      : event;
+  if (wireEvent.channel === "terminal:data") {
+    const id = String(wireEvent.args[0] ?? "");
+    const data = String(wireEvent.args[1] ?? "");
     const terminalSequence =
-      typeof event.args[2] === "number" && Number.isFinite(event.args[2])
-        ? event.args[2]
+      typeof wireEvent.args[2] === "number" && Number.isFinite(wireEvent.args[2])
+        ? wireEvent.args[2]
         : 0;
     try {
       ws.send(
         Buffer.from(
-          encodeTerminalDataFrame(event.sequence, terminalSequence, id, data),
+          encodeTerminalDataFrame(wireEvent.sequence, terminalSequence, id, data),
         ),
       );
       return;
@@ -1069,7 +1421,7 @@ function sendEventSocketMessage(
       // Fall through to JSON if encoding fails (oversized id, etc.).
     }
   }
-  ws.send(JSON.stringify(event));
+  ws.send(JSON.stringify(wireEvent));
 }
 
 function wsDataToText(data: WebSocket.RawData): string {

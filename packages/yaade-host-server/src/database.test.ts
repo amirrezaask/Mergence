@@ -8,6 +8,22 @@ import { DatabaseOwner, type DatabaseMigration } from "./database.js"
 
 const CountRow = Schema.Struct({ count: Schema.Number })
 
+test("Project host identity remains stable across database reopen", async () => {
+  const { ProjectDatabase } = await import("./persistence.js")
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-host-identity-"))
+  const file = path.join(dir, "host.sqlite3")
+  const first = new ProjectDatabase(file)
+  const serverId = first.serverId()
+  first.close()
+  const second = new ProjectDatabase(file)
+  try {
+    assert.equal(second.serverId(), serverId)
+  } finally {
+    second.close()
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
 test("DatabaseOwner applies named migrations once and rolls back failures", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-database-owner-"))
   const owner = new DatabaseOwner(path.join(dir, "host.sqlite3"))

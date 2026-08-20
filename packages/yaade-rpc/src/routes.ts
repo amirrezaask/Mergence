@@ -52,6 +52,8 @@ import {
   TextFileReadResult,
   TextFileWriteOptions,
   TextFileWriteResult,
+  TerminalCheckpoint,
+  TerminalLease,
   TrashEntry,
 } from "./host.js"
 
@@ -140,9 +142,20 @@ const TerminalCreateArgs = Schema.Tuple(
   Schema.String,
   Schema.optionalElement(Schema.NullOr(TerminalLaunch)),
 )
+const ProcessIdentity = Schema.Struct({
+  pid: Schema.Number,
+  platform: Schema.Literal("linux", "darwin", "windows"),
+  bootId: Schema.optional(Schema.String),
+  startToken: Schema.String,
+  executablePath: Schema.optional(Schema.String),
+})
 const TerminalCreateResult = Schema.Struct({
   id: Schema.String,
   title: Schema.NullOr(Schema.String),
+  osPid: Schema.optional(Schema.NullOr(Schema.Number)),
+  osStartedAtMs: Schema.optional(Schema.Number),
+  processIdentity: Schema.optional(Schema.NullOr(ProcessIdentity)),
+  terminalEpoch: Schema.optional(Schema.String),
 })
 const TerminalAttachArgs = Schema.Tuple(
   Schema.String,
@@ -152,6 +165,9 @@ const TerminalAttachResult = Schema.NullOr(
   Schema.Struct({
     id: Schema.String,
     title: Schema.NullOr(Schema.String),
+    terminalEpoch: Schema.optional(Schema.String),
+    checkpoint: Schema.optional(TerminalCheckpoint),
+    replayQuality: Schema.optional(Schema.Literal("exact", "checkpoint", "degraded")),
     outputChunks: Schema.Array(Schema.String),
     output: Schema.String,
     replayTruncated: Schema.Boolean,
@@ -371,6 +387,7 @@ const AgentCapabilities = Schema.Struct({
   subagents: Schema.Boolean,
   compaction: Schema.Boolean,
   fileEvents: Schema.Literal("native", "derived", "unsupported"),
+  nativeResume: Schema.optional(Schema.Boolean),
 })
 const ProviderAvailability = Schema.Struct({
   provider: CliProvider,
@@ -538,7 +555,16 @@ const AgentRun = Schema.Struct({
   toolUseId: Schema.optional(Schema.NullOr(Schema.String)),
   ptyId: Schema.NullOr(Schema.String),
   nativeSessionId: Schema.NullOr(Schema.String),
-  processState: Schema.Literal("reserved", "starting", "running", "exited", "disconnected"),
+  processState: Schema.Literal(
+    "reserved",
+    "starting",
+    "running",
+    "exited",
+    "disconnected",
+    "interrupted",
+    "restoring",
+    "orphaned",
+  ),
   activityState: Schema.Literal(
     "starting",
     "working",
@@ -557,6 +583,7 @@ const AgentRun = Schema.Struct({
   endReason: Schema.NullOr(Schema.String),
   telemetryError: Schema.NullOr(Schema.String),
   revision: Schema.Number,
+  processIdentity: Schema.optional(Schema.NullOr(ProcessIdentity)),
 })
 const TerminalInstance = Schema.Struct({
   id: Schema.String,
@@ -570,7 +597,16 @@ const TerminalInstance = Schema.Struct({
   launchRequestId: Schema.NullOr(Schema.String),
   ptyId: Schema.NullOr(Schema.String),
   nativeSessionId: Schema.NullOr(Schema.String),
-  processState: Schema.Literal("starting", "running", "exited", "failed", "disconnected"),
+  processState: Schema.Literal(
+    "starting",
+    "running",
+    "exited",
+    "failed",
+    "disconnected",
+    "interrupted",
+    "restoring",
+    "orphaned",
+  ),
   activityState: Schema.Literal(
     "starting",
     "working",
@@ -589,6 +625,11 @@ const TerminalInstance = Schema.Struct({
   endReason: Schema.NullOr(Schema.String),
   telemetryError: Schema.NullOr(Schema.String),
   revision: Schema.Number,
+  processIdentity: Schema.optional(Schema.NullOr(ProcessIdentity)),
+  terminalEpoch: Schema.optional(Schema.NullOr(Schema.String)),
+  launchProfile: Schema.optional(Schema.Unknown),
+  nativeSessionRef: Schema.optional(Schema.Unknown),
+  restartPolicy: Schema.optional(Schema.Literal("never", "manual", "resume-on-daemon-start")),
 })
 const TaskResult = Schema.Struct({ exitCode: Schema.Number, output: Schema.String })
 const LaunchConfig = Schema.Struct({
@@ -615,7 +656,26 @@ export type HostTerminalInstanceInfo = {
   launchRequestId: string | null
   ptyId: string | null
   nativeSessionId: string | null
-  processState: "starting" | "running" | "exited" | "failed" | "disconnected"
+  processIdentity?: {
+    pid: number
+    platform: "linux" | "darwin" | "windows"
+    bootId?: string
+    startToken: string
+    executablePath?: string
+  } | null
+  terminalEpoch?: string | null
+  launchProfile?: unknown
+  nativeSessionRef?: unknown
+  restartPolicy?: "never" | "manual" | "resume-on-daemon-start"
+  processState:
+    | "starting"
+    | "running"
+    | "exited"
+    | "failed"
+    | "disconnected"
+    | "interrupted"
+    | "restoring"
+    | "orphaned"
   activityState:
     | "starting"
     | "working"
@@ -648,7 +708,22 @@ export type HostAgentRunInfo = {
   toolUseId?: string | null
   ptyId: string | null
   nativeSessionId: string | null
-  processState: "reserved" | "starting" | "running" | "exited" | "disconnected"
+  processIdentity?: {
+    pid: number
+    platform: "linux" | "darwin" | "windows"
+    bootId?: string
+    startToken: string
+    executablePath?: string
+  } | null
+  processState:
+    | "reserved"
+    | "starting"
+    | "running"
+    | "exited"
+    | "disconnected"
+    | "interrupted"
+    | "restoring"
+    | "orphaned"
   activityState:
     | "starting"
     | "working"
@@ -934,6 +1009,36 @@ export const HOST_ROUTES = {
   "terminal:writeBinary": route(TerminalWriteArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:resize": route(TerminalResizeArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:ack": route(TerminalAckArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
+  "terminal:acquireLease": route(
+    Schema.Tuple(Schema.String, Schema.optionalElement(Schema.Literal("writer", "observer"))),
+    Schema.NullOr(TerminalLease),
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
+  "terminal:renewLease": route(
+    Schema.Tuple(Schema.String, Schema.String),
+    Schema.NullOr(TerminalLease),
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
+  "terminal:releaseLease": route(
+    Schema.Tuple(Schema.String, Schema.String),
+    Schema.Null,
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
+  "terminal:requestControl": route(
+    StringArgs,
+    Schema.NullOr(TerminalLease),
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
+  "terminal:transferControl": route(
+    Schema.Tuple(Schema.String, Schema.String, Schema.String),
+    Schema.NullOr(TerminalLease),
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
+  "terminal:listViewers": route(
+    StringArgs,
+    Schema.Array(Schema.String),
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
   "terminal:ready": route(StringArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:attach": route(TerminalAttachArgs, TerminalAttachResult, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:getCwd": route(StringArgs, Schema.NullOr(Schema.String), { pathPolicy: { kind: "terminal-id-or-path" } }),
@@ -942,6 +1047,7 @@ export const HOST_ROUTES = {
   "terminal:listInstances": route(StringArgs, Schema.Array(TerminalInstance)),
   "terminal:createInstance": route(TerminalInstanceRequestArgs, TerminalInstance),
   "terminal:restartInstance": route(TerminalInstanceRequestArgs, Schema.NullOr(TerminalInstance)),
+  "terminal:resumeInstance": route(TerminalInstanceRequestArgs, Schema.NullOr(TerminalInstance)),
   "terminal:closeInstance": route(TerminalInstanceRequestArgs, Schema.NullOr(TerminalInstance)),
   "terminal:getInstanceTranscript": route(StringArgs, Schema.NullOr(Schema.Struct({ output: Schema.String, truncated: Schema.Boolean }))),
 } as const satisfies Record<string, AnyHostRouteDefinition>

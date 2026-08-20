@@ -11,6 +11,7 @@ function argValue(flag: string): string | null {
 const socketPath =
   argValue("--socket") ?? process.env.YAADE_PTY_SUPERVISOR_SOCKET
 const pidPath = argValue("--pid-file")
+const manifestPath = argValue("--manifest")
 if (!socketPath) {
   console.error("pty-supervisor: --socket is required")
   process.exit(1)
@@ -22,6 +23,8 @@ if (pidPath) {
 
 const { close } = await listenTerminalSupervisor(socketPath, {
   onShutdown: () => process.exit(0),
+  dataDir: process.env.YAADE_PTY_SUPERVISOR_DATA_DIR,
+  ...(manifestPath ? { manifestPath } : {}),
 })
 
 const shutdown = () => {

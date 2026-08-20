@@ -26,6 +26,7 @@ const RUN_TS_ENTRY = path.join("scripts", "run-ts.mjs")
 const VP_ENTRY = path.join("apps", "web", "node_modules", "vite-plus", "bin", "vp")
 const HOISTED_VP_ENTRY = path.join("node_modules", "vite-plus", "bin", "vp")
 const CHILD_READY_TIMEOUT_MS = 45_000
+const RUNTIME_MANIFEST_FILE = "runtime.json"
 // Keep the native overlay aligned with --yaade-tab-bar-height (3.5rem at the
 // app's 13px root font size). The renderer owns the visual titlebar; Electron
 // only supplies the platform window controls.
@@ -38,7 +39,7 @@ const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/
 /** @typedef {import("node:child_process").ChildProcess} ChildProcess */
 /** @typedef {import("electron").WebContents} WebContents */
 /** @typedef {import("electron").BrowserWindow} BrowserWindowInstance */
-/** @typedef {{ child: ChildProcess, port: number, stop: () => Promise<void> }} ManagedChild */
+/** @typedef {{ child: ChildProcess | null, port: number, stop: () => Promise<void> }} ManagedChild */
 /** @typedef {{ host: ManagedChild, vite: ManagedChild | null, url: string, origins: string[] }} DesktopServices */
 
 /** @type {BrowserWindowInstance | null} */
@@ -295,11 +296,32 @@ function stopChild(child) {
  * @param {string | null} workspace
  */
 async function launchHost(repoRoot, workspace) {
-  // 0 = OS-assigned ephemeral port; the bound value is parsed from stdout.
+  // 0 = OS-assigned ephemeral port. The daemon publishes the bound port in an
+  // atomic runtime manifest so Electron never has to parse child stdout.
   const port = 0
   const runtimeRoot = resolveRuntimeRoot()
   const dataDir = path.join(app.getPath("userData"), "host")
   await fs.promises.mkdir(dataDir, { recursive: true })
+  const manifestPath = path.join(dataDir, RUNTIME_MANIFEST_FILE)
+  try {
+    const raw = JSON.parse(await fs.promises.readFile(manifestPath, "utf8"))
+    if (
+      raw &&
+      typeof raw === "object" &&
+      raw.host === LOOPBACK_HOST &&
+      typeof raw.port === "number" &&
+      raw.port > 0
+    ) {
+      const response = await fetch(`http://${LOOPBACK_HOST}:${raw.port}/health`, {
+        signal: AbortSignal.timeout(750),
+      })
+      if (response.ok) {
+        return { child: null, port: raw.port, stop: async () => undefined }
+      }
+    }
+  } catch {
+    // A stale or incomplete manifest is replaced by the singleton daemon.
+  }
 
   const args = [
     "--host",
@@ -308,14 +330,7 @@ async function launchHost(repoRoot, workspace) {
     String(port),
     "--data-dir",
     dataDir,
-    "--kill-ptys-on-exit",
   ]
-  // The packaged backend is a single bundle and does not include the source
-  // entry point used by the standalone PTY supervisor. The desktop host owns
-  // the app lifetime and already kills PTYs on shutdown, so keep PTYs in this
-  // process instead of asking the packaged bundle to spawn the unavailable
-  // supervisor.
-  if (runtimeRoot) args.push("--pty-supervisor", "0")
   let command
   let commandArgs
   let cwd
@@ -349,20 +364,35 @@ async function launchHost(repoRoot, workspace) {
       JET_DATA_DIR: dataDir,
       JET_SKIP_LOCAL_HOST: "1",
     }),
-    stdio: ["ignore", "pipe", "pipe"],
+    detached: true,
+    stdio: ["ignore", "ignore", "ignore"],
     windowsHide: true,
   })
 
-  let observedPort = 0
-  observeChildOutput(child, "host", line => {
-    const match = /listening on http:\/\/[^:]+:(\d+)/.exec(line)
-    if (match) observedPort = Number(match[1])
-  })
+  const readPort = () => {
+    try {
+      const raw = JSON.parse(fs.readFileSync(manifestPath, "utf8"))
+      if (
+        raw &&
+        typeof raw === "object" &&
+        raw.host === LOOPBACK_HOST &&
+        typeof raw.port === "number" &&
+        raw.port > 0
+      ) return raw.port
+    } catch {
+      // The daemon may still be writing its manifest.
+    }
+    return 0
+  }
 
   try {
     await waitForHttp(
-      () =>
-        observedPort > 0 ? `http://${LOOPBACK_HOST}:${observedPort}/health` : null,
+      () => {
+        const observedPort = readPort()
+        return observedPort > 0
+          ? `http://${LOOPBACK_HOST}:${observedPort}/health`
+          : null
+      },
       child,
       "host server",
     )
@@ -371,6 +401,8 @@ async function launchHost(repoRoot, workspace) {
     throw error
   }
 
+  const observedPort = readPort()
+  child.unref()
   return {
     child,
     port: observedPort,
@@ -593,18 +625,20 @@ function installAppWebContentsHook(trustedOrigins) {
   })
 }
 
-async function stopServices() {
+async function stopServices(stopHost = false) {
   const active = services
   services = null
   if (!active) return
   if (active.vite) await active.vite.stop()
-  await active.host.stop()
+  // Closing Electron is a client detach. The daemon and supervisor are
+  // deliberately left running; explicit daemon management is separate.
+  if (stopHost) await active.host.stop()
 }
 
-function requestQuit() {
+function requestQuit(stopHost = false) {
   if (shutdownPromise) return shutdownPromise
   shuttingDown = true
-  shutdownPromise = stopServices()
+  shutdownPromise = stopServices(stopHost)
     .catch(error => {
       console.error("[desktop] service shutdown failed", error)
     })

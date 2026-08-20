@@ -108,6 +108,9 @@ export const ProcessState = Schema.Literal(
   "exited",
   "failed",
   "disconnected",
+  "interrupted",
+  "restoring",
+  "orphaned",
 );
 export const ActivityState = Schema.Literal(
   "starting",

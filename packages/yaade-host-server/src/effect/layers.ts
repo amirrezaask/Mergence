@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomUUID } from "node:crypto";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import {
   makeTerminalHostScoped,
@@ -14,6 +15,7 @@ import {
   prepareLiveTerminals,
   type HostRuntime,
 } from "../host-runtime.js";
+import type { ServerIdentity } from "@yaade/rpc";
 import { NotificationService } from "../notifications/index.js";
 import { ProjectDatabase } from "../persistence.js";
 import { GitServiceLive, GitServiceTag } from "./git.js";
@@ -63,11 +65,20 @@ export function makeHostLayers(
   const runtimeLayer = Layer.scoped(
     HostRuntimeTag,
     Effect.gen(function* () {
-      const events = new EventHub(
-        options?.eventHubCapacity ?? EVENT_HUB_CAPACITY,
-      );
       const db = yield* makeProjectDatabaseScoped(
         path.join(config.dataDir, "jet.sqlite3"),
+      );
+      const identity: ServerIdentity = {
+        serverId: db.serverId(),
+        serverEpoch: randomUUID(),
+        protocolVersion: 2,
+        runtimeVersion: "0.0.1",
+        startedAt: new Date().toISOString(),
+      };
+      const events = new EventHub(
+        options?.eventHubCapacity ?? EVENT_HUB_CAPACITY,
+        16 * 1024 * 1024,
+        identity,
       );
       const terminal = config.ptySupervisor
         ? yield* Effect.acquireRelease(
@@ -92,6 +103,7 @@ export function makeHostLayers(
       );
 
       const runtime = createRuntime(config, events, db, terminal, {
+        identity,
         emitNotification: (event) => {
           Effect.runSync(PubSub.publish(pubsub, event));
         },

@@ -216,6 +216,7 @@ function applyAttachReplay(
   attached: {
     output?: string;
     outputChunks?: string[];
+    checkpoint?: { syntheticAnsi: string };
     replayTruncated?: boolean;
     replayNeedsQueryResponses?: boolean;
   },
@@ -224,12 +225,15 @@ function applyAttachReplay(
   outputWriter: ReturnType<typeof createTerminalOutputWriter>,
   respondToQueries = false,
 ): void {
-  const chunks =
+  const rawChunks =
     attached.outputChunks && attached.outputChunks.length > 0
       ? attached.outputChunks
       : attached.output
         ? [attached.output]
         : []
+  const chunks = attached.checkpoint?.syntheticAnsi
+    ? [attached.checkpoint.syntheticAnsi, ...rawChunks]
+    : rawChunks
   if (chunks.length === 0) return
   onOutput?.(tabId, chunks.find(chunk => chunk.length > 0))
   if (attached.replayTruncated) {

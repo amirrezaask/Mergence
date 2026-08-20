@@ -23,6 +23,9 @@ export type {
   HookInstallationContext,
   HookInstallationResult,
   NativeHookInput,
+  NativeAgentSessionRef,
+  NativeResumeContext,
+  NativeResumeLaunch,
   CliAgentDriver,
 } from "./types/driver.js"
 

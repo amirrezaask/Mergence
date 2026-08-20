@@ -20,9 +20,12 @@ import {
   type ToolUse,
 } from "@yaade/rpc"
 import type {
+  JetElectronTerminal,
   JetElectronTools,
   YaadeHostAPI,
   ToolSessionSnapshot,
+  TerminalInstanceEvent,
+  TerminalInstanceInfo,
 } from "@yaade/workspace"
 import type {
   YaadeServerConnection,
@@ -34,6 +37,7 @@ import { normalizeHostBaseUrl, WebHostTransport } from "./web-transport.js"
 
 const SERVER_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/
 const SERVER_STORAGE_KEY = "yaade:server-definitions"
+const LEGACY_TOKEN_SESSION_KEY = "yaade:legacy-server-tokens"
 
 type StorageLike = Pick<Storage, "getItem" | "setItem">
 export type MultiServerGlobalTarget = {
@@ -55,6 +59,7 @@ type ManagedConnection = {
   error?: string
   disposeStatus: () => void
   disposeTools: () => void
+  disposeTerminal: () => void
 }
 
 export type MultiServerSnapshot = {
@@ -116,13 +121,57 @@ export function decodeStoredServerDefinitions(raw: unknown): YaadeServerDefiniti
   return definitions
 }
 
+function sessionTokenMap(): Record<string, string> {
+  if (typeof sessionStorage === "undefined") return {}
+  try {
+    const raw = sessionStorage.getItem(LEGACY_TOKEN_SESSION_KEY)
+    const parsed: unknown = raw ? JSON.parse(raw) : {}
+    if (!isRecord(parsed)) return {}
+    return Object.fromEntries(
+      Object.entries(parsed).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string" && entry[1].trim().length > 0,
+      ),
+    )
+  } catch {
+    return {}
+  }
+}
+
+function saveSessionTokenMap(tokens: Record<string, string>): void {
+  if (typeof sessionStorage === "undefined") return
+  try {
+    sessionStorage.setItem(LEGACY_TOKEN_SESSION_KEY, JSON.stringify(tokens))
+  } catch {
+    /* Session storage can be disabled; the user can pair again. */
+  }
+}
+
 export function loadStoredServerDefinitions(
   storage: StorageLike | null = typeof localStorage === "undefined" ? null : localStorage,
 ): YaadeServerDefinition[] {
   if (!storage) return []
   try {
     const raw = storage.getItem(SERVER_STORAGE_KEY)
-    return raw ? decodeStoredServerDefinitions(JSON.parse(raw)) : []
+    const definitions = raw ? decodeStoredServerDefinitions(JSON.parse(raw)) : []
+    const tokens = sessionTokenMap()
+    let migrated = false
+    const result = definitions.map(definition => {
+      if (definition.token && !tokens[definition.id]) {
+        tokens[definition.id] = definition.token
+        migrated = true
+      }
+      return definition.token || !tokens[definition.id]
+        ? definition
+        : { ...definition, token: tokens[definition.id] }
+    })
+    if (migrated) {
+      saveSessionTokenMap(tokens)
+      storage.setItem(
+        SERVER_STORAGE_KEY,
+        JSON.stringify(result.map(({ token: _token, ...definition }) => definition)),
+      )
+    }
+    return result
   } catch {
     return []
   }
@@ -134,7 +183,15 @@ export function saveStoredServerDefinitions(
 ): void {
   if (!storage) return
   try {
-    storage.setItem(SERVER_STORAGE_KEY, JSON.stringify(definitions))
+    const tokens = sessionTokenMap()
+    for (const definition of definitions) {
+      if (definition.token) tokens[definition.id] = definition.token
+    }
+    saveSessionTokenMap(tokens)
+    // Browser localStorage keeps server metadata only. Legacy bearer tokens
+    // are session-scoped during migration; device auth can replace them.
+    const persisted = definitions.map(({ token: _token, ...definition }) => definition)
+    storage.setItem(SERVER_STORAGE_KEY, JSON.stringify(persisted))
   } catch {
     // Storage can be disabled or full. The live connection still works.
   }
@@ -183,6 +240,10 @@ function scopedProjectId(serverId: string, projectId: string): string {
   return `${serverId}::${projectId}`
 }
 
+function scopedTerminalId(serverId: string, terminalId: string): string {
+  return `term-${serverId}--${terminalId}`
+}
+
 export class MultiServerHostClient {
   readonly tools: JetElectronTools
   readonly ports: YaadeHostAPI
@@ -196,6 +257,16 @@ export class MultiServerHostClient {
   private readonly toolUseOwners = new Map<string, Owner>()
   private readonly projectOwners = new Map<string, Owner>()
   private readonly ptyOwners = new Map<string, Owner>()
+  private readonly terminalInstanceOwners = new Map<string, Owner>()
+  private readonly terminalExitListeners = new Set<(
+    id: string,
+    exitCode: number,
+    signal?: number,
+  ) => void>()
+  private readonly terminalInstanceListeners = new Set<
+    (event: TerminalInstanceEvent) => void
+  >()
+  private readonly aggregateTerminal: JetElectronTerminal
   private activeServerId: string | undefined
   private generation = 0
   private globalTarget?: MultiServerGlobalTarget
@@ -208,6 +279,7 @@ export class MultiServerHostClient {
   }) {
     this.currentServerId = options.currentServer.id
     this.globalTarget = options.globalTarget
+    this.aggregateTerminal = this.createTerminal()
     this.tools = this.createTools()
     this.syncDefinitions(options.currentServer, options.servers ?? [])
     this.ports = this.createPorts(options.currentServer)
@@ -295,7 +367,7 @@ export class MultiServerHostClient {
   private createPorts(currentServer: YaadeServerDefinition): YaadeHostAPI {
     const connection = this.connections.get(currentServer.id)
     if (connection) {
-      return { ...connection.api, tools: this.tools }
+      return { ...connection.api, tools: this.tools, terminal: this.aggregateTerminal }
     }
     // The current connection is installed by syncDefinitions immediately after
     // construction. This branch only keeps the object creation type-safe.
@@ -349,30 +421,58 @@ export class MultiServerHostClient {
       sessionCount: 0,
       disposeStatus: () => undefined,
       disposeTools: () => undefined,
+      disposeTerminal: () => undefined,
     }
-    connection.disposeStatus = transport.on("connection:status", (...args) => {
+    const disposeConnectionStatus = transport.on("connection:status", (...args) => {
       const status = args[0]
       if (status === "connected") {
         connection.status = "connected"
         connection.error = undefined
-        this.snapshot = this.makeSnapshot()
-        this.publish()
+      } else if (status === "synchronizing") {
+        connection.status = "synchronizing"
       } else if (status === "disconnected") {
         connection.status = "offline"
-        this.snapshot = this.makeSnapshot()
-        this.publish()
       }
+      this.snapshot = this.makeSnapshot()
+      this.publish()
     })
+    const disposeProtocolErrors = transport.on("protocol:error", (...args) => {
+      const message = String(args[0] ?? "")
+      if (/incompatible/i.test(message)) connection.status = "incompatible"
+      else if (/revoked/i.test(message)) connection.status = "revoked"
+      connection.error = message || connection.error
+      this.snapshot = this.makeSnapshot()
+      this.publish()
+    })
+    connection.disposeStatus = () => {
+      disposeConnectionStatus()
+      disposeProtocolErrors()
+    }
     connection.disposeTools = api.tools.onEvent(event => {
       const scoped = this.scopeEvent(connection, event)
       for (const listener of this.toolEventListeners) listener(scoped)
     })
+    const disposeExit = api.terminal.onExit((id, exitCode, signal) => {
+      const scopedId = this.scopePtyId(connection.definition.id, id)
+      for (const listener of this.terminalExitListeners) listener(scopedId, exitCode, signal)
+    })
+    const disposeInstance = api.terminal.onInstanceEvent(event => {
+      const scoped = this.scopeTerminalInstance(connection, event.instance)
+      for (const listener of this.terminalInstanceListeners) {
+        listener({ ...event, instance: scoped })
+      }
+    })
+    connection.disposeTerminal = () => {
+      disposeExit()
+      disposeInstance()
+    }
     return connection
   }
 
   private disposeConnection(connection: ManagedConnection): void {
     connection.disposeStatus()
     connection.disposeTools()
+    connection.disposeTerminal()
     connection.transport.close()
   }
 
@@ -469,19 +569,18 @@ export class MultiServerHostClient {
     const sessionOwner = { serverId: connection.definition.id, localId: use.sessionId }
     const sessionId = publicSessionId(scopedId("ses", sessionOwner.serverId, sessionOwner.localId))
     this.sessionOwners.set(sessionId, sessionOwner)
-    const projectId = use.context.project.projectId
+    const localProjectIdValue = use.context.project.projectId
     const projectOwner = {
       serverId: owner.serverId,
-      localId: use.context.project.projectId,
+      localId: localProjectIdValue,
     }
+    const projectId = scopedProjectId(owner.serverId, localProjectIdValue)
+    this.projectOwners.set(localProjectIdValue, projectOwner)
     this.projectOwners.set(projectId, projectOwner)
-    this.projectOwners.set(scopedProjectId(owner.serverId, projectId), projectOwner)
-    const output = use.output.kind === "process" && use.output.ptyId
-      ? (() => {
-          this.ptyOwners.set(use.output.ptyId, owner)
-          return use.output
-        })()
-      : use.output
+    const output = this.scopeProcessOutput(owner.serverId, use.output)
+    if (use.output.kind === "process" && use.output.ptyId) {
+      this.ptyOwners.set(this.scopePtyId(owner.serverId, use.output.ptyId), owner)
+    }
     return {
       ...use,
       id,
@@ -494,6 +593,56 @@ export class MultiServerHostClient {
         project: { ...use.context.project, projectId },
       },
       output,
+    }
+  }
+
+  private scopePtyId(serverId: string, localId: string): string {
+    return scopedTerminalId(serverId, localId)
+  }
+
+  private ownerForPty(ptyId: string): Owner {
+    const owner = this.ptyOwners.get(ptyId)
+    if (owner) return owner
+    return {
+      serverId: this.activeConnection().definition.id,
+      localId: ptyId,
+    }
+  }
+
+  private scopeTerminalInstance(
+    connection: ManagedConnection,
+    instance: TerminalInstanceInfo,
+  ): TerminalInstanceInfo {
+    const owner = { serverId: connection.definition.id, localId: instance.id }
+    const id = scopedTerminalId(owner.serverId, owner.localId)
+    this.terminalInstanceOwners.set(id, owner)
+    if (instance.ptyId) {
+      this.ptyOwners.set(this.scopePtyId(owner.serverId, instance.ptyId), owner)
+    }
+    return {
+      ...instance,
+      id,
+      projectId: scopedProjectId(owner.serverId, instance.projectId),
+      ...(instance.workspaceId
+        ? { workspaceId: scopedId("ses", owner.serverId, instance.workspaceId) }
+        : {}),
+      ...(instance.ptyId
+        ? { ptyId: this.scopePtyId(owner.serverId, instance.ptyId) }
+        : {}),
+    }
+  }
+
+  private scopeProcessOutput(
+    serverId: string,
+    output: ToolUse["output"],
+  ): ToolUse["output"] {
+    if (output.kind !== "process") return output
+    return {
+      ...output,
+      terminalInstanceId: scopedTerminalId(serverId, output.terminalInstanceId),
+      ...(output.ptyId
+        ? { ptyId: this.scopePtyId(serverId, output.ptyId) }
+        : {}),
     }
   }
 
@@ -533,7 +682,7 @@ export class MultiServerHostClient {
         }
       case "ToolUseOutputChanged":
         if (event.output.kind === "process" && event.output.ptyId) {
-          this.ptyOwners.set(event.output.ptyId, {
+          this.ptyOwners.set(this.scopePtyId(connection.definition.id, event.output.ptyId), {
             serverId: connection.definition.id,
             localId: event.toolUseId,
           })
@@ -541,12 +690,139 @@ export class MultiServerHostClient {
         return {
           ...event,
           toolUseId: publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
+          output: this.scopeProcessOutput(connection.definition.id, event.output),
         }
       case "ToolUseArchived":
         return {
           ...event,
           toolUseId: publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
         }
+    }
+  }
+
+  private createTerminal(): JetElectronTerminal {
+    const self = this
+    return {
+      create: async (cwdUri, launch) => {
+        const connection = self.activeConnection()
+        const local = await connection.api.terminal.create(cwdUri, launch)
+        const id = self.scopePtyId(connection.definition.id, local.id)
+        self.ptyOwners.set(id, { serverId: connection.definition.id, localId: local.id })
+        return { ...local, id }
+      },
+      attach: (id) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.attach(owner.localId)
+      },
+      write: (id, data) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.write(owner.localId, data)
+      },
+      writeBinary: (id, data) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.writeBinary(owner.localId, data)
+      },
+      resize: (id, cols, rows) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.resize(owner.localId, cols, rows)
+      },
+      acknowledgeData: (id, count) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.acknowledgeData(owner.localId, count)
+      },
+      markReplayReady: (id) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.markReplayReady(owner.localId)
+      },
+      getCwd: (id) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.getCwd(owner.localId)
+      },
+      getForegroundProcess: (id) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.getForegroundProcess(owner.localId)
+      },
+      onData: (id, callback) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.onData(owner.localId, callback)
+      },
+      onExit: (callback) => {
+        self.terminalExitListeners.add(callback)
+        return () => self.terminalExitListeners.delete(callback)
+      },
+      dispose: (id) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.dispose(owner.localId)
+      },
+      listInstances: async projectId => {
+        const owner = self.ownerForProject(projectId)
+        const values = await self.connectionForOwner(owner).api.terminal.listInstances(
+          localProjectId(owner, projectId, self.projectOwners),
+        )
+        return values.map(value => self.scopeTerminalInstance(self.connectionForOwner(owner), value))
+      },
+      createInstance: async request => {
+        const owner = self.ownerForProject(request.projectId)
+        const connection = self.connectionForOwner(owner)
+        const local = await connection.api.terminal.createInstance({
+          ...request,
+          projectId: localProjectId(owner, request.projectId, self.projectOwners),
+        })
+        return self.scopeTerminalInstance(connection, local)
+      },
+      restartInstance: async request => {
+        const owner = self.terminalInstanceOwners.get(request.id) ?? self.ownerForPty(request.id)
+        const localId = self.terminalInstanceOwners.get(request.id)?.localId ?? owner.localId
+        const local = await self.connectionForOwner(owner).api.terminal.restartInstance({ ...request, id: localId })
+        return local ? self.scopeTerminalInstance(self.connectionForOwner(owner), local) : null
+      },
+      resumeInstance: async request => {
+        const owner = self.terminalInstanceOwners.get(request.id) ?? self.ownerForPty(request.id)
+        const localId = self.terminalInstanceOwners.get(request.id)?.localId ?? owner.localId
+        const local = await self.connectionForOwner(owner).api.terminal.resumeInstance({ ...request, id: localId })
+        return local ? self.scopeTerminalInstance(self.connectionForOwner(owner), local) : null
+      },
+      closeInstance: async request => {
+        const owner = self.terminalInstanceOwners.get(request.id) ?? self.ownerForPty(request.id)
+        const localId = self.terminalInstanceOwners.get(request.id)?.localId ?? owner.localId
+        const local = await self.connectionForOwner(owner).api.terminal.closeInstance({ ...request, id: localId })
+        return local ? self.scopeTerminalInstance(self.connectionForOwner(owner), local) : null
+      },
+      getInstanceTranscript: (id) => {
+        const owner = self.terminalInstanceOwners.get(id) ?? self.ownerForPty(id)
+        const localId = self.terminalInstanceOwners.get(id)?.localId ?? owner.localId
+        return self.connectionForOwner(owner).api.terminal.getInstanceTranscript(localId)
+      },
+      onInstanceEvent: (callback) => {
+        self.terminalInstanceListeners.add(callback)
+        return () => self.terminalInstanceListeners.delete(callback)
+      },
+      acquireLease: (id, mode) => {
+        const owner = self.ownerForPty(id)
+        return mode === undefined
+          ? self.connectionForOwner(owner).api.terminal.acquireLease(owner.localId)
+          : self.connectionForOwner(owner).api.terminal.acquireLease(owner.localId, mode)
+      },
+      renewLease: (id, leaseId) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.renewLease(owner.localId, leaseId)
+      },
+      releaseLease: (id, leaseId) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.releaseLease(owner.localId, leaseId)
+      },
+      requestControl: id => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.requestControl(owner.localId)
+      },
+      transferControl: (id, leaseId, targetClientId) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.transferControl(owner.localId, leaseId, targetClientId)
+      },
+      listViewers: id => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.listViewers(owner.localId)
+      },
     }
   }
 
@@ -866,27 +1142,40 @@ export class MultiServerHostClient {
           serverId: connection.definition.id,
           localId: project.projectId,
         })
-        self.projectOwners.set(scopedProjectId(connection.definition.id, project.projectId), {
+        const scoped = scopedProjectId(connection.definition.id, project.projectId)
+        self.projectOwners.set(scoped, {
           serverId: connection.definition.id,
           localId: project.projectId,
         })
-        return project
+        return { ...project, projectId: scoped }
       },
       onEvent: callback => self.onToolEvent(callback),
       listProjects: async () => {
-        const connection = self.activeConnection()
-        const values = await connection.api.tools.listProjects()
-        return values.map(project => {
-          self.projectOwners.set(project.projectId, {
-            serverId: connection.definition.id,
-            localId: project.projectId,
-          })
-          self.projectOwners.set(scopedProjectId(connection.definition.id, project.projectId), {
-            serverId: connection.definition.id,
-            localId: project.projectId,
-          })
-          return project
-        })
+        const results: Array<{ projectId: string; projectPath: string; projectName: string }> = []
+        for (const connection of self.connections.values()) {
+          try {
+            const values = await connection.api.tools.listProjects()
+            connection.status = "connected"
+            for (const project of values) {
+              self.projectOwners.set(project.projectId, {
+                serverId: connection.definition.id,
+                localId: project.projectId,
+              })
+              const scoped = scopedProjectId(connection.definition.id, project.projectId)
+              self.projectOwners.set(scoped, {
+                serverId: connection.definition.id,
+                localId: project.projectId,
+              })
+              results.push({ ...project, projectId: scoped })
+            }
+          } catch (error) {
+            connection.status = "offline"
+            connection.error = errorMessage(error)
+          }
+        }
+        self.snapshot = self.makeSnapshot()
+        self.publish()
+        return results
       },
     }
   }
@@ -918,7 +1207,12 @@ export class MultiServerHostClient {
     const active = this.activeServerId
       ? this.connections.get(this.activeServerId)
       : undefined
-    if (active) Object.assign(this.ports, active.api, { tools: this.tools })
+    if (active) {
+      Object.assign(this.ports, active.api, {
+        tools: this.tools,
+        terminal: this.aggregateTerminal,
+      })
+    }
     this.globalTarget?.setYaade(this.ports)
   }
 
