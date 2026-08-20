@@ -16,7 +16,6 @@ test-results
 .synara
 .pnpm-store
 **/target
-apps/yaade/src-tauri/binaries
 apps/yaade/src-tauri/generated
 apps/jet-tauri/src-tauri/capabilities/e2e.json
 .yaade

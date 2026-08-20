@@ -1,8 +1,8 @@
 import { DatabaseSync } from "node:sqlite"
 import { performance } from "node:perf_hooks"
 import { test } from "@playwright/test"
-import { EventHub } from "../../apps/host-server/src/events.js"
-import { NotificationService } from "../../apps/host-server/src/notifications/service.js"
+import { EventHub } from "../../packages/yaade-host-server/src/events.js"
+import { NotificationService } from "../../packages/yaade-host-server/src/notifications/service.js"
 import { assertBudget, logBenchResult, runBench } from "./_bench.js"
 
 test("bench server event replay ingestion", async () => {

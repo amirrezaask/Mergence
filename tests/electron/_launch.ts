@@ -38,7 +38,7 @@ export function hasPtySpawn(): boolean {
 /**
  * Shared E2E entry. Historical specs remain under tests/electron/.
  *
- * Each `launchJet()` call spins up its own `@yaade/host-server` + browser
+ * Each `launchJet()` call spins up its own `@yaade/server` + browser
  * context and tears it down in the test's `finally` via `app.close()`.
  * The default suite is serial because PTY/LSP timing becomes flaky under host
  * contention; `PLAYWRIGHT_WORKERS=N` remains available for targeted runs.

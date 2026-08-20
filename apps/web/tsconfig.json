@@ -8,5 +8,5 @@
       "@/*": ["../../packages/yaade-ui/src/*"]
     }
   },
-  "include": ["src/jet-adapter.ts", "vite.config.ts"]
+  "include": ["vite.config.ts"]
 }

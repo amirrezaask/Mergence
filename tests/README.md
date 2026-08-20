@@ -1,10 +1,10 @@
 # Browser verification
 
-The historical `tests/electron/` directory contains the shared product scenarios; the name is retained to avoid a noisy move. The suite now drives Chromium against the standalone Rust server.
+The historical `tests/electron/` directory contains the shared product scenarios; the name is retained to avoid a noisy move. The suite drives Chromium against a separately launched server application.
 
 ```bash
-pnpm test:e2e
-YAADE_HEADED=1 pnpm test:e2e
+pnpm test:web:e2e
+YAADE_HEADED=1 pnpm test:web:e2e
 pnpm test:bench
 ```
 
@@ -16,7 +16,7 @@ Failures retain Playwright traces, screenshots, video, browser console output, a
 
 The suite is split by the boundary it protects rather than by implementation file:
 
-- **Host/server tests** cover SQLite migrations and recovery, project/checkouts, ToolUse revisions, PTY lifecycle and supervisor reattach, flow control, binary terminal frames, WebSocket replay/gaps, authorization, notifications, agent telemetry, Git commands, and the two-client live PTY fan-out (`apps/host-server/src/server-multiclient.test.ts`).
+- **Host/server tests** cover SQLite migrations and recovery, project/checkouts, ToolUse revisions, PTY lifecycle and supervisor reattach, flow control, binary terminal frames, WebSocket replay/gaps, authorization, notifications, agent telemetry, Git commands, and the two-client live PTY fan-out (`packages/yaade-host-server/src/server-multiclient.test.ts`).
 - **Host-client/RPC tests** cover route schemas, typed errors, HTTP text-file versioning, realtime decoding, reconnect backoff, delta replay, and optional-argument serialization.
 - **Package tests** cover session routing/state, tiling, keymaps, terminal rendering/input, Git review mutation queues and hunk patching, themes, panels, telemetry reduction, and desktop security policy.
 - **Browser journeys** cover release boot, shell chrome, settings/focus restoration, terminal input and replay after reload, durable Windows/panes, project discovery, split/zoom controls, mobile terminal accessory keys, Git history/no-repository/working-tree staging/commit/mobile diff, DA1 compatibility, and a long-running agent with permission attention.
@@ -26,7 +26,8 @@ A product change is not covered until the relevant boundary test exists. Run the
 ```bash
 pnpm typecheck
 pnpm lint
-pnpm test
-pnpm test:e2e
+pnpm test:server
+pnpm test:web
 pnpm test:desktop
+pnpm test:web:e2e
 ```

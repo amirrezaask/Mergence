@@ -7,7 +7,7 @@
  * scenario names, message shapes and CLI flags are kept compatible so the ACP
  * matrix tests and E2E specs observe identical behavior.
  *
- * Usage: tsx apps/host-server/mocks/mock-acp.ts --scenario echo
+ * Usage: tsx packages/yaade-host-server/mocks/mock-acp.ts --scenario echo
  */
 import fs from "node:fs"
 import path from "node:path"

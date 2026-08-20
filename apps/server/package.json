@@ -1,0 +1,21 @@
+{
+  "name": "@yaade/server",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/bin.ts --port 4747",
+    "start": "tsx src/bin.ts",
+    "build": "node ../../scripts/build-server.mjs",
+    "typecheck": "tsc --noEmit",
+    "test": "pnpm --filter @yaade/host-server test"
+  },
+  "dependencies": {
+    "@yaade/host-server": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.29",
+    "tsx": "^4.23.0",
+    "typescript": "^7.0.2"
+  }
+}

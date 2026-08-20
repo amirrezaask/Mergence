@@ -6,7 +6,7 @@
  * (apps/server/src/bin/yaade-mock_claude_sdk.rs). Emits the same
  * `control_request` / `control_response` / `stream_event` / `result` envelopes.
  *
- * Usage: tsx apps/host-server/mocks/mock-claude-sdk.ts
+ * Usage: tsx packages/yaade-host-server/mocks/mock-claude-sdk.ts
  */
 
 type JsonPrimitive = string | number | boolean | null | undefined

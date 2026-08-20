@@ -7,7 +7,7 @@
  * (apps/server/src/bin/yaade-mock_line_rpc.rs). Message shapes and control
  * flow are preserved so E2E specs observe identical behavior.
  *
- * Usage: tsx apps/host-server/mocks/mock-line-rpc.ts
+ * Usage: tsx packages/yaade-host-server/mocks/mock-line-rpc.ts
  */
 
 type JsonPrimitive = string | number | boolean | null | undefined

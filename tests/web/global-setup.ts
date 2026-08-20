@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process"
 import { readdirSync, statSync } from "node:fs"
 import { join } from "node:path"
 
-// Playwright runs global setup with cwd at the repo root (`pnpm test:e2e`).
+// Playwright runs global setup with cwd at the repo root (`pnpm test:web:e2e`).
 const repoRoot = process.cwd()
 
 const IGNORED_DIRS = new Set(["node_modules", "dist", ".git", ".turbo", "coverage"])
@@ -33,7 +33,7 @@ function newestMtime(path: string, acc: { value: number }): void {
 function distIsFresh(): boolean {
   let distStat
   try {
-    distStat = statSync(join(repoRoot, "apps", "yaade", "dist", "index.html"))
+    distStat = statSync(join(repoRoot, "apps", "web", "dist", "index.html"))
   } catch {
     return false
   }
@@ -54,8 +54,8 @@ function distIsFresh(): boolean {
 export default function globalSetup(): void {
   if (process.env.JET_SKIP_E2E_BUILD === "1") return
   if (distIsFresh()) {
-    console.log("[global-setup] apps/yaade/dist is newer than sources; skipping SPA build")
+    console.log("[global-setup] apps/web/dist is newer than sources; skipping SPA build")
     return
   }
-  execFileSync("pnpm", ["--filter", "yaade", "build"], { stdio: "inherit" })
+  execFileSync("pnpm", ["--filter", "@yaade/web", "build"], { stdio: "inherit" })
 }

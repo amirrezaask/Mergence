@@ -6,11 +6,12 @@
   "main": "src/main.mjs",
   "scripts": {
     "dev": "electron-forge start",
+    "build": "node ../../scripts/build-desktop.mjs",
     "test": "node --test src/policy.test.mjs",
     "typecheck": "tsc --noEmit",
-    "package": "pnpm --workspace-root build -- --server-only && node scripts/prepare-packaging.mjs && node scripts/run-forge.mjs package",
-    "make": "pnpm --workspace-root build -- --server-only && node scripts/prepare-packaging.mjs && node scripts/run-forge.mjs make",
-    "make:dmg": "pnpm --workspace-root build -- --server-only && pnpm run make:dmg:prepared",
+    "package": "node scripts/prepare-packaging.mjs && node scripts/run-forge.mjs package",
+    "make": "node scripts/prepare-packaging.mjs && node scripts/run-forge.mjs make",
+    "make:dmg": "pnpm run make:dmg:prepared",
     "make:dmg:prepared": "node scripts/prepare-packaging.mjs && node scripts/run-forge.mjs make --targets dmg"
   },
   "devDependencies": {

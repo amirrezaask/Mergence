@@ -13,10 +13,11 @@ Do not add standalone Agent, Search, Editor, or Neovim ToolUses. Agent CLIs run 
 
 ## Layout
 
-- `apps/host-server` — Effect-based HTTP/WS host and ToolUse lifecycle
-- `apps/yaade` — Vite frontend
+- `apps/server` — thin server executable that uses `@yaade/host-server`
+- `apps/web` — thin Vite web executable that uses `@yaade/app`
 - `packages/yaade-app` — React Session shell
 - `packages/yaade-rpc` — Effect Schema contracts
+- `packages/yaade-host-server` — reusable HTTP/WS host and ToolUse lifecycle
 - `packages/yaade-host-client` — browser transport
 - `packages/yaade-node-host` — filesystem, Git, and PTY implementation
 - `packages/yaade-panels` — dock tree
@@ -30,14 +31,32 @@ Keep package imports acyclic. Lower layers must not import React.
 
 ```bash
 pnpm install
-pnpm -r typecheck
-pnpm test
+pnpm typecheck
+pnpm test:server
+pnpm test:web
+pnpm test:desktop
 pnpm lint
-pnpm test:e2e
-pnpm build
+pnpm build:server
+pnpm build:web
+pnpm build:desktop
 ```
 
 Tests use `node:test` through `tsx`, not Vitest. App tests must be listed in `packages/yaade-app/package.json`.
+
+## Application isolation
+
+The repository has exactly three executable applications:
+
+- `apps/server` owns only the server process entrypoint.
+- `apps/web` owns only Vite configuration and web packaging.
+- `apps/desktop` owns only Electron lifecycle and packaging.
+
+Reusable implementation belongs in `packages/`. Applications may depend on
+packages, but they must not import another application's source. The three
+root build and development commands are intentionally independent:
+`build:server`, `build:web`, `build:desktop` and `dev:server`, `dev:web`,
+`dev:desktop`. Web development does not start a host process; start
+`dev:server` separately when the web proxy needs one.
 
 ## Architecture invariants
 

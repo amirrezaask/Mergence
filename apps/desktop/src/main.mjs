@@ -21,8 +21,8 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const LOOPBACK_HOST = "127.0.0.1"
-const HOST_ENTRY = path.join("apps", "host-server", "src", "bin.ts")
-const VITE_ENTRY = path.join("apps", "yaade", "node_modules", "vite", "bin", "vite.js")
+const HOST_ENTRY = path.join("packages", "yaade-host-server", "src", "cli.ts")
+const VITE_ENTRY = path.join("apps", "web", "node_modules", "vite", "bin", "vite.js")
 const HOISTED_VITE_ENTRY = path.join("node_modules", "vite", "bin", "vite.js")
 const TSX_ENTRY = path.join("node_modules", "tsx", "dist", "cli.mjs")
 const CHILD_READY_TIMEOUT_MS = 45_000
@@ -179,7 +179,7 @@ function resolveRuntimeRoot() {
   if (required.every(isFile)) return runtimeRoot
 
   throw new Error(
-    `Packaged YAADE runtime is missing from ${runtimeRoot}. Run pnpm desktop:package after pnpm build.`,
+    `Packaged YAADE runtime is missing from ${runtimeRoot}. Run pnpm build:desktop before packaging.`,
   )
 }
 
@@ -399,7 +399,7 @@ async function launchVite(repoRoot, hostPort) {
   }
 
   const child = spawn(command, [viteEntry], {
-    cwd: path.join(repoRoot, "apps", "yaade"),
+    cwd: path.join(repoRoot, "apps", "web"),
     env: childEnvironment({
       JET_HOST: LOOPBACK_HOST,
       JET_WEB_HOST: LOOPBACK_HOST,

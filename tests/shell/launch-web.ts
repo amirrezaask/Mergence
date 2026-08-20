@@ -9,7 +9,7 @@ import { wrapPlaywrightPage } from "./playwright-driver.js"
 import type { LaunchShellResult } from "./driver.js"
 
 const REPO_ROOT = path.resolve(__dirname, "../..")
-const HOST_SERVER_ENTRY = path.join(REPO_ROOT, "apps/host-server/src/bin.ts")
+const HOST_SERVER_ENTRY = path.join(REPO_ROOT, "packages/yaade-host-server/src/cli.ts")
 
 function resolveTsxCli(): string {
   const candidates = [
@@ -206,7 +206,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
     JET_ALLOWED_ROOTS: `${REPO_ROOT},${temporaryRoot},${path.dirname(sourceWorkspace)}`,
     YAADE_E2E: "1",
     // Installed YAADE may export JET_STATIC_DIR; e2e must serve the repo build.
-    JET_STATIC_DIR: path.join(REPO_ROOT, "apps/yaade/dist"),
+    JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
     ...options.env,
   }
 

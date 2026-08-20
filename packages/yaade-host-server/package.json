@@ -3,8 +3,10 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "bin": {
-    "yaade-host-server": "./src/bin.ts"
+  "exports": {
+    ".": "./src/index.ts",
+    "./bin": "./src/bin.ts",
+    "./cli": "./src/cli.ts"
   },
   "scripts": {
     "dev": "tsx watch src/bin.ts",

@@ -1,14 +1,11 @@
 #!/usr/bin/env node
 /**
- * Stage self-contained YAADE runtime (SPA + bundled host + Node).
+ * Stage a self-contained runtime for the desktop application.
  *
- * Default output: dist/runtime/
- *   yaade                  launcher → host-server on an ephemeral port + static SPA
- *   web/                   Vite SPA dist
- *   backend/               esbuild bundles + native deps (node-pty, fff, ripgrep)
- *   node/                  official Node binary (ABI-matched for natives)
- *
- * Override output: YAADE_PACK_DIR or first CLI arg.
+ * The staged runtime contains the web dist, bundled host, native modules, and
+ * an ABI-matched Node binary. The standalone server build uses the same
+ * backend staging helpers without copying the web application; see
+ * stageServerPack below.
  */
 import { spawnSync } from "node:child_process"
 import { createRequire } from "node:module"
@@ -20,7 +17,7 @@ import { fileURLToPath } from "node:url"
 
 const require = createRequire(import.meta.url)
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const webSrc = path.join(repoRoot, "apps/yaade/dist")
+const webSrc = path.join(repoRoot, "apps/web/dist")
 
 function resolvePackDir() {
   const fromEnv = process.env.YAADE_PACK_DIR
@@ -36,19 +33,19 @@ function run(command, args, cwd = repoRoot) {
 }
 
 function resolveEsbuild() {
-  const vitePkg = path.dirname(
-    require.resolve("vite/package.json", { paths: [path.join(repoRoot, "apps/yaade")] }),
-  )
-  return require(require.resolve("esbuild", { paths: [vitePkg] }))
+  require.resolve("esbuild/package.json", { paths: [repoRoot] })
+  return require("esbuild")
 }
 
-async function bundleBackends(backendDir) {
+export async function bundleBackends(
+  backendDir,
+  entryPoint = path.join(repoRoot, "packages/yaade-host-server/src/cli.ts"),
+) {
   const esbuild = resolveEsbuild()
   fs.mkdirSync(backendDir, { recursive: true })
   for (const stale of ["host-server.mjs", "agent-server.mjs", "host-server.cjs", "agent-server.cjs"]) {
     fs.rmSync(path.join(backendDir, stale), { force: true })
   }
-  // Banner defines `require` before esbuild's __require shim so CJS deps (ws) resolve.
   const banner = {
     js: `import { createRequire as __yaadeCreateRequire } from "node:module";
 const require = __yaadeCreateRequire(import.meta.url);
@@ -61,8 +58,7 @@ const require = __yaadeCreateRequire(import.meta.url);
     target: "node22",
     packages: "bundle",
     banner,
-    // @vscode/ripgrep must stay external: its JS require.resolve()'s the
-    // platform package (@vscode/ripgrep-<os>-<arch>) at runtime.
+    // These modules contain native binaries or resolve platform packages at runtime.
     external: [
       "node-pty",
       "@ff-labs/fff-node",
@@ -73,7 +69,7 @@ const require = __yaadeCreateRequire(import.meta.url);
   }
   await esbuild.build({
     ...common,
-    entryPoints: [path.join(repoRoot, "apps/host-server/src/bin.ts")],
+    entryPoints: [entryPoint],
     outfile: path.join(backendDir, "host-server.mjs"),
   })
   console.log("Bundled host-server.mjs")
@@ -103,10 +99,9 @@ function fixPackagedNodePtyPerms(backendDir) {
 
 function installBackendNatives(backendDir) {
   writeBackendPackageJson(backendDir)
-  // Fresh install against the Node we will ship (system Node during build — same major).
   run("npm", ["install", "--omit=dev", "--no-fund", "--no-audit"], backendDir)
   fixPackagedNodePtyPerms(backendDir)
-  // Ensure platform ripgrep binary is executable (tar extract can drop +x).
+
   const rgBinName = process.platform === "win32" ? "rg.exe" : "rg"
   const vscodeMods = path.join(backendDir, "node_modules", "@vscode")
   if (fs.existsSync(vscodeMods)) {
@@ -116,7 +111,7 @@ function installBackendNatives(backendDir) {
       if (fs.existsSync(rgBin)) fs.chmodSync(rgBin, 0o755)
     }
   }
-  // Fail the build if @vscode/ripgrep cannot resolve its platform binary.
+
   const probe = spawnSync(
     process.execPath,
     [
@@ -202,13 +197,10 @@ async function ensureNodeRuntime(packDir, nodeDest) {
   }
 
   fs.rmSync(nodeDest, { recursive: true, force: true })
-  const extractParent = packDir
-  fs.rmSync(path.join(extractParent, base), { recursive: true, force: true })
-  run("tar", ["-xzf", tarball, "-C", extractParent])
-  const extracted = path.join(extractParent, base)
-  if (!fs.existsSync(extracted)) {
-    throw new Error(`Node extract missing: ${extracted}`)
-  }
+  fs.rmSync(path.join(packDir, base), { recursive: true, force: true })
+  run("tar", ["-xzf", tarball, "-C", packDir])
+  const extracted = path.join(packDir, base)
+  if (!fs.existsSync(extracted)) throw new Error(`Node extract missing: ${extracted}`)
   fs.renameSync(extracted, nodeDest)
   const nodeBin = path.join(nodeDest, nodeBinRelative())
   if (!fs.existsSync(nodeBin)) throw new Error(`node binary missing at ${nodeBin}`)
@@ -216,52 +208,70 @@ async function ensureNodeRuntime(packDir, nodeDest) {
   console.log(`Node runtime ready: ${nodeBin}`)
 }
 
-function copyWebDist(webDest) {
-  if (!fs.existsSync(path.join(webSrc, "index.html"))) {
-    throw new Error(`Frontend dist missing at ${webSrc}; run vite build first`)
+function copyWebDist(source, destination) {
+  if (!fs.existsSync(path.join(source, "index.html"))) {
+    throw new Error(`Frontend dist missing at ${source}; run pnpm build:web first`)
   }
-  fs.rmSync(webDest, { recursive: true, force: true })
-  fs.cpSync(webSrc, webDest, { recursive: true })
-  console.log(`Copied SPA → ${webDest}`)
+  fs.rmSync(destination, { recursive: true, force: true })
+  fs.cpSync(source, destination, { recursive: true })
+  console.log(`Copied SPA → ${destination}`)
 }
 
-function writeLauncherScripts(packDir) {
+function writeLauncherScripts(packDir, { launcherName, includeWeb }) {
   const nodeRel = nodeBinRelative()
-  const hostLauncher = `#!/bin/sh
-# YAADE — self-contained server (release SPA + host API, ephemeral loopback port)
+  const staticArg = includeWeb ? `  --static-dir "$ROOT/web" \\\n` : ""
+  const launcher = `#!/bin/sh
+# YAADE — self-contained ${includeWeb ? "desktop runtime" : "server"}
 set -eu
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
 exec "$ROOT/node/${nodeRel}" "$ROOT/backend/host-server.mjs" \\
-  --static-dir "$ROOT/web" \\
-  "$@"
+${staticArg}  "$@"
 `
-  const hostPath = path.join(packDir, "yaade")
-  // Drop legacy agent launcher; rewrite host launcher fresh.
-  fs.rmSync(path.join(packDir, "yaade-agent"), { force: true })
-  fs.writeFileSync(hostPath, hostLauncher)
-  fs.chmodSync(hostPath, 0o755)
-  console.log(`Launchers: ${hostPath}`)
+  const launcherPath = path.join(packDir, launcherName)
+  for (const stale of ["yaade", "yaade-server", "yaade-agent"]) {
+    if (stale !== launcherName) fs.rmSync(path.join(packDir, stale), { force: true })
+  }
+  fs.writeFileSync(launcherPath, launcher)
+  fs.chmodSync(launcherPath, 0o755)
+  console.log(`Launcher: ${launcherPath}`)
+}
+
+async function stageBackendPack(packDir, options) {
+  const resolved = path.resolve(packDir)
+  const backendDir = path.join(resolved, "backend")
+  const nodeDest = path.join(resolved, "node")
+  const webDest = path.join(resolved, "web")
+
+  fs.mkdirSync(resolved, { recursive: true })
+  if (options.webSource) copyWebDist(options.webSource, webDest)
+  else fs.rmSync(webDest, { recursive: true, force: true })
+  await bundleBackends(backendDir, options.entryPoint)
+  installBackendNatives(backendDir)
+  await ensureNodeRuntime(resolved, nodeDest)
+  writeLauncherScripts(resolved, options)
+  console.log(`Runtime pack staged at ${resolved}`)
+  return resolved
 }
 
 export async function stageRuntimePack(packDir = resolvePackDir()) {
-  const resolved = path.resolve(packDir)
-  const webDest = path.join(resolved, "web")
-  const backendDir = path.join(resolved, "backend")
-  const nodeDest = path.join(resolved, "node")
+  return stageBackendPack(packDir, {
+    launcherName: "yaade",
+    includeWeb: true,
+    webSource: webSrc,
+    entryPoint: path.join(repoRoot, "packages/yaade-host-server/src/cli.ts"),
+  })
+}
 
-  fs.mkdirSync(resolved, { recursive: true })
-  copyWebDist(webDest)
-  await bundleBackends(backendDir)
-  installBackendNatives(backendDir)
-  await ensureNodeRuntime(resolved, nodeDest)
-  writeLauncherScripts(resolved)
-  console.log(`Runtime pack staged at ${resolved}`)
-  return resolved
+export async function stageServerPack(packDir = path.join(repoRoot, "dist/server-runtime")) {
+  return stageBackendPack(packDir, {
+    launcherName: "yaade-server",
+    includeWeb: false,
+    webSource: null,
+    entryPoint: path.join(repoRoot, "apps/server/src/bin.ts"),
+  })
 }
 
 const isMain =
   process.argv[1] && path.resolve(process.argv[1]) === path.resolve(fileURLToPath(import.meta.url))
 
-if (isMain) {
-  await stageRuntimePack()
-}
+if (isMain) await stageRuntimePack()

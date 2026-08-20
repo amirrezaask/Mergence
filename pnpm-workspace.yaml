@@ -1,5 +1,7 @@
 packages:
-  - "apps/*"
+  - "apps/desktop"
+  - "apps/web"
+  - "apps/server"
   - "packages/*"
 
 pnpm:

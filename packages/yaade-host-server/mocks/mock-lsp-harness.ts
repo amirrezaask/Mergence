@@ -64,7 +64,7 @@ export type WaitForMockLspOptions = {
   afterCaptureCount?: number;
 };
 
-const repoModuleDir = path.join(process.cwd(), "apps", "host-server", "mocks");
+const repoModuleDir = path.join(process.cwd(), "packages", "yaade-host-server", "mocks");
 const packageModuleDir = path.join(process.cwd(), "mocks");
 const moduleDir = fs.existsSync(repoModuleDir)
   ? repoModuleDir

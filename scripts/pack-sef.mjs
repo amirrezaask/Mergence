@@ -4,8 +4,8 @@
  *
  * Usage: node scripts/pack-sef.mjs <runtimeDir> <outfile>
  *
- * The resulting file extracts to ~/.cache/yaade/<hash>/ on first run, then
- * execs the inner `yaade` launcher (SPA + host API).
+ * The resulting file extracts to a cache directory on first run, then execs
+ * the selected launcher.
  */
 import { spawnSync } from "node:child_process"
 import crypto from "node:crypto"
@@ -28,14 +28,18 @@ function countLines(text) {
 /**
  * @param {string} runtimeDir
  * @param {string} outfile
+ * @param {{ launcher?: string; requireWeb?: boolean; cacheName?: string }} [options]
  */
-export function packSelfExtracting(runtimeDir, outfile) {
+export function packSelfExtracting(runtimeDir, outfile, options = {}) {
   const resolved = path.resolve(runtimeDir)
-  const launcher = path.join(resolved, "yaade")
+  const launcherName = options.launcher ?? "yaade"
+  const requireWeb = options.requireWeb ?? true
+  const cacheName = options.cacheName ?? "yaade"
+  const launcher = path.join(resolved, launcherName)
   if (!fs.existsSync(launcher)) {
     die(`Runtime launcher missing: ${launcher}`)
   }
-  if (!fs.existsSync(path.join(resolved, "web", "index.html"))) {
+  if (requireWeb && !fs.existsSync(path.join(resolved, "web", "index.html"))) {
     die(`Runtime SPA missing under ${resolved}/web`)
   }
   if (!fs.existsSync(path.join(resolved, "backend", "host-server.mjs"))) {
@@ -59,7 +63,7 @@ export function packSelfExtracting(runtimeDir, outfile) {
     // Do NOT zero-pad LINES — `$((00000025 + 1))` is octal in sh (→ wrong offset).
     // Placeholder width is irrelevant: substitution stays on one line either way.
     const stubTemplate = `#!/bin/sh
-# YAADE self-extracting server — extracts once, then runs the host + SPA.
+# YAADE self-extracting runtime — extracts once, then runs the selected app.
 set -eu
 HASH="${hash}"
 LINES=XXXXXXXX
@@ -68,7 +72,7 @@ case "$SELF" in
   /*) ;;
   *) SELF="$(pwd)/$SELF" ;;
 esac
-CACHE="\${XDG_CACHE_HOME:-$HOME/.cache}/yaade/$HASH"
+CACHE="\${XDG_CACHE_HOME:-$HOME/.cache}/${cacheName}/$HASH"
 READY="$CACHE/.ready"
 if [ ! -f "$READY" ]; then
   TMP="$CACHE.tmp.$$"
@@ -77,14 +81,14 @@ if [ ! -f "$READY" ]; then
   tail -n +"$((LINES + 1))" "$SELF" | tar -xzf - -C "$TMP"
   rm -rf "$CACHE"
   mv "$TMP" "$CACHE"
-  chmod +x "$CACHE/yaade" 2>/dev/null || true
+  chmod +x "$CACHE/${launcherName}" 2>/dev/null || true
   if [ -x "$CACHE/node/bin/node" ]; then chmod +x "$CACHE/node/bin/node"; fi
   find "$CACHE/backend/node_modules/node-pty" -name 'spawn-helper' -exec chmod +x {} + 2>/dev/null || true
   find "$CACHE/backend/node_modules/@vscode" -path '*/bin/rg' -exec chmod +x {} + 2>/dev/null || true
   find "$CACHE/backend/node_modules/@vscode" -path '*/bin/rg.exe' -exec chmod +x {} + 2>/dev/null || true
   touch "$READY"
 fi
-exec "$CACHE/yaade" "$@"
+exec "$CACHE/${launcherName}" "$@"
 `
     if (!stubTemplate.endsWith("\n")) {
       die("internal: stub template must end with newline")

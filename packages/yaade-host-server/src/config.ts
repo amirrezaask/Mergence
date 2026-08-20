@@ -1,7 +1,6 @@
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
-import { fileURLToPath } from "node:url"
 import { resolveLaunchTarget, type LaunchConfig } from "@yaade/node-host"
 import { pathAllowed } from "./sandbox.js"
 import { isLoopbackHostname } from "./security.js"
@@ -49,7 +48,10 @@ function parseArgs(argv: string[]): Record<string, string | boolean> {
   return out
 }
 
-export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConfig> {
+export async function loadConfig(
+  argv = process.argv.slice(2),
+  options: { defaultStaticDir?: string } = {},
+): Promise<HostConfig> {
   const args = parseArgs(argv)
   const home = os.homedir()
   const host = String(args.host ?? process.env.JET_HOST ?? "127.0.0.1")
@@ -115,14 +117,14 @@ export async function loadConfig(argv = process.argv.slice(2)): Promise<HostConf
     }
   }
 
-  const here = path.dirname(fileURLToPath(import.meta.url))
-  const repoDist = path.resolve(here, "../../yaade/dist")
   const staticOverride = args["static-dir"] ?? process.env.JET_STATIC_DIR
   const staticCandidate =
     typeof staticOverride === "string" && staticOverride.trim()
       ? path.resolve(staticOverride.trim())
-      : repoDist
-  const staticDir = fs.existsSync(staticCandidate) ? staticCandidate : null
+      : options.defaultStaticDir
+        ? path.resolve(options.defaultStaticDir)
+        : null
+  const staticDir = staticCandidate && fs.existsSync(staticCandidate) ? staticCandidate : null
 
   fs.mkdirSync(dataDir, { recursive: true })
 

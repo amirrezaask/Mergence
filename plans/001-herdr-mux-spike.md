@@ -7,7 +7,7 @@
 > in `plans/README.md` — unless a reviewer dispatched you and told you they
 > maintain the index.
 >
-> **Drift check (run first)**: `git diff --stat ce6a08dc..HEAD -- packages/yaade-rpc/src/herdr.ts packages/yaade-rpc/src/tool-session.ts packages/yaade-app/src/tools/ToolSessionApp.tsx packages/yaade-app/src/tools/tool-tiling.ts apps/host-server/src/tool-session-store.ts packages/yaade-node-host/src/terminal.ts packages/yaade-ui/src/panels/TerminalPanel.tsx`
+> **Drift check (run first)**: `git diff --stat ce6a08dc..HEAD -- packages/yaade-rpc/src/herdr.ts packages/yaade-rpc/src/tool-session.ts packages/yaade-app/src/tools/ToolSessionApp.tsx packages/yaade-app/src/tools/tool-tiling.ts packages/yaade-host-server/src/tool-session-store.ts packages/yaade-node-host/src/terminal.ts packages/yaade-ui/src/panels/TerminalPanel.tsx`
 > If any in-scope file changed since this plan was written, compare the
 > "Current state" excerpts against the live code before proceeding; on a
 > mismatch, treat it as a STOP condition.
@@ -107,7 +107,7 @@ Inspect live schema with `herdr api schema --json`. Methods that matter:
 Approximate size at `ce6a08dc`:
 
 - `packages/yaade-app/src/tools/ToolSessionApp.tsx` — 2556 lines, session shell
-- `apps/host-server/src/tool-session-store.ts` — 1276 lines, SQLite mux
+- `packages/yaade-host-server/src/tool-session-store.ts` — 1276 lines, SQLite mux
 - `packages/yaade-app/src/tools/tool-tiling.ts` — 502 lines, `yaade-panels` adapter
 - `packages/yaade-rpc/src/tool-session.ts` — 571 lines, Session/Tab/ToolUse schemas
 - `packages/yaade-node-host/src/terminal.ts` — 918 lines, PTY implementation
@@ -151,7 +151,7 @@ Host routes to keep even after a later cut: `git:*`, `fs:*` (if Git overlay stil
 **Out of scope** (do NOT touch):
 
 - `packages/yaade-app/src/tools/ToolSessionApp.tsx` and `tool-tiling.ts`
-- `apps/host-server/src/tool-session-store.ts` and `dispatch.ts` `tools:*` handlers
+- `packages/yaade-host-server/src/tool-session-store.ts` and `dispatch.ts` `tools:*` handlers
 - `packages/yaade-node-host/src/terminal.ts` and the PTY supervisor
 - `packages/yaade-rpc/src/routes.ts` / `tool-session.ts` (no route swaps)
 - Electron packaging, keybindings catalog, Git UI
@@ -304,7 +304,7 @@ Stop and report back (do not improvise) if:
 - Reviewer: the only valuable artifact is the verdict plus evidence. A green typecheck with no spike report is a failed execution.
 - If verdict is `VIEWER`, a follow-up plan should port **chrome only**: replace Session/Window pills with Herdr workspace/tab rail, keep `TerminalPanel`'s PTY attach. That still requires a policy for "who owns the PTY" — default: YAADE keeps PTYs, Herdr is not in-process. Mixing Herdr panes with YAADE PTYs is the rejected dual-mux.
 - If verdict is `FIRST_CLASS`, the next plan should:
-  1. Add a loopback Herdr bridge in `apps/host-server` modeled on `herdr-web/server/bridge.ts` (allowlist methods; newline JSON)
+  1. Add a loopback Herdr bridge in `packages/yaade-host-server` modeled on `herdr-web/server/bridge.ts` (allowlist methods; newline JSON)
   2. Render `snapshot.layouts` instead of `restoreToolWorkspace`
   3. Point Ghostty `onData` at `pane.send_input` and feed output from a **stream if it exists**, else document remaining `pane.read` gaps
   4. Bind Git overlay to focused pane cwd

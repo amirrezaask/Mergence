@@ -1,20 +1,16 @@
 {
-  "name": "yaade",
+  "name": "@yaade/web",
   "version": "0.0.1",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "node scripts/dev-web.mjs",
-    "dev:frontend": "node scripts/dev-frontend.mjs",
     "test": "node --test scripts/register-local-host.test.mjs",
     "build": "vite build && node scripts/verify-startup-graph.mjs && node scripts/compress-assets.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@yaade/agent-telemetry": "workspace:*",
-    "@yaade/app": "workspace:*",
-    "@yaade/host-client": "workspace:*",
-    "@yaade/shared": "workspace:*",
-    "@yaade/workspace": "workspace:*"
+    "@yaade/app": "workspace:*"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.1.8",
