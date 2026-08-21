@@ -11,6 +11,7 @@ import {
 } from "../../packages/yaade-rpc/src/tool-session.js"
 import {
   attachTerminal,
+  acquireLease,
   createDurableRuntimeHarness,
   createSession,
   createToolUse,
@@ -34,7 +35,9 @@ async function withHarness(
   run: (harness: Awaited<ReturnType<typeof createDurableRuntimeHarness>>) => Promise<void>,
   env?: Record<string, string>,
 ): Promise<void> {
-  const harness = await createDurableRuntimeHarness({ env })
+  const harness = await createDurableRuntimeHarness({
+    env: { YAADE_TERMINAL_RUNTIME_GENERATION: "legacy", ...env },
+  })
   try {
     await run(harness)
   } catch (error) {
@@ -231,6 +234,7 @@ test.describe("T — terminal checkpoint and replay fidelity", { tag: "@p1" }, (
         path.join(harness.root, "t06.json"),
         "T06",
       )
+      await acquireLease(api.origin, launched.ptyId, "legacy:runtime-e2e")
       await resizeTerminal(api.origin, launched.ptyId, 60, 18)
       await launched.agent.emitRange(1, 30)
       await waitUntil(async () => {

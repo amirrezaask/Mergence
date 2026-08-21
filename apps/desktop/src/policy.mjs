@@ -83,6 +83,7 @@ export function contentSecurityPolicy(allowedOrigins, development) {
   // HTTP(S)/WebSocket endpoint.
   const connectSources = [
     "'self'",
+    "data:",
     ...allowedOrigins,
     ...socketOrigins,
     "http:",

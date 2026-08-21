@@ -189,6 +189,9 @@ export type JetElectronTerminal = {
     id: string;
     title?: string;
     terminalEpoch?: string;
+    ownerId?: string;
+    ownerEpoch?: string;
+    protocolVersion?: number;
     checkpoint?: {
       checkpointVersion: 1;
       terminalEpoch: string;
@@ -211,6 +214,7 @@ export type JetElectronTerminal = {
     status: "running" | "exited";
     exitCode?: number;
     signal?: number;
+    semanticSnapshot?: import("@yaade/rpc").TerminalSemanticSnapshot | null;
   } | null>;
   write(id: string, data: string): Promise<void>;
   writeBinary(id: string, dataBase64: string): Promise<void>;
@@ -243,6 +247,10 @@ export type JetElectronTerminal = {
       replayNeedsQueryResponses?: boolean,
       replayTruncated?: boolean,
     ) => void,
+  ): () => void;
+  onSemanticSnapshot?(
+    id: string,
+    callback: (snapshot: import("@yaade/rpc").TerminalSemanticSnapshot) => void,
   ): () => void;
   onExit(
     cb: (id: string, exitCode: number, signal?: number) => void,
@@ -322,6 +330,9 @@ export type TerminalInstanceInfo = {
   endReason: string | null;
   telemetryError: string | null;
   revision: number;
+  ownerId?: string | null;
+  ownerEpoch?: string | null;
+  protocolVersion?: number | null;
 };
 
 export type TerminalInstanceEvent = {

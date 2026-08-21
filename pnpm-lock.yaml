@@ -6,12 +6,12 @@ settings:
 
 catalogs:
   default:
+    vite:
+      specifier: npm:@voidzero-dev/vite-plus-core@0.2.9
+      version: 0.2.9
     vite-plus:
       specifier: 0.2.9
       version: 0.2.9
-
-overrides:
-  vite: npm:@voidzero-dev/vite-plus-core@0.2.9
 
 importers:
 
@@ -33,7 +33,7 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       vite:
-        specifier: npm:@voidzero-dev/vite-plus-core@0.2.9
+        specifier: 'catalog:'
         version: '@voidzero-dev/vite-plus-core@0.2.9(@types/node@22.20.0)(jiti@2.7.0)(terser@5.50.0)(typescript@7.0.2)'
       vite-plus:
         specifier: 'catalog:'
@@ -110,13 +110,26 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       vite:
-        specifier: npm:@voidzero-dev/vite-plus-core@0.2.9
+        specifier: 'catalog:'
         version: '@voidzero-dev/vite-plus-core@0.2.9(@types/node@22.20.0)(jiti@2.7.0)(terser@5.50.0)(typescript@7.0.2)'
       vite-plus:
         specifier: 'catalog:'
         version: 0.2.9(@types/node@22.20.0)(@voidzero-dev/vite-plus-core@0.2.9(@types/node@22.20.0)(jiti@2.7.0)(terser@5.50.0)(typescript@7.0.2))(jiti@2.7.0)(terser@5.50.0)(typescript@7.0.2)
 
+  packages/ghostty-core:
+    devDependencies:
+      '@types/node':
+        specifier: ^22.15.29
+        version: 22.20.0
+      typescript:
+        specifier: ^7.0.2
+        version: 7.0.2
+
   packages/ghostty-react:
+    dependencies:
+      '@yaade/ghostty-core':
+        specifier: workspace:*
+        version: link:../ghostty-core
     devDependencies:
       '@types/react':
         specifier: ^19.1.8
@@ -199,7 +212,7 @@ importers:
         specifier: ^7.0.2
         version: 7.0.2
       vite:
-        specifier: npm:@voidzero-dev/vite-plus-core@0.2.9
+        specifier: 'catalog:'
         version: '@voidzero-dev/vite-plus-core@0.2.9(@types/node@24.13.3)(jiti@2.7.0)(terser@5.50.0)(typescript@7.0.2)'
       vite-plus:
         specifier: 'catalog:'
@@ -275,6 +288,9 @@ importers:
       '@vscode/ripgrep':
         specifier: 1.18.0
         version: 1.18.0
+      '@yaade/ghostty-core':
+        specifier: workspace:*
+        version: link:../ghostty-core
       '@yaade/rpc':
         specifier: workspace:*
         version: link:../yaade-rpc
@@ -2176,7 +2192,7 @@ packages:
   '@tailwindcss/vite@4.3.1':
     resolution: {integrity: sha512-hItDHuIIlEV61R+faXu66s1K36aTurO/Qw0e45Vskz57gXl9pWOT6eg3zmcEui6CZXddbN7zd41bwmvag4JGwQ==}
     peerDependencies:
-      vite: npm:@voidzero-dev/vite-plus-core@0.2.9
+      vite: ^5.2.0 || ^6 || ^7 || ^8
 
   '@tanstack/react-virtual@3.14.5':
     resolution: {integrity: sha512-4EKRXh7zBLkbKbFmG3AUVkircuHd+7OdT1pocJSepxtfBd3qnrJgJ5rtPkRYyo9fmyVb2+pI2xPy5oYvMLQy6A==}
@@ -2396,7 +2412,7 @@ packages:
       '@rolldown/plugin-babel': ^0.1.7 || ^0.2.0
       babel-plugin-react-compiler: ^1.0.0
       oxc-transform-react: ^0.145.0
-      vite: npm:@voidzero-dev/vite-plus-core@0.2.9
+      vite: ^8.0.0
     peerDependenciesMeta:
       '@rolldown/plugin-babel':
         optional: true
@@ -2422,7 +2438,7 @@ packages:
     resolution: {integrity: sha512-v0xaezt+DKEmKfaxg133ldzADrwLGd7Ze1MfQQTYfvs8OqZIwbxyxaYURivwV7sWy5fqn3rH5uOrSp07bp44Ow==}
     peerDependencies:
       msw: ^2.4.9
-      vite: npm:@voidzero-dev/vite-plus-core@0.2.9
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       msw:
         optional: true
@@ -4912,7 +4928,7 @@ packages:
       '@vitest/ui': 4.1.10
       happy-dom: '*'
       jsdom: '*'
-      vite: npm:@voidzero-dev/vite-plus-core@0.2.9
+      vite: ^6.0.0 || ^7.0.0 || ^8.0.0
     peerDependenciesMeta:
       '@edge-runtime/vm':
         optional: true

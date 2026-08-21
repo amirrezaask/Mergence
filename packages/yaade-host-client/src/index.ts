@@ -34,6 +34,10 @@ export {
 } from "./text-file-http.js";
 export type { YaadeHostTransport } from "./transport.js";
 export {
+  TerminalV3Store,
+  type TerminalV3ApplyResult,
+} from "./terminal-v3-store.js";
+export {
   MultiServerHostClient,
   createMultiServerHostClient,
   decodeStoredServerDefinitions,

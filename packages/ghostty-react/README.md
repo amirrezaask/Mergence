@@ -3,9 +3,11 @@
 A browser React component for rendering terminal sessions with the pinned
 `libghostty-vt` WebAssembly parser and a Canvas 2D grid renderer.
 
-The package owns terminal emulation, keyboard/IME input, selection, scrollback,
-links, cursor rendering, font metrics, and resize measurement. It deliberately
-does not own a PTY, transport, persistence, or application state.
+The package owns the React/Canvas renderer and browser input adapter. The
+environment-neutral terminal emulation, keyboard encoding, and pinned WASM
+loader live in `@yaade/ghostty-core`, which can use either the browser loader
+or the Node loader. The React package deliberately does not own a PTY,
+transport, persistence, or application state.
 
 ```tsx
 import {
@@ -32,8 +34,8 @@ terminalRef.current?.write(output)
 `linkMatcher` to provide application-specific link detection while keeping
 link activation in the host.
 
-The vendored Ghostty assets are pinned by `src/vendor/VERSION`. Rebuild them
-with:
+The vendored Ghostty assets are pinned by `@yaade/ghostty-core/src/vendor/VERSION`.
+Rebuild them with:
 
 ```sh
 vp run --filter @yaade/ghostty-react build:ghostty-wasm

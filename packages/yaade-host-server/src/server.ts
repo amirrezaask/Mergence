@@ -23,6 +23,8 @@ import {
   PathOutsideRootsError,
   PayloadTooLargeError,
   encodeTerminalDataFrame,
+  encodeTerminalStreamV3,
+  TerminalSemanticSnapshot,
   hostErrorHttpStatus,
   getHostRoute,
   hostErrorWire,
@@ -50,9 +52,18 @@ import {
   requestAuthToken,
   tokensEqual,
 } from "./security.js";
-import { deviceMayInvoke } from "./device-scopes.js";
+import {
+  makeHostTokenPrincipal,
+  makeLocalDevelopmentPrincipal,
+  makePairedDevicePrincipal,
+  RequestPrincipalRegistry,
+  type RequestPrincipal,
+} from "./principal.js"
+import { principalMayInvoke, principalMayUseCapability } from "./route-policy.js";
+import { httpRouteCapability } from "./http-route-policy.js";
 import { diagnosticBundle } from "./diagnostics.js";
 import { normalizeProviderHookRequest } from "./notifications/index.js";
+import { ClientSocketWriter } from "./ws/client-socket-writer.js";
 import {
   removeDaemonRuntimeManifest,
   writeDaemonRuntimeManifest,
@@ -60,9 +71,6 @@ import {
 
 const VERSION = "0.0.1";
 const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
-/** Slow clients get paused, then closed 1013 if they stay behind. */
-const MAX_WEBSOCKET_BUFFERED_BYTES = 2 * 1024 * 1024;
-const SOFT_WEBSOCKET_BUFFERED_BYTES = 512 * 1024;
 /** Bound concurrent /api/v1/rpc handlers to avoid stampede spikes. */
 const MAX_INFLIGHT_RPC = 32;
 const MAX_WS_COMMAND_QUEUE = 64;
@@ -70,6 +78,134 @@ const MAX_WS_PAYLOAD_BYTES = 1024 * 1024;
 const LEGACY_PROTOCOL_SOCKETS = new WeakSet<WebSocket>();
 const DEVICE_EVENT_SOCKETS = new WeakMap<WebSocket, { deviceId: string }>();
 const ACTIVE_EVENT_SOCKETS = new Set<WebSocket>();
+const CLIENT_SOCKETS = new Map<string, WebSocket>();
+const SOCKET_WRITERS = new WeakMap<WebSocket, ClientSocketWriter>();
+
+function socketWriter(ws: WebSocket): ClientSocketWriter {
+  const existing = SOCKET_WRITERS.get(ws);
+  if (existing) return existing;
+  const writer = new ClientSocketWriter({
+    get readyState() {
+      return ws.readyState;
+    },
+    get bufferedAmount() {
+      return ws.bufferedAmount;
+    },
+    send(data, cb) {
+      ws.send(typeof data === "string" ? data : Buffer.from(data), cb);
+    },
+    close(code, reason) {
+      ws.close(code, reason);
+    },
+    terminate() {
+      ws.terminate();
+    },
+  });
+  SOCKET_WRITERS.set(ws, writer);
+  return writer;
+}
+
+function sendSocketFrame(ws: WebSocket, data: string | Uint8Array): boolean {
+  return socketWriter(ws).enqueueReliable(data);
+}
+
+function sendReliableSocketJson(ws: WebSocket, value: unknown): boolean {
+  return socketWriter(ws).enqueueReliable(JSON.stringify(value));
+}
+
+function runtimeOwnerEpoch(runtime: HostRuntime, terminalId: string | null): string | null {
+  if (terminalId) {
+    const inspected = runtime.terminal.inspect(terminalId)
+    if (inspected && !(inspected instanceof Promise)) {
+      if (typeof inspected.ownerEpoch === "string" && inspected.ownerEpoch.length > 0) {
+        return inspected.ownerEpoch
+      }
+    }
+  }
+  const terminal = runtime.terminal;
+  if ("currentSupervisorEpoch" in terminal) {
+    const epoch = terminal.currentSupervisorEpoch;
+    if (typeof epoch === "string" && epoch.length > 0) return epoch;
+  }
+  return runtime.identity.serverEpoch;
+}
+
+function logUnexpectedWebSocketClose(details: {
+  readonly code: number;
+  readonly reason: string;
+  readonly bufferedBytes: number;
+  readonly pendingBytes: number;
+  readonly terminalId: string | null;
+  readonly ownerEpoch: string | null;
+}): void {
+  if (details.code === 1000 || details.code === 1001) return;
+  console.warn(
+    JSON.stringify({
+      event: "yaade.websocket.close",
+      code: details.code,
+      reason: details.reason,
+      bufferedBytes: details.bufferedBytes,
+      pendingBytes: details.pendingBytes,
+      terminalId: details.terminalId,
+      ownerEpoch: details.ownerEpoch,
+    }),
+  );
+}
+
+function disposeSocketWriter(
+  runtime: HostRuntime,
+  ws: WebSocket,
+  attachedTerminals: Set<string>,
+  code?: number,
+  reasonBuf?: Buffer,
+): void {
+  const writer = SOCKET_WRITERS.get(ws);
+  const terminalId =
+    [...attachedTerminals][0] ?? writer?.currentTerminalId ?? null;
+  logUnexpectedWebSocketClose({
+    code: code ?? 1006,
+    reason: reasonBuf?.toString("utf8") ?? "",
+    bufferedBytes: ws.bufferedAmount,
+    pendingBytes: writer?.pendingBytes ?? 0,
+    terminalId,
+    ownerEpoch: runtimeOwnerEpoch(runtime, terminalId),
+  });
+  writer?.dispose();
+  SOCKET_WRITERS.delete(ws);
+}
+
+async function releaseClosedWriter(
+  runtime: HostRuntime,
+  terminalId: string,
+  clientId: string,
+): Promise<void> {
+  const writer = await Promise.resolve(runtime.terminal.currentWriterLease(terminalId))
+  if (!writer || writer.connectionId === clientId) return
+  const socket = CLIENT_SOCKETS.get(writer.connectionId)
+  if (socket && socket.readyState !== WebSocket.OPEN) {
+    await Promise.resolve(runtime.terminal.releaseConnection(writer.connectionId))
+  }
+  const projected = runtime.leases.currentWriter(terminalId)
+  if (projected && projected.clientId !== clientId) {
+    const projectedSocket = CLIENT_SOCKETS.get(projected.clientId)
+    if (projectedSocket && projectedSocket.readyState !== WebSocket.OPEN) {
+      runtime.leases.releaseClient(projected.clientId, { preserveWriter: false })
+    }
+  }
+}
+
+/** Arming live output is a best-effort side effect of a realtime attach. */
+function armLiveViewerBestEffort(
+  runtime: HostRuntime,
+  terminalId: string,
+  clientId: string,
+): void {
+  // Start from a resolved promise so both synchronous routing failures and
+  // asynchronous supervisor disconnects stay inside the handled chain.
+  void Promise.resolve()
+    .then(() => runtime.terminal.armLiveViewer(terminalId, clientId))
+    .catch(() => undefined)
+}
 
 function closeDeviceEventSockets(deviceId: string): void {
   for (const socket of ACTIVE_EVENT_SOCKETS) {
@@ -104,11 +240,11 @@ function runHostRpc(
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
   channel: string,
   args: unknown[],
-  clientId: string,
+  principal: RequestPrincipal,
   signal?: AbortSignal,
 ): Promise<{ ok: true; value: unknown } | { ok: false; error: HostRpcError }> {
   return managed.runPromise(
-    dispatch(channel, args, clientId, signal).pipe(
+    dispatch(channel, args, principal, signal).pipe(
       Effect.map((value) => ({ ok: true as const, value })),
       Effect.catchAll((error) => Effect.succeed({ ok: false as const, error })),
     ),
@@ -131,6 +267,7 @@ export async function startHostServer(
       return yield* HostRuntimeTag;
     }),
   );
+  const requestPrincipalRegistry = new RequestPrincipalRegistry();
   let inflightRpc = 0;
 
   const server = createServer(async (req, res) => {
@@ -145,6 +282,7 @@ export async function startHostServer(
         endRpc: () => {
           inflightRpc = Math.max(0, inflightRpc - 1);
         },
+        principalRegistry: requestPrincipalRegistry,
       });
     } catch (error) {
       const status = error instanceof HttpError ? error.status : 500;
@@ -196,7 +334,7 @@ export async function startHostServer(
     }
     if (url.pathname === "/ws") {
       wss.handleUpgrade(req, socket, head, (ws) => {
-        handleEventSocket(runtime, managed, ws, url);
+        handleEventSocket(runtime, managed, ws, url, requestPrincipalRegistry);
       });
       return;
     }
@@ -325,6 +463,7 @@ type RpcGate = {
   getInflightRpc: () => number;
   beginRpc: () => boolean;
   endRpc: () => void;
+  principalRegistry: RequestPrincipalRegistry;
 };
 
 function isRuntimeAuthorized(
@@ -337,30 +476,99 @@ function isRuntimeAuthorized(
   return Boolean(token && runtime.devices.session(token))
 }
 
+function principalForToken(
+  runtime: HostRuntime,
+  token: string | null,
+  connectionId: string,
+  registry?: RequestPrincipalRegistry,
+  correlationId?: string | null,
+): RequestPrincipal | null {
+  const principal = runtime.config.authToken && token && tokensEqual(runtime.config.authToken, token)
+    ? makeHostTokenPrincipal(connectionId)
+    : token
+      ? (() => {
+          const session = runtime.devices.session(token)
+          return session
+            ? makePairedDevicePrincipal(session.deviceId, session.scopes, connectionId)
+            : null
+        })()
+      : !runtime.config.authToken && isLoopbackHostname(runtime.config.host)
+        ? makeLocalDevelopmentPrincipal(connectionId)
+        : null
+  return principal && registry
+    ? registry.resolve(principal, correlationId ?? null)
+    : principal
+}
+
+function principalForRequest(
+  runtime: HostRuntime,
+  req: IncomingMessage,
+  url: URL,
+  connectionId = randomUUID(),
+  registry?: RequestPrincipalRegistry,
+  correlationId?: string | null,
+): RequestPrincipal | null {
+  const principal = principalForToken(runtime, requestAuthToken(req, url), connectionId)
+  return principal && registry
+    ? registry.resolve(principal, correlationId ?? null)
+    : principal
+}
+
 function runtimeHealth(runtime: HostRuntime) {
   const supervisorState =
     "connectionState" in runtime.terminal
       ? String(runtime.terminal.connectionState)
-      : "healthy";
+      : null;
   const supervisorStatus =
-    supervisorState === "healthy"
+    supervisorState === "healthy" || supervisorState === null
       ? "healthy"
-      : supervisorState === "connecting" || supervisorState === "reconnecting"
+      : supervisorState === "connecting" || supervisorState === "reconnecting" || supervisorState === "degraded"
         ? "degraded"
         : "unhealthy";
   const supervisorMessage =
-    supervisorState === "reconnecting"
-      ? "Supervisor reconnecting"
-      : supervisorState === "incompatible"
-        ? "incompatible supervisor protocol"
-        : supervisorState;
+    supervisorState === null
+      ? "in-process terminal host"
+      : supervisorState === "reconnecting"
+        ? "Supervisor reconnecting"
+        : supervisorState === "incompatible"
+          ? "incompatible supervisor protocol"
+          : supervisorState;
+  let databaseStatus: "healthy" | "degraded" = "healthy";
+  try {
+    runtime.db.session().prepare("SELECT 1").get();
+  } catch {
+    databaseStatus = "degraded";
+  }
+  let storageStatus: "healthy" | "degraded" = "healthy";
+  let storageMessage = "runtime storage is available";
+  try {
+    fs.accessSync(runtime.config.dataDir, fs.constants.R_OK | fs.constants.W_OK);
+  } catch {
+    storageStatus = "degraded";
+    storageMessage = "runtime storage probe failed";
+  }
+  const persistenceDegraded =
+    "persistenceDegraded" in runtime.terminal && runtime.terminal.persistenceDegraded === true;
+  if (persistenceDegraded) {
+    storageStatus = "degraded";
+    storageMessage = "terminal recovery persistence is degraded";
+  }
+  const eventLoopStatus = "healthy" as const
+  const eventLoopMessage = "health request served on the HTTP event loop";
+  const degraded =
+    supervisorStatus === "degraded" ||
+    databaseStatus === "degraded" ||
+    storageStatus === "degraded";
+  const unhealthy =
+    supervisorStatus === "unhealthy" ||
+    databaseStatus === "degraded";
   return {
-    status: supervisorStatus === "healthy" ? "healthy" : "degraded",
-    database: { status: "healthy", message: "SQLite WAL is available" },
+    status: unhealthy ? "unhealthy" : degraded ? "degraded" : "healthy",
+    database: { status: databaseStatus, message: databaseStatus === "healthy" ? "SQLite WAL is available" : "SQLite probe failed" },
     supervisor: { status: supervisorStatus, message: supervisorMessage },
-    eventLoop: { status: "healthy", message: "HTTP event loop is responsive" },
-    storage: { status: "healthy", message: "runtime storage is available" },
-    connectedClients: 0,
+    eventLoop: { status: eventLoopStatus, message: eventLoopMessage },
+    storage: { status: storageStatus, message: storageMessage },
+    connectedClients: ACTIVE_EVENT_SOCKETS.size,
     runningTerminals: runtime.terminalInstances.listLive().length,
   } as const;
 }
@@ -529,8 +737,31 @@ async function handleHttp(
     return;
   }
 
+  const httpCapability = httpRouteCapability(pathname, req.method ?? "GET")
+  if (httpCapability) {
+    const principal = principalForRequest(runtime, req, url, randomUUID())
+    if (!principal || !principalMayUseCapability(principal, httpCapability)) {
+      sendJson(res, 403, {
+        error: {
+          code: "SCOPE_DENIED",
+          message: `route requires ${httpCapability} capability`,
+          details: {},
+        },
+      })
+      return
+    }
+  }
+
   if (req.method === "POST" && pathname === "/api/v1/security/pairing-code") {
-    if (!isAuthorizedRequest(req, runtime.config.authToken, url)) {
+    const principal = principalForRequest(
+      runtime,
+      req,
+      url,
+      randomUUID(),
+      rpcGate.principalRegistry,
+      "security:pairing-code",
+    )
+    if (!principal || !principalMayUseCapability(principal, "local-admin")) {
       sendJson(res, 403, {
         error: {
           code: "SCOPE_DENIED",
@@ -551,12 +782,40 @@ async function handleHttp(
   }
 
   if (req.method === "GET" && pathname === "/api/v1/security/devices") {
+    const principal = principalForRequest(
+      runtime,
+      req,
+      url,
+      randomUUID(),
+      rpcGate.principalRegistry,
+      "security:devices",
+    )
+    if (!principal || !principalMayUseCapability(principal, "admin")) {
+      sendJson(res, 403, {
+        error: { code: "SCOPE_DENIED", message: "admin scope required", details: {} },
+      })
+      return
+    }
     sendJson(res, 200, runtime.devices.list())
     return
   }
 
   const revokeDevice = /^\/api\/v1\/security\/devices\/([^/]+)$/.exec(pathname)
   if (req.method === "DELETE" && revokeDevice) {
+    const principal = principalForRequest(
+      runtime,
+      req,
+      url,
+      randomUUID(),
+      rpcGate.principalRegistry,
+      "security:revoke-device",
+    )
+    if (!principal || !principalMayUseCapability(principal, "admin")) {
+      sendJson(res, 403, {
+        error: { code: "SCOPE_DENIED", message: "admin scope required", details: {} },
+      })
+      return
+    }
     const deviceId = decodeURIComponent(revokeDevice[1] ?? "")
     runtime.devices.revoke(deviceId)
     closeDeviceEventSockets(deviceId)
@@ -748,14 +1007,27 @@ async function handleHttp(
         return;
       }
       const { channel, args, clientId } = decoded.right;
-      const hostAuthorized = isAuthorizedRequest(req, runtime.config.authToken, url);
-      const providedToken = requestAuthToken(req, url);
-      const deviceSession = !hostAuthorized && providedToken
-        ? runtime.devices.session(providedToken)
-        : null;
-      if (!hostAuthorized && deviceSession && !deviceMayInvoke(deviceSession.scopes, channel)) {
+      const principal = principalForRequest(
+        runtime,
+        req,
+        url,
+        randomUUID(),
+        rpcGate.principalRegistry,
+        clientId,
+      );
+      if (!principal) {
+        sendJson(res, 401, {
+          error: {
+            code: "UNAUTHORIZED",
+            message: "request principal could not be resolved",
+            details: {},
+          },
+        });
+        return;
+      }
+      if (!principalMayInvoke(principal, channel)) {
         const error = new ScopeDeniedError({
-          message: "device scope does not allow this operation",
+          message: "principal does not have the capability for this operation",
           channel,
         });
         sendJson(res, hostErrorHttpStatus(error), { error: hostErrorWire(error) });
@@ -783,7 +1055,7 @@ async function handleHttp(
         managed,
         channel,
         rpcArgs,
-        clientId,
+        principal,
         requestAbort.signal,
       );
       if (result.ok) {
@@ -804,6 +1076,20 @@ async function handleHttp(
   if (req.method === "POST" && pathname === "/api/v1/notifications/ingest") {
     const body = await readJson(req);
     try {
+      const principal = principalForRequest(
+        runtime,
+        req,
+        url,
+        randomUUID(),
+        rpcGate.principalRegistry,
+        "hook",
+      );
+      if (!principal || !principalMayInvoke(principal, "notifications:ingest")) {
+        throw new ScopeDeniedError({
+          message: "principal does not have the capability for this operation",
+          channel: "notifications:ingest",
+        });
+      }
       const providerParam = url.searchParams.get("provider");
       const sessionIdParam = url.searchParams.get("sessionId");
       const { parseAgentProviderParam } = await import("./agents/index.js");
@@ -831,7 +1117,7 @@ async function handleHttp(
         managed,
         "notifications:ingest",
         [normalized],
-        "hook",
+        principal,
       );
       if (!ingest.ok) {
         const wire = hostErrorWire(ingest.error);
@@ -1220,6 +1506,7 @@ function handleEventSocket(
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
   ws: WebSocket,
   url: URL,
+  principalRegistry: RequestPrincipalRegistry,
 ): void {
   const protocol = url.searchParams.get("protocol");
   if (protocol && protocol !== "1" && protocol !== "2") {
@@ -1227,10 +1514,24 @@ function handleEventSocket(
     return;
   }
   if (protocol === "2") {
-    handleModernEventSocket(runtime, managed, ws, url)
+    handleModernEventSocket(runtime, managed, ws, url, principalRegistry)
     return
   }
-  handleLegacyEventSocket(runtime, managed, ws, url)
+  const requestedClientId = url.searchParams.get("clientId")
+  const principal = principalForToken(
+    runtime,
+    url.searchParams.get("token"),
+    randomUUID(),
+    principalRegistry,
+    requestedClientId && /^[A-Za-z0-9-]{1,128}$/u.test(requestedClientId)
+      ? requestedClientId
+      : null,
+  )
+  if (!principal) {
+    ws.close(4003, "authentication required")
+    return
+  }
+  handleLegacyEventSocket(runtime, managed, ws, url, principal)
 }
 
 function handleLegacyEventSocket(
@@ -1238,15 +1539,13 @@ function handleLegacyEventSocket(
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
   ws: WebSocket,
   url: URL,
+  principal: RequestPrincipal,
 ): void {
   const since = Number(url.searchParams.get("since") ?? "0") || 0;
   if (url.searchParams.get("protocol") === "1") LEGACY_PROTOCOL_SOCKETS.add(ws);
-  const requestedClientId = url.searchParams.get("clientId");
-  const clientId =
-    requestedClientId && /^[A-Za-z0-9-]{1,128}$/.test(requestedClientId)
-      ? requestedClientId
-      : `ws-${randomUUID()}`;
-  const legacyClientId = `legacy:${clientId}`;
+  // The URL clientId is correlation data only. Authority identity comes from
+  // the server-created connection principal.
+  const clientId = principal.connectionId;
   // Subscribe before taking the replay snapshot. Events emitted while the
   // synchronous replay frames are being sent are buffered and delivered after
   // them; subscribing after replay creates a reconnect window that silently
@@ -1283,12 +1582,15 @@ function handleLegacyEventSocket(
     sendEventSocketMessage(ws, event, runtime, attachedTerminals);
   }
   pendingEvents.length = 0;
+  ACTIVE_EVENT_SOCKETS.add(ws);
+  CLIENT_SOCKETS.set(clientId, ws)
+  if (principal.deviceId) DEVICE_EVENT_SOCKETS.set(ws, { deviceId: principal.deviceId });
   let commandTail = Promise.resolve();
   let commandQueue = 0;
   ws.on("message", (data) => {
     const text = typeof data === "string" ? data : wsDataToText(data);
     if (text === "ping") {
-      ws.send("pong");
+      sendSocketFrame(ws, "pong");
       return;
     }
     let raw: unknown;
@@ -1299,16 +1601,18 @@ function handleLegacyEventSocket(
     }
     const cmd = tryDecodeTerminalWsCommand(raw);
     if (!cmd) return;
+    const checksClosedWriter =
+      cmd.op === "terminal:write" ||
+      cmd.op === "terminal:writeBinary" ||
+      cmd.op === "terminal:resize"
     if (commandQueue >= MAX_WS_COMMAND_QUEUE) {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(
-          JSON.stringify({
-            type: "terminal:result",
-            requestId: cmd.requestId,
-            ok: false,
-            error: { code: "HOST_BUSY", message: "too many in-flight terminal commands" },
-          }),
-        );
+        sendReliableSocketJson(ws, {
+          type: "terminal:result",
+          requestId: cmd.requestId,
+          ok: false,
+          error: { code: "HOST_BUSY", message: "too many in-flight terminal commands" },
+        });
       }
       return;
     }
@@ -1317,12 +1621,15 @@ function handleLegacyEventSocket(
       const id = cmd.args[0];
       if (typeof id === "string" && id) {
         attachedTerminals.add(id);
-        void Promise.resolve(runtime.terminal.armLiveViewer(id, legacyClientId));
+        armLiveViewerBestEffort(runtime, id, clientId)
       }
     }
-    const command = commandTail.then(() =>
-      runHostRpc(managed, cmd.op, cmd.args, legacyClientId),
-    );
+    const command = commandTail.then(async () => {
+      if (checksClosedWriter && typeof cmd.args[0] === "string") {
+        await releaseClosedWriter(runtime, cmd.args[0], clientId)
+      }
+      return runHostRpc(managed, cmd.op, cmd.args, principal)
+    });
     commandTail = command.then(
       () => {
         commandQueue = Math.max(0, commandQueue - 1);
@@ -1334,32 +1641,36 @@ function handleLegacyEventSocket(
     void command.then((result) => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (result.ok) {
-        ws.send(
-          JSON.stringify({
-            type: "terminal:result",
-            requestId: cmd.requestId,
-            ok: true,
-            value: result.value,
-          }),
-        );
+        sendReliableSocketJson(ws, {
+          type: "terminal:result",
+          requestId: cmd.requestId,
+          ok: true,
+          value: result.value,
+        });
         return;
       }
       const error = hostErrorWire(result.error);
-      ws.send(
-        JSON.stringify({
-          type: "terminal:result",
-          requestId: cmd.requestId,
-          ok: false,
-          error: { code: error.code, message: error.message },
-        }),
-      );
+      sendReliableSocketJson(ws, {
+        type: "terminal:result",
+        requestId: cmd.requestId,
+        ok: false,
+        error: { code: error.code, message: error.message },
+      });
     });
   });
-  ws.on("close", () => {
+  ws.on("close", (code, reason) => {
+    disposeSocketWriter(runtime, ws, attachedTerminals, code, reason);
     unsubscribe();
     LEGACY_PROTOCOL_SOCKETS.delete(ws);
-    runtime.leases.releaseClient(legacyClientId);
-    void Promise.resolve(runtime.terminal.resumeForClient(legacyClientId));
+    ACTIVE_EVENT_SOCKETS.delete(ws);
+    DEVICE_EVENT_SOCKETS.delete(ws);
+    if (CLIENT_SOCKETS.get(clientId) === ws) CLIENT_SOCKETS.delete(clientId)
+    // Legacy sockets did not expose an explicit transfer command. Release
+    // their writer on disconnect and promote an existing observer; this is a
+    // compatibility policy, not an authorization bypass.
+    void Promise.resolve(runtime.terminal.releaseConnection(clientId)).catch(() => undefined)
+    runtime.leases.releaseClient(clientId, { preserveWriter: false });
+    void Promise.resolve(runtime.terminal.resumeForClient(clientId));
   });
 }
 
@@ -1369,10 +1680,26 @@ function handleModernEventSocket(
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
   ws: WebSocket,
   url: URL,
+  principalRegistry: RequestPrincipalRegistry,
 ): void {
   const expectedToken = runtime.config.authToken
+  const requestedClientId = url.searchParams.get("clientId")
+  const correlationId = requestedClientId && /^[A-Za-z0-9-]{1,128}$/u.test(requestedClientId)
+    ? requestedClientId
+    : null
   if (!expectedToken) {
-    startModernEventSocket(runtime, managed, ws, url)
+    const principal = principalForToken(
+      runtime,
+      null,
+      randomUUID(),
+      principalRegistry,
+      correlationId,
+    )
+    if (!principal) {
+      ws.close(4003, "authentication required")
+      return
+    }
+    startModernEventSocket(runtime, managed, ws, url, principal)
     return
   }
   let authenticated = false
@@ -1397,12 +1724,20 @@ function handleModernEventSocket(
     authenticated = true
     clearTimeout(timeout)
     ws.off("message", authenticate)
-    const deviceSession = tokensEqual(expectedToken, record.token)
-      ? null
-      : runtime.devices.session(record.token)
-    startModernEventSocket(runtime, managed, ws, url, deviceSession ?? undefined)
+    const principal = principalForToken(
+      runtime,
+      record.token,
+      randomUUID(),
+      principalRegistry,
+      correlationId,
+    )
+    if (!principal) {
+      ws.close(4003, "authentication failed")
+      return
+    }
+    startModernEventSocket(runtime, managed, ws, url, principal)
   }
-  ws.send(JSON.stringify({ type: "protocol:auth-required" }))
+  sendSocketFrame(ws, JSON.stringify({ type: "protocol:auth-required" }))
   ws.on("message", authenticate)
 }
 
@@ -1411,13 +1746,11 @@ function startModernEventSocket(
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
   ws: WebSocket,
   url: URL,
-  deviceSession?: { deviceId: string; scopes: import("./device-auth.js").DeviceScope[] },
+  principal: RequestPrincipal,
 ): void {
-  const requestedClientId = url.searchParams.get("clientId");
-  const clientId =
-    requestedClientId && /^[A-Za-z0-9-]{1,128}$/.test(requestedClientId)
-      ? requestedClientId
-      : `ws-${randomUUID()}`;
+  // ClientId is only a namespaced correlation key. The registry maps it to a
+  // server-generated identity after authentication; it never grants scope.
+  const clientId = principal.connectionId;
   let synchronizing = true;
   const pendingEvents: HostEvent[] = [];
   const attachedTerminals = new Set<string>();
@@ -1433,13 +1766,13 @@ function startModernEventSocket(
   });
 
   try {
-    ws.send(JSON.stringify({
+    sendReliableSocketJson(ws, {
       type: "protocol:hello",
       identity: runtime.identity,
       capabilities: serverCapabilities(runtime),
-    }));
+    });
     const snapshot = buildRuntimeSnapshot(runtime);
-    ws.send(JSON.stringify(snapshot));
+    sendReliableSocketJson(ws, snapshot);
     const snapshotSequence = snapshot.cursor.sequence;
     synchronizing = false;
     for (const event of pendingEvents) {
@@ -1453,14 +1786,15 @@ function startModernEventSocket(
   }
 
   ACTIVE_EVENT_SOCKETS.add(ws);
-  if (deviceSession) DEVICE_EVENT_SOCKETS.set(ws, { deviceId: deviceSession.deviceId });
+  CLIENT_SOCKETS.set(clientId, ws)
+  if (principal.deviceId) DEVICE_EVENT_SOCKETS.set(ws, { deviceId: principal.deviceId });
 
   let commandTail = Promise.resolve();
   let commandQueue = 0;
   ws.on("message", data => {
     const text = typeof data === "string" ? data : wsDataToText(data);
     if (text === "ping") {
-      ws.send("pong");
+      sendSocketFrame(ws, "pong");
       return;
     }
     let raw: unknown;
@@ -1471,25 +1805,18 @@ function startModernEventSocket(
     }
     const cmd = tryDecodeTerminalWsCommand(raw);
     if (!cmd) return;
-    if (deviceSession && !deviceMayInvoke(deviceSession.scopes, cmd.op)) {
-      if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
-          type: "terminal:result",
-          requestId: cmd.requestId,
-          ok: false,
-          error: { code: "SCOPE_DENIED", message: "device scope does not allow this operation" },
-        }));
-      }
-      return;
-    }
+    const checksClosedWriter =
+      cmd.op === "terminal:write" ||
+      cmd.op === "terminal:writeBinary" ||
+      cmd.op === "terminal:resize"
     if (commandQueue >= MAX_WS_COMMAND_QUEUE) {
       if (ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({
+        sendReliableSocketJson(ws, {
           type: "terminal:result",
           requestId: cmd.requestId,
           ok: false,
           error: { code: "HOST_BUSY", message: "too many in-flight terminal commands" },
-        }));
+        });
       }
       return;
     }
@@ -1498,12 +1825,15 @@ function startModernEventSocket(
       const id = cmd.args[0];
       if (typeof id === "string" && id) {
         attachedTerminals.add(id);
-        void Promise.resolve(runtime.terminal.armLiveViewer(id, clientId));
+        armLiveViewerBestEffort(runtime, id, clientId)
       }
     }
-    const command = commandTail.then(() =>
-      runHostRpc(managed, cmd.op, cmd.args, clientId),
-    );
+    const command = commandTail.then(async () => {
+      if (checksClosedWriter && typeof cmd.args[0] === "string") {
+        await releaseClosedWriter(runtime, cmd.args[0], clientId)
+      }
+      return runHostRpc(managed, cmd.op, cmd.args, principal)
+    });
     commandTail = command.then(
       () => { commandQueue = Math.max(0, commandQueue - 1) },
       () => { commandQueue = Math.max(0, commandQueue - 1) },
@@ -1511,27 +1841,30 @@ function startModernEventSocket(
     void command.then(result => {
       if (ws.readyState !== WebSocket.OPEN) return;
       if (result.ok) {
-        ws.send(JSON.stringify({
+        sendReliableSocketJson(ws, {
           type: "terminal:result",
           requestId: cmd.requestId,
           ok: true,
           value: result.value,
-        }));
+        });
         return;
       }
       const error = hostErrorWire(result.error);
-      ws.send(JSON.stringify({
+      sendReliableSocketJson(ws, {
         type: "terminal:result",
         requestId: cmd.requestId,
         ok: false,
         error: { code: error.code, message: error.message },
-      }));
+      });
     });
   });
-  ws.on("close", () => {
+  ws.on("close", (code, reason) => {
+    disposeSocketWriter(runtime, ws, attachedTerminals, code, reason);
     unsubscribe();
     ACTIVE_EVENT_SOCKETS.delete(ws);
     DEVICE_EVENT_SOCKETS.delete(ws);
+    if (CLIENT_SOCKETS.get(clientId) === ws) CLIENT_SOCKETS.delete(clientId)
+    void Promise.resolve(runtime.terminal.releaseConnection(clientId)).catch(() => undefined)
     runtime.leases.releaseClient(clientId);
     void Promise.resolve(runtime.terminal.resumeForClient(clientId));
   });
@@ -1540,18 +1873,10 @@ function startModernEventSocket(
 function sendEventSocketMessage(
   ws: WebSocket,
   event: HostEvent,
-  runtime?: { terminal: HostRuntime["terminal"] },
-  attachedTerminals?: Set<string>,
+  _runtime?: { terminal: HostRuntime["terminal"] },
+  _attachedTerminals?: Set<string>,
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
-  if (ws.bufferedAmount > SOFT_WEBSOCKET_BUFFERED_BYTES) {
-    const ids = attachedTerminals ? [...attachedTerminals] : undefined;
-    void Promise.resolve(runtime?.terminal.pauseForBackpressure(ids));
-  }
-  if (ws.bufferedAmount > MAX_WEBSOCKET_BUFFERED_BYTES) {
-    ws.close(1013, "client is not consuming events");
-    return;
-  }
   const wireEvent =
     LEGACY_PROTOCOL_SOCKETS.has(ws) && event.protocolVersion === 2
       ? {
@@ -1561,25 +1886,69 @@ function sendEventSocketMessage(
           args: event.args,
         }
       : event;
+  let data: string | Uint8Array = JSON.stringify(wireEvent);
+  let terminalId: string | undefined;
   if (wireEvent.channel === "terminal:data") {
-    const id = String(wireEvent.args[0] ?? "");
-    const data = String(wireEvent.args[1] ?? "");
+    terminalId = String(wireEvent.args[0] ?? "");
+    const output = String(wireEvent.args[1] ?? "");
     const terminalSequence =
       typeof wireEvent.args[2] === "number" && Number.isFinite(wireEvent.args[2])
         ? wireEvent.args[2]
         : 0;
     try {
-      ws.send(
-        Buffer.from(
-          encodeTerminalDataFrame(wireEvent.sequence, terminalSequence, id, data),
-        ),
+      data = encodeTerminalDataFrame(
+        wireEvent.sequence,
+        terminalSequence,
+        terminalId,
+        output,
       );
-      return;
     } catch {
-      // Fall through to JSON if encoding fails (oversized id, etc.).
+      // Keep the JSON event when a compatibility frame cannot be encoded.
     }
   }
-  ws.send(JSON.stringify(wireEvent));
+  const writer = socketWriter(ws);
+  if (terminalId && wireEvent.channel === "terminal:data") {
+    writer.enqueueLegacyOutput(terminalId, data);
+    return;
+  }
+  if (wireEvent.channel === "terminal:semantic") {
+    const semanticId = String(wireEvent.args[0] ?? "")
+    const revision = typeof wireEvent.args[1] === "number" ? wireEvent.args[1] : 0
+    const terminalEpoch = String(wireEvent.args[2] ?? "")
+    const snapshot = wireEvent.args[3]
+    if (
+      semanticId &&
+      snapshot &&
+      typeof snapshot === "object" &&
+      !Array.isArray(snapshot) &&
+      "schemaVersion" in snapshot
+    ) {
+      try {
+        const decodedSnapshot = Schema.decodeUnknownSync(TerminalSemanticSnapshot)(snapshot)
+        const eventOwnerEpoch = wireEvent.args[4]
+        const ownerEpoch =
+          typeof eventOwnerEpoch === "string" && eventOwnerEpoch.length > 0
+            ? eventOwnerEpoch
+            : _runtime && "currentSupervisorEpoch" in _runtime.terminal
+              ? _runtime.terminal.currentSupervisorEpoch ?? "local"
+              : "local"
+        const frame = encodeTerminalStreamV3({
+          type: "terminal.snapshot",
+          terminalId: semanticId,
+          ownerEpoch,
+          terminalEpoch,
+          revision,
+          snapshot: decodedSnapshot,
+        })
+        writer.enqueueSemanticRender(semanticId, frame)
+        return
+      } catch {
+        writer.enqueueReliable(data)
+        return
+      }
+    }
+  }
+  writer.enqueueReliable(data);
 }
 
 function wsDataToText(data: WebSocket.RawData): string {

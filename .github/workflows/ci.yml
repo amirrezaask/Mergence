@@ -46,6 +46,9 @@ jobs:
       - run: vp install --frozen-lockfile
       - run: vp run typecheck
       - run: vp test packages/yaade-node-host packages/yaade-host-server packages/yaade-host-client
+      - run: vp run test:terminal:unit
+      - run: vp run test:terminal:protocol
+      - run: vp run test:terminal:integration
       - run: vp run build:web
       - run: vp exec playwright install chromium
       - run: vp run test:runtime:e2e

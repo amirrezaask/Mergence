@@ -20,6 +20,7 @@ import {
   type GhosttyCellMetrics,
 } from "./renderer.js";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
+import { browserGhosttyWasmSource } from "@yaade/ghostty-core/loaders/browser";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -725,6 +726,7 @@ export class GhosttyTerminalSurface {
       metrics.height,
       options.theme,
       options.onData ?? (() => undefined),
+      browserGhosttyWasmSource(),
     );
     const surface = new GhosttyTerminalSurface(
       mount,

@@ -1,4 +1,6 @@
 import type { DeviceScope } from "./device-auth.js"
+import { principalMayInvoke } from "./route-policy.js"
+import { makePairedDevicePrincipal } from "./principal.js"
 
 const OBSERVE_CHANNELS = new Set([
   "tools:listSessions",
@@ -48,13 +50,15 @@ const OBSERVE_CHANNELS = new Set([
   "terminal:getForegroundProcess",
 ])
 
-/** Host-token callers are unrestricted. Observe may only read. */
+/** Host-token callers are unrestricted. Paired devices use route policy. */
 export function deviceMayInvoke(
   scopes: readonly DeviceScope[] | undefined,
   channel: string,
 ): boolean {
   if (!scopes || scopes.length === 0) return true
-  if (scopes.includes("admin") || scopes.includes("control")) return true
-  if (!scopes.includes("observe")) return false
-  return OBSERVE_CHANNELS.has(channel)
+  if (OBSERVE_CHANNELS.has(channel) && scopes.includes("observe")) return true
+  return principalMayInvoke(
+    makePairedDevicePrincipal("scope-check", scopes, "scope-check"),
+    channel,
+  )
 }

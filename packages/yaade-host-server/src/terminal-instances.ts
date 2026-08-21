@@ -67,6 +67,9 @@ export type TerminalInstance = {
   nativeSessionId: string | null;
   processIdentity: ProcessIdentity | null;
   terminalEpoch: string | null;
+  ownerId?: string | null;
+  ownerEpoch?: string | null;
+  protocolVersion?: number | null;
   launchProfile: TerminalLaunchProfile | null;
   nativeSessionRef: NativeAgentSessionRef | null;
   restartPolicy: "never" | "manual" | "resume-on-daemon-start";
@@ -108,6 +111,9 @@ type TerminalInstanceRow = {
   native_session_id: string | null;
   process_identity_json: string | null;
   terminal_epoch: string | null;
+  owner_id: string | null;
+  owner_epoch: string | null;
+  protocol_version: number | null;
   launch_profile_json: string | null;
   native_session_ref_json: string | null;
   restart_policy: string;
@@ -324,6 +330,9 @@ function toInstance(row: TerminalInstanceRow): TerminalInstance {
     nativeSessionId: row.native_session_id,
     processIdentity: processIdentity(row.process_identity_json),
     terminalEpoch: row.terminal_epoch,
+    ownerId: row.owner_id,
+    ownerEpoch: row.owner_epoch,
+    protocolVersion: row.protocol_version,
     launchProfile: launchProfile(row.launch_profile_json),
     nativeSessionRef: nativeSessionRef(row.native_session_ref_json),
     restartPolicy: restartPolicy(row.restart_policy),
@@ -690,6 +699,11 @@ export class TerminalInstanceService {
     telemetryState?: TerminalInstanceTelemetryState,
     identity?: ProcessIdentity | null,
     terminalEpoch?: string,
+    owner?: {
+      readonly ownerId: string
+      readonly ownerEpoch: string
+      readonly protocolVersion: number
+    },
   ): TerminalInstance | null {
     const current = this.get(id);
     if (!current || current.generation !== generation) return null;
@@ -704,7 +718,8 @@ export class TerminalInstanceService {
           activity_state=CASE WHEN provider IS NOT NULL THEN 'starting' ELSE activity_state END,
           telemetry_state=?, started_at=?, last_activity_at=?, ended_at=NULL,
           exit_code=NULL, end_reason=NULL, transcript='', transcript_truncated=0,
-          telemetry_error=NULL, os_pid=?, os_started_at_ms=?, process_identity_json=?, terminal_epoch=?, revision=revision+1
+          telemetry_error=NULL, os_pid=?, os_started_at_ms=?, process_identity_json=?, terminal_epoch=?,
+          owner_id=?, owner_epoch=?, protocol_version=?, revision=revision+1
         WHERE id=? AND generation=? AND removed_at IS NULL
           AND process_state IN ('starting','disconnected')`,
       )
@@ -718,6 +733,9 @@ export class TerminalInstanceService {
         null,
         identity ? JSON.stringify(identity) : null,
         terminalEpoch ?? null,
+        owner?.ownerId ?? null,
+        owner?.ownerEpoch ?? null,
+        owner?.protocolVersion ?? null,
         id,
         generation,
       );
@@ -1090,6 +1108,9 @@ export class TerminalInstanceService {
       ["os_started_at_ms", "INTEGER"],
       ["process_identity_json", "TEXT"],
       ["terminal_epoch", "TEXT"],
+      ["owner_id", "TEXT"],
+      ["owner_epoch", "TEXT"],
+      ["protocol_version", "INTEGER"],
       ["launch_profile_json", "TEXT"],
       ["native_session_ref_json", "TEXT"],
       ["restart_policy", "TEXT NOT NULL DEFAULT 'manual'"],

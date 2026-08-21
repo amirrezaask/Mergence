@@ -52,7 +52,7 @@ test.describe("terminal compatibility", () => {
 
     await expect(
       page.locator(
-        `[data-yaade-tool-tile="${toolUseId}"] [data-ghostty-terminal-canvas]`,
+        `[data-yaade-tool-tile="${toolUseId}"] [data-ghostty-terminal-canvas], [data-yaade-tool-tile="${toolUseId}"] [data-yaade-terminal-semantic]`,
       ),
     ).toBeVisible({ timeout: 30_000 })
     await expect
@@ -75,5 +75,51 @@ test.describe("terminal compatibility", () => {
         { timeout: 1_000 },
       )
       .not.toContain("DA1-PROBE-TIMEOUT")
+  })
+
+  test("typing does not reconnect the host socket", async ({ launchApp }) => {
+    const { page } = await launchApp()
+    await page.evaluate(() => {
+      history.pushState(null, "", "/")
+      window.dispatchEvent(new Event("popstate"))
+    })
+    await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
+    await page.evaluate(() => window.__yaadeAgent!.waitForReady())
+    const toolUseId = await page.evaluate(async () => {
+      const tools = window.yaade?.tools
+      const state = window.__yaadeAgent?.getState()
+      const sessionId = state?.activeSessionId
+      if (!tools || !sessionId) throw new Error("tools API or session missing")
+      const project = (await tools.listProjects())[0]
+      if (!project) throw new Error("no project")
+      const created = await tools.createUse({
+        _tag: "CreateToolUse",
+        sessionId,
+        kind: "terminal",
+        project,
+        checkout: { _tag: "MainCheckout", kind: "main" },
+        input: { _tag: "TerminalToolInput", kind: "terminal" },
+      })
+      await window.__yaadeAgent?.selectToolUse?.(created.id)
+      return created.id
+    })
+    const surface = page.locator(
+      `[data-yaade-tool-tile="${toolUseId}"] [data-ghostty-terminal-canvas], [data-yaade-tool-tile="${toolUseId}"] [data-yaade-terminal-semantic]`,
+    )
+    await expect(surface).toBeVisible({ timeout: 30_000 })
+    await surface.click()
+    await page.keyboard.type("echo reconnect-probe")
+    await page.keyboard.press("Enter")
+    await expect(page.locator("[data-yaade-connection]")).toHaveCount(0)
+    await expect
+      .poll(
+        () =>
+          page.evaluate(
+            id => window.__yaadeAgent?.getTerminalText?.(id) ?? "",
+            toolUseId,
+          ),
+        { timeout: 10_000 },
+      )
+      .toMatch(/reconnect-probe|echo/)
   })
 })

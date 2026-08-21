@@ -48,7 +48,14 @@ function resolveTerminal(tabId?: string): GhosttyTerminalSurface | undefined {
 
 /** Buffer-backed terminal text for E2E / agent bridge. */
 export function readTerminalBufferText(tabId?: string): string {
-  return resolveTerminal(tabId)?.getBufferText() ?? ""
+  const ghostty = resolveTerminal(tabId)?.getBufferText() ?? ""
+  if (ghostty.trim().length > 0) return ghostty
+  const root = tabId
+    ? document.querySelector(
+        `[data-yaade-terminal-tab-id="${CSS.escape(tabId)}"] [data-yaade-terminal-semantic]`,
+      )
+    : document.querySelector("[data-yaade-terminal-semantic]")
+  return root?.textContent ?? ghostty
 }
 
 export function readTerminalDims(

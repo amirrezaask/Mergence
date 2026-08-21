@@ -1,4 +1,5 @@
 import * as pty from "node-pty"
+import type { GhosttyMouseInput } from "@yaade/ghostty-core"
 import { randomUUID } from "node:crypto"
 import fs from "node:fs"
 import os from "node:os"
@@ -28,6 +29,21 @@ import {
   TERMINAL_DA1_RESPONSE,
   type Da1Scanner,
 } from "./terminal-da.js"
+import {
+  TerminalControlError,
+  TerminalControlRegistry,
+  type TerminalLease as RuntimeTerminalLease,
+  type TerminalLeaseMode,
+  type TerminalMutationFence,
+} from "./terminal-control.js"
+import {
+  TerminalSemanticRuntime,
+  type SemanticHistoryPage,
+} from "./terminal-semantic-runtime.js"
+import {
+  TerminalRecoveryStore,
+  type TerminalHistoryPersistence,
+} from "./terminal-recovery-store.js"
 
 /**
  * This is a bounded transcript, not a serialized terminal state. Once the
@@ -65,13 +81,12 @@ const TERMINAL_EMIT_BATCH_DELAY_MS = 4
 const TERMINAL_EMIT_INTERACTIVE_BYTES = 32
 
 /**
- * VS Code FlowControlConstants — pause the PTY when the renderer falls behind
- * instead of flooding WS / shedding frames (which is what made agent TUIs choke).
- * @see https://github.com/microsoft/vscode/blob/main/src/vs/platform/terminal/common/terminal.ts
+ * Legacy acknowledgement thresholds retained for protocol compatibility.
+ * They are diagnostic limits only: client debt must never pause a PTY.
  */
 export const TERMINAL_FLOW_HIGH_WATERMARK_CHARS = 100_000
 export const TERMINAL_FLOW_LOW_WATERMARK_CHARS = 5_000
-/** Client should ack at least this often so the host can resume. */
+/** Legacy acknowledgement cadence; no acknowledgement resumes a PTY. */
 export const TERMINAL_FLOW_ACK_CHARS = 5_000
 
 export type TerminalLaunch = {
@@ -91,12 +106,18 @@ export type TerminalCreateResult = {
   osStartedAtMs: number
   processIdentity: ProcessIdentity | null
   terminalEpoch: string
+  ownerId?: string
+  ownerEpoch?: string
+  protocolVersion?: number
 }
 
 export type TerminalAttachSnapshot = {
   id: string
   title: string | null
   terminalEpoch: string
+  ownerId?: string
+  ownerEpoch?: string
+  protocolVersion?: number
   checkpoint?: TerminalCheckpoint
   replayQuality: "exact" | "checkpoint" | "degraded"
   /**
@@ -119,6 +140,7 @@ export type TerminalAttachSnapshot = {
   status: "running" | "exited"
   exitCode: number | null
   signal: number | null
+  semanticSnapshot?: import("@yaade/rpc").TerminalSemanticSnapshot | null
 }
 
 /** Metadata-only terminal probe. It never changes ownership or flow control. */
@@ -135,12 +157,14 @@ export type TerminalInspectSnapshot = {
   osPid: number | null
   processIdentity?: ProcessIdentity | null
   terminalEpoch?: string
+  ownerId?: string
+  ownerEpoch?: string
+  protocolVersion?: number
 }
 
 type EmitFn = (channel: string, args: unknown[]) => void
 
 type TerminalViewer = {
-  unacknowledgedChars: number
   hasAttached: boolean
   /** True only while this client's event socket is armed for live frames. */
   live: boolean
@@ -177,83 +201,34 @@ type TerminalEntry = {
   pendingOutputTimer: ReturnType<typeof setTimeout> | null
   disposeTimer: ReturnType<typeof setTimeout> | null
   killTimers: Array<ReturnType<typeof setTimeout>>
-  ptyPaused: boolean
   proc: pty.IPty | null
   disposed: boolean
   dataDisposable: pty.IDisposable | null
   exitDisposable: pty.IDisposable | null
   exitWaiters: Array<(result: { exitCode: number | null; signal?: string }) => void>
   /** Incomplete DA1 prefix (`ESC` / `ESC[` / `ESC[0`) spanning PTY reads. */
-  da1Scanner: Da1Scanner
+  /** Legacy-only compatibility query scanner; Ghostty answers current queries. */
+  da1Scanner: Da1Scanner | null
   terminalEpoch: string
-  recorder: TerminalStateRecorder
+  /** Legacy replay checkpoint parser; current semantic owners use Ghostty only. */
+  recorder: TerminalStateRecorder | null
   checkpoint: TerminalCheckpoint | null
   checkpointSequence: number
   bytesSinceCheckpoint: number
   lastCheckpointAt: number
   cols: number
   rows: number
-  /** Supervisor-owned PTYs keep reading so offline output enters the replay ring. */
-  flowControl: boolean
+  semantic: TerminalSemanticRuntime | null
+  stateRevision: number
 }
 
 function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
   let viewer = entry.viewers.get(clientId)
   if (!viewer) {
-    viewer = { unacknowledgedChars: 0, hasAttached: false, live: false }
+    viewer = { hasAttached: false, live: false }
     entry.viewers.set(clientId, viewer)
   }
   return viewer
-}
-
-function anyViewerOverHighWater(entry: TerminalEntry): boolean {
-  for (const viewer of entry.viewers.values()) {
-    if (
-      viewer.live &&
-      viewer.unacknowledgedChars > TERMINAL_FLOW_HIGH_WATERMARK_CHARS
-    ) {
-      return true
-    }
-  }
-  return false
-}
-
-function allViewersUnderLowWater(entry: TerminalEntry): boolean {
-  if (entry.viewers.size === 0) return true
-  for (const viewer of entry.viewers.values()) {
-    if (!viewer.live) continue
-    if (viewer.unacknowledgedChars >= TERMINAL_FLOW_LOW_WATERMARK_CHARS) return false
-  }
-  return true
-}
-
-function incrementViewerDebt(entry: TerminalEntry, chars: number): void {
-  // Only live event-socket viewers count. HTTP attach / create-time RPC
-  // clients never see live frames, so charging them pauses a healthy PTY.
-  for (const viewer of entry.viewers.values()) {
-    if (!viewer.live) continue
-    viewer.unacknowledgedChars += chars
-  }
-}
-
-function pausePtyForFlowControl(entry: TerminalEntry): void {
-  if (!entry.flowControl || entry.ptyPaused || !entry.proc) return
-  try {
-    entry.proc.pause()
-    entry.ptyPaused = true
-  } catch {
-    /* ignore — some platforms/adapters may not support pause */
-  }
-}
-
-function resumePtyForFlowControl(entry: TerminalEntry): void {
-  if (!entry.ptyPaused || !entry.proc) return
-  try {
-    entry.proc.resume()
-    entry.ptyPaused = false
-  } catch {
-    /* ignore */
-  }
 }
 
 function flushPendingOutput(entry: TerminalEntry, emit: EmitFn): void {
@@ -268,12 +243,9 @@ function flushPendingOutput(entry: TerminalEntry, emit: EmitFn): void {
       : entry.pendingOutput.join("")
   entry.pendingOutput.length = 0
   entry.pendingOutputBytes = 0
-  // Flow control counts chars (VS Code) — JS string length matches xterm write units.
-  incrementViewerDebt(entry, data.length)
+  // Client queues are isolated at the transport boundary. Never pause a PTY
+  // because a browser, WebSocket, or host peer is slow.
   emit("terminal:data", [entry.id, data, entry.sequence])
-  if (!entry.ptyPaused && anyViewerOverHighWater(entry)) {
-    pausePtyForFlowControl(entry)
-  }
 }
 
 function queueOutput(
@@ -406,10 +378,18 @@ export type TerminalHostOptions = {
   /** Delay between SIGHUP → SIGTERM → SIGKILL. Tests use a short value. */
   killGraceMs?: number
   /**
-   * Pause the PTY when live viewers fall behind. The detached supervisor
-   * turns this off so output produced with no API still enters the replay ring.
+   * @deprecated Retained for callers compiled against the old API. Client
+   * backpressure never pauses a PTY in any mode.
    */
   flowControl?: boolean
+  /** Current-generation terminals parse output with Ghostty. */
+  semanticState?: boolean
+  recovery?: {
+    readonly dataDir: string
+    readonly ownerId: string
+    readonly ownerEpoch: string
+    readonly persistence?: TerminalHistoryPersistence
+  }
 }
 
 export class TerminalHost {
@@ -418,11 +398,17 @@ export class TerminalHost {
   private readonly titleCounts = new Map<string, number>()
   /** Supervisor-epoch idempotency for create retries after a lost response. */
   private readonly createRequests = new Map<string, TerminalCreateResult>()
+  private readonly control = new TerminalControlRegistry()
   private emit: EmitFn = () => {}
   /** Cap concurrent entries; overridable in tests. */
   private readonly maxEntries: number
   private readonly killGraceMs: number
-  private readonly flowControl: boolean
+  private readonly semanticState: boolean
+  private readonly recoveryStore: TerminalRecoveryStore | null
+  private readonly recoveryOwner: {
+    readonly ownerId: string
+    readonly ownerEpoch: string
+  } | null
   persistenceDegraded = false
 
   constructor(
@@ -431,14 +417,28 @@ export class TerminalHost {
     if (typeof maxEntries === "number") {
       this.maxEntries = Math.max(1, Math.trunc(maxEntries))
       this.killGraceMs = 2_000
-      this.flowControl = true
+      this.semanticState = false
+      this.recoveryStore = null
+      this.recoveryOwner = null
     } else {
       this.maxEntries = Math.max(
         1,
         Math.trunc(maxEntries.maxEntries ?? MAX_TERMINAL_ENTRIES),
       )
       this.killGraceMs = Math.max(20, Math.trunc(maxEntries.killGraceMs ?? 2_000))
-      this.flowControl = maxEntries.flowControl !== false
+      this.semanticState = maxEntries.semanticState === true
+      this.recoveryStore = maxEntries.recovery
+        ? new TerminalRecoveryStore({
+            dataDir: maxEntries.recovery.dataDir,
+            persistence: maxEntries.recovery.persistence ?? "screen-only",
+          })
+        : null
+      this.recoveryOwner = maxEntries.recovery
+        ? {
+            ownerId: maxEntries.recovery.ownerId,
+            ownerEpoch: maxEntries.recovery.ownerEpoch,
+          }
+        : null
     }
   }
 
@@ -582,35 +582,65 @@ export class TerminalHost {
       pendingOutputTimer: null,
       disposeTimer: null,
       killTimers: [],
-      ptyPaused: false,
       proc,
       disposed: false,
       dataDisposable: null,
       exitDisposable: null,
       exitWaiters: [],
-      da1Scanner: createDa1Scanner(),
+      da1Scanner: this.semanticState ? null : createDa1Scanner(),
       terminalEpoch,
-      recorder: new BasicTerminalStateRecorder(
-        initialSize.cols,
-        initialSize.rows,
-        terminalEpoch,
-      ),
+      recorder: this.semanticState
+        ? null
+        : new BasicTerminalStateRecorder(
+            initialSize.cols,
+            initialSize.rows,
+            terminalEpoch,
+          ),
       checkpoint: null,
       checkpointSequence: 0,
       bytesSinceCheckpoint: 0,
       lastCheckpointAt: Date.now(),
       cols: initialSize.cols,
       rows: initialSize.rows,
-      flowControl: this.flowControl,
+      semantic: null,
+      stateRevision: 0,
     }
     this.entries.set(id, entry)
+    this.control.registerTerminal(id, terminalEpoch)
+    if (this.semanticState) {
+      entry.semantic = TerminalSemanticRuntime.start({
+        cols: initialSize.cols,
+        rows: initialSize.rows,
+        writeToPty: data => {
+          if (entry.disposed || !entry.proc) return
+          entry.proc.write(data)
+        },
+        onRevision: revision => {
+          entry.stateRevision = revision
+          const snapshot = entry.semantic?.snapshot() ?? null
+          this.emit("terminal:semantic", [
+            entry.id,
+            revision,
+            entry.terminalEpoch,
+            snapshot,
+          ])
+          this.persistSemantic(entry, snapshot)
+        },
+      })
+    }
 
     entry.dataDisposable = proc.onData(data => {
       if (entry.disposed) return
-      // Answer DA1 here — fish's 10s timer starts at spawn, not at Ghostty mount.
-      const da1Queries = feedDa1Queries(entry.da1Scanner, data)
-      if (da1Queries > 0 && entry.proc) {
-        for (let i = 0; i < da1Queries; i++) entry.proc.write(TERMINAL_DA1_RESPONSE)
+      if (entry.semantic) {
+        entry.semantic.feedOutput(data)
+      } else {
+        // Answer DA1 here — fish's 10s timer starts at spawn, not at Ghostty mount.
+        const da1Queries = entry.da1Scanner
+          ? feedDa1Queries(entry.da1Scanner, data)
+          : 0
+        if (da1Queries > 0 && entry.proc) {
+          for (let i = 0; i < da1Queries; i++) entry.proc.write(TERMINAL_DA1_RESPONSE)
+        }
       }
       const oscCwd = parseOsc7Cwd(data)
       if (oscCwd) {
@@ -626,7 +656,7 @@ export class TerminalHost {
       }
       entry.sequence += 1
       const dataBytes = Buffer.byteLength(data, "utf8")
-      entry.recorder.write(data)
+      entry.recorder?.write(data)
       entry.bytesSinceCheckpoint += dataBytes
       if (
         entry.bytesSinceCheckpoint >= CHECKPOINT_BYTES ||
@@ -653,6 +683,8 @@ export class TerminalHost {
       this.storeCheckpoint(entry)
       entry.signal = signal ?? null
       entry.proc = null
+      // Keep the terminal epoch/control record until explicit disposal so an
+      // exited buffer remains attachable and its final screen can be read.
       trimReplay(entry, EXITED_TERMINAL_REPLAY, target => this.storeCheckpoint(target))
       const args: unknown[] = [id, exitCode]
       if (entry.signal) args.push(entry.signal)
@@ -668,6 +700,15 @@ export class TerminalHost {
       osStartedAtMs,
       processIdentity,
       terminalEpoch,
+      ...(this.recoveryOwner
+        ? {
+            ownerId: this.recoveryOwner.ownerId,
+            ownerEpoch: this.recoveryOwner.ownerEpoch,
+            protocolVersion: this.semanticState ? 2 : 1,
+          }
+        : this.semanticState
+          ? { protocolVersion: 2 }
+          : {}),
     }
     if (requestId) {
       this.createRequests.set(requestId, result)
@@ -752,6 +793,13 @@ export class TerminalHost {
       osPid: entry.osPid,
       processIdentity: entry.processIdentity,
       terminalEpoch: entry.terminalEpoch,
+      ...(this.recoveryOwner
+        ? {
+            ownerId: this.recoveryOwner.ownerId,
+            ownerEpoch: this.recoveryOwner.ownerEpoch,
+            protocolVersion: this.semanticState ? 2 : 1,
+          }
+        : {}),
     }
   }
 
@@ -771,6 +819,13 @@ export class TerminalHost {
         osPid: entry.osPid,
         processIdentity: entry.processIdentity,
         terminalEpoch: entry.terminalEpoch,
+        ...(this.recoveryOwner
+          ? {
+              ownerId: this.recoveryOwner.ownerId,
+              ownerEpoch: this.recoveryOwner.ownerEpoch,
+              protocolVersion: this.semanticState ? 2 : 1,
+            }
+          : {}),
       })
     }
     return out
@@ -779,7 +834,9 @@ export class TerminalHost {
   write(id: string, data: string): null {
     if (id.length > 256 || data.length > MAX_WRITE_BYTES) return null
     const entry = this.entries.get(id)
-    entry?.proc?.write(data)
+    if (!entry || entry.disposed) return null
+    if (entry.semantic) entry.semantic.enqueueUserInput(data)
+    else entry.proc?.write(data)
     return null
   }
 
@@ -794,8 +851,182 @@ export class TerminalHost {
       return null
     }
     if (data.byteLength > MAX_WRITE_BYTES) return null
-    entry.proc.write(data)
+    if (entry.semantic) entry.semantic.enqueueUserInput(data.toString("utf8"))
+    else entry.proc.write(data)
     return null
+  }
+
+  /** Owner-side lease operations used by the versioned supervisor protocol. */
+  acquireLease(
+    terminalId: string,
+    terminalEpoch: string,
+    principalId: string,
+    connectionId: string,
+    mode: TerminalLeaseMode,
+  ): RuntimeTerminalLease {
+    return this.control.acquire({
+      terminalId,
+      terminalEpoch,
+      principalId,
+      connectionId,
+      mode,
+    })
+  }
+
+  renewLease(
+    terminalId: string,
+    terminalEpoch: string,
+    leaseId: string,
+    principalId: string,
+    connectionId: string,
+  ): RuntimeTerminalLease {
+    return this.control.renew(
+      terminalId,
+      terminalEpoch,
+      leaseId,
+      principalId,
+      connectionId,
+    )
+  }
+
+  releaseLease(
+    terminalId: string,
+    terminalEpoch: string,
+    leaseId: string,
+    principalId: string,
+    connectionId: string,
+  ): null {
+    this.control.release(
+      terminalId,
+      terminalEpoch,
+      leaseId,
+      principalId,
+      connectionId,
+    )
+    return null
+  }
+
+  releaseConnection(connectionId: string): null {
+    this.control.releaseConnection(connectionId)
+    return null
+  }
+
+  forceTakeover(
+    terminalId: string,
+    terminalEpoch: string,
+    principalId: string,
+    connectionId: string,
+  ): RuntimeTerminalLease {
+    return this.control.forceTakeover(
+      terminalId,
+      terminalEpoch,
+      principalId,
+      connectionId,
+    )
+  }
+
+  listLeases(terminalId: string): RuntimeTerminalLease[] {
+    return this.control.list(terminalId)
+  }
+
+  currentWriterLease(id: string): RuntimeTerminalLease | null {
+    try {
+      return this.control.writer(id)
+    } catch {
+      return null
+    }
+  }
+
+  transferLease(
+    terminalId: string,
+    terminalEpoch: string,
+    leaseId: string,
+    principalId: string,
+    connectionId: string,
+    targetPrincipalId: string,
+    targetConnectionId: string,
+  ): RuntimeTerminalLease {
+    return this.control.transfer(
+      terminalId,
+      terminalEpoch,
+      leaseId,
+      principalId,
+      connectionId,
+      targetPrincipalId,
+      targetConnectionId,
+    )
+  }
+
+  writeFenced(id: string, data: string, fence: TerminalMutationFence): null {
+    this.control.authorizeMutation(fence)
+    return this.write(id, data)
+  }
+
+  writeBinaryFenced(
+    id: string,
+    dataBase64: string,
+    fence: TerminalMutationFence,
+  ): null {
+    this.control.authorizeMutation(fence)
+    return this.writeBinary(id, dataBase64)
+  }
+
+  resizeFenced(
+    id: string,
+    cols: number | undefined,
+    rows: number | undefined,
+    fence: TerminalMutationFence,
+  ): null {
+    this.control.authorizeMutation(fence)
+    return this.resize(id, cols, rows)
+  }
+
+  disposeFenced(id: string, fence: TerminalMutationFence): null {
+    this.control.authorizeMutation(fence)
+    return this.dispose(id)
+  }
+
+  pasteFenced(id: string, data: string, fence: TerminalMutationFence): null {
+    this.control.authorizeMutation(fence)
+    const entry = this.entries.get(id)
+    const encoded = entry?.semantic?.encodePaste(data) ?? data
+    return this.write(id, encoded)
+  }
+
+  focusFenced(id: string, focused: boolean, fence: TerminalMutationFence): null {
+    this.control.authorizeMutation(fence)
+    return this.write(id, focused ? "\u001b[I" : "\u001b[O")
+  }
+
+  mouseFenced(
+    id: string,
+    input: GhosttyMouseInput,
+    fence: TerminalMutationFence,
+  ): null {
+    this.control.authorizeMutation(fence)
+    const entry = this.entries.get(id)
+    if (!entry?.semantic) {
+      throw new TerminalControlError(
+        "WRITER_LEASE_REQUIRED",
+        id,
+        "structured mouse input is unavailable for this terminal",
+      )
+    }
+    return this.write(id, entry.semantic.encodeMouse(input))
+  }
+
+  readSemanticSnapshot(id: string) {
+    return this.entries.get(id)?.semantic?.snapshot() ?? null
+  }
+
+  readSemanticHistory(id: string, offset: number, limit: number): SemanticHistoryPage | null {
+    const entry = this.entries.get(id)
+    if (!entry?.semantic) return null
+    return entry.semantic.historyPage(offset, limit)
+  }
+
+  waitForSemantic(id: string): Promise<void> {
+    return this.entries.get(id)?.semantic?.ready() ?? Promise.resolve()
   }
 
   resize(id: string, cols?: number, rows?: number): null {
@@ -807,73 +1038,40 @@ export class TerminalHost {
     if (entry && !entry.disposed) {
       entry.cols = size.cols
       entry.rows = size.rows
-      entry.recorder.resize(size.cols, size.rows)
-      entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
-      entry.checkpointSequence = entry.sequence
-      entry.bytesSinceCheckpoint = 0
-      entry.lastCheckpointAt = Date.now()
+      entry.semantic?.resize(size.cols, size.rows)
+      if (entry.recorder) {
+        entry.recorder.resize(size.cols, size.rows)
+        entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
+        entry.checkpointSequence = entry.sequence
+        entry.bytesSinceCheckpoint = 0
+        entry.lastCheckpointAt = Date.now()
+      }
     }
     return null
   }
 
   /**
-   * Renderer finished parsing `charCount` chars of previously emitted output.
-   * Drop below the low watermark → resume a paused PTY (VS Code pattern).
+   * Compatibility acknowledgement. Queue bounds are enforced by the transport
+   * mailbox, never by pausing the child process.
    */
-  acknowledgeData(id: string, charCount: number, clientId?: string): null {
+  acknowledgeData(id: string, _charCount: number, _clientId?: string): null {
     if (id.length > 256) return null
     const entry = this.entries.get(id)
     if (!entry || entry.disposed) return null
-    const n = Number.isFinite(charCount) ? Math.max(0, Math.trunc(charCount)) : 0
-    if (clientId) {
-      const viewer = entry.viewers.get(clientId)
-      if (viewer) viewer.unacknowledgedChars = Math.max(0, viewer.unacknowledgedChars - n)
-    } else {
-      for (const viewer of entry.viewers.values()) {
-        viewer.unacknowledgedChars = Math.max(0, viewer.unacknowledgedChars - n)
-      }
-    }
-    if (entry.ptyPaused && allViewersUnderLowWater(entry)) {
-      resumePtyForFlowControl(entry)
-    }
     return null
   }
 
-  /** Force-resume after attach/reconnect so a stale pause cannot stick forever. */
-  clearUnacknowledgedChars(id: string): null {
-    const entry = this.entries.get(id)
-    if (!entry) return null
-    for (const viewer of entry.viewers.values()) viewer.unacknowledgedChars = 0
-    resumePtyForFlowControl(entry)
+  /** Compatibility no-op retained for older host clients. */
+  clearUnacknowledgedChars(_id: string): null {
     return null
   }
 
-  /** Pause the highest-debt PTYs when a shared socket is falling behind. */
-  pauseForBackpressure(ids?: readonly string[]): void {
-    const allow = ids ? new Set(ids) : null
-    const ranked: TerminalEntry[] = []
-    for (const entry of this.entries.values()) {
-      if (entry.disposed || entry.status !== "running" || !entry.proc) continue
-      if (allow && !allow.has(entry.id)) continue
-      ranked.push(entry)
-    }
-    ranked.sort((a, b) => {
-      let aMax = 0
-      let bMax = 0
-      for (const viewer of a.viewers.values()) {
-        if (viewer.live && viewer.unacknowledgedChars > aMax) {
-          aMax = viewer.unacknowledgedChars
-        }
-      }
-      for (const viewer of b.viewers.values()) {
-        if (viewer.live && viewer.unacknowledgedChars > bMax) {
-          bMax = viewer.unacknowledgedChars
-        }
-      }
-      return bMax - aMax
-    })
-    for (const entry of ranked) pausePtyForFlowControl(entry)
-  }
+  /**
+   * Deprecated compatibility operation. A slow socket must be isolated or
+   * disconnected at the transport boundary; it must never pause a PTY.
+   */
+  pauseForBackpressure(_ids?: readonly string[]): void {}
+
 
   /**
    * Mark a viewer as receiving live `terminal:data` on an event socket.
@@ -886,36 +1084,50 @@ export class TerminalHost {
     viewerOf(entry, clientId).live = true
   }
 
-  /**
-   * A websocket can disappear after the client has received terminal output
-   * but before its acknowledgement reaches the host. Clear that stale debt for
-   * this client only so other viewers keep protecting the PTY.
-   */
+  /** Remove a disconnected viewer without affecting PTY output. */
   resumeForClient(clientId: string): void {
     if (clientId.length > 256) return
-    for (const entry of this.entries.values()) {
-      if (!entry.viewers.delete(clientId)) continue
-      if (allViewersUnderLowWater(entry)) resumePtyForFlowControl(entry)
-    }
+    for (const entry of this.entries.values()) entry.viewers.delete(clientId)
   }
 
   /**
-   * Drop live-viewer flow-control debt. Used when no API remains connected so
-   * supervisor-owned PTYs keep recording output for later attach replay.
+   * Compatibility operation used when no API remains connected. Output keeps
+   * draining into the bounded replay/semantic runtime regardless of viewers.
    */
   resumeAllLiveViewers(): void {
     for (const entry of this.entries.values()) {
       if (entry.disposed) continue
-      for (const viewer of entry.viewers.values()) {
-        viewer.live = false
-        viewer.unacknowledgedChars = 0
-      }
+      for (const viewer of entry.viewers.values()) viewer.live = false
       flushPendingOutput(entry, this.emit)
-      resumePtyForFlowControl(entry)
     }
   }
 
+  private persistSemantic(
+    entry: TerminalEntry,
+    snapshot: import("@yaade/rpc").TerminalSemanticSnapshot | null,
+  ): void {
+    const store = this.recoveryStore
+    const owner = this.recoveryOwner
+    if (!store || !owner || !snapshot) return
+    const payload = {
+      terminalEpoch: entry.terminalEpoch,
+      ownerId: owner.ownerId,
+      ownerEpoch: owner.ownerEpoch,
+      stateRevision: snapshot.revision,
+      activeScreen: snapshot.activeScreen,
+      snapshot,
+    }
+    setImmediate(() => {
+      void store.write(payload).then(result => {
+        if (result.written === false && result.reason === "io-error") {
+          this.persistenceDegraded = true
+        }
+      })
+    })
+  }
+
   private storeCheckpoint(entry: TerminalEntry): void {
+    if (!entry.recorder) return
     entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
     entry.checkpointSequence = entry.sequence
     entry.bytesSinceCheckpoint = 0
@@ -973,8 +1185,6 @@ export class TerminalHost {
     flushPendingOutput(entry, this.emit)
     entry.clientId = clientId
     entry.lastAttachAt = Date.now()
-    viewer.unacknowledgedChars = 0
-    if (allViewersUnderLowWater(entry)) resumePtyForFlowControl(entry)
     if (entry.status === "exited") {
       this.scheduleDisposeAfterExit(entry)
     }
@@ -1007,6 +1217,15 @@ export class TerminalHost {
       id: entry.id,
       title: entry.title,
       terminalEpoch: entry.terminalEpoch,
+      ...(this.recoveryOwner
+        ? {
+            ownerId: this.recoveryOwner.ownerId,
+            ownerEpoch: this.recoveryOwner.ownerEpoch,
+            protocolVersion: this.semanticState ? 2 : 1,
+          }
+        : this.semanticState
+          ? { protocolVersion: 2 }
+          : {}),
       ...(checkpoint ? { checkpoint } : {}),
       replayQuality: checkpoint ? "checkpoint" : replayTruncated ? "degraded" : "exact",
       outputChunks: outputChunks.slice(replayOffset),
@@ -1019,6 +1238,7 @@ export class TerminalHost {
       status: entry.status,
       exitCode: entry.exitCode,
       signal: entry.signal,
+      ...(entry.semantic ? { semanticSnapshot: entry.semantic.snapshot() } : {}),
     }
   }
 
@@ -1106,16 +1326,17 @@ export class TerminalHost {
     if (!entry) return null
     this.entries.delete(id)
     entry.disposed = true
+    this.control.unregisterTerminal(id, entry.terminalEpoch)
+    entry.semantic?.dispose()
+    entry.semantic = null
     this.clearDisposeTimer(entry)
     if (entry.pendingOutputTimer) clearTimeout(entry.pendingOutputTimer)
     entry.pendingOutputTimer = null
     entry.pendingOutput.length = 0
     entry.pendingOutputBytes = 0
-    for (const viewer of entry.viewers.values()) viewer.unacknowledgedChars = 0
-    resumePtyForFlowControl(entry)
     entry.dataDisposable?.dispose()
     entry.dataDisposable = null
-    entry.recorder.dispose()
+    entry.recorder?.dispose()
     for (const resolve of entry.exitWaiters.splice(0)) resolve({ exitCode: null, signal: "disposed" })
     if (entry.titleKey) {
       const n = (this.titleCounts.get(entry.titleKey) ?? 1) - 1

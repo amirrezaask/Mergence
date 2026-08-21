@@ -4,7 +4,9 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PACKAGE_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
-VENDOR_DIR="${PACKAGE_DIR}/src/vendor"
+CORE_PACKAGE_DIR="${PACKAGE_DIR}/../ghostty-core"
+VENDOR_DIR="${CORE_PACKAGE_DIR}/src/vendor"
+COMPAT_VENDOR_DIR="${PACKAGE_DIR}/src/vendor"
 REVISION_FILE="${VENDOR_DIR}/VERSION"
 GHOSTTY_REVISION="$(tr -d '[:space:]' < "${REVISION_FILE}")"
 GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/yaade/ghostty-${GHOSTTY_REVISION:0:8}}"
@@ -103,8 +105,10 @@ log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
     -p "${build_root}"
 )
 
-mkdir -p "${VENDOR_DIR}"
+mkdir -p "${VENDOR_DIR}" "${COMPAT_VENDOR_DIR}"
 cp "${build_root}/bin/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-vt.wasm"
+cp "${VENDOR_DIR}/VERSION" "${COMPAT_VENDOR_DIR}/VERSION"
+cp "${VENDOR_DIR}/ghostty-vt.wasm" "${COMPAT_VENDOR_DIR}/ghostty-vt.wasm"
 "${GHOSTTY_ZIG}" build-exe \
   "${SCRIPT_DIR}/ghostty-write-pty.zig" \
   -target wasm32-freestanding \
@@ -112,5 +116,7 @@ cp "${build_root}/bin/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-vt.wasm"
   -fno-entry \
   -rdynamic \
   -femit-bin="${VENDOR_DIR}/ghostty-write-pty.wasm"
-chmod 0644 "${VENDOR_DIR}/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-write-pty.wasm"
+cp "${VENDOR_DIR}/ghostty-write-pty.wasm" "${COMPAT_VENDOR_DIR}/ghostty-write-pty.wasm"
+chmod 0644 "${VENDOR_DIR}/ghostty-vt.wasm" "${VENDOR_DIR}/ghostty-write-pty.wasm" \
+  "${COMPAT_VENDOR_DIR}/ghostty-vt.wasm" "${COMPAT_VENDOR_DIR}/ghostty-write-pty.wasm"
 log "wrote ${VENDOR_DIR}/ghostty-vt.wasm"

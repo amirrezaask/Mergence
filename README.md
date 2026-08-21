@@ -13,7 +13,7 @@ http://localhost:5174/?s=ses-…&t=tab-…&u=use-… Deep link
 
 | Tool | Behavior |
 | --- | --- |
-| **Terminal** | Persistent PTY with replay, flow control, mobile accessory keys, and support for running shell or agent CLIs directly. |
+| **Terminal** | Persistent PTY with bounded replay, isolated client queues, mobile accessory keys, and support for running shell or agent CLIs directly. |
 | **Git History** | Virtualized commit history, changed files, and diffs for the selected checkout. |
 
 Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. The top bar holds the Session dropdown, Window pills, and Settings. A resizable **Agents** sidebar appears when agent CLIs are running and focuses their session, window, and pane when selected.
@@ -25,8 +25,9 @@ Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. 
 - Layout, project, checkout, and ToolUse metadata persist across reloads.
 - PTYs are owned by the detached supervisor, not by a browser/Electron window; browser reloads, disconnects, API restarts, and normal Electron close leave agents running.
 - Closing a Terminal ToolUse is the explicit destructive action that stops its PTY.
-- Reconnects use a persistent server identity, per-runtime epoch, authoritative snapshot, and per-terminal replay/checkpoint sequence.
-- Multiple viewers can attach to one terminal. Modern clients use a writer lease for input and resize; observers continue receiving output.
+- Reconnects keep the PTY on the supervisor. Current-generation terminals restore from an owner-side Ghostty snapshot; legacy terminals still use bounded raw replay. A slow viewer is resynchronized or disconnected and never pauses the PTY.
+- Supervisor generations can coexist during an upgrade: new terminals use the current owner while existing terminals remain on their original owner until drained.
+- Multiple viewers can attach to one terminal. Writer leases are explicit for input and resize; observers continue receiving output. A slow client is bounded or disconnected and never pauses the PTY.
 - Add projects from any ToolUse context with folder-path autocomplete; terminals offer to remember a newly visited folder after `cd`.
 - Mobile uses a list-first Terminal/Git shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal by default; hold Cmd/Ctrl while clicking to choose a tool.
@@ -161,7 +162,9 @@ YAADE makes these guarantees explicit:
 Terminal replay is bounded. Recent output is retained separately from the control
 plane, and the supervisor records a bounded synthetic screen checkpoint before
 raw history rotates. Checkpoints are a recovery aid, not proof that a process is
-still alive.
+still alive. Runtime architecture and the generation-draining upgrade policy
+are documented in `docs/architecture/terminal-runtime.md`; a legacy supervisor
+is not killed merely because a newer host/runtime is available.
 
 Durable-runtime coverage lives under `tests/runtime/` and related suite
 directories. Run `vp run test:e2e:critical` for P0 scenarios,

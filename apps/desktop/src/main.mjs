@@ -138,6 +138,7 @@ function hostDataDir() {
   return path.join(app.getPath("userData"), "host")
 }
 
+/** @param {string} target */
 function readJsonFile(target) {
   try {
     return JSON.parse(fs.readFileSync(target, "utf8"))
@@ -146,6 +147,10 @@ function readJsonFile(target) {
   }
 }
 
+/**
+ * @param {number} pid
+ * @param {NodeJS.Signals} signal
+ */
 function signalPid(pid, signal) {
   if (typeof pid !== "number" || pid <= 0) return
   try {
@@ -155,6 +160,10 @@ function signalPid(pid, signal) {
   }
 }
 
+/**
+ * @param {number} pid
+ * @param {number} timeoutMs
+ */
 async function waitForPidExit(pid, timeoutMs) {
   const deadline = Date.now() + timeoutMs
   while (Date.now() < deadline) {

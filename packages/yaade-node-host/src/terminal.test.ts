@@ -600,13 +600,13 @@ test("dispose kills a grandchild in the same process group", async (t) => {
   }
 })
 
-test("a second attach does not clear the first viewer's flow-control debt", async () => {
+test("a slow viewer never pauses the PTY", async () => {
   const terminal = new TerminalHost()
-  let sawResumeMarker = false
+  let sawMarker = false
   terminal.setEmit((channel, args) => {
     if (channel !== "terminal:data") return
-    if (String(args[1] ?? "").includes("client-b-must-not-resume")) {
-      sawResumeMarker = true
+    if (String(args[1] ?? "").includes("client-b-must-not-pause")) {
+      sawMarker = true
     }
   })
   try {
@@ -616,7 +616,7 @@ test("a second attach does not clear the first viewer's flow-control debt", asyn
         command: process.execPath,
         args: [
           "-e",
-          `process.stdin.once('data',()=>{process.stdout.write('x'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 8_000})); setTimeout(()=>process.stdout.write('client-b-must-not-resume'),80)})`,
+          `process.stdin.once('data',()=>{process.stdout.write('x'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 8_000})); setTimeout(()=>process.stdout.write('client-b-must-not-pause'),80)})`,
         ],
       },
       "creator",
@@ -627,11 +627,7 @@ test("a second attach does not clear the first viewer's flow-control debt", asyn
     await new Promise(resolve => setTimeout(resolve, 150))
     terminal.attach(created.id, "client-b")
     terminal.armLiveViewer(created.id, "client-b")
-    await new Promise(resolve => setTimeout(resolve, 250))
-    assert.equal(sawResumeMarker, false)
-    terminal.acknowledgeData(created.id, 1_000_000, "client-a")
-    terminal.acknowledgeData(created.id, 1_000_000, "client-b")
-    await waitUntil(() => sawResumeMarker, 5_000, "acked PTY never resumed")
+    await waitUntil(() => sawMarker, 5_000, "slow viewer paused the PTY")
   } finally {
     terminal.stopAll()
   }

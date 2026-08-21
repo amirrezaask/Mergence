@@ -7,6 +7,7 @@ export const HostRpcRequest = Schema.Struct({
   args: Schema.optionalWith(Schema.Array(Schema.Unknown), {
     default: () => [] as unknown[],
   }),
+  /** Correlation key only; host auth creates the request principal. */
   clientId: Schema.optionalWith(Schema.String, { default: () => "browser" }),
 });
 export type HostRpcRequest = Schema.Schema.Type<typeof HostRpcRequest>;
@@ -238,11 +239,29 @@ export const FsEmptyTrashArgs = Schema.Tuple();
 export const GitPathArgs = Schema.Tuple(Schema.String);
 export const TerminalCreateArgs = Schema.Array(Schema.Unknown);
 export const TerminalIdArgs = Schema.Tuple(Schema.String);
-export const TerminalWriteArgs = Schema.Tuple(Schema.String, Schema.String);
+
+/** Optional fence carried by current terminal mutation clients. */
+export const TerminalMutationFence = Schema.Struct({
+  terminalId: Schema.String,
+  terminalEpoch: Schema.String,
+  leaseId: Schema.String,
+  leaseGeneration: Schema.Number,
+  principalId: Schema.String,
+  connectionId: Schema.String,
+  commandId: Schema.String,
+});
+export type TerminalMutationFence = Schema.Schema.Type<typeof TerminalMutationFence>;
+
+export const TerminalWriteArgs = Schema.Tuple(
+  Schema.String,
+  Schema.String,
+  Schema.optionalElement(TerminalMutationFence),
+);
 export const TerminalResizeArgs = Schema.Tuple(
   Schema.String,
   Schema.Number,
   Schema.Number,
+  Schema.optionalElement(TerminalMutationFence),
 );
 
 export const TerminalCheckpoint = Schema.Struct({
@@ -265,6 +284,9 @@ export const TerminalLease = Schema.Struct({
   acquiredAt: Schema.String,
   expiresAt: Schema.String,
   revision: Schema.Number,
+  leaseGeneration: Schema.optional(Schema.Number),
+  principalId: Schema.optional(Schema.String),
+  connectionId: Schema.optional(Schema.String),
 });
 export type TerminalLease = Schema.Schema.Type<typeof TerminalLease>;
 

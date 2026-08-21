@@ -1,6 +1,7 @@
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import {
+  MultiGenerationTerminalHost,
   PerfHost,
   SupervisedTerminalHost,
   type TerminalHost,
@@ -41,7 +42,7 @@ import {
   type ProcessDriverDependencies,
 } from "./tools/process-driver.js";
 
-export type RuntimeTerminal = TerminalHost | SupervisedTerminalHost;
+export type RuntimeTerminal = TerminalHost | SupervisedTerminalHost | MultiGenerationTerminalHost;
 
 export type HostRuntime = {
   config: HostConfig;
@@ -340,7 +341,10 @@ export function createRuntime(
   }
   requestHookQueueDrain();
   requestTerminalAgentScan();
-  if (terminal instanceof SupervisedTerminalHost) {
+  if (
+    terminal instanceof SupervisedTerminalHost ||
+    terminal instanceof MultiGenerationTerminalHost
+  ) {
     terminal.onState(state => {
       events.emit("connection:status", [state]);
       if (state === "lost") {
@@ -611,7 +615,10 @@ export async function shutdownRuntime(
   await runtime.pendingHookQueueDrain();
   await runtime.toolService?.close();
   const killPtys = options?.killPtys ?? runtime.config.killPtysOnShutdown;
-  if (runtime.terminal instanceof SupervisedTerminalHost) {
+  if (
+    runtime.terminal instanceof SupervisedTerminalHost ||
+    runtime.terminal instanceof MultiGenerationTerminalHost
+  ) {
     if (killPtys) await runtime.terminal.shutdownSupervisor();
     else await runtime.terminal.disconnect();
   } else {

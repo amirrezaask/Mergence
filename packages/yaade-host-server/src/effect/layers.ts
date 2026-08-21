@@ -3,8 +3,8 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import {
   makeTerminalHostScoped,
+  MultiGenerationTerminalHost,
   PerfHost,
-  SupervisedTerminalHost,
   TerminalHost,
 } from "@yaade/node-host";
 import type { NotificationStreamEvent } from "@yaade/shared";
@@ -83,9 +83,26 @@ export function makeHostLayers(
         16 * 1024 * 1024,
         identity,
       );
+      const currentGeneration =
+        process.env.YAADE_TERMINAL_RUNTIME_GENERATION !== "legacy"
+      const runtimeOptions = currentGeneration
+        ? {
+            ensureCurrentGeneration: true,
+            requiredProtocol: 2,
+            requiredCapabilities: {
+              authoritativeLeases: true,
+              semanticTerminalState: true,
+            },
+          }
+        : {
+            ensureCurrentGeneration: false,
+            requiredProtocol: 1,
+          }
       const terminal = config.ptySupervisor
         ? yield* Effect.acquireRelease(
-            Effect.promise(() => SupervisedTerminalHost.connect(config.dataDir)),
+            Effect.promise(() =>
+              MultiGenerationTerminalHost.connect(config.dataDir, runtimeOptions),
+            ),
             (host) => Effect.promise(() => host.disconnect()),
           )
         : yield* makeTerminalHostScoped;

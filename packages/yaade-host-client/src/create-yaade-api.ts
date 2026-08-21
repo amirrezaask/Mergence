@@ -1,11 +1,17 @@
 import type { WorkspaceFileChangeKind, YaadeHostAPI } from "@yaade/workspace";
 import { Schema } from "effect";
-import { ToolEvent, type ProjectTarget } from "@yaade/rpc";
+import {
+  ToolEvent,
+  TerminalPatchMessage,
+  TerminalResyncRequiredMessage,
+  TerminalSnapshotMessage,
+} from "@yaade/rpc";
 import type { YaadeHostTransport } from "./transport.js";
 import {
   readFileWithDiagnostics,
   readTextFileWithDiagnostics,
 } from "./fs-read-diagnostics.js";
+import { TerminalV3Store } from "./terminal-v3-store.js";
 
 // Host owns the authoritative terminal replay. This buffer only bridges the
 // attach handshake, so keeping a second multi-megabyte copy is wasteful.
@@ -15,6 +21,9 @@ type TerminalAttachResult = {
   id: string;
   title?: string;
   terminalEpoch?: string;
+  ownerId?: string;
+  ownerEpoch?: string;
+  protocolVersion?: number;
   checkpoint?: {
     checkpointVersion: 1;
     terminalEpoch: string;
@@ -33,6 +42,7 @@ type TerminalAttachResult = {
   status: "running" | "exited";
   exitCode?: number;
   signal?: number;
+  semanticSnapshot?: import("@yaade/rpc").TerminalSemanticSnapshot | null;
 };
 
 /** Prefer acknowledged WS delivery for hot terminal I/O; fall back to HTTP RPC. */
@@ -78,13 +88,11 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     replayTruncated = false,
   ) => {
     const pending = terminalDataBuffers.get(id) ?? [];
-    pending.push({
-      data,
-      sequence,
-      ...(replay ? { replay: true } : {}),
-      ...(replayNeedsQueryResponses ? { replayNeedsQueryResponses: true } : {}),
-      ...(replayTruncated ? { replayTruncated: true } : {}),
-    });
+    const buffered: BufferedTerminalData = { data, sequence }
+    if (replay) buffered.replay = true
+    if (replayNeedsQueryResponses) buffered.replayNeedsQueryResponses = true
+    if (replayTruncated) buffered.replayTruncated = true
+    pending.push(buffered)
     let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length;
     while (size > MAX_BUFFERED_TERMINAL_CHARS && pending.length > 1) {
       size -= pending.shift()!.data.length;
@@ -299,6 +307,56 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     const exitCode = args[1] as number;
     const signal = args[2] as number | undefined;
     for (const cb of terminalExitListeners) cb(id, exitCode, signal);
+  });
+  const semanticStores = new Map<string, TerminalV3Store>();
+  const semanticStoreFor = (terminalId: string): TerminalV3Store => {
+    const existing = semanticStores.get(terminalId)
+    if (existing) return existing
+    const created = new TerminalV3Store()
+    semanticStores.set(terminalId, created)
+    return created
+  }
+  const requestSemanticResync = (terminalId: string): void => {
+    void attachTerminal(terminalId)
+      .then(result => {
+        if (!result?.semanticSnapshot) return
+        const ownerEpoch = result.ownerEpoch ?? "attach"
+        semanticStoreFor(terminalId).applySnapshot({
+          type: "terminal.snapshot",
+          terminalId,
+          ownerEpoch,
+          terminalEpoch: result.terminalEpoch ?? "",
+          revision: result.semanticSnapshot.revision,
+          snapshot: result.semanticSnapshot,
+        })
+      })
+      .catch(() => undefined)
+  }
+  transport.on("terminal.snapshot", (...args: unknown[]) => {
+    try {
+      const message = Schema.decodeUnknownSync(TerminalSnapshotMessage)(args[0])
+      const result = semanticStoreFor(message.terminalId).applySnapshot(message)
+      if (result === "resync-required") requestSemanticResync(message.terminalId)
+    } catch {
+      /* A malformed semantic frame must not break the legacy PTY stream. */
+    }
+  });
+  transport.on("terminal.patch", (...args: unknown[]) => {
+    try {
+      const message = Schema.decodeUnknownSync(TerminalPatchMessage)(args[0])
+      const result = semanticStoreFor(message.terminalId).applyPatch(message)
+      if (result === "resync-required") requestSemanticResync(message.terminalId)
+    } catch {
+      /* A malformed semantic frame must not break the legacy PTY stream. */
+    }
+  });
+  transport.on("terminal.resync-required", (...args: unknown[]) => {
+    try {
+      const message = Schema.decodeUnknownSync(TerminalResyncRequiredMessage)(args[0])
+      requestSemanticResync(message.terminalId)
+    } catch {
+      /* Ignore malformed resync notices; the next attach reconciles state. */
+    }
   });
   transport.on("terminal-instances:event", (...args: unknown[]) => {
     const event = args[0] as import("@yaade/workspace").TerminalInstanceEvent;
@@ -560,15 +618,23 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     terminal: {
       create: async (cwdUri, launch) => {
         const result = await transport.invoke("terminal:create", cwdUri, launch);
-        return {
-          id: result.id,
-          ...(result.title ? { title: result.title } : {}),
-        };
+        if (result.title) return { id: result.id, title: result.title }
+        return { id: result.id }
       },
       attach: async (id) => {
         const result = await attachTerminal(id);
         if (result) {
           terminalReplayFloors.set(id, result.lastSequence);
+          if (result.semanticSnapshot) {
+            semanticStoreFor(id).applySnapshot({
+              type: "terminal.snapshot",
+              terminalId: id,
+              ownerEpoch: result.ownerEpoch ?? "attach",
+              terminalEpoch: result.terminalEpoch ?? "",
+              revision: result.semanticSnapshot.revision,
+              snapshot: result.semanticSnapshot,
+            })
+          }
           const pending = terminalDataBuffers.get(id);
           if (pending) {
             const kept = pending.filter(
@@ -638,6 +704,14 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
           set!.delete(callback);
           if (set!.size === 0) terminalDataListeners.delete(id);
         };
+      },
+      onSemanticSnapshot: (id, callback) => {
+        const store = semanticStoreFor(id)
+        const current = store.snapshot
+        if (current) callback(current)
+        return store.onChange((snapshot, result) => {
+          if (result === "applied" && snapshot) callback(snapshot)
+        })
       },
       onExit: (cb) => {
         terminalExitListeners.add(cb);

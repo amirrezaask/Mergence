@@ -26,6 +26,7 @@ import {
   scanTerminalPathLinks,
 } from "./terminal-links.js"
 import { DEFAULT_MONO_FONT_FAMILY } from "../theme/appearance-defaults.js"
+import { SemanticTerminalView, type SemanticTerminalSnapshot } from "./SemanticTerminalView.js"
 
 export type TerminalPanelProps = {
   cwdRootUri: string
@@ -286,6 +287,8 @@ export function TerminalPanel({
   const [displayExitCode, setDisplayExitCode] = useState(exitCode)
   const [connectedPtyId, setConnectedPtyId] = useState<string | null>(existingPtyId ?? null)
   const [terminalError, setTerminalError] = useState<string | null>(null)
+  const [semanticSnapshot, setSemanticSnapshot] = useState<SemanticTerminalSnapshot | null>(null)
+  const semanticModeRef = useRef(false)
   const themeRef = useRef(theme)
   themeRef.current = theme
   const statusRef = useRef(status)
@@ -326,6 +329,7 @@ export function TerminalPanel({
     let session: TerminalSession | null = null
     let surface: GhosttyTerminalSurface | null = null
     let unsub: (() => void) | null = null
+    let semanticUnsub: (() => void) | null = null
     let dataDispose: (() => void) | null = null
     let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
     const pendingTerminalInput: string[] = []
@@ -458,6 +462,7 @@ export function TerminalPanel({
           replayTruncated = false,
         ) => {
           onOutputRef.current?.(tabId, data)
+          if (semanticModeRef.current) return
           if (replay && replayTruncated) {
             // A reconnect gap means the ring starts after the current parser
             // state. Reset before applying the best-effort replacement stream.
@@ -483,6 +488,10 @@ export function TerminalPanel({
           }
         },
       )
+      semanticUnsub = terminalApi.onSemanticSnapshot?.(id, snapshot => {
+        semanticModeRef.current = true
+        setSemanticSnapshot(snapshot)
+      }) ?? null
       if (!readOnly) {
         inputWriter = createTerminalInputWriter(
           data => terminalApi.write(id, data),
@@ -534,7 +543,10 @@ export function TerminalPanel({
             return
           }
           if (!attached) throw new Error("precreated terminal disappeared before attach")
-          if (outputWriter) {
+          if (attached.semanticSnapshot) {
+            semanticModeRef.current = true
+            setSemanticSnapshot(attached.semanticSnapshot)
+          } else if (outputWriter) {
             applyAttachReplay(
               attached,
               tabId,
@@ -584,7 +596,10 @@ export function TerminalPanel({
                 createFreshPty()
                 return
               }
-              if (outputWriter) {
+              if (attached.semanticSnapshot) {
+                semanticModeRef.current = true
+                setSemanticSnapshot(attached.semanticSnapshot)
+              } else if (outputWriter) {
                 applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
               }
               setDisplayStatus("exited")
@@ -593,7 +608,10 @@ export function TerminalPanel({
             }
             const respondToQueries =
               !readOnly && attached.replayNeedsQueryResponses === true
-            if (outputWriter) {
+            if (attached.semanticSnapshot) {
+              semanticModeRef.current = true
+              setSemanticSnapshot(attached.semanticSnapshot)
+            } else if (outputWriter) {
               applyAttachReplay(
                 attached,
                 tabId,
@@ -762,6 +780,7 @@ export function TerminalPanel({
       }
       flushAck(session?.ptyId ?? null)
       unsub?.()
+      semanticUnsub?.()
       if (surface) {
         unregisterTerminalInstance(tabId, surface)
         surface.dispose()
@@ -832,10 +851,28 @@ export function TerminalPanel({
       <div className="yaade-terminal-surface jet-terminal-surface relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={containerRef}
-          className="relative h-full min-h-0 w-full overflow-hidden"
+          className={
+            semanticSnapshot
+              ? "invisible absolute inset-0 overflow-hidden"
+              : "relative h-full min-h-0 w-full overflow-hidden"
+          }
           data-yaade-terminal-fit=""
           data-yaade-terminal-surface=""
         />
+        {semanticSnapshot ? (
+          <div className="absolute inset-0">
+            <SemanticTerminalView
+              snapshot={semanticSnapshot}
+              focused={focused && isActive}
+              onInput={data => {
+                if (connectedPtyId && !readOnly) {
+                  void window.yaade?.terminal.write(connectedPtyId, data)
+                }
+                onInput?.(tabId, data)
+              }}
+            />
+          </div>
+        ) : null}
       </div>
       {displayStatus === "starting" || deferPty ? (
         <div

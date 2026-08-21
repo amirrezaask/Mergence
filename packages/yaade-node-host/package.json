@@ -24,6 +24,7 @@
   },
   "dependencies": {
     "@vscode/ripgrep": "1.18.0",
+    "@yaade/ghostty-core": "workspace:*",
     "@yaade/rpc": "workspace:*",
     "@yaade/shared": "workspace:*",
     "effect": "3.22.1",

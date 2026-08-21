@@ -2,6 +2,7 @@ import type { YaadeHostTransport } from "./transport.js";
 import {
   HostDisconnectedError,
   decodeTerminalDataFrame,
+  decodeTerminalStreamV3,
   encodeTerminalWsCommand,
   isTerminalWsHotOp,
   tryDecodeRealtimeHostEvent,
@@ -693,6 +694,11 @@ export class WebHostTransport implements YaadeHostTransport {
     else if (ArrayBuffer.isView(data)) frame = data;
     if (!frame) {
       this.dispatch("protocol:error", "Unsupported realtime binary message");
+      return;
+    }
+    const v3 = decodeTerminalStreamV3(frame);
+    if (v3) {
+      this.dispatch(v3.type, v3);
       return;
     }
     const decoded = decodeTerminalDataFrame(frame);

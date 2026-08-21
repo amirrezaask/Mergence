@@ -7,6 +7,7 @@ import {
   supervisorSocketPath,
   type SupervisorManifest,
 } from "../../../packages/yaade-node-host/src/terminal-supervisor.js"
+import { TerminalRuntimeRegistry } from "../../../packages/yaade-node-host/src/terminal-runtime-registry.js"
 import { waitUntil } from "./wait.js"
 import type { SupervisorHandle } from "./types.js"
 
@@ -82,18 +83,49 @@ export async function pingSupervisor(dataDir: string): Promise<{
   }
 }
 
+function runtimeSockets(dataDir: string): Array<{
+  readonly socketPath: string
+  readonly ownerId: string | null
+}> {
+  const entries = new Map<string, string | null>()
+  const legacy = readSupervisorHandle(dataDir)
+  if (legacy) entries.set(legacy.socketPath, null)
+  for (const manifest of new TerminalRuntimeRegistry(dataDir).listManifests()) {
+    entries.set(
+      manifest.socketPath,
+      manifest.runtimeVersion === "legacy" ? null : manifest.ownerId,
+    )
+  }
+  return [...entries].map(([socketPath, ownerId]) => ({ socketPath, ownerId }))
+}
+
 export async function dropSupervisorClients(dataDir: string): Promise<void> {
-  const handle = readSupervisorHandle(dataDir)
-  if (!handle) throw new Error("supervisor is not running")
-  await supervisorRpc(handle.socketPath, "dropClients").catch(() => {
-    /* The drop may close this probe connection before the response arrives. */
-  })
+  const sockets = runtimeSockets(dataDir)
+  if (sockets.length === 0) throw new Error("supervisor is not running")
+  await Promise.all(
+    sockets.map(({ socketPath }) =>
+      supervisorRpc(socketPath, "dropClients").catch(() => {
+        /* The drop closes the probe connection before the response arrives. */
+      }),
+    ),
+  )
 }
 
 export async function forceSupervisorCheckpoint(dataDir: string, ptyId: string): Promise<void> {
-  const handle = readSupervisorHandle(dataDir)
-  if (!handle) throw new Error("supervisor is not running")
-  await supervisorRpc(handle.socketPath, "forceCheckpoint", [ptyId])
+  const sockets = runtimeSockets(dataDir)
+  if (sockets.length === 0) throw new Error("supervisor is not running")
+  for (const { socketPath, ownerId } of sockets) {
+    const localId = ownerId && ptyId.startsWith(`pty-${ownerId}-`)
+      ? ptyId.slice(`pty-${ownerId}-`.length)
+      : ptyId
+    try {
+      await supervisorRpc(socketPath, "forceCheckpoint", [localId])
+      return
+    } catch {
+      /* The terminal belongs to another generation. */
+    }
+  }
+  throw new Error(`terminal owner not found: ${ptyId}`)
 }
 
 export async function injectSupervisorCheckpoint(
@@ -101,16 +133,37 @@ export async function injectSupervisorCheckpoint(
   ptyId: string,
   checkpoint: unknown,
 ): Promise<void> {
-  const handle = readSupervisorHandle(dataDir)
-  if (!handle) throw new Error("supervisor is not running")
-  await supervisorRpc(handle.socketPath, "injectCheckpoint", [ptyId, checkpoint])
+  const sockets = runtimeSockets(dataDir)
+  if (sockets.length === 0) throw new Error("supervisor is not running")
+  for (const { socketPath, ownerId } of sockets) {
+    const localId = ownerId && ptyId.startsWith(`pty-${ownerId}-`)
+      ? ptyId.slice(`pty-${ownerId}-`.length)
+      : ptyId
+    try {
+      await supervisorRpc(socketPath, "injectCheckpoint", [localId, checkpoint])
+      return
+    } catch {
+      /* The terminal belongs to another generation. */
+    }
+  }
+  throw new Error(`terminal owner not found: ${ptyId}`)
 }
 
 export async function listSupervisorPtys(dataDir: string): Promise<Array<{ id: string }>> {
-  const handle = readSupervisorHandle(dataDir)
-  if (!handle) throw new Error("supervisor is not running")
-  const value = await supervisorRpc(handle.socketPath, "listRunning")
-  return Array.isArray(value) ? (value as Array<{ id: string }>) : []
+  const sockets = runtimeSockets(dataDir)
+  if (sockets.length === 0) throw new Error("supervisor is not running")
+  const running: Array<{ id: string }> = []
+  for (const { socketPath, ownerId } of sockets) {
+    const value = await supervisorRpc(socketPath, "listRunning")
+    if (!Array.isArray(value)) continue
+    for (const item of value) {
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue
+      const id = (item as { id?: unknown }).id
+      if (typeof id !== "string") continue
+      running.push({ id: ownerId ? `pty-${ownerId}-${id}` : id })
+    }
+  }
+  return running
 }
 
 export async function startIncompatibleSupervisor(dataDir: string): Promise<{

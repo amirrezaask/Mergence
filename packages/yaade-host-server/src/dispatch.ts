@@ -20,7 +20,10 @@ import {
   writeTextFile,
   writeTempDrop,
   assertAllowedUri,
+  TerminalControlError,
+  type TerminalInspectSnapshot,
   type TerminalLaunch,
+  type TerminalMutationFence,
 } from "@yaade/node-host";
 import {
   ArchiveSession,
@@ -57,6 +60,8 @@ import {
   ToolUseConflict,
   ToolRuntimeFailure,
   TerminalLeaseError,
+  TerminalMutationFence as RpcTerminalMutationFence,
+  ScopeDeniedError,
   SessionCreated,
   SessionRestored,
   SessionUpdated,
@@ -97,7 +102,20 @@ import {
   restartTerminalInstance,
   resumeTerminalInstance,
 } from "./tools/process-driver.js";
-import { ToolDriverFailure } from "./tools/errors.js";
+import { ToolDriverFailure } from "./tools/errors.js"
+import { principalMayInvoke } from "./route-policy.js"
+import {
+  makeCompatibilityPrincipal,
+  type RequestPrincipal,
+} from "./principal.js";
+import {
+  bindOwnerFence,
+  controlErrorToHostError,
+  currentOwnerWriter,
+  mapControlError,
+  projectRuntimeLease,
+  usesAuthoritativeLeases,
+} from "./terminal-authority.js";
 
 export type { HostRuntime } from "./host-runtime.js";
 export { createRuntime, shutdownRuntime } from "./host-runtime.js";
@@ -143,6 +161,8 @@ export function mapDispatchError(
   ) {
     return error;
   }
+  const controlError = mapControlError(error);
+  if (controlError) return controlError;
   if (error instanceof ToolDriverFailure) {
     return new ToolRuntimeFailure({
       toolUseId: error.toolUseId,
@@ -168,12 +188,24 @@ export type DispatchEnv = HostRuntimeTag | GitServiceTag;
 export function dispatch(
   channel: string,
   args: unknown[],
-  clientId: string,
+  principalOrClientId: RequestPrincipal | string,
   _signal?: AbortSignal,
 ): Effect.Effect<unknown, HostRpcError, DispatchEnv> {
   return Effect.gen(function* () {
     if (!isHostRouteName(channel)) {
       return yield* Effect.fail(unknownChannel(channel));
+    }
+    const principal =
+      typeof principalOrClientId === "string"
+        ? makeCompatibilityPrincipal(principalOrClientId)
+        : principalOrClientId
+    if (!principalMayInvoke(principal, channel)) {
+      return yield* Effect.fail(
+        new ScopeDeniedError({
+          message: "principal does not have the capability for this operation",
+          channel,
+        }),
+      )
     }
     const decodedArgs = yield* Effect.try({
       try: () => decodeHostRouteArgs(channel, args),
@@ -189,7 +221,7 @@ export function dispatch(
     } else {
       const runtime = yield* HostRuntimeTag
       value = yield* Effect.tryPromise({
-        try: () => dispatchImpl(runtime, channel, decodedArgs, clientId),
+        try: () => dispatchImpl(runtime, channel, decodedArgs, principal),
         catch: err => mapDispatchError(channel, err),
       })
     }
@@ -208,11 +240,11 @@ export function dispatchPromise(
   runtime: HostRuntime,
   channel: string,
   args: unknown[],
-  clientId: string,
+  principalOrClientId: RequestPrincipal | string,
   signal?: AbortSignal,
 ): Promise<unknown> {
   return Effect.runPromise(
-    dispatch(channel, args, clientId, signal).pipe(
+    dispatch(channel, args, principalOrClientId, signal).pipe(
       Effect.provideService(HostRuntimeTag, runtime),
       Effect.provide(GitServiceLive),
     ),
@@ -223,8 +255,9 @@ async function dispatchImpl(
   runtime: HostRuntime,
   channel: string,
   args: unknown[],
-  clientId: string,
+  principal: RequestPrincipal,
 ): Promise<unknown> {
+  const clientId = principal.connectionId
   if (
     channel === "fs:showOpenFolderDialog" ||
     channel === "fs:showSaveFileDialog"
@@ -245,7 +278,7 @@ async function dispatchImpl(
   if (channel.startsWith("tools:")) return handleTools(runtime, channel, args);
   if (channel.startsWith("fs:")) return handleFs(runtime, channel, args);
   if (channel.startsWith("terminal:"))
-    return handleTerminal(runtime, channel, args, clientId);
+    return handleTerminal(runtime, channel, args, clientId, principal);
   if (channel.startsWith("shell:")) return handleShell(channel, args);
   if (channel.startsWith("tasks:")) return handleTasks(channel, args);
   if (channel.startsWith("perf:")) return handlePerf(runtime, channel, args);
@@ -1154,7 +1187,7 @@ async function createTerminalInstance(
   }
   if (!checkoutPath)
     throw new Error("terminal:createInstance requires checkoutPath");
-  return createSharedTerminalInstance(
+  const instance = await createSharedTerminalInstance(
     runtime.terminalExecution,
     {
       projectId: project.id,
@@ -1183,6 +1216,13 @@ async function createTerminalInstance(
     },
     clientId,
   );
+  if (instance.ptyId) {
+    if (instance.terminalEpoch) {
+      runtime.leases.bindTerminalEpoch(instance.ptyId, instance.terminalEpoch)
+    }
+    runtime.leases.acquire(instance.ptyId, clientId, "writer")
+  }
+  return instance;
 }
 
 async function handleFs(
@@ -1379,11 +1419,46 @@ function handleGitEffect(
   );
 }
 
+async function ownerMutationFence(
+  runtime: HostRuntime,
+  id: string,
+  inspected: TerminalInspectSnapshot,
+  principal: RequestPrincipal,
+  decoded: Schema.Schema.Type<typeof RpcTerminalMutationFence> | null,
+): Promise<TerminalMutationFence> {
+  let writer = await currentOwnerWriter(runtime.terminal, id)
+  if (!writer) {
+    const leases = await Promise.resolve(runtime.terminal.listLeases(id))
+    const observer = leases.find(
+      lease =>
+        lease.mode === "observer" &&
+        lease.principalId === principal.principalId &&
+        lease.connectionId === principal.connectionId,
+    )
+    if (observer) {
+      throw new TerminalLeaseError({
+        code: "WRITER_LEASE_REQUIRED",
+        terminalId: id,
+        message: "an active writer lease is required",
+      })
+    }
+    writer = await Promise.resolve(runtime.terminal.acquireLease(
+      id,
+      inspected.terminalEpoch ?? "",
+      principal.principalId,
+      principal.connectionId,
+      "writer",
+    ))
+  }
+  return bindOwnerFence(id, decoded, principal, writer)
+}
+
 async function handleTerminal(
   runtime: HostRuntime,
   channel: string,
   args: unknown[],
   clientId: string,
+  principal: RequestPrincipal,
 ): Promise<unknown> {
   switch (channel) {
     case "terminal:listInstances":
@@ -1439,46 +1514,153 @@ async function handleTerminal(
       const created = await Promise.resolve(
         runtime.terminal.create(cwdUri, launch, clientId),
       );
+      runtime.leases.bindTerminalEpoch(created.id, created.terminalEpoch)
       runtime.db.recordSession(created.id, "terminal", "running", {
         title: created.title,
       });
       return created;
     }
     case "terminal:acquireLease": {
-      const mode = args[1] === "observer" ? "observer" : "writer";
-      return runtime.leases.acquire(str(args[0], "id"), clientId, mode);
+      const id = str(args[0], "id")
+      const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+      if (!inspected) throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+      const mode = args[1] === "observer" ? "observer" : "writer"
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        try {
+          const lease = await Promise.resolve(runtime.terminal.acquireLease(
+            id,
+            inspected.terminalEpoch ?? "",
+            principal.principalId,
+            principal.connectionId,
+            mode,
+          ))
+          return projectRuntimeLease(lease, id)
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      if (inspected.terminalEpoch) runtime.leases.bindTerminalEpoch(id, inspected.terminalEpoch)
+      return runtime.leases.acquire(id, clientId, mode)
     }
-    case "terminal:renewLease":
-      return runtime.leases.renew(
-        str(args[0], "id"),
-        str(args[1], "leaseId"),
-        clientId,
-      );
-    case "terminal:releaseLease":
-      runtime.leases.release(str(args[0], "id"), str(args[1], "leaseId"), clientId);
-      return null;
-    case "terminal:requestControl":
-      return runtime.leases.requestControl(str(args[0], "id"), clientId);
-    case "terminal:transferControl":
-      return runtime.leases.transfer(
-        str(args[0], "id"),
-        str(args[1], "leaseId"),
-        clientId,
-        str(args[2], "targetClientId"),
-      );
+    case "terminal:renewLease": {
+      const id = str(args[0], "id")
+      const leaseId = str(args[1], "leaseId")
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+        if (!inspected) throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+        try {
+          const lease = await Promise.resolve(runtime.terminal.renewLease(
+            id,
+            inspected.terminalEpoch ?? "",
+            leaseId,
+            principal.principalId,
+            principal.connectionId,
+          ))
+          return projectRuntimeLease(lease, id)
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      return runtime.leases.renew(id, leaseId, clientId)
+    }
+    case "terminal:releaseLease": {
+      const id = str(args[0], "id")
+      const leaseId = str(args[1], "leaseId")
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+        if (!inspected) throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+        try {
+          await Promise.resolve(runtime.terminal.releaseLease(
+            id,
+            inspected.terminalEpoch ?? "",
+            leaseId,
+            principal.principalId,
+            principal.connectionId,
+          ))
+          return null
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      runtime.leases.release(id, leaseId, clientId)
+      return null
+    }
+    case "terminal:requestControl": {
+      const id = str(args[0], "id")
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+        if (!inspected) throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+        try {
+          const lease = await Promise.resolve(runtime.terminal.forceTakeover(
+            id,
+            inspected.terminalEpoch ?? "",
+            principal.principalId,
+            principal.connectionId,
+          ))
+          return projectRuntimeLease(lease, id)
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      return runtime.leases.requestControl(id, clientId)
+    }
+    case "terminal:transferControl": {
+      const id = str(args[0], "id")
+      const leaseId = str(args[1], "leaseId")
+      const targetClientId = str(args[2], "targetClientId")
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+        if (!inspected) throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+        try {
+          const lease = await Promise.resolve(runtime.terminal.transferLease(
+            id,
+            inspected.terminalEpoch ?? "",
+            leaseId,
+            principal.principalId,
+            principal.connectionId,
+            principal.principalId,
+            targetClientId,
+          ))
+          return projectRuntimeLease(lease, id)
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      return runtime.leases.transfer(id, leaseId, clientId, targetClientId)
+    }
     case "terminal:listViewers":
+      if (usesAuthoritativeLeases(runtime.terminal, str(args[0], "id"))) {
+        const leases = await Promise.resolve(runtime.terminal.listLeases(str(args[0], "id")))
+        return [...new Set(leases.map(lease => lease.connectionId))]
+      }
       return runtime.leases.listViewers(str(args[0], "id"));
     case "terminal:write": {
       const id = str(args[0], "id");
-      if (!(await Promise.resolve(runtime.terminal.inspect(id)))) {
+      const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+      if (!inspected) {
         throw new NotFoundError({ message: `terminal ${id} not found`, resource: id });
       }
-      if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       const data = String(args[1] ?? "");
-      const result = await Promise.resolve(runtime.terminal.write(id, data));
-      // Enter starts a foreground command; Ctrl-C/Ctrl-D can return an agent
-      // to its shell. Ask for one targeted reconciliation without polling on
-      // every printable keystroke.
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        try {
+          const fence = await ownerMutationFence(
+            runtime,
+            id,
+            inspected,
+            principal,
+            decodeMutationFence(args[2]),
+          )
+          await Promise.resolve(runtime.terminal.writeFenced(id, data, fence))
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      } else {
+        if (inspected.terminalEpoch) runtime.leases.bindTerminalEpoch(id, inspected.terminalEpoch)
+        const fence = decodeMutationFence(args[2])
+        if (fence) runtime.leases.authorizeMutationFence(id, fence, principal)
+        else runtime.leases.authorizeWrite(id, clientId);
+        await Promise.resolve(runtime.terminal.write(id, data));
+      }
       const commandBoundary =
         data.includes("\r") ||
         data.includes("\n") ||
@@ -1487,24 +1669,65 @@ async function handleTerminal(
       if (commandBoundary) {
         runtime.requestTerminalAgentScan(id, true);
       }
-      return result;
+      return null;
     }
     case "terminal:writeBinary": {
       const id = str(args[0], "id");
-      if (!(await Promise.resolve(runtime.terminal.inspect(id)))) {
+      const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+      if (!inspected) {
         throw new NotFoundError({ message: `terminal ${id} not found`, resource: id });
       }
-      if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        try {
+          const fence = await ownerMutationFence(
+            runtime,
+            id,
+            inspected,
+            principal,
+            decodeMutationFence(args[2]),
+          )
+          return Promise.resolve(runtime.terminal.writeBinaryFenced(id, String(args[1] ?? ""), fence))
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      if (inspected.terminalEpoch) runtime.leases.bindTerminalEpoch(id, inspected.terminalEpoch)
+      const fence = decodeMutationFence(args[2])
+      if (fence) runtime.leases.authorizeMutationFence(id, fence, principal)
+      else runtime.leases.authorizeWrite(id, clientId);
       return Promise.resolve(
         runtime.terminal.writeBinary(id, String(args[1] ?? "")),
       );
     }
     case "terminal:resize": {
       const id = str(args[0], "id");
-      if (!(await Promise.resolve(runtime.terminal.inspect(id)))) {
+      const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+      if (!inspected) {
         throw new NotFoundError({ message: `terminal ${id} not found`, resource: id });
       }
-      if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        try {
+          const fence = await ownerMutationFence(
+            runtime,
+            id,
+            inspected,
+            principal,
+            decodeMutationFence(args[3]),
+          )
+          return Promise.resolve(runtime.terminal.resizeFenced(
+            id,
+            typeof args[1] === "number" ? args[1] : undefined,
+            typeof args[2] === "number" ? args[2] : undefined,
+            fence,
+          ))
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      }
+      if (inspected.terminalEpoch) runtime.leases.bindTerminalEpoch(id, inspected.terminalEpoch)
+      const fence = decodeMutationFence(args[3])
+      if (fence) runtime.leases.authorizeMutationFence(id, fence, principal)
+      else runtime.leases.authorizeWrite(id, clientId);
       return Promise.resolve(
         runtime.terminal.resize(
           id,
@@ -1527,7 +1750,31 @@ async function handleTerminal(
       );
     case "terminal:attach": {
       const id = str(args[0], "id");
-      if (!clientId.startsWith("legacy:")) {
+      const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        if (!inspected) throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+        try {
+          await Promise.resolve(runtime.terminal.acquireLease(
+            id,
+            inspected.terminalEpoch ?? "",
+            principal.principalId,
+            principal.connectionId,
+            "writer",
+          ))
+        } catch (error) {
+          if (!(error instanceof TerminalControlError) || error.code !== "WRITER_LEASE_REQUIRED") {
+            controlErrorToHostError(error)
+          }
+          await Promise.resolve(runtime.terminal.acquireLease(
+            id,
+            inspected.terminalEpoch ?? "",
+            principal.principalId,
+            principal.connectionId,
+            "observer",
+          )).catch(controlErrorToHostError)
+        }
+      } else {
+        if (inspected?.terminalEpoch) runtime.leases.bindTerminalEpoch(id, inspected.terminalEpoch)
         runtime.leases.attachClient(id, clientId);
       }
       return Promise.resolve(
@@ -1546,7 +1793,27 @@ async function handleTerminal(
       );
     case "terminal:dispose": {
       const id = str(args[0], "id");
-      await Promise.resolve(runtime.terminal.dispose(id));
+      const inspected = await Promise.resolve(runtime.terminal.inspect(id))
+      if (usesAuthoritativeLeases(runtime.terminal, id)) {
+        if (!inspected) {
+          throw new NotFoundError({ message: `terminal ${id} not found`, resource: id })
+        }
+        try {
+          const fence = await ownerMutationFence(
+            runtime,
+            id,
+            inspected,
+            principal,
+            decodeMutationFence(args[1]),
+          )
+          await Promise.resolve(runtime.terminal.disposeFenced(id, fence))
+        } catch (error) {
+          controlErrorToHostError(error)
+        }
+      } else {
+        await Promise.resolve(runtime.terminal.dispose(id));
+      }
+      runtime.leases.invalidateTerminal(id, inspected?.terminalEpoch)
       runtime.db.updateSessionStatus(id, "stopped");
       // A terminal can be disposed while its agent history remains useful in
       // HQ.  The terminal exit callback marks the durable run ended; never
@@ -1590,6 +1857,17 @@ function handlePerf(
   if (channel === "perf:getStartupLogPath")
     return runtime.perf.getStartupLogPath();
   throw new Error(`unknown perf channel: ${channel}`);
+}
+
+function decodeMutationFence(
+  value: unknown,
+): Schema.Schema.Type<typeof RpcTerminalMutationFence> | null {
+  if (value === undefined) return null
+  try {
+    return Schema.decodeUnknownSync(RpcTerminalMutationFence)(value)
+  } catch {
+    return null
+  }
 }
 
 function str(value: unknown, label: string): string {

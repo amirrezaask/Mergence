@@ -11,6 +11,7 @@ import {
   isProcessAlive,
   type ProcessIdentity,
 } from "../../../packages/yaade-node-host/src/process-identity.js"
+import { TerminalRuntimeRegistry } from "../../../packages/yaade-node-host/src/terminal-runtime-registry.js"
 import { readDatabaseState } from "./database.js"
 import { waitForMockAgent } from "./mock-agent.js"
 import { assertProcessAlive, assertProcessDead, readProcessTree, waitForProcessIdentity } from "./process.js"
@@ -436,10 +437,19 @@ export async function createDurableRuntimeHarness(
     startServer: async () => startApi(),
     killApi,
     killSupervisor: async signal => {
+      const pids = new Set<number>()
       const supervisor = readSupervisorHandle(dataDir)
-      if (!supervisor) return
-      signalPid(supervisor.pid, signal)
-      await waitUntil(() => !isProcessAlive(supervisor.pid), 8_000, "supervisor exit")
+      if (supervisor) pids.add(supervisor.pid)
+      for (const manifest of new TerminalRuntimeRegistry(dataDir).listManifests()) {
+        if (manifest.pid > 0) pids.add(manifest.pid)
+      }
+      if (pids.size === 0) return
+      for (const pid of pids) signalPid(pid, signal)
+      await waitUntil(
+        () => [...pids].every(pid => !isProcessAlive(pid)),
+        8_000,
+        "supervisor generation exit",
+      )
     },
     interruptSupervisorSocket: async () => {
       await dropSupervisorClients(dataDir)

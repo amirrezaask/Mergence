@@ -15,8 +15,50 @@ test("writer leases serialize input while observers remain independent", () => {
     (error: unknown) => error instanceof TerminalLeaseError && error.code === "LEASE_NOT_HELD",
   )
   leases.release("term-1", writer.leaseId, "laptop")
-  const next = leases.authorizeWrite("term-1", "phone")
+  assert.throws(
+    () => leases.authorizeWrite("term-1", "phone"),
+    (error: unknown) => error instanceof TerminalLeaseError && error.code === "WRITER_LEASE_REQUIRED",
+  )
+  const next = leases.acquire("term-1", "phone", "writer")
   assert.equal(next.clientId, "phone")
+})
+
+test("writes require an explicit writer lease", () => {
+  const leases = new TerminalLeaseService()
+  assert.throws(
+    () => leases.authorizeWrite("term-explicit", "client"),
+    (error: unknown) => error instanceof TerminalLeaseError && error.code === "WRITER_LEASE_REQUIRED",
+  )
+})
+
+test("mutation fences reject stale generations and duplicate command IDs", () => {
+  const leases = new TerminalLeaseService()
+  const writer = leases.acquire("term-fence", "connection-a", "writer")
+  const fence = {
+    terminalId: "term-fence",
+    terminalEpoch: writer.terminalEpoch,
+    leaseId: writer.leaseId,
+    leaseGeneration: writer.leaseGeneration ?? writer.revision,
+    principalId: "device-a",
+    connectionId: "connection-a",
+    commandId: "command-1",
+  }
+  assert.equal(
+    leases.authorizeMutationFence("term-fence", fence, {
+      principalId: "device-a",
+      connectionId: "connection-a",
+    }).leaseId,
+    writer.leaseId,
+  )
+  assert.throws(() => leases.authorizeMutationFence("term-fence", fence, {
+    principalId: "device-a",
+    connectionId: "connection-a",
+  }), TerminalLeaseError)
+  assert.throws(() => leases.authorizeMutationFence("term-fence", {
+    ...fence,
+    leaseGeneration: fence.leaseGeneration + 1,
+    commandId: "command-2",
+  }, { principalId: "device-a", connectionId: "connection-a" }), TerminalLeaseError)
 })
 
 test("control transfer invalidates the old writer atomically", () => {
@@ -49,4 +91,12 @@ test("disconnect grace keeps the writer until the client returns", () => {
   const restored = leases.authorizeWrite("term-5", "laptop")
   assert.equal(restored.clientId, "laptop")
   assert.equal(restored.mode, "writer")
+})
+
+test("legacy compatibility release promotes an existing observer", () => {
+  const leases = new TerminalLeaseService()
+  leases.acquire("term-promote", "a", "writer")
+  leases.acquire("term-promote", "b", "observer")
+  leases.releaseClient("a", { preserveWriter: false })
+  assert.equal(leases.currentWriter("term-promote")?.clientId, "b")
 })

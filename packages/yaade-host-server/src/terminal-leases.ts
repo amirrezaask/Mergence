@@ -28,7 +28,24 @@ function expired(lease: TerminalLease, time = now()): boolean {
 export class TerminalLeaseService {
   private readonly terminalEpochs = new Map<string, string>()
   private readonly leases = new Map<string, Map<string, LeaseEntry>>()
+  private readonly acceptedCommands = new Map<string, Set<string>>()
   private revision = 0
+
+  bindTerminalEpoch(terminalId: string, terminalEpoch: string): void {
+    if (!terminalId || !terminalEpoch) return
+    const existing = this.terminalEpochs.get(terminalId)
+    if (existing === terminalEpoch) return
+    if (existing) this.leases.delete(terminalId)
+    this.terminalEpochs.set(terminalId, terminalEpoch)
+  }
+
+  invalidateTerminal(terminalId: string, terminalEpoch?: string): void {
+    const existing = this.terminalEpochs.get(terminalId)
+    if (terminalEpoch && existing && existing !== terminalEpoch) return
+    this.terminalEpochs.delete(terminalId)
+    this.leases.delete(terminalId)
+    this.acceptedCommands.delete(terminalId)
+  }
 
   private epochFor(terminalId: string): string {
     const existing = this.terminalEpochs.get(terminalId)
@@ -75,6 +92,7 @@ export class TerminalLeaseService {
       acquiredAt: iso(acquired),
       expiresAt: iso(acquired + LEASE_TTL_MS),
       revision: this.revision,
+      leaseGeneration: this.revision,
     }
   }
 
@@ -166,9 +184,65 @@ export class TerminalLeaseService {
     return this.acquire(terminalId, targetClientId, "writer")
   }
 
+  authorizeMutationFence(
+    terminalId: string,
+    fence: {
+      readonly terminalId: string
+      readonly terminalEpoch: string
+      readonly leaseId: string
+      readonly leaseGeneration: number
+      readonly principalId: string
+      readonly connectionId: string
+      readonly commandId: string
+    },
+    principal: { readonly principalId: string; readonly connectionId: string },
+  ): TerminalLease {
+    const writer = this.writerFor(terminalId)
+    if (
+      !writer ||
+      fence.terminalId !== terminalId ||
+      fence.terminalEpoch !== writer.lease.terminalEpoch ||
+      fence.leaseId !== writer.lease.leaseId ||
+      fence.leaseGeneration !== writer.lease.leaseGeneration ||
+      fence.principalId !== principal.principalId ||
+      fence.connectionId !== principal.connectionId ||
+      fence.connectionId !== writer.lease.clientId
+    ) {
+      throw new TerminalLeaseError({
+        code: writer ? "WRITER_LEASE_STALE" : "WRITER_LEASE_REQUIRED",
+        terminalId,
+        leaseId: writer?.lease.leaseId,
+        message: "terminal mutation fence is stale",
+      })
+    }
+    const commands = this.acceptedCommands.get(terminalId) ?? new Set<string>()
+    if (commands.has(fence.commandId)) {
+      throw new TerminalLeaseError({
+        code: "WRITER_LEASE_STALE",
+        terminalId,
+        leaseId: fence.leaseId,
+        message: "terminal command was already accepted",
+      })
+    }
+    commands.add(fence.commandId)
+    while (commands.size > 1_024) {
+      const oldest = commands.values().next().value
+      if (typeof oldest !== "string") break
+      commands.delete(oldest)
+    }
+    this.acceptedCommands.set(terminalId, commands)
+    return this.renew(terminalId, writer.lease.leaseId, writer.lease.clientId)
+  }
+
   authorizeWrite(terminalId: string, clientId: string): TerminalLease {
     const writer = this.writerFor(terminalId)
-    if (!writer) return this.acquire(terminalId, clientId, "writer")
+    if (!writer) {
+      throw new TerminalLeaseError({
+        code: "WRITER_LEASE_REQUIRED",
+        terminalId,
+        message: "an explicit writer lease is required before terminal input",
+      })
+    }
     if (writer.lease.clientId !== clientId) {
       throw new TerminalLeaseError({
         code: "LEASE_NOT_HELD",
@@ -203,18 +277,34 @@ export class TerminalLeaseService {
     return this.writerFor(terminalId)?.lease
   }
 
-  releaseClient(clientId: string): void {
+  releaseClient(
+    clientId: string,
+    options: { readonly preserveWriter?: boolean } = {},
+  ): void {
+    const preserveWriter = options.preserveWriter !== false
     for (const [terminalId, entries] of this.leases) {
+      let writerReleased = false
       for (const [leaseId, entry] of entries) {
         if (entry.lease.clientId !== clientId) continue
-        if (entry.lease.mode === "writer" && DISCONNECT_GRACE_MS > 0) {
+        if (entry.lease.mode === "writer" && preserveWriter && DISCONNECT_GRACE_MS > 0) {
           entry.lease = {
             ...entry.lease,
             expiresAt: iso(now() + DISCONNECT_GRACE_MS),
           }
           continue
         }
+        writerReleased ||= entry.lease.mode === "writer"
         entries.delete(leaseId)
+      }
+      if (writerReleased && entries.size > 0) {
+        const next = [...entries.values()].find(entry => entry.lease.mode === "observer")
+        if (next) {
+          next.lease = {
+            ...next.lease,
+            mode: "writer",
+            revision: ++this.revision,
+          }
+        }
       }
       if (entries.size === 0) this.leases.delete(terminalId)
     }

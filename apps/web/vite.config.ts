@@ -85,7 +85,10 @@ export default defineConfig(({ command }) => ({
   },
   plugins: lazyPlugins(() => [
     yaadeBuildBranding(command),
-    react({ compiler: true }),
+    // The app still contains imperative integrations and third-party hooks that
+    // are not safe for infer-mode compilation. Adopt the compiler explicitly
+    // with "use memo" once a component has been audited.
+    react({ compiler: { compilationMode: "annotation" } }),
     tailwindcss(),
   ]),
   root: appRoot,

@@ -233,6 +233,13 @@ export async function launchReservedTerminalInstance(
       undefined,
       created.processIdentity,
       created.terminalEpoch,
+      created.ownerId && created.ownerEpoch
+        ? {
+            ownerId: created.ownerId,
+            ownerEpoch: created.ownerEpoch,
+            protocolVersion: created.protocolVersion ?? 2,
+          }
+        : undefined,
     ) ?? instance
   }
 
@@ -290,6 +297,13 @@ export async function launchReservedTerminalInstance(
     processOnly ? "process_only" : "connecting",
     created.processIdentity,
     created.terminalEpoch,
+    created.ownerId && created.ownerEpoch
+      ? {
+          ownerId: created.ownerId,
+          ownerEpoch: created.ownerEpoch,
+          protocolVersion: created.protocolVersion ?? 2,
+        }
+      : undefined,
   )
   if (!bound) throw new Error("process binding was rejected")
   deps.db.recordSession(created.id, "terminal", "running", { title: created.title })

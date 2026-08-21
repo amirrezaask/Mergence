@@ -196,16 +196,16 @@ test.describe("P — supervisor and process-safety", { tag: "@p0" }, () => {
     })
   })
 
-  test("P06 supervisor protocol mismatch is surfaced and non-destructive", async ({}, testInfo) => {
+  test("P06 incompatible legacy owner stays non-destructive while current generation serves creates", async ({}, testInfo) => {
     test.skip(process.platform === "win32", "Unix incompatible-supervisor fixture")
     await withHarness(testInfo, async harness => {
       const fixture = await startIncompatibleSupervisor(harness.dataDir)
       try {
         const api = await harness.startApi()
         const health = await readHealth(api.origin)
-        expect(health.health.supervisor.status).toBe("unhealthy")
-        expect(health.health.supervisor.message).toMatch(/incompatible/i)
-        await expect(harness.launchMockAgent()).rejects.toThrow(/INCOMPATIBLE|incompatible|supervisor/i)
+        expect(health.health.supervisor.status).toBe("healthy")
+        const launched = await harness.launchMockAgent()
+        expect(launched.instance.ptyId).toBeTruthy()
         expect(fs.existsSync(fixture.socketPath)).toBe(true)
       } finally {
         await fixture.close()

@@ -54,6 +54,7 @@ import {
   TextFileWriteResult,
   TerminalCheckpoint,
   TerminalLease,
+  TerminalMutationFence as RpcTerminalMutationFence,
   TrashEntry,
 } from "./host.js"
 
@@ -180,11 +181,16 @@ const TerminalAttachResult = Schema.NullOr(
     signal: Schema.NullOr(Schema.Number),
   }),
 )
-const TerminalWriteArgs = Schema.Tuple(Schema.String, Schema.String)
+const TerminalWriteArgs = Schema.Tuple(
+  Schema.String,
+  Schema.String,
+  Schema.optionalElement(RpcTerminalMutationFence),
+)
 const TerminalResizeArgs = Schema.Tuple(
   Schema.String,
   Schema.Number,
   Schema.Number,
+  Schema.optionalElement(RpcTerminalMutationFence),
 )
 const TerminalAckArgs = Schema.Tuple(Schema.String, Schema.Number)
 const TerminalInstanceIdArgs = Schema.Tuple(Schema.String)

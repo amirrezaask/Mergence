@@ -34,7 +34,7 @@ test("reads an explicit workspace without treating flags as paths", () => {
 test("keeps production CSP free of eval while allowing required local WASM", () => {
   const policy = contentSecurityPolicy(["http://127.0.0.1:48123"], false)
 
-  assert.match(policy, /connect-src 'self' http:\/\/127\.0\.0\.1:48123 ws:\/\/127\.0\.0\.1:48123/)
+  assert.match(policy, /connect-src 'self' data: http:\/\/127\.0\.0\.1:48123 ws:\/\/127\.0\.0\.1:48123/)
   assert.match(policy, /wasm-unsafe-eval/)
   assert.doesNotMatch(policy, /'unsafe-eval'/)
   assert.match(policy, /frame-src 'none'/)

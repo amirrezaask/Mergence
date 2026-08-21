@@ -218,6 +218,13 @@ function discoverAgentInstance(
     telemetryState,
     inspected.processIdentity,
     inspected.terminalEpoch,
+    inspected.ownerId && inspected.ownerEpoch
+      ? {
+          ownerId: inspected.ownerId,
+          ownerEpoch: inspected.ownerEpoch,
+          protocolVersion: inspected.protocolVersion ?? 2,
+        }
+      : undefined,
   )
   return { instance: bound ?? reserved, started: true }
 }
