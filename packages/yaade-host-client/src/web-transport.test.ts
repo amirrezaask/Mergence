@@ -6,6 +6,7 @@ import {
   createClientId,
   hostRealtimeReconnectDelay,
   readHostAuthToken,
+  consumeHostAuthTokenFromLocation,
   subscribeRealtimeWake,
   websocketUrl,
   normalizeHostBaseUrl,
@@ -86,6 +87,28 @@ test("readHostAuthToken prefers the query token and remembers it", () => {
   assert.equal(readHostAuthToken("?token=abc", storage), "abc")
   assert.equal(store.get("yaade-host-token"), "abc")
   assert.equal(readHostAuthToken("", storage), "abc")
+})
+
+test("consumeHostAuthTokenFromLocation strips the query token from history", () => {
+  const store = new Map<string, string>()
+  const storage = {
+    getItem: (key: string) => store.get(key) ?? null,
+    setItem: (key: string, value: string) => {
+      store.set(key, value)
+    },
+  }
+  let url = "/?s=ses-1&token=secret"
+  consumeHostAuthTokenFromLocation(
+    { search: "?s=ses-1&token=secret", pathname: "/", hash: "" },
+    {
+      replaceState: (_state, _title, next) => {
+        url = String(next)
+      },
+    },
+    storage,
+  )
+  assert.equal(store.get("yaade-host-token"), "secret")
+  assert.equal(url, "/?s=ses-1")
 })
 
 test("client ids work when randomUUID is unavailable outside secure contexts", () => {

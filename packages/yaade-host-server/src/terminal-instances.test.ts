@@ -120,7 +120,29 @@ describe("TerminalInstanceService", () => {
       const live = service.bindPty(reserved.id, 1, "pty-agent", "claude", "process_only")
       assert.equal(live?.processState, "running")
       assert.equal(service.listLiveForWorkspace("ses-1").length, 1)
+      const failed = service.onPtyExit("pty-agent", 1, "resume failed")
+      assert.equal(failed?.processState, "failed")
+      assert.equal(failed?.activityState, "failed")
       service.close(reserved.id, 1, "")
+    })
+  })
+
+  it("reopens a disconnected reservation so a retry can bind the PTY", () => {
+    withService(service => {
+      const reserved = service.reserve({
+        projectId: "project-1",
+        checkoutKey: "main",
+        checkoutPath: "/tmp/project",
+        title: "Terminal",
+        launchRequestId: "retry-1",
+      })
+      service.markSupervisorDisconnected("supervisor_unavailable")
+      assert.equal(service.get(reserved.id)?.processState, "disconnected")
+      const reopened = service.reopenForLaunch(reserved.id, reserved.generation)
+      assert.equal(reopened?.processState, "starting")
+      const live = service.bindPty(reserved.id, reserved.generation, "pty-retry")
+      assert.equal(live?.processState, "running")
+      assert.equal(live?.ptyId, "pty-retry")
     })
   })
 

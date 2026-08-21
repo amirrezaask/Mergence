@@ -173,6 +173,8 @@ const TerminalAttachResult = Schema.NullOr(
     replayTruncated: Schema.Boolean,
     replayNeedsQueryResponses: Schema.Boolean,
     lastSequence: Schema.Number,
+    cols: Schema.optional(Schema.Number),
+    rows: Schema.optional(Schema.Number),
     status: Schema.Literal("running", "exited"),
     exitCode: Schema.NullOr(Schema.Number),
     signal: Schema.NullOr(Schema.Number),
@@ -760,6 +762,8 @@ export type HostTerminalAttachResult = {
   replayTruncated?: boolean
   replayNeedsQueryResponses?: boolean
   lastSequence: number
+  cols?: number
+  rows?: number
   status: "running" | "exited"
   exitCode?: number
   signal?: number

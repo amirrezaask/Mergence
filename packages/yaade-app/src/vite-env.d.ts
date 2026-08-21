@@ -8,5 +8,12 @@ interface Window {
     saveServerDefinitions?: (
       servers: readonly import("@yaade/shared").YaadeServerDefinition[],
     ) => Promise<void>
+    inspectDaemon?: () => Promise<{
+      running: boolean
+      runningTerminals: number
+      origin: string
+      pid: number
+    }>
+    stopDaemon?: () => Promise<void>
   }
 }

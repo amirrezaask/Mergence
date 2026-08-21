@@ -27,6 +27,7 @@ import {
   getHostRoute,
   hostErrorWire,
   tryDecodeTerminalWsCommand,
+  ScopeDeniedError,
   type HostRpcError,
   type TextFileWriteOptions,
 } from "@yaade/rpc";
@@ -45,9 +46,12 @@ import {
   isAllowedCorsOrigin,
   isAllowedWebSocketOrigin,
   isAuthorizedRequest,
+  isLoopbackHostname,
   requestAuthToken,
   tokensEqual,
 } from "./security.js";
+import { deviceMayInvoke } from "./device-scopes.js";
+import { diagnosticBundle } from "./diagnostics.js";
 import { normalizeProviderHookRequest } from "./notifications/index.js";
 import {
   removeDaemonRuntimeManifest,
@@ -64,6 +68,28 @@ const MAX_INFLIGHT_RPC = 32;
 const MAX_WS_COMMAND_QUEUE = 64;
 const MAX_WS_PAYLOAD_BYTES = 1024 * 1024;
 const LEGACY_PROTOCOL_SOCKETS = new WeakSet<WebSocket>();
+const DEVICE_EVENT_SOCKETS = new WeakMap<WebSocket, { deviceId: string }>();
+const ACTIVE_EVENT_SOCKETS = new Set<WebSocket>();
+
+function closeDeviceEventSockets(deviceId: string): void {
+  for (const socket of ACTIVE_EVENT_SOCKETS) {
+    if (DEVICE_EVENT_SOCKETS.get(socket)?.deviceId === deviceId && socket.readyState === WebSocket.OPEN) {
+      socket.close(4003, "access revoked");
+    }
+  }
+}
+
+function originDenied(origin: string | undefined, bindHost: string, corsOrigins: readonly string[]): boolean {
+  if (!origin) return false;
+  if (!isAllowedCorsOrigin(origin, corsOrigins)) return true;
+  if (isLoopbackHostname(bindHost)) return false;
+  try {
+    const url = new URL(origin);
+    return url.protocol === "http:" && !isLoopbackHostname(url.hostname);
+  } catch {
+    return true;
+  }
+}
 
 class HttpError extends Error {
   constructor(
@@ -153,9 +179,16 @@ export async function startHostServer(
       req.url ?? "/",
       `http://${req.headers.host ?? "localhost"}`,
     );
+    const protocol = url.searchParams.get("protocol");
+    if (url.pathname === "/ws" && protocol && protocol !== "1" && protocol !== "2") {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        ws.close(4002, "incompatible protocol");
+      });
+      return;
+    }
     if (
       !isRuntimeAuthorized(runtime, req, url) &&
-      url.searchParams.get("protocol") !== "2"
+      protocol !== "2"
     ) {
       socket.write("HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n");
       socket.destroy();
@@ -315,10 +348,16 @@ function runtimeHealth(runtime: HostRuntime) {
       : supervisorState === "connecting" || supervisorState === "reconnecting"
         ? "degraded"
         : "unhealthy";
+  const supervisorMessage =
+    supervisorState === "reconnecting"
+      ? "Supervisor reconnecting"
+      : supervisorState === "incompatible"
+        ? "incompatible supervisor protocol"
+        : supervisorState;
   return {
     status: supervisorStatus === "healthy" ? "healthy" : "degraded",
     database: { status: "healthy", message: "SQLite WAL is available" },
-    supervisor: { status: supervisorStatus, message: supervisorState },
+    supervisor: { status: supervisorStatus, message: supervisorMessage },
     eventLoop: { status: "healthy", message: "HTTP event loop is responsive" },
     storage: { status: "healthy", message: "runtime storage is available" },
     connectedClients: 0,
@@ -341,9 +380,9 @@ function serverCapabilities(runtime: HostRuntime) {
     platform,
     features: {
       runtimeSnapshot: true,
-      terminalCheckpoints: true,
+      terminalCheckpoints: runtime.config.features.terminalCheckpoints,
       writerLeases: true,
-      nativeAgentResume: true,
+      nativeAgentResume: runtime.config.features.nativeAgentResume,
       deviceAuthentication: true,
       persistedTerminalHistory: false,
     },
@@ -381,6 +420,20 @@ async function handleHttp(
     return;
   }
 
+  if (
+    pathname.startsWith("/api") &&
+    originDenied(origin, runtime.config.host, runtime.config.corsOrigins ?? [])
+  ) {
+    sendJson(res, 403, {
+      error: {
+        code: "ORIGIN_DENIED",
+        message: "origin is not allowed",
+        details: {},
+      },
+    });
+    return;
+  }
+
   if (req.method === "GET" && pathname === "/health") {
     sendJson(res, 200, {
       status: "ok",
@@ -410,8 +463,13 @@ async function handleHttp(
       })
       sendJson(res, 201, paired)
     } catch (error) {
-      sendJson(res, 400, {
-        error: { code: "PAIRING_FAILED", message: error instanceof Error ? error.message : String(error), details: {} },
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, message.includes("too many") ? 429 : 400, {
+        error: {
+          code: message.includes("too many") ? "RATE_LIMITED" : "PAIRING_FAILED",
+          message,
+          details: {},
+        },
       })
     }
     return
@@ -445,8 +503,13 @@ async function handleHttp(
       })
       sendJson(res, 200, session)
     } catch (error) {
-      sendJson(res, 401, {
-        error: { code: "DEVICE_AUTH_FAILED", message: error instanceof Error ? error.message : String(error), details: {} },
+      const message = error instanceof Error ? error.message : String(error)
+      sendJson(res, message.includes("too many") ? 429 : 401, {
+        error: {
+          code: message.includes("too many") ? "RATE_LIMITED" : "DEVICE_AUTH_FAILED",
+          message,
+          details: {},
+        },
       })
     }
     return
@@ -467,6 +530,16 @@ async function handleHttp(
   }
 
   if (req.method === "POST" && pathname === "/api/v1/security/pairing-code") {
+    if (!isAuthorizedRequest(req, runtime.config.authToken, url)) {
+      sendJson(res, 403, {
+        error: {
+          code: "SCOPE_DENIED",
+          message: "admin pairing requires a local administrator",
+          details: {},
+        },
+      })
+      return
+    }
     try {
       sendJson(res, 201, runtime.devices.createPairingCode())
     } catch (error) {
@@ -486,8 +559,26 @@ async function handleHttp(
   if (req.method === "DELETE" && revokeDevice) {
     const deviceId = decodeURIComponent(revokeDevice[1] ?? "")
     runtime.devices.revoke(deviceId)
+    closeDeviceEventSockets(deviceId)
     res.writeHead(204)
     res.end()
+    return
+  }
+
+  if (req.method === "POST" && pathname === "/api/v1/security/session/rotate") {
+    const token = requestAuthToken(req, url)
+    try {
+      if (!token) throw new Error("unknown session")
+      sendJson(res, 200, runtime.devices.rotate(token))
+    } catch (error) {
+      sendJson(res, 401, {
+        error: {
+          code: "DEVICE_AUTH_FAILED",
+          message: error instanceof Error ? error.message : String(error),
+          details: {},
+        },
+      })
+    }
     return
   }
 
@@ -504,6 +595,35 @@ async function handleHttp(
       homeDir: runtime.homeDir,
       machineHostname: runtime.machineHostname,
     });
+    return;
+  }
+
+  if (req.method === "GET" && pathname === "/api/v1/diagnostics") {
+    sendJson(
+      res,
+      200,
+      diagnosticBundle(
+        {
+          generatedAt: new Date().toISOString(),
+          identity: runtime.identity,
+          health: runtimeHealth(runtime),
+          config: {
+            host: runtime.config.host,
+            port: runtime.config.port,
+            ptySupervisor: runtime.config.ptySupervisor,
+            features: runtime.config.features,
+          },
+          devices: runtime.devices.list().map(device => ({
+            id: device.id,
+            name: device.name,
+            scopes: device.scopes,
+            revokedAt: device.revokedAt,
+          })),
+          capabilities: serverCapabilities(runtime),
+        },
+        [runtime.config.authToken ?? ""],
+      ),
+    );
     return;
   }
 
@@ -628,6 +748,19 @@ async function handleHttp(
         return;
       }
       const { channel, args, clientId } = decoded.right;
+      const hostAuthorized = isAuthorizedRequest(req, runtime.config.authToken, url);
+      const providedToken = requestAuthToken(req, url);
+      const deviceSession = !hostAuthorized && providedToken
+        ? runtime.devices.session(providedToken)
+        : null;
+      if (!hostAuthorized && deviceSession && !deviceMayInvoke(deviceSession.scopes, channel)) {
+        const error = new ScopeDeniedError({
+          message: "device scope does not allow this operation",
+          channel,
+        });
+        sendJson(res, hostErrorHttpStatus(error), { error: hostErrorWire(error) });
+        return;
+      }
       let rpcArgs: unknown[];
       try {
         rpcArgs = decodeHostRouteArgs(channel, [...args]);
@@ -1088,7 +1221,12 @@ function handleEventSocket(
   ws: WebSocket,
   url: URL,
 ): void {
-  if (url.searchParams.get("protocol") === "2") {
+  const protocol = url.searchParams.get("protocol");
+  if (protocol && protocol !== "1" && protocol !== "2") {
+    ws.close(4002, "incompatible protocol");
+    return;
+  }
+  if (protocol === "2") {
     handleModernEventSocket(runtime, managed, ws, url)
     return
   }
@@ -1259,7 +1397,10 @@ function handleModernEventSocket(
     authenticated = true
     clearTimeout(timeout)
     ws.off("message", authenticate)
-    startModernEventSocket(runtime, managed, ws, url)
+    const deviceSession = tokensEqual(expectedToken, record.token)
+      ? null
+      : runtime.devices.session(record.token)
+    startModernEventSocket(runtime, managed, ws, url, deviceSession ?? undefined)
   }
   ws.send(JSON.stringify({ type: "protocol:auth-required" }))
   ws.on("message", authenticate)
@@ -1270,6 +1411,7 @@ function startModernEventSocket(
   managed: ManagedRuntime.ManagedRuntime<HostLayerServices, never>,
   ws: WebSocket,
   url: URL,
+  deviceSession?: { deviceId: string; scopes: import("./device-auth.js").DeviceScope[] },
 ): void {
   const requestedClientId = url.searchParams.get("clientId");
   const clientId =
@@ -1310,6 +1452,9 @@ function startModernEventSocket(
     return;
   }
 
+  ACTIVE_EVENT_SOCKETS.add(ws);
+  if (deviceSession) DEVICE_EVENT_SOCKETS.set(ws, { deviceId: deviceSession.deviceId });
+
   let commandTail = Promise.resolve();
   let commandQueue = 0;
   ws.on("message", data => {
@@ -1326,6 +1471,17 @@ function startModernEventSocket(
     }
     const cmd = tryDecodeTerminalWsCommand(raw);
     if (!cmd) return;
+    if (deviceSession && !deviceMayInvoke(deviceSession.scopes, cmd.op)) {
+      if (ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({
+          type: "terminal:result",
+          requestId: cmd.requestId,
+          ok: false,
+          error: { code: "SCOPE_DENIED", message: "device scope does not allow this operation" },
+        }));
+      }
+      return;
+    }
     if (commandQueue >= MAX_WS_COMMAND_QUEUE) {
       if (ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({
@@ -1374,6 +1530,8 @@ function startModernEventSocket(
   });
   ws.on("close", () => {
     unsubscribe();
+    ACTIVE_EVENT_SOCKETS.delete(ws);
+    DEVICE_EVENT_SOCKETS.delete(ws);
     runtime.leases.releaseClient(clientId);
     void Promise.resolve(runtime.terminal.resumeForClient(clientId));
   });

@@ -6,6 +6,7 @@ import {
   cwdOfPidSync,
   deepestDescendantPid,
   foregroundProcessOf,
+  preferredForegroundPid,
 } from "./terminal-cwd.js"
 
 test("cwdOfPid rejects invalid pids", async () => {
@@ -71,6 +72,28 @@ test("deepestDescendantPid walks to leaf child", () => {
 
 test("deepestDescendantPid returns root when alone", () => {
   assert.equal(deepestDescendantPid(42, [{ pid: 42, ppid: 1, comm: "zsh" }]), 42)
+})
+
+test("deepestDescendantPid walks to the child", () => {
+  assert.equal(
+    deepestDescendantPid(1, [
+      { pid: 1, ppid: 0, comm: "zsh" },
+      { pid: 2, ppid: 1, comm: "claude" },
+      { pid: 3, ppid: 2, comm: "node" },
+    ]),
+    3,
+  )
+})
+
+test("preferredForegroundPid prefers an agent descendant over node", () => {
+  assert.equal(
+    preferredForegroundPid(1, [
+      { pid: 1, ppid: 0, comm: "zsh" },
+      { pid: 2, ppid: 1, comm: "/bin/sh /tmp/bin/claude /tmp/mock.mjs" },
+      { pid: 3, ppid: 2, comm: "node /tmp/mock.mjs" },
+    ]),
+    2,
+  )
 })
 
 test("foregroundProcessOf resolves this process", async () => {

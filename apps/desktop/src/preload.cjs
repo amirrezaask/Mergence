@@ -11,5 +11,7 @@ contextBridge.exposeInMainWorld(
     /** @param {unknown} servers */
     saveServerDefinitions: servers =>
       ipcRenderer.invoke("yaade:servers:save", servers),
+    inspectDaemon: () => ipcRenderer.invoke("yaade:daemon:inspect"),
+    stopDaemon: () => ipcRenderer.invoke("yaade:daemon:stop"),
   }),
 )

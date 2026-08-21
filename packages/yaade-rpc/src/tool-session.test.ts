@@ -31,6 +31,10 @@ describe("terminal/Git ToolUse schemas", () => {
       "terminal",
     );
     assert.equal(
+      decode(ToolUseInput, TerminalToolInput.make({ kind: "terminal", provider: "claude" })).provider,
+      "claude",
+    );
+    assert.equal(
       decode(ToolUseInput, GitToolInput.make({ kind: "git" })).kind,
       "git",
     );

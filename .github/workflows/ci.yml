@@ -24,6 +24,10 @@ jobs:
       - run: vp run test:web:e2e
         env:
           YAADE_E2E_RUN_FLAKY: "1"
+      - run: sudo apt-get update && sudo apt-get install -y xvfb
+      - run: xvfb-run --auto-servernum vp run test:e2e:critical
+        env:
+          JET_SKIP_E2E_BUILD: "1"
 
   runtime-platform:
     name: Runtime (${{ matrix.os }})
@@ -42,3 +46,11 @@ jobs:
       - run: vp install --frozen-lockfile
       - run: vp run typecheck
       - run: vp test packages/yaade-node-host packages/yaade-host-server packages/yaade-host-client
+      - run: vp run build:web
+      - run: vp exec playwright install chromium
+      - run: vp run test:runtime:e2e
+        env:
+          JET_SKIP_E2E_BUILD: "1"
+      - run: vp run test:platform:e2e
+        env:
+          JET_SKIP_E2E_BUILD: "1"

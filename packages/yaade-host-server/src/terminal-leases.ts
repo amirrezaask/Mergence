@@ -2,6 +2,10 @@ import { randomUUID } from "node:crypto"
 import { TerminalLeaseError, type TerminalLease } from "@yaade/rpc"
 
 const LEASE_TTL_MS = 15_000
+const DISCONNECT_GRACE_MS = (() => {
+  const raw = Number(process.env.JET_LEASE_DISCONNECT_GRACE_MS)
+  return Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 2_000
+})()
 
 type LeaseEntry = {
   lease: TerminalLease
@@ -167,19 +171,50 @@ export class TerminalLeaseService {
     if (!writer) return this.acquire(terminalId, clientId, "writer")
     if (writer.lease.clientId !== clientId) {
       throw new TerminalLeaseError({
-        code: "WRITER_LEASE_REQUIRED",
+        code: "LEASE_NOT_HELD",
         terminalId,
         leaseId: writer.lease.leaseId,
-        message: "writer lease required",
+        message: "LEASE_NOT_HELD",
       })
     }
     return this.renew(terminalId, writer.lease.leaseId, clientId)
   }
 
+  /**
+   * First eligible client becomes writer. Later attachers are observers unless
+   * they already hold the writer lease. Pass `observer` for mobile viewports.
+   */
+  attachClient(
+    terminalId: string,
+    clientId: string,
+    preferredMode: "writer" | "observer" = "writer",
+  ): TerminalLease {
+    if (preferredMode === "observer") {
+      return this.acquire(terminalId, clientId, "observer")
+    }
+    const writer = this.writerFor(terminalId)
+    if (!writer || writer.lease.clientId === clientId) {
+      return this.acquire(terminalId, clientId, "writer")
+    }
+    return this.acquire(terminalId, clientId, "observer")
+  }
+
+  currentWriter(terminalId: string): TerminalLease | undefined {
+    return this.writerFor(terminalId)?.lease
+  }
+
   releaseClient(clientId: string): void {
     for (const [terminalId, entries] of this.leases) {
       for (const [leaseId, entry] of entries) {
-        if (entry.lease.clientId === clientId) entries.delete(leaseId)
+        if (entry.lease.clientId !== clientId) continue
+        if (entry.lease.mode === "writer" && DISCONNECT_GRACE_MS > 0) {
+          entry.lease = {
+            ...entry.lease,
+            expiresAt: iso(now() + DISCONNECT_GRACE_MS),
+          }
+          continue
+        }
+        entries.delete(leaseId)
       }
       if (entries.size === 0) this.leases.delete(terminalId)
     }

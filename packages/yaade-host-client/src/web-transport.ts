@@ -102,6 +102,30 @@ export function readHostAuthToken(
   }
 }
 
+/** Copy a one-shot query token into session storage and drop it from the URL/history. */
+export function consumeHostAuthTokenFromLocation(
+  location: Pick<Location, "search" | "pathname" | "hash"> =
+    typeof window === "undefined"
+      ? { search: "", pathname: "/", hash: "" }
+      : window.location,
+  historyApi: Pick<History, "replaceState"> | null =
+    typeof history === "undefined" ? null : history,
+  storage: Pick<Storage, "getItem" | "setItem"> | null =
+    typeof sessionStorage === "undefined" ? null : sessionStorage,
+): string | null {
+  const token = readHostAuthToken(location.search, storage);
+  const params = new URLSearchParams(location.search);
+  if (!params.has("token") || !historyApi) return token;
+  params.delete("token");
+  const search = params.toString();
+  historyApi.replaceState(
+    null,
+    "",
+    `${location.pathname}${search ? `?${search}` : ""}${location.hash}`,
+  );
+  return token;
+}
+
 /** Reconnect backoff matching legacy setTimeout: 250ms × 2^n, cap 10s. */
 export function hostRealtimeReconnectDelay(attempt: number): Duration.Duration {
   return Duration.millis(Math.min(10_000, 250 * 2 ** Math.max(0, attempt)));
@@ -219,6 +243,7 @@ export class WebHostTransport implements YaadeHostTransport {
   private reconnectRequested = false;
   private reconnectWake: (() => void) | null = null;
   private preservePendingOnReconnect = false;
+  private accessRevoked = false;
   private readonly disposeRealtimeWake: (() => void) | null;
 
   constructor(options: WebHostTransportOptions = {}) {
@@ -407,9 +432,9 @@ export class WebHostTransport implements YaadeHostTransport {
     const self = this;
     return Effect.gen(function* () {
       if (typeof WebSocket === "undefined") return;
-      while (!self.closed) {
+      while (!self.closed && !self.accessRevoked) {
         yield* self.openSession();
-        if (self.closed) return;
+        if (self.closed || self.accessRevoked) return;
         const preservePending = self.preservePendingOnReconnect;
         self.preservePendingOnReconnect = false;
         self.dispatch("connection:status", "disconnected");
@@ -453,7 +478,7 @@ export class WebHostTransport implements YaadeHostTransport {
   }
 
   private wakeRealtime(replaceOpenSocket: boolean): void {
-    if (this.closed) return;
+    if (this.closed || this.accessRevoked) return;
     const socket = this.socket;
     const socketOpen = socket?.readyState === WebSocket.OPEN;
     if (!replaceOpenSocket && socketOpen) return;
@@ -567,7 +592,12 @@ export class WebHostTransport implements YaadeHostTransport {
             });
             socket.addEventListener("close", event => {
               if (event.code === 4003) {
-                self.dispatch("protocol:error", "access revoked or authentication failed");
+                self.accessRevoked = true;
+                const reason = event.reason.trim() || "authentication failed";
+                self.dispatch(
+                  "protocol:error",
+                  /revoked/i.test(reason) ? "access revoked" : reason,
+                );
               }
               finish();
             });

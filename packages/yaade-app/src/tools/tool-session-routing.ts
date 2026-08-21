@@ -126,15 +126,68 @@ export function resolveToolSessionRoute(
   return restored.sessionId ? restored : live
 }
 
+/** Strip `ses-`/`tab-`/`use-` and an optional `serverId--` multi-server prefix. */
+export function localResourceKey(id: string): string {
+  const rest = id.replace(/^(ses|tab|use)-/, "")
+  const split = rest.indexOf("--")
+  return split === -1 ? rest : rest.slice(split + 2)
+}
+
+export function sameLocalResource(left?: string, right?: string): boolean {
+  if (!left || !right) return false
+  return left === right || localResourceKey(left) === localResourceKey(right)
+}
+
+function findUniqueId<T extends string>(
+  requested: string | undefined,
+  ids: readonly T[],
+): T | undefined {
+  if (!requested) return undefined
+  const exact = ids.find(id => id === requested)
+  if (exact) return exact
+  const key = localResourceKey(requested)
+  return ids.find(id => localResourceKey(id) === key)
+}
+
+function findUniqueByLocalKey<T extends { readonly id: string }>(
+  requested: string | undefined,
+  items: readonly T[],
+): T | undefined {
+  const id = findUniqueId(requested, items.map(item => item.id))
+  return id ? items.find(item => item.id === id) : undefined
+}
+
+function loadedId(
+  requested: string | undefined,
+  ids: Iterable<string>,
+): string | undefined {
+  return findUniqueId(requested, [...ids])
+}
+
+export function shouldHoldRequestedRoute(
+  route: ToolSessionRoute,
+  loaded: {
+    readonly sessionsById: ReadonlyMap<string, unknown>
+    readonly tabsById: ReadonlyMap<string, unknown>
+    readonly usesById: ReadonlyMap<string, unknown>
+  },
+  connection: "connecting" | "connected" | "reconciling" | "offline",
+): boolean {
+  const requestedMissing =
+    Boolean(route.sessionId && !loadedId(route.sessionId, loaded.sessionsById.keys())) ||
+    Boolean(route.tabId && !loadedId(route.tabId, loaded.tabsById.keys())) ||
+    Boolean(route.toolUseId && !loadedId(route.toolUseId, loaded.usesById.keys()))
+  if (!requestedMissing) return false
+  return connection !== "connected"
+}
+
 export function chooseSession(
   requested: SessionIdType | undefined,
   sessions: readonly AppSession[],
 ): AppSession | undefined {
   const visible = sessions.filter(session => !session.archivedAt)
-  return (
-    visible.find(session => session.id === requested) ??
-    [...visible].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
-  )
+  if (requested) return findUniqueByLocalKey(requested, visible)
+  return [...visible].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))[0]
 }
 
 export function isLiveSessionTab(
@@ -161,9 +214,9 @@ export function chooseTab(
     .filter(tab => tab.sessionId === session.id && !tab.archivedAt)
     .sort((a, b) => a.position - b.position)
   return (
-    visible.find(tab => tab.id === requested) ??
-    visible.find(tab => tab.id === owningTabId) ??
-    visible.find(tab => tab.id === session.activeTabId) ??
+    findUniqueByLocalKey(requested, visible) ??
+    findUniqueByLocalKey(owningTabId, visible) ??
+    findUniqueByLocalKey(session.activeTabId, visible) ??
     visible[0]
   )
 }
@@ -174,8 +227,9 @@ export function chooseToolUse(
   toolUseIds: readonly ToolUseIdType[],
 ): ToolUseIdType | undefined {
   if (!tab) return undefined
-  if (requested && toolUseIds.includes(requested)) return requested
-  const activeToolUseId = tab.activeToolUseId
-  if (activeToolUseId && toolUseIds.includes(activeToolUseId)) return activeToolUseId
+  const requestedMatch = findUniqueId(requested, toolUseIds)
+  if (requestedMatch) return requestedMatch
+  const activeMatch = findUniqueId(tab.activeToolUseId, toolUseIds)
+  if (activeMatch) return activeMatch
   return toolUseIds[0]
 }

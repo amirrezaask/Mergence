@@ -64,4 +64,54 @@ export default defineConfig({
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },
+  run: {
+    tasks: {
+      "test:runtime:e2e": {
+        command: "vp exec playwright test --project=runtime-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:web:durability": {
+        command: "vp exec playwright test --project=web-durability --pass-with-no-tests",
+        cache: false,
+      },
+      "test:desktop:e2e": {
+        command: "vp exec playwright test --project=desktop-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:recovery:e2e": {
+        command: "vp exec playwright test --project=recovery-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:multi-server:e2e": {
+        command: "vp exec playwright test --project=multi-server-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:security:e2e": {
+        command: "vp exec playwright test --project=security-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:platform:e2e": {
+        command: "vp exec playwright test --project=platform-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:chaos": {
+        command: "vp exec playwright test --project=chaos-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:soak": {
+        command: "vp exec playwright test --project=soak-e2e --pass-with-no-tests",
+        cache: false,
+      },
+      "test:e2e:critical": {
+        command:
+          "vp exec playwright test --pass-with-no-tests --grep @p0 --project=runtime-e2e --project=web-durability --project=desktop-e2e --project=recovery-e2e --project=multi-server-e2e --project=security-e2e",
+        cache: false,
+      },
+      "test:e2e:all": {
+        command:
+          'vp exec playwright test --pass-with-no-tests --grep "@p0|@p1" --project=runtime-e2e --project=web-durability --project=desktop-e2e --project=recovery-e2e --project=multi-server-e2e --project=security-e2e --project=chaos-e2e',
+        cache: false,
+      },
+    },
+  },
 });

@@ -10,9 +10,9 @@ const GlassMaterialGallery = lazy(() => import("@yaade/ui/gallery"))
 /** The Session shell is now the only browser app surface. */
 export function AppRoot() {
   const [updateReady, setUpdateReady] = useState(isPwaUpdateReady)
+  window.__yaadeAgent ??= basicAgentBridge({ route: "hq", workspace: "/" })
 
   useEffect(() => {
-    window.__yaadeAgent = basicAgentBridge({ route: "hq", workspace: "/" })
     return () => {
       if (window.__yaadeAgent?.getState().route === "hq") {
         delete window.__yaadeAgent

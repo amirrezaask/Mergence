@@ -2,12 +2,13 @@
 import fs from "node:fs"
 import path from "node:path"
 import {
+  STORAGE_FAILURE_FILE,
   controlUserService,
   installUserService,
   loadConfig,
+  runHostServer,
   uninstallUserService,
 } from "@yaade/host-server"
-import { runHostServer } from "@yaade/host-server"
 
 const argv = process.argv.slice(2)
 const command = argv[0]
@@ -40,6 +41,14 @@ async function inspectRuntime(action: "status" | "doctor" | "pair", args: string
   } catch {
     /* stale/missing manifests are reported below */
   }
+  let storageFailure: unknown = null
+  try {
+    storageFailure = JSON.parse(
+      fs.readFileSync(path.join(config.dataDir, STORAGE_FAILURE_FILE), "utf8"),
+    )
+  } catch {
+    /* no storage failure record */
+  }
   if (action === "pair") {
     if (!config.authToken) throw new Error("pairing-code requires the configured host token")
     const targetHost = manifest?.host ?? config.host
@@ -57,8 +66,8 @@ async function inspectRuntime(action: "status" | "doctor" | "pair", args: string
         body: await response.text(),
       })).catch(error => ({ status: 0, body: String(error) }))
     : { status: 0, body: "runtime manifest is missing" }
-  console.log(JSON.stringify({ action, dataDir: config.dataDir, manifest, health }, null, 2))
-  if (action === "doctor" && health.status !== 200) process.exitCode = 1
+  console.log(JSON.stringify({ action, dataDir: config.dataDir, manifest, health, storageFailure }, null, 2))
+  if (action === "doctor" && (health.status !== 200 || storageFailure)) process.exitCode = 1
 }
 
 if (!command || command === "run" || (!serviceCommands.has(command) && !inspectionCommands.has(command))) {

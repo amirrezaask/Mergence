@@ -13,6 +13,7 @@ export interface TerminalStateRecorder {
   resize(cols: number, rows: number): void
   write(data: string): void
   checkpoint(sequence: number): TerminalCheckpoint
+  plainText(): string
   dispose(): void
 }
 
@@ -31,6 +32,7 @@ export class BasicTerminalStateRecorder implements TerminalStateRecorder {
   private cursorX = 0
   private cursorY = 0
   private alternate = false
+  private cursorVisible = true
   private pending = ""
   private disposed = false
 
@@ -105,11 +107,15 @@ export class BasicTerminalStateRecorder implements TerminalStateRecorder {
     }
   }
 
+  plainText(): string {
+    return this.cells.map(line => line.join("").replace(/\s+$/u, "")).join("\n")
+  }
+
   checkpoint(sequence: number): TerminalCheckpoint {
-    const lines = this.cells.map(line => line.join("").replace(/\s+$/u, ""))
-    const body = lines.join("\r\n")
+    const body = this.plainText().replace(/\n/g, "\r\n")
     const cursor = `${ESC}[${this.cursorY + 1};${this.cursorX + 1}H`
     const mode = this.alternate ? `${ESC}[?1049h` : `${ESC}[?1049l`
+    const cursorVis = this.cursorVisible ? `${ESC}[?25h` : `${ESC}[?25l`
     return {
       checkpointVersion: 1,
       terminalEpoch: this.terminalEpoch,
@@ -117,7 +123,7 @@ export class BasicTerminalStateRecorder implements TerminalStateRecorder {
       cols: this.cols,
       rows: this.rows,
       createdAt: new Date().toISOString(),
-      syntheticAnsi: `${ESC}[0m${ESC}[2J${ESC}[H${mode}${body}${cursor}`,
+      syntheticAnsi: `${ESC}[0m${ESC}[2J${ESC}[H${mode}${cursorVis}${body}${cursor}`,
     }
   }
 
@@ -148,6 +154,10 @@ export class BasicTerminalStateRecorder implements TerminalStateRecorder {
       return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 0
     })
     const first = values[0] ?? 0
+    if (privateMode && first === 25 && (final === "h" || final === "l")) {
+      this.cursorVisible = final === "h"
+      return
+    }
     if (privateMode && (first === 1049 || first === 47) && (final === "h" || final === "l")) {
       this.alternate = final === "h"
       if (this.alternate) {

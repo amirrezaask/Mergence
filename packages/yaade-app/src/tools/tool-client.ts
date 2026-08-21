@@ -77,7 +77,9 @@ export class ToolClient {
   async hydrate(includeArchived = false): Promise<void> {
     if (this.disposed) return
     const baseline = this.store.captureRevisions()
-    this.store.setConnection("reconciling")
+    if (this.store.getSnapshot().connection !== "offline") {
+      this.store.setConnection("reconciling")
+    }
     try {
       const snapshots = await this.api.listSessions(includeArchived)
       if (this.disposed) return

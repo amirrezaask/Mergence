@@ -39,6 +39,10 @@ vp run lint
 vp run build:server
 vp run build:web
 vp run build:desktop
+vp run test:web:e2e
+vp run test:runtime:e2e
+vp run test:platform:e2e
+vp run test:e2e:critical
 ```
 
 Tests run through Vite+ (`vp test`) with Vitest. App tests must be listed in `packages/yaade-app/package.json`.

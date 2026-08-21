@@ -13,9 +13,13 @@ export type HostErrorCode =
   | "HOST_DISCONNECTED"
   | "WRITER_LEASE_REQUIRED"
   | "WRITER_LEASE_STALE"
+  | "LEASE_NOT_HELD"
   | "TERMINAL_INTERRUPTED"
   | "SERVER_EPOCH_CHANGED"
   | "SUPERVISOR_UNAVAILABLE"
+  | "SCOPE_DENIED"
+  | "ORIGIN_DENIED"
+  | "RATE_LIMITED"
 
 export class PathOutsideRootsError extends Data.TaggedError("PathOutsideRoots")<{
   readonly message: string
@@ -108,13 +112,13 @@ export class TerminalLeaseError extends Data.TaggedError("TerminalLeaseError")<{
   readonly terminalId: string
   readonly leaseId?: string
 }> {
-  readonly code: "WRITER_LEASE_REQUIRED" | "WRITER_LEASE_STALE"
+  readonly code: "WRITER_LEASE_REQUIRED" | "WRITER_LEASE_STALE" | "LEASE_NOT_HELD"
 
   constructor(args: {
     readonly message: string
     readonly terminalId: string
     readonly leaseId?: string
-    readonly code: "WRITER_LEASE_REQUIRED" | "WRITER_LEASE_STALE"
+    readonly code: "WRITER_LEASE_REQUIRED" | "WRITER_LEASE_STALE" | "LEASE_NOT_HELD"
   }) {
     super(args)
     this.code = args.code
@@ -127,6 +131,13 @@ export class GitCommandFailedError extends Data.TaggedError("GitCommandFailed")<
   readonly cause?: unknown
 }> {
   readonly code = "OPERATION_FAILED" as const
+}
+
+export class ScopeDeniedError extends Data.TaggedError("ScopeDenied")<{
+  readonly message: string
+  readonly channel?: string
+}> {
+  readonly code = "SCOPE_DENIED" as const
 }
 
 export type HostRpcError =
@@ -142,11 +153,13 @@ export type HostRpcError =
   | HostDisconnectedError
   | TerminalLeaseError
   | GitCommandFailedError
+  | ScopeDeniedError
   | ToolSessionError
 
 export function hostErrorHttpStatus(error: HostRpcError): number {
   switch (error._tag) {
     case "PathOutsideRoots":
+    case "ScopeDenied":
       return 403
     case "NotFound":
       return 404
@@ -198,7 +211,9 @@ export function hostErrorWire(error: HostRpcError): {
               ? { tabId: error.tabId }
               : error._tag === "ToolUseNotFound"
             ? { toolUseId: error.toolUseId }
-            : error._tag === "InvalidToolInput" ||
+              : error._tag === "ScopeDenied"
+                ? (error.channel ? { channel: error.channel } : {})
+                : error._tag === "InvalidToolInput" ||
                 error._tag === "InvalidToolCommand" ||
                 error._tag === "CheckoutResolutionFailed"
               ? { toolError: error._tag }

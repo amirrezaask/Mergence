@@ -90,6 +90,12 @@ export class TerminalToolInput extends Schema.TaggedClass<TerminalToolInput>()(
   {
     kind: Schema.Literal("terminal"),
     shellArgs: Schema.optional(Schema.Array(Schema.String)),
+    /** When set, the PTY launches this executable instead of the login shell. */
+    executable: Schema.optional(Schema.String),
+    /** When set, the host treats the PTY as this agent provider. */
+    provider: Schema.optional(
+      Schema.Literal("claude", "codex", "cursor", "opencode", "grok", "pi"),
+    ),
   },
 ) {}
 

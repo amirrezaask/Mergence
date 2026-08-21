@@ -29,6 +29,7 @@ describe("loadConfig launch workspace", () => {
     ])
     assert.equal(config.host, "0.0.0.0")
     assert.equal(config.authToken, "test-host-token")
+    assert.deepEqual(config.corsOrigins, [])
   })
 
   it("refuses a non-loopback bind without a host token", async () => {
@@ -38,19 +39,20 @@ describe("loadConfig launch workspace", () => {
     )
   })
 
-  it("keeps the PTY supervisor off under tests unless requested", async () => {
-    const implicit = await loadConfig(["--host", "127.0.0.1", "--port", "0"])
-    assert.equal(implicit.ptySupervisor, false)
-    const enabled = await loadConfig([
-      "--host",
-      "127.0.0.1",
-      "--port",
-      "0",
-      "--pty-supervisor",
-      "1",
-    ])
-    assert.equal(enabled.ptySupervisor, true)
-  })
+    it("honors an explicit kill-ptys-on-exit disable under tests", async () => {
+      const config = await loadConfig([
+        "--host",
+        "127.0.0.1",
+        "--port",
+        "0",
+        "--pty-supervisor",
+        "1",
+        "--kill-ptys-on-exit",
+        "0",
+      ])
+      assert.equal(config.ptySupervisor, true)
+      assert.equal(config.killPtysOnShutdown, false)
+    })
 
   it("falls back to home when process cwd is outside allowed roots", async () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-host-cwd-"))
@@ -101,6 +103,23 @@ describe("loadConfig launch workspace", () => {
       )
     } finally {
       fs.rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it("can advertise disabled checkpoint and resume features", async () => {
+    const previousCheckpoints = process.env.JET_TERMINAL_CHECKPOINTS
+    const previousResume = process.env.JET_NATIVE_AGENT_RESUME
+    process.env.JET_TERMINAL_CHECKPOINTS = "0"
+    process.env.JET_NATIVE_AGENT_RESUME = "0"
+    try {
+      const config = await loadConfig(["--host", "127.0.0.1", "--port", "0"])
+      assert.equal(config.features.terminalCheckpoints, false)
+      assert.equal(config.features.nativeAgentResume, false)
+    } finally {
+      if (previousCheckpoints === undefined) delete process.env.JET_TERMINAL_CHECKPOINTS
+      else process.env.JET_TERMINAL_CHECKPOINTS = previousCheckpoints
+      if (previousResume === undefined) delete process.env.JET_NATIVE_AGENT_RESUME
+      else process.env.JET_NATIVE_AGENT_RESUME = previousResume
     }
   })
 })

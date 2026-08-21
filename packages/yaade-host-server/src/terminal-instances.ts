@@ -125,7 +125,10 @@ type TerminalInstanceRow = {
 };
 
 const FINAL_TRANSCRIPT_BYTES = 256 * 1024;
-const TELEMETRY_GRACE_MS = 10_000;
+const TELEMETRY_GRACE_MS = (() => {
+  const raw = Number(process.env.JET_TELEMETRY_GRACE_MS);
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 10_000;
+})();
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -432,13 +435,14 @@ export class TerminalInstanceService {
     for (const row of rows) {
       if (row.pty_id && livePtyIds.has(row.pty_id)) continue;
       const identity = processIdentity(row.process_identity_json);
-      const nextState = identity
-        ? matchesProcessIdentity(identity)
+      const canNativeResume = Boolean(row.provider && row.native_session_ref_json);
+      const nextState = identity && matchesProcessIdentity(identity)
+        ? "interrupted"
+        : canNativeResume
           ? "interrupted"
-          : "orphaned"
-        : row.provider && row.native_session_ref_json
-          ? "interrupted"
-          : "disconnected";
+          : identity
+            ? "orphaned"
+            : "disconnected";
       this.db
         .prepare(
           `UPDATE terminal_instances
@@ -701,7 +705,8 @@ export class TerminalInstanceService {
           telemetry_state=?, started_at=?, last_activity_at=?, ended_at=NULL,
           exit_code=NULL, end_reason=NULL, transcript='', transcript_truncated=0,
           telemetry_error=NULL, os_pid=?, os_started_at_ms=?, process_identity_json=?, terminal_epoch=?, revision=revision+1
-        WHERE id=? AND generation=? AND removed_at IS NULL AND process_state='starting'`,
+        WHERE id=? AND generation=? AND removed_at IS NULL
+          AND process_state IN ('starting','disconnected')`,
       )
       .run(
         ptyId,
@@ -749,6 +754,27 @@ export class TerminalInstanceService {
     return Number(changed.changes) === 0
       ? this.get(id)
       : this.updated(id, "instance.ended");
+  }
+
+  /**
+   * A create retry after API/supervisor loss may find a reservation that never
+   * bound a PTY. Reset it to `starting` so bindPty can complete idempotently.
+   */
+  reopenForLaunch(id: string, generation: number): TerminalInstance | null {
+    const current = this.get(id);
+    if (!current || current.generation !== generation) return null;
+    if (current.ptyId && current.processState === "running") return current;
+    const changed = this.db
+      .prepare(
+        `UPDATE terminal_instances
+            SET process_state='starting', ended_at=NULL, end_reason=NULL,
+                telemetry_error=NULL, revision=revision+1
+          WHERE id=? AND generation=? AND removed_at IS NULL
+            AND pty_id IS NULL
+            AND process_state IN ('starting','disconnected','failed','interrupted','orphaned')`,
+      )
+      .run(id, generation);
+    return Number(changed.changes) === 0 ? this.get(id) : this.updated(id, "instance.updated");
   }
 
   markTelemetryDegraded(
@@ -827,9 +853,14 @@ export class TerminalInstanceService {
     this.clearTelemetryGrace(current.id);
     const transcript = boundedTranscript(output);
     const activity = exitCode === 0 ? "idle" : "failed";
+    const failedResume =
+      (exitCode ?? 0) !== 0 &&
+      current.provider != null &&
+      current.activityState === "starting";
+    const processState = failedResume ? "failed" : "exited";
     const changed = this.db
       .prepare(
-        `UPDATE terminal_instances SET process_state='exited',
+        `UPDATE terminal_instances SET process_state=?,
           activity_state=CASE WHEN provider IS NOT NULL THEN ? ELSE activity_state END,
           ended_at=COALESCE(ended_at, ?),
           exit_code=COALESCE(?, exit_code), end_reason=COALESCE(end_reason, 'process_exit'),
@@ -838,6 +869,7 @@ export class TerminalInstanceService {
           AND process_state IN ('starting','running')`,
       )
       .run(
+        processState,
         activity,
         nowIso(),
         exitCode,

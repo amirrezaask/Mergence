@@ -43,11 +43,33 @@ export type ProcessLaunchRequest = {
   readonly launchRequestId?: string
   readonly generation?: number
   readonly args?: readonly string[]
+  readonly executable?: string
   readonly restartPolicy?: "never" | "manual" | "resume-on-daemon-start"
+  readonly nativeSessionRef?: {
+    provider: AgentProvider
+    kind: string
+    value: string
+    capturedAt: string
+    driverVersion: number
+  }
 }
 
 function parseAgentProvider(value: string): AgentProvider | null {
   return isCliProvider(value) ? value : null
+}
+
+function composeProviderLaunchArgs(
+  command: string,
+  launchArgs: readonly string[],
+  userArgs: readonly string[],
+): string[] {
+  const basename = command.replace(/\\/g, "/").split("/").pop() ?? command
+  const nodeLauncher = /^(?:node|node\.exe)$/i.test(basename)
+  const script = userArgs[0]
+  if (nodeLauncher && script && /\.[cm]?js$/i.test(script)) {
+    return [script, ...launchArgs, ...userArgs.slice(1)]
+  }
+  return [...launchArgs, ...userArgs]
 }
 
 function providerTitle(provider: AgentProvider): string {
@@ -79,9 +101,16 @@ function driverFailure(toolUse: ToolUse, operation: string, cause: unknown): Too
 
 function processRequest(input: ToolUseInput): {
   readonly args: readonly string[]
+  readonly executable?: string
+  readonly provider?: AgentProvider
 } {
   if (input._tag === "TerminalToolInput") {
-    return { args: input.shellArgs ?? [] }
+    const provider = input.provider ? parseAgentProvider(input.provider) : null
+    return {
+      args: input.shellArgs ?? [],
+      ...(input.executable ? { executable: input.executable } : {}),
+      ...(provider ? { provider } : {}),
+    }
   }
   throw new Error("process driver received mismatched input")
 }
@@ -106,7 +135,28 @@ export async function createTerminalInstance(
 
   if (request.launchRequestId) {
     const existing = deps.terminalInstances.byLaunchRequestId(request.launchRequestId)
-    if (existing) return existing
+    if (existing?.ptyId) return existing
+    if (existing) {
+      const reopened = deps.terminalInstances.reopenForLaunch(existing.id, existing.generation)
+        ?? existing
+      try {
+        return await launchReservedTerminalInstance(deps, reopened, {
+          ...request,
+          projectId: project.id,
+          checkoutKey,
+          checkoutPath,
+          title,
+          ...(provider ? { provider } : {}),
+        }, clientId)
+      } catch (error) {
+        deps.terminalInstances.fail(
+          existing.id,
+          existing.generation,
+          error instanceof Error ? error.message : String(error),
+        )
+        throw error
+      }
+    }
   }
 
   const instance = deps.terminalInstances.reserve({
@@ -120,6 +170,7 @@ export async function createTerminalInstance(
     launchProfile: {
       schemaVersion: 1,
       provider,
+      ...(request.executable ? { executable: request.executable } : {}),
       args: [...(request.args ?? [])],
       cwd: checkoutPath,
       projectId: project.id,
@@ -127,6 +178,7 @@ export async function createTerminalInstance(
       restartPolicy: request.restartPolicy ?? "manual",
     },
     restartPolicy: request.restartPolicy ?? "manual",
+    ...(request.nativeSessionRef ? { nativeSessionRef: request.nativeSessionRef } : {}),
     ...(request.generation == null ? {} : { generation: request.generation }),
   })
   try {
@@ -160,11 +212,18 @@ export async function launchReservedTerminalInstance(
   const provider = request.provider ?? null
 
   if (!provider) {
-    const launch = request.args && request.args.length > 0
-      ? { args: [...request.args] }
-      : null
+    const launch = request.executable
+      ? { command: request.executable, args: [...(request.args ?? [])] }
+      : request.args && request.args.length > 0
+        ? { args: [...request.args] }
+        : null
     const created = await Promise.resolve(
-      deps.terminal.create(pathToFileUri(request.checkoutPath), launch, clientId),
+      deps.terminal.create(
+        pathToFileUri(request.checkoutPath),
+        launch,
+        clientId,
+        request.launchRequestId,
+      ),
     )
     return deps.terminalInstances.bindPty(
       instance.id,
@@ -178,8 +237,20 @@ export async function launchReservedTerminalInstance(
   }
 
   const availability = deps.agentRuns.providerAvailable(provider)
-  if (!availability.available) {
+  const command = request.executable?.trim() || availability.binary
+  if (!request.executable && !availability.available) {
     throw new Error(availability.error ?? `${availability.binary} is not available`)
+  }
+  if (request.executable && !fs.existsSync(request.executable)) {
+    throw new Error(`${request.executable} is not available`)
+  }
+  const scriptArg = request.args?.[0]
+  if (
+    scriptArg &&
+    /\.(cjs|mjs|js)$/i.test(scriptArg) &&
+    !fs.existsSync(scriptArg)
+  ) {
+    throw new Error(`${scriptArg} is not available`)
   }
   const capabilities = getCliAgentDriver(provider).getCapabilities()
   const processOnly = !capabilities.sessionLifecycle && !capabilities.promptLifecycle &&
@@ -207,10 +278,10 @@ export async function launchReservedTerminalInstance(
     telemetryError = error instanceof Error ? error.message : String(error)
   }
   const created = await Promise.resolve(deps.terminal.create(pathToFileUri(request.checkoutPath), {
-    command: availability.binary,
-    args: [...launchArgs, ...(request.args ?? [])],
+    command,
+    args: composeProviderLaunchArgs(command, launchArgs, request.args ?? []),
     env: launchEnv,
-  }, clientId))
+  }, clientId, request.launchRequestId))
   const bound = deps.terminalInstances.bindPty(
     instance.id,
     instance.generation,
@@ -271,18 +342,25 @@ export async function resumeTerminalInstance(
   })
   const restarting = deps.terminalInstances.beginRestart(instance.id, instance.generation)
   if (!restarting) throw new Error("terminal instance cannot be restored")
-  return launchReservedTerminalInstance(deps, restarting, {
-    projectId: restarting.projectId,
-    checkoutKey: restarting.checkoutKey,
-    checkoutPath: restarting.checkoutPath,
-    title: restarting.title,
-    provider: restarting.provider ?? undefined,
-    args: [
-      ...launch.args,
-      ...(restarting.launchProfile?.args ?? []),
-    ],
-    launchRequestId: `${restarting.id}:${restarting.generation}:resume`,
-  }, clientId)
+  try {
+    return await launchReservedTerminalInstance(deps, restarting, {
+      projectId: restarting.projectId,
+      checkoutKey: restarting.checkoutKey,
+      checkoutPath: restarting.checkoutPath,
+      title: restarting.title,
+      provider: restarting.provider ?? undefined,
+      executable: launch.command,
+      args: launch.args,
+      launchRequestId: `${restarting.id}:${restarting.generation}:resume`,
+    }, clientId)
+  } catch (error) {
+    deps.terminalInstances.fail(
+      restarting.id,
+      restarting.generation,
+      error instanceof Error ? error.message : String(error),
+    )
+    throw error
+  }
 }
 
 export async function restartTerminalInstance(

@@ -34,9 +34,14 @@ import {
  * transcript is trimmed, a browser reload cannot faithfully restore Ghostty's
  * parser/mode state; the attach response marks that case explicitly.
  */
-const MAX_TERMINAL_REPLAY = 2 * 1024 * 1024
-const CHECKPOINT_BYTES = 512 * 1024
-const CHECKPOINT_INTERVAL_MS = 2_000
+function envInt(name: string, fallback: number): number {
+  const raw = Number(process.env[name])
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : fallback
+}
+
+const MAX_TERMINAL_REPLAY = envInt("JET_TERMINAL_REPLAY_BYTES", 2 * 1024 * 1024)
+const CHECKPOINT_BYTES = envInt("JET_CHECKPOINT_BYTES", 512 * 1024)
+const CHECKPOINT_INTERVAL_MS = envInt("JET_CHECKPOINT_INTERVAL_MS", 2_000)
 /** Shrink ring after exit so disposed-but-reattachable PTYs do not keep 2 MB. */
 const EXITED_TERMINAL_REPLAY = 256 * 1024
 const MAX_WRITE_BYTES = 1024 * 1024
@@ -109,6 +114,8 @@ export type TerminalAttachSnapshot = {
   /** True when a live renderer may need to answer queries while applying replay. */
   replayNeedsQueryResponses: boolean
   lastSequence: number
+  cols: number
+  rows: number
   status: "running" | "exited"
   exitCode: number | null
   signal: number | null
@@ -184,6 +191,10 @@ type TerminalEntry = {
   checkpointSequence: number
   bytesSinceCheckpoint: number
   lastCheckpointAt: number
+  cols: number
+  rows: number
+  /** Supervisor-owned PTYs keep reading so offline output enters the replay ring. */
+  flowControl: boolean
 }
 
 function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
@@ -226,7 +237,7 @@ function incrementViewerDebt(entry: TerminalEntry, chars: number): void {
 }
 
 function pausePtyForFlowControl(entry: TerminalEntry): void {
-  if (entry.ptyPaused || !entry.proc) return
+  if (!entry.flowControl || entry.ptyPaused || !entry.proc) return
   try {
     entry.proc.pause()
     entry.ptyPaused = true
@@ -315,12 +326,24 @@ function shellFallbacks(): string[] {
   return ["/bin/zsh", "/bin/bash", "/bin/sh"]
 }
 
-function trimReplay(entry: TerminalEntry, maxBytes = MAX_TERMINAL_REPLAY): void {
+function replayFloor(entry: TerminalEntry): number {
+  return entry.sequence - (entry.output.length - entry.outputHead) + 1
+}
+
+function trimReplay(
+  entry: TerminalEntry,
+  maxBytes = MAX_TERMINAL_REPLAY,
+  ensureCheckpoint?: (target: TerminalEntry) => void,
+): void {
   let truncated = false
-  while (
-    entry.outputBytes > maxBytes &&
-    entry.output.length - entry.outputHead > 1
-  ) {
+  const canDropHead = (): boolean =>
+    entry.output.length - entry.outputHead > 1 &&
+    replayFloor(entry) <= entry.checkpointSequence
+  while (entry.outputBytes > maxBytes && entry.output.length - entry.outputHead > 1) {
+    if (!canDropHead()) {
+      ensureCheckpoint?.(entry)
+      if (!canDropHead()) break
+    }
     const dropped = entry.output[entry.outputHead]!
     entry.output[entry.outputHead] = ""
     entry.outputHead += 1
@@ -331,18 +354,31 @@ function trimReplay(entry: TerminalEntry, maxBytes = MAX_TERMINAL_REPLAY): void 
     entry.outputBytes > maxBytes &&
     entry.output.length - entry.outputHead === 1
   ) {
-    const bytes = Buffer.from(entry.output[entry.outputHead]!, "utf8")
-    let start = bytes.length - maxBytes
-    truncated = true
-    while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1
-    entry.output[entry.outputHead] = bytes.subarray(start).toString("utf8")
-    entry.outputBytes = Buffer.byteLength(entry.output[entry.outputHead], "utf8")
+    if (replayFloor(entry) > entry.checkpointSequence) {
+      ensureCheckpoint?.(entry)
+    }
+    if (replayFloor(entry) <= entry.checkpointSequence) {
+      const bytes = Buffer.from(entry.output[entry.outputHead]!, "utf8")
+      let start = bytes.length - maxBytes
+      truncated = true
+      while (start < bytes.length && (bytes[start]! & 0xc0) === 0x80) start += 1
+      entry.output[entry.outputHead] = bytes.subarray(start).toString("utf8")
+      entry.outputBytes = Buffer.byteLength(entry.output[entry.outputHead], "utf8")
+    }
   }
   if (entry.outputHead > 1024 && entry.outputHead * 2 > entry.output.length) {
     entry.output = entry.output.slice(entry.outputHead)
     entry.outputHead = 0
   }
   if (truncated) entry.replayTruncated = true
+}
+
+function usableCheckpoint(value: TerminalCheckpoint | null | undefined): TerminalCheckpoint | undefined {
+  if (!value || value.checkpointVersion !== 1) return undefined
+  if (typeof value.sequence !== "number" || !Number.isFinite(value.sequence)) return undefined
+  if (typeof value.syntheticAnsi !== "string" || value.syntheticAnsi.length === 0) return undefined
+  if (typeof value.terminalEpoch !== "string" || value.terminalEpoch.length === 0) return undefined
+  return value
 }
 
 export function normalizeTerminalSize(
@@ -369,6 +405,11 @@ export type TerminalHostOptions = {
   maxEntries?: number
   /** Delay between SIGHUP → SIGTERM → SIGKILL. Tests use a short value. */
   killGraceMs?: number
+  /**
+   * Pause the PTY when live viewers fall behind. The detached supervisor
+   * turns this off so output produced with no API still enters the replay ring.
+   */
+  flowControl?: boolean
 }
 
 export class TerminalHost {
@@ -381,6 +422,8 @@ export class TerminalHost {
   /** Cap concurrent entries; overridable in tests. */
   private readonly maxEntries: number
   private readonly killGraceMs: number
+  private readonly flowControl: boolean
+  persistenceDegraded = false
 
   constructor(
     maxEntries: number | TerminalHostOptions = MAX_TERMINAL_ENTRIES,
@@ -388,12 +431,14 @@ export class TerminalHost {
     if (typeof maxEntries === "number") {
       this.maxEntries = Math.max(1, Math.trunc(maxEntries))
       this.killGraceMs = 2_000
+      this.flowControl = true
     } else {
       this.maxEntries = Math.max(
         1,
         Math.trunc(maxEntries.maxEntries ?? MAX_TERMINAL_ENTRIES),
       )
       this.killGraceMs = Math.max(20, Math.trunc(maxEntries.killGraceMs ?? 2_000))
+      this.flowControl = maxEntries.flowControl !== false
     }
   }
 
@@ -554,6 +599,9 @@ export class TerminalHost {
       checkpointSequence: 0,
       bytesSinceCheckpoint: 0,
       lastCheckpointAt: Date.now(),
+      cols: initialSize.cols,
+      rows: initialSize.rows,
+      flowControl: this.flowControl,
     }
     this.entries.set(id, entry)
 
@@ -584,14 +632,11 @@ export class TerminalHost {
         entry.bytesSinceCheckpoint >= CHECKPOINT_BYTES ||
         Date.now() - entry.lastCheckpointAt >= CHECKPOINT_INTERVAL_MS
       ) {
-        entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
-        entry.checkpointSequence = entry.sequence
-        entry.bytesSinceCheckpoint = 0
-        entry.lastCheckpointAt = Date.now()
+        this.storeCheckpoint(entry)
       }
       entry.output.push(data)
       entry.outputBytes += dataBytes
-      trimReplay(entry)
+      trimReplay(entry, MAX_TERMINAL_REPLAY, target => this.storeCheckpoint(target))
       queueOutput(entry, data, dataBytes, this.emit)
     })
 
@@ -605,11 +650,10 @@ export class TerminalHost {
       flushPendingOutput(entry, this.emit)
       entry.status = "exited"
       entry.exitCode = exitCode
-      entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
-      entry.checkpointSequence = entry.sequence
+      this.storeCheckpoint(entry)
       entry.signal = signal ?? null
       entry.proc = null
-      trimReplay(entry, EXITED_TERMINAL_REPLAY)
+      trimReplay(entry, EXITED_TERMINAL_REPLAY, target => this.storeCheckpoint(target))
       const args: unknown[] = [id, exitCode]
       if (entry.signal) args.push(entry.signal)
       this.emit("terminal:exit", args)
@@ -761,6 +805,8 @@ export class TerminalHost {
     const entry = this.entries.get(id)
     entry?.proc?.resize(size.cols, size.rows)
     if (entry && !entry.disposed) {
+      entry.cols = size.cols
+      entry.rows = size.rows
       entry.recorder.resize(size.cols, size.rows)
       entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
       entry.checkpointSequence = entry.sequence
@@ -853,6 +899,67 @@ export class TerminalHost {
     }
   }
 
+  /**
+   * Drop live-viewer flow-control debt. Used when no API remains connected so
+   * supervisor-owned PTYs keep recording output for later attach replay.
+   */
+  resumeAllLiveViewers(): void {
+    for (const entry of this.entries.values()) {
+      if (entry.disposed) continue
+      for (const viewer of entry.viewers.values()) {
+        viewer.live = false
+        viewer.unacknowledgedChars = 0
+      }
+      flushPendingOutput(entry, this.emit)
+      resumePtyForFlowControl(entry)
+    }
+  }
+
+  private storeCheckpoint(entry: TerminalEntry): void {
+    entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
+    entry.checkpointSequence = entry.sequence
+    entry.bytesSinceCheckpoint = 0
+    entry.lastCheckpointAt = Date.now()
+    const directory =
+      process.env.JET_CHECKPOINT_DIR ??
+      (process.env.YAADE_PTY_SUPERVISOR_DATA_DIR
+        ? `${process.env.YAADE_PTY_SUPERVISOR_DATA_DIR}/pty-checkpoints`
+        : null)
+    if (!directory) return
+    try {
+      fs.mkdirSync(directory, { recursive: true })
+      const target = `${directory}/${entry.id}.json`
+      const temporary = `${target}.${process.pid}.tmp`
+      fs.writeFileSync(temporary, `${JSON.stringify(entry.checkpoint)}\n`)
+      fs.renameSync(temporary, target)
+    } catch {
+      this.persistenceDegraded = true
+    }
+  }
+
+  forceCheckpoint(id: string): boolean {
+    const entry = this.entries.get(id)
+    if (!entry || entry.disposed) return false
+    this.storeCheckpoint(entry)
+    return true
+  }
+
+  injectCheckpoint(id: string, checkpoint: unknown): boolean {
+    const entry = this.entries.get(id)
+    if (!entry || entry.disposed) return false
+    entry.checkpoint = checkpoint as TerminalCheckpoint
+    const sequence =
+      checkpoint &&
+      typeof checkpoint === "object" &&
+      "sequence" in checkpoint &&
+      typeof checkpoint.sequence === "number"
+        ? checkpoint.sequence
+        : entry.sequence
+    entry.checkpointSequence = sequence
+    entry.replayTruncated = true
+    return true
+  }
+
   attach(
     id: string,
     clientId: string,
@@ -878,10 +985,12 @@ export class TerminalHost {
     const requestedSequence = hasRequestedSequence
       ? Math.max(0, Math.trunc(afterSequence!))
       : replayFloor - 1
+    // A complete ring is exact byte replay. Checkpoint-only restore is for
+    // clients that reconnect after the ring has already dropped prefix bytes.
     const checkpoint =
-      entry.checkpoint &&
+      entry.replayTruncated &&
       (!hasRequestedSequence || requestedSequence < entry.checkpointSequence)
-        ? entry.checkpoint
+        ? usableCheckpoint(entry.checkpoint)
         : undefined
     const rawRequestedSequence = checkpoint
       ? Math.max(requestedSequence, checkpoint.sequence)
@@ -905,6 +1014,8 @@ export class TerminalHost {
       replayTruncated,
       replayNeedsQueryResponses,
       lastSequence: entry.sequence,
+      cols: entry.cols,
+      rows: entry.rows,
       status: entry.status,
       exitCode: entry.exitCode,
       signal: entry.signal,

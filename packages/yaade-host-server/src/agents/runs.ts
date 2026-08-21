@@ -114,7 +114,10 @@ type AgentRunRow = {
   removed_at?: string | null
 }
 
-const TELEMETRY_GRACE_MS = 10_000
+const TELEMETRY_GRACE_MS = (() => {
+  const raw = Number(process.env.JET_TELEMETRY_GRACE_MS)
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 10_000
+})()
 const PROVIDER_CACHE_MS = 30_000
 
 function nowIso(): string {

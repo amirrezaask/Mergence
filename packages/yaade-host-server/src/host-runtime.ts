@@ -247,6 +247,15 @@ export function createRuntime(
       if (shellPrompt) {
         outputProbeArmed.add(ptyId);
         requestTerminalAgentScan(ptyId);
+        if (instance?.provider) {
+          let attempts = 0;
+          const timer = setInterval(() => {
+            attempts += 1;
+            requestTerminalAgentScan(ptyId, true);
+            if (attempts >= 8) clearInterval(timer);
+          }, 400);
+          timer.unref?.();
+        }
       } else if (shellCommandStart && !instance?.provider) {
         outputProbeArmed.delete(ptyId);
         requestTerminalAgentScan(ptyId);
@@ -388,10 +397,16 @@ export function buildRuntimeSnapshot(runtime: HostRuntime): RuntimeSnapshot {
 }
 
 export async function prepareLiveTerminals(runtime: HostRuntime): Promise<void> {
-  const live = await Promise.resolve(runtime.terminal.listRunning());
-  runtime.terminalInstances.reconcileHostStart(
-    new Set(live.map((item) => item.id)),
-  );
+  let liveIds = new Set<string>();
+  try {
+    const live = await Promise.resolve(runtime.terminal.listRunning());
+    liveIds = new Set(live.map((item) => item.id));
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.includes("SUPERVISOR_PROTOCOL_INCOMPATIBLE")) return;
+    throw error;
+  }
+  runtime.terminalInstances.reconcileHostStart(liveIds);
   runtime.toolService.reconcile();
 
   const recoverable = runtime.terminalInstances
@@ -412,11 +427,20 @@ export async function prepareLiveTerminals(runtime: HostRuntime): Promise<void> 
           "daemon-restore",
         );
       } catch (error) {
+        const current = runtime.terminalInstances.get(instance.id);
+        const reason = error instanceof Error ? error.message : String(error);
         runtime.terminalInstances.markRestoreFailed(
           instance.id,
-          instance.generation,
-          error instanceof Error ? error.message : String(error),
+          current?.generation ?? instance.generation,
+          reason,
         );
+        if (current?.processState === "starting") {
+          runtime.terminalInstances.fail(
+            instance.id,
+            current.generation,
+            reason,
+          );
+        }
       }
     }),
   );

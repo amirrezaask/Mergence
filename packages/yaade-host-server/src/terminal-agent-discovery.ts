@@ -112,6 +112,7 @@ function isShellProcess(processName: string | null): boolean {
   const basename = path
     .basename(processName)
     .replace(/\.exe$/i, "")
+    .replace(/^-+/, "")
     .toLowerCase()
   return SHELL_PROCESSES.has(basename)
 }
@@ -235,7 +236,7 @@ function closeAgentAssociation(
     expectedExit: true,
     projectId: instance.projectId,
   })
-  if (instance.toolUseId) {
+  if (inspected.status === "running") {
     runtime.terminalInstances.demoteToTerminal(instance.id, instance.generation)
   } else {
     runtime.terminalInstances.close(instance.id, instance.generation, "")
@@ -258,7 +259,7 @@ export async function discoverTerminalAgents(
   for (const inspected of inspectedTerminals) {
     const processName = await runtime.terminal.getForegroundProcess(
       inspected.id,
-      false,
+      true,
     )
     const provider = inferAgentProvider(
       undefined,

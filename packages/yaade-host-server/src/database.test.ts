@@ -24,7 +24,24 @@ test("Project host identity remains stable across database reopen", async () => 
   }
 })
 
-test("DatabaseOwner applies named migrations once and rolls back failures", () => {
+test("DatabaseOwner refuses a corrupt database without wiping it", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-corrupt-db-"))
+  const file = path.join(dir, "jet.sqlite3")
+  fs.writeFileSync(file, "this is not a sqlite database\n")
+  try {
+    assert.throws(() => new DatabaseOwner(file))
+    assert.equal(fs.readFileSync(file, "utf8"), "this is not a sqlite database\n")
+    const record = JSON.parse(
+      fs.readFileSync(path.join(dir, "storage-failure.json"), "utf8"),
+    ) as { recovery?: string; message?: string }
+    assert.match(String(record.message), /sqlite|malformed|integrity|not a database/i)
+    assert.match(String(record.recovery), /backup/i)
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true })
+  }
+})
+
+test("DatabaseOwner applies named migrations once and rolls back failed transactions", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-database-owner-"))
   const owner = new DatabaseOwner(path.join(dir, "host.sqlite3"))
   let applied = 0

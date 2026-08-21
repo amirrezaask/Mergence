@@ -20,12 +20,68 @@ type DatabaseConnection = {
   close(): void;
 };
 
-type DatabaseConstructor = new (path: string) => DatabaseConnection;
+type DatabaseConstructor = new (
+  path: string,
+  options?: { timeout?: number },
+) => DatabaseConnection;
+
+const SQLITE_BUSY_TIMEOUT_MS = 8_000;
+export const STORAGE_FAILURE_FILE = "storage-failure.json";
+
+export function writeStorageFailureRecord(dataDir: string, error: unknown): void {
+  const payload = {
+    generatedAt: new Date().toISOString(),
+    message: error instanceof Error ? error.message : String(error),
+    recovery:
+      "Restore jet.sqlite3 from a backup. The daemon refused to open or migrate a corrupt database.",
+  };
+  try {
+    fs.writeFileSync(
+      path.join(dataDir, STORAGE_FAILURE_FILE),
+      `${JSON.stringify(payload, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+  } catch {
+    /* the original SQLite error is more important */
+  }
+}
 
 type DatabaseModule = {
   readonly Database: DatabaseConstructor;
   readonly DatabaseSync: DatabaseConstructor;
 };
+
+function isSqliteBusy(error: unknown): boolean {
+  const text = error instanceof Error ? error.message : String(error);
+  return /SQLITE_BUSY|database is locked/i.test(text);
+}
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function retrySqliteBusy<T>(operation: () => T, attempts = 40): T {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    try {
+      return operation();
+    } catch (error) {
+      lastError = error;
+      if (!isSqliteBusy(error) || attempt === attempts - 1) throw error;
+      sleepSync(Math.min(200, 25 * (attempt + 1)));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+function openSqliteConnection(dbPath: string): DatabaseConnection {
+  const Database = loadDatabaseConstructor();
+  try {
+    return new Database(dbPath, { timeout: SQLITE_BUSY_TIMEOUT_MS });
+  } catch {
+    return new Database(dbPath);
+  }
+}
 
 /** Bun exposes SQLite as `bun:sqlite`; Node uses the built-in `node:sqlite`. */
 function loadDatabaseConstructor(): DatabaseConstructor {
@@ -66,18 +122,37 @@ export class DatabaseOwner {
   private closed = false;
 
   constructor(dbPath: string) {
-    fs.mkdirSync(path.dirname(dbPath), { recursive: true });
-    this.connection = new (loadDatabaseConstructor())(dbPath);
-    this.connection.exec(`
-      PRAGMA journal_mode=WAL;
-      PRAGMA foreign_keys=ON;
-      PRAGMA busy_timeout=5000;
-    `);
-    const integrity = this.connection.prepare("PRAGMA quick_check").get();
-    const integrityText = String(integrity?.quick_check ?? "");
-    if (integrityText && integrityText !== "ok") {
-      this.connection.close();
-      throw new Error(`sqlite integrity check failed: ${integrityText}`);
+    if (dbPath !== ":memory:") {
+      fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+    }
+    try {
+      this.connection = retrySqliteBusy(() => {
+        const connection = openSqliteConnection(dbPath);
+        try {
+          connection.exec(`
+            PRAGMA journal_mode=WAL;
+            PRAGMA foreign_keys=ON;
+            PRAGMA busy_timeout=${SQLITE_BUSY_TIMEOUT_MS};
+          `);
+          return connection;
+        } catch (error) {
+          connection.close();
+          throw error;
+        }
+      });
+      const integrity = this.connection.prepare("PRAGMA quick_check").get();
+      const integrityText = String(
+        (integrity as { quick_check?: unknown } | undefined)?.quick_check ?? "",
+      );
+      if (integrityText && integrityText !== "ok") {
+        this.connection.close();
+        throw new Error(`sqlite integrity check failed: ${integrityText}`);
+      }
+    } catch (error) {
+      if (dbPath !== ":memory:") {
+        writeStorageFailureRecord(path.dirname(dbPath), error);
+      }
+      throw error;
     }
   }
 
@@ -86,7 +161,9 @@ export class DatabaseOwner {
   }
 
   transaction<T>(operation: () => T): T {
-    this.connection.exec("BEGIN IMMEDIATE");
+    retrySqliteBusy(() => {
+      this.connection.exec("BEGIN IMMEDIATE");
+    });
     try {
       const result = operation();
       this.connection.exec("COMMIT");

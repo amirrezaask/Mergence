@@ -23,6 +23,7 @@ export type SupervisorConnectionState =
   | "degraded"
   | "reconnecting"
   | "lost"
+  | "incompatible"
   | "closed"
 
 type PendingRequest = {
@@ -89,11 +90,12 @@ export class SupervisedTerminalHost {
     cwdUri: string,
     launch: TerminalLaunch | null | undefined,
     clientId: string,
+    requestId?: string,
   ): Promise<TerminalCreateResult> {
-    const requestId = `${clientId}:${randomUUID()}`
+    const idempotencyKey = requestId ?? `${clientId}:${randomUUID()}`
     return this.rpc(
       "create",
-      [cwdUri, launch ?? null, clientId, requestId],
+      [cwdUri, launch ?? null, clientId, idempotencyKey],
       true,
     ) as Promise<TerminalCreateResult>
   }
@@ -128,6 +130,10 @@ export class SupervisedTerminalHost {
 
   resumeForClient(clientId: string): Promise<void> {
     return this.rpc("resumeForClient", [clientId]) as Promise<void>
+  }
+
+  resumeAllLiveViewers(): Promise<void> {
+    return this.rpc("resumeAllLiveViewers", []) as Promise<void>
   }
 
   attach(id: string, clientId: string, afterSequence?: number): Promise<TerminalAttachSnapshot | null> {
@@ -250,8 +256,9 @@ export class SupervisedTerminalHost {
         supervisorEpoch?: string
       }
       if (handshake.protocolVersion !== 1 || !handshake.supervisorEpoch) {
+        this.setState("incompatible")
         socket.destroy()
-        throw new Error("SUPERVISOR_PROTOCOL_INCOMPATIBLE")
+        return
       }
       supervisorEpoch = handshake.supervisorEpoch
     } catch (error) {
@@ -306,7 +313,7 @@ export class SupervisedTerminalHost {
       this.pending.delete(id)
       pending.reject(error)
     }
-    if (this.closed) return
+    if (this.closed || this.state === "incompatible") return
     this.setState("reconnecting")
     this.scheduleReconnect()
   }
@@ -370,6 +377,9 @@ export class SupervisedTerminalHost {
 
   private rpc(op: string, args: unknown[], retryable = false): Promise<unknown> {
     if (this.closed) return Promise.reject(new Error("pty supervisor client closed"))
+    if (this.state === "incompatible") {
+      return Promise.reject(new Error("SUPERVISOR_PROTOCOL_INCOMPATIBLE"))
+    }
     const socket = this.socket
     if ((!socket || socket.destroyed) && !retryable) {
       return Promise.reject(new Error("SUPERVISOR_UNAVAILABLE"))

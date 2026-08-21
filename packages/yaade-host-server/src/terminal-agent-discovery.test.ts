@@ -88,7 +88,10 @@ describe("terminal agent discovery", () => {
     foreground = "fish"
     await discoverTerminalAgents(runtime)
 
-    assert.equal(terminalInstances.listLive(project.id).length, 0)
+    const demoted = terminalInstances.listLive(project.id)
+    assert.equal(demoted.length, 1)
+    assert.equal(demoted[0]?.provider, null)
+    assert.equal(demoted[0]?.ptyId, "pty-shell")
     assert.deepEqual(exited, [discoveredInstance.id])
   })
 })

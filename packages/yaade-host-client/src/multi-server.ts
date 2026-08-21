@@ -20,6 +20,8 @@ import {
   type ToolUse,
 } from "@yaade/rpc"
 import type {
+  AgentRunInfo,
+  JetElectronAgents,
   JetElectronTerminal,
   JetElectronTools,
   YaadeHostAPI,
@@ -60,6 +62,7 @@ type ManagedConnection = {
   disposeStatus: () => void
   disposeTools: () => void
   disposeTerminal: () => void
+  disposeAgents: () => void
 }
 
 export type MultiServerSnapshot = {
@@ -258,6 +261,8 @@ export class MultiServerHostClient {
   private readonly projectOwners = new Map<string, Owner>()
   private readonly ptyOwners = new Map<string, Owner>()
   private readonly terminalInstanceOwners = new Map<string, Owner>()
+  private readonly agentOwners = new Map<string, Owner>()
+  private readonly agentEventListeners = new Set<Parameters<JetElectronAgents["onEvent"]>[0]>()
   private readonly terminalExitListeners = new Set<(
     id: string,
     exitCode: number,
@@ -267,6 +272,7 @@ export class MultiServerHostClient {
     (event: TerminalInstanceEvent) => void
   >()
   private readonly aggregateTerminal: JetElectronTerminal
+  private readonly aggregateAgents: JetElectronAgents
   private activeServerId: string | undefined
   private generation = 0
   private globalTarget?: MultiServerGlobalTarget
@@ -280,6 +286,7 @@ export class MultiServerHostClient {
     this.currentServerId = options.currentServer.id
     this.globalTarget = options.globalTarget
     this.aggregateTerminal = this.createTerminal()
+    this.aggregateAgents = this.createAgents()
     this.tools = this.createTools()
     this.syncDefinitions(options.currentServer, options.servers ?? [])
     this.ports = this.createPorts(options.currentServer)
@@ -367,7 +374,7 @@ export class MultiServerHostClient {
   private createPorts(currentServer: YaadeServerDefinition): YaadeHostAPI {
     const connection = this.connections.get(currentServer.id)
     if (connection) {
-      return { ...connection.api, tools: this.tools, terminal: this.aggregateTerminal }
+      return { ...connection.api, tools: this.tools, terminal: this.aggregateTerminal, agents: this.aggregateAgents }
     }
     // The current connection is installed by syncDefinitions immediately after
     // construction. This branch only keeps the object creation type-safe.
@@ -422,6 +429,7 @@ export class MultiServerHostClient {
       disposeStatus: () => undefined,
       disposeTools: () => undefined,
       disposeTerminal: () => undefined,
+      disposeAgents: () => undefined,
     }
     const disposeConnectionStatus = transport.on("connection:status", (...args) => {
       const status = args[0]
@@ -431,7 +439,9 @@ export class MultiServerHostClient {
       } else if (status === "synchronizing") {
         connection.status = "synchronizing"
       } else if (status === "disconnected") {
-        connection.status = "offline"
+        if (connection.status !== "revoked" && connection.status !== "incompatible") {
+          connection.status = "offline"
+        }
       }
       this.snapshot = this.makeSnapshot()
       this.publish()
@@ -466,6 +476,10 @@ export class MultiServerHostClient {
       disposeExit()
       disposeInstance()
     }
+    connection.disposeAgents = api.agents.onEvent(event => {
+      const run = event.run ? this.scopeAgentRun(connection, event.run) : event.run
+      for (const listener of this.agentEventListeners) listener({ ...event, run })
+    })
     return connection
   }
 
@@ -473,6 +487,7 @@ export class MultiServerHostClient {
     connection.disposeStatus()
     connection.disposeTools()
     connection.disposeTerminal()
+    connection.disposeAgents()
     connection.transport.close()
   }
 
@@ -529,8 +544,14 @@ export class MultiServerHostClient {
       : { serverId: activeServerId, localId: projectId }
   }
 
+  private keepLocalIds(connection: ManagedConnection): boolean {
+    return connection.definition.id === this.currentServerId
+  }
+
   private scopeSession(connection: ManagedConnection, session: AppSessionValue): AppSessionValue {
     const owner = { serverId: connection.definition.id, localId: session.id }
+    this.sessionOwners.set(session.id, owner)
+    if (this.keepLocalIds(connection)) return session
     const id = publicSessionId(scopedId("ses", owner.serverId, owner.localId))
     this.sessionOwners.set(id, owner)
     return {
@@ -547,9 +568,12 @@ export class MultiServerHostClient {
 
   private scopeTab(connection: ManagedConnection, tab: import("@yaade/rpc").SessionTab): import("@yaade/rpc").SessionTab {
     const owner = { serverId: connection.definition.id, localId: tab.id }
+    this.tabOwners.set(tab.id, owner)
+    const sessionOwner = { serverId: connection.definition.id, localId: tab.sessionId }
+    this.sessionOwners.set(tab.sessionId, sessionOwner)
+    if (this.keepLocalIds(connection)) return tab
     const id = publicTabId(scopedId("tab", owner.serverId, owner.localId))
     this.tabOwners.set(id, owner)
-    const sessionOwner = { serverId: connection.definition.id, localId: tab.sessionId }
     const sessionId = publicSessionId(scopedId("ses", sessionOwner.serverId, sessionOwner.localId))
     this.sessionOwners.set(sessionId, sessionOwner)
     return {
@@ -564,18 +588,27 @@ export class MultiServerHostClient {
 
   private scopeToolUse(connection: ManagedConnection, use: ToolUse): ToolUse {
     const owner = { serverId: connection.definition.id, localId: use.id }
-    const id = publicToolUseId(scopedId("use", owner.serverId, owner.localId))
-    this.toolUseOwners.set(id, owner)
+    this.toolUseOwners.set(use.id, owner)
     const sessionOwner = { serverId: connection.definition.id, localId: use.sessionId }
-    const sessionId = publicSessionId(scopedId("ses", sessionOwner.serverId, sessionOwner.localId))
-    this.sessionOwners.set(sessionId, sessionOwner)
+    this.sessionOwners.set(use.sessionId, sessionOwner)
     const localProjectIdValue = use.context.project.projectId
     const projectOwner = {
       serverId: owner.serverId,
       localId: localProjectIdValue,
     }
-    const projectId = scopedProjectId(owner.serverId, localProjectIdValue)
     this.projectOwners.set(localProjectIdValue, projectOwner)
+    if (use.output.kind === "process" && use.output.ptyId) {
+      this.ptyOwners.set(use.output.ptyId, {
+        serverId: owner.serverId,
+        localId: use.output.ptyId,
+      })
+    }
+    if (this.keepLocalIds(connection)) return use
+    const id = publicToolUseId(scopedId("use", owner.serverId, owner.localId))
+    this.toolUseOwners.set(id, owner)
+    const sessionId = publicSessionId(scopedId("ses", sessionOwner.serverId, sessionOwner.localId))
+    this.sessionOwners.set(sessionId, sessionOwner)
+    const projectId = scopedProjectId(owner.serverId, localProjectIdValue)
     this.projectOwners.set(projectId, projectOwner)
     const output = this.scopeProcessOutput(owner.serverId, use.output)
     if (use.output.kind === "process" && use.output.ptyId) {
@@ -600,6 +633,7 @@ export class MultiServerHostClient {
   }
 
   private scopePtyId(serverId: string, localId: string): string {
+    if (serverId === this.currentServerId) return localId
     return scopedTerminalId(serverId, localId)
   }
 
@@ -617,6 +651,14 @@ export class MultiServerHostClient {
     instance: TerminalInstanceInfo,
   ): TerminalInstanceInfo {
     const owner = { serverId: connection.definition.id, localId: instance.id }
+    this.terminalInstanceOwners.set(instance.id, owner)
+    if (instance.ptyId) {
+      this.ptyOwners.set(instance.ptyId, {
+        serverId: owner.serverId,
+        localId: instance.ptyId,
+      })
+    }
+    if (this.keepLocalIds(connection)) return instance
     const id = scopedTerminalId(owner.serverId, owner.localId)
     this.terminalInstanceOwners.set(id, owner)
     if (instance.ptyId) {
@@ -683,26 +725,161 @@ export class MultiServerHostClient {
       case "ToolUseUpdated":
         return {
           ...event,
-          toolUseId: publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
+          toolUseId: this.keepLocalIds(connection)
+            ? event.toolUseId
+            : publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
           toolUse: this.scopeToolUse(connection, event.toolUse),
         }
       case "ToolUseOutputChanged":
         if (event.output.kind === "process" && event.output.ptyId) {
-          this.ptyOwners.set(this.scopePtyId(connection.definition.id, event.output.ptyId), {
+          const ptyId = this.keepLocalIds(connection)
+            ? event.output.ptyId
+            : this.scopePtyId(connection.definition.id, event.output.ptyId)
+          this.ptyOwners.set(ptyId, {
             serverId: connection.definition.id,
             localId: event.output.ptyId,
           })
         }
         return {
           ...event,
-          toolUseId: publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
-          output: this.scopeProcessOutput(connection.definition.id, event.output),
+          toolUseId: this.keepLocalIds(connection)
+            ? event.toolUseId
+            : publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
+          output: this.keepLocalIds(connection)
+            ? event.output
+            : this.scopeProcessOutput(connection.definition.id, event.output),
         }
       case "ToolUseArchived":
         return {
           ...event,
-          toolUseId: publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
+          toolUseId: this.keepLocalIds(connection)
+            ? event.toolUseId
+            : publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
         }
+    }
+  }
+
+  private ownerForAgent(runId: string): Owner {
+    const owner = this.agentOwners.get(runId)
+    if (owner) return owner
+    return {
+      serverId: this.activeConnection().definition.id,
+      localId: runId,
+    }
+  }
+
+  private scopeAgentRun(connection: ManagedConnection, run: AgentRunInfo): AgentRunInfo {
+    const owner = { serverId: connection.definition.id, localId: run.runId }
+    this.agentOwners.set(run.runId, owner)
+    if (run.toolUseId) {
+      this.toolUseOwners.set(run.toolUseId, {
+        serverId: owner.serverId,
+        localId: run.toolUseId,
+      })
+    }
+    if (run.ptyId) {
+      this.ptyOwners.set(run.ptyId, { serverId: owner.serverId, localId: run.ptyId })
+    }
+    if (this.keepLocalIds(connection)) return run
+    const runId = `run-${owner.serverId}--${owner.localId}`
+    this.agentOwners.set(runId, owner)
+    const toolUseId = run.toolUseId
+      ? publicToolUseId(scopedId("use", owner.serverId, run.toolUseId))
+      : run.toolUseId
+    if (toolUseId && run.toolUseId) {
+      this.toolUseOwners.set(toolUseId, {
+        serverId: owner.serverId,
+        localId: run.toolUseId,
+      })
+    }
+    const ptyId = run.ptyId ? this.scopePtyId(owner.serverId, run.ptyId) : run.ptyId
+    if (ptyId && run.ptyId) {
+      this.ptyOwners.set(ptyId, { serverId: owner.serverId, localId: run.ptyId })
+    }
+    const projectId = scopedProjectId(owner.serverId, run.projectId)
+    this.projectOwners.set(projectId, { serverId: owner.serverId, localId: run.projectId })
+    this.projectOwners.set(run.projectId, { serverId: owner.serverId, localId: run.projectId })
+    return { ...run, runId, toolUseId, ptyId, projectId }
+  }
+
+  private createAgents(): JetElectronAgents {
+    const self = this
+    const collectLive = async (projectId?: string): Promise<AgentRunInfo[]> => {
+      const results: AgentRunInfo[] = []
+      for (const connection of self.connections.values()) {
+        try {
+          const values = projectId === undefined
+            ? await connection.api.agents.listLive()
+            : await connection.api.agents.listLive(projectId)
+          connection.status = "connected"
+          for (const run of values) results.push(self.scopeAgentRun(connection, run))
+        } catch (error) {
+          connection.status = "offline"
+          connection.error = errorMessage(error)
+        }
+      }
+      self.snapshot = self.makeSnapshot()
+      self.publish()
+      return results
+    }
+    return {
+      listProviders: refresh => self.activeConnection().api.agents.listProviders(refresh),
+      launch: req => self.activeConnection().api.agents.launch(req),
+      stop: req => {
+        const owner = self.ownerForAgent(req.runId)
+        return self.connectionForOwner(owner).api.agents.stop({ ...req, runId: owner.localId })
+      },
+      close: req => {
+        const owner = self.ownerForAgent(req.runId)
+        return self.connectionForOwner(owner).api.agents.close({ ...req, runId: owner.localId })
+      },
+      listLive: projectId => collectLive(projectId),
+      listProject: async projectId => {
+        const owner = self.ownerForProject(projectId)
+        const values = await self.connectionForOwner(owner).api.agents.listProject(
+          localProjectId(owner, projectId, self.projectOwners),
+        )
+        return values.map(run => self.scopeAgentRun(self.connectionForOwner(owner), run))
+      },
+      get: async runId => {
+        const owner = self.ownerForAgent(runId)
+        const local = await self.connectionForOwner(owner).api.agents.get(owner.localId)
+        return local ? self.scopeAgentRun(self.connectionForOwner(owner), local) : null
+      },
+      getTranscript: runId => {
+        const owner = self.ownerForAgent(runId)
+        return self.connectionForOwner(owner).api.agents.getTranscript(owner.localId)
+      },
+      listActivity: async opts => {
+        const runs: AgentRunInfo[] = []
+        let nextCursor: string | null = null
+        for (const connection of self.connections.values()) {
+          try {
+            const page = await connection.api.agents.listActivity(opts)
+            connection.status = "connected"
+            for (const run of page.runs) runs.push(self.scopeAgentRun(connection, run))
+            if (page.nextCursor) nextCursor = page.nextCursor
+          } catch (error) {
+            connection.status = "offline"
+            connection.error = errorMessage(error)
+          }
+        }
+        return { runs, nextCursor }
+      },
+      getSnapshot: sessionId => {
+        const owner = self.ownerForSession(sessionId)
+        return self.connectionForOwner(owner).api.agents.getSnapshot(owner.localId)
+      },
+      listEvents: (sessionId, opts) => {
+        const owner = self.ownerForSession(sessionId)
+        return self.connectionForOwner(owner).api.agents.listEvents(owner.localId, opts)
+      },
+      ingestNative: req => self.activeConnection().api.agents.ingestNative(req),
+      installProjectHooks: req => self.activeConnection().api.agents.installProjectHooks(req),
+      onEvent: callback => {
+        self.agentEventListeners.add(callback)
+        return () => self.agentEventListeners.delete(callback)
+      },
     }
   }
 
@@ -1217,6 +1394,7 @@ export class MultiServerHostClient {
       Object.assign(this.ports, active.api, {
         tools: this.tools,
         terminal: this.aggregateTerminal,
+        agents: this.aggregateAgents,
       })
     }
     this.globalTarget?.setYaade(this.ports)

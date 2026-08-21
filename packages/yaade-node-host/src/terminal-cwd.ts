@@ -167,7 +167,7 @@ async function listProcessesUncached(): Promise<ProcRow[]> {
   try {
     const { stdout } = await execFileAsync(
       "ps",
-      ["-Ao", "pid=,ppid=,comm="],
+      ["-Ao", "pid=,ppid=,command="],
       {
         encoding: "utf8",
         timeout: 2_000,
@@ -218,29 +218,70 @@ async function listProcesses(fresh = false): Promise<ProcRow[]> {
  * children over the leader so a shell running nvim reports nvim's cwd.
  * Returns the root itself when it has no children.
  */
-export function deepestDescendantPid(
-  rootPid: number,
-  rows: ProcRow[],
-): number {
+const AGENT_PROCESS_NAMES = new Set([
+  "claude",
+  "codex",
+  "cursor-agent",
+  "cursor",
+  "opencode",
+  "grok",
+  "pi",
+])
+
+function processName(comm: string): string {
+  return basenameOfComm(comm).replace(/\.exe$/i, "").toLowerCase()
+}
+
+function agentNameFromCommand(command: string): string | null {
+  const direct = processName(command)
+  if (AGENT_PROCESS_NAMES.has(direct)) return direct
+  for (const token of command.split(/\s+/)) {
+    const name = processName(token)
+    if (AGENT_PROCESS_NAMES.has(name)) return name
+  }
+  return null
+}
+
+function descendantPids(rootPid: number, rows: ProcRow[]): number[] {
   const children = new Map<number, number[]>()
   for (const row of rows) {
     const list = children.get(row.ppid)
     if (list) list.push(row.pid)
     else children.set(row.ppid, [row.pid])
   }
-  let deepest = rootPid
+  const found: number[] = []
   const queue = [rootPid]
   const seen = new Set<number>([rootPid])
   while (queue.length > 0) {
     const cur = queue.shift()!
-    deepest = cur
+    found.push(cur)
     for (const child of children.get(cur) ?? []) {
       if (seen.has(child)) continue
       seen.add(child)
       queue.push(child)
     }
   }
-  return deepest
+  return found
+}
+
+export function deepestDescendantPid(
+  rootPid: number,
+  rows: ProcRow[],
+): number {
+  const found = descendantPids(rootPid, rows)
+  return found[found.length - 1] ?? rootPid
+}
+
+export function preferredForegroundPid(rootPid: number, rows: ProcRow[]): number {
+  const found = descendantPids(rootPid, rows)
+  let agentPid: number | null = null
+  for (const pid of found) {
+    if (pid === rootPid) continue
+    const row = rows.find(item => item.pid === pid)
+    if (!row) continue
+    if (agentNameFromCommand(row.comm)) agentPid = pid
+  }
+  return agentPid ?? (found[found.length - 1] ?? rootPid)
 }
 
 function basenameOfComm(comm: string): string {
@@ -275,9 +316,11 @@ export async function foregroundProcessOf(
     putCache(fgCache, leaderPid, null)
     return null
   }
-  const fgPid = deepestDescendantPid(leaderPid, rows)
+  const fgPid = preferredForegroundPid(leaderPid, rows)
   const row = rows.find(r => r.pid === fgPid)
-  const name = row ? basenameOfComm(row.comm) : ""
+  const name = row
+    ? (agentNameFromCommand(row.comm) ?? basenameOfComm(row.comm.split(/\s+/)[0] ?? row.comm))
+    : ""
   if (!name) {
     putCache(fgCache, leaderPid, null)
     return null

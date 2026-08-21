@@ -76,7 +76,10 @@ export function makeHostLayers(
         startedAt: new Date().toISOString(),
       };
       const events = new EventHub(
-        options?.eventHubCapacity ?? EVENT_HUB_CAPACITY,
+        options?.eventHubCapacity ??
+          (Number(process.env.JET_EVENT_HUB_CAPACITY) > 0
+            ? Math.trunc(Number(process.env.JET_EVENT_HUB_CAPACITY))
+            : EVENT_HUB_CAPACITY),
         16 * 1024 * 1024,
         identity,
       );

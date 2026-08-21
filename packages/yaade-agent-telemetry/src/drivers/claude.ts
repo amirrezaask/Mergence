@@ -163,7 +163,7 @@ export const claudeDriver: CliAgentDriver = {
     }
     return {
       command: context.executable ?? "claude",
-      args: ["--resume", ref.value, ...(context.args ?? [])],
+      args: [...(context.args ?? []), "--resume", ref.value],
     }
   },
 

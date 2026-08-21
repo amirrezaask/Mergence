@@ -7,6 +7,7 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   workers: process.env.PLAYWRIGHT_WORKERS ? Number(process.env.PLAYWRIGHT_WORKERS) : 1,
   fullyParallel: false,
+  passWithNoTests: true,
   globalSetup: "./tests/web/global-setup.ts",
   use: {
     actionTimeout: 15_000,
@@ -22,6 +23,60 @@ export default defineConfig({
       testDir: "./tests/electron",
       testMatch: "*.electron.spec.ts",
       timeout: 180_000,
+    },
+    {
+      name: "runtime-e2e",
+      testDir: "./tests/runtime",
+      testMatch: "*.e2e.test.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "web-durability",
+      testDir: "./tests/web/durability",
+      testMatch: "*.spec.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "desktop-e2e",
+      testDir: "./tests/desktop",
+      testMatch: "*.desktop.spec.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "recovery-e2e",
+      testDir: "./tests/recovery",
+      testMatch: "*.e2e.test.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "multi-server-e2e",
+      testDir: "./tests/multi-server",
+      testMatch: "*.multi-server.spec.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "security-e2e",
+      testDir: "./tests/security",
+      testMatch: "*.security.spec.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "platform-e2e",
+      testDir: "./tests/platform",
+      testMatch: "*.e2e.test.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "chaos-e2e",
+      testDir: "./tests/chaos",
+      testMatch: "*.e2e.test.ts",
+      timeout: 180_000,
+    },
+    {
+      name: "soak-e2e",
+      testDir: "./tests/soak",
+      testMatch: "*.soak.test.ts",
+      timeout: 3_600_000,
     },
     {
       name: "bench",

@@ -490,6 +490,7 @@ function ServerSettingsPanel(props: {
             <Badge
               variant={current ? serverStatusVariant(current.status) : "outline"}
               className="ml-auto"
+              data-yaade-current-server-status={current?.status ?? "connecting"}
             >
               {serverStatusLabel(current?.status ?? "connecting")}
             </Badge>

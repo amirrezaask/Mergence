@@ -6,6 +6,7 @@ import { HostPortsProvider } from "./host-ports.js"
 import { AppErrorBoundary } from "./AppErrorBoundary.js"
 import {
   createMultiServerHostClient,
+  consumeHostAuthTokenFromLocation,
   loadStoredServerDefinitions,
 } from "@yaade/host-client"
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
@@ -15,6 +16,7 @@ import { ServerConnectionsProvider } from "./server-connections.js"
 
 const startupWindow = window as Window & { __yaadeStartupBootstrapAt?: number }
 startupWindow.__yaadeStartupBootstrapAt ??= performance.now()
+consumeHostAuthTokenFromLocation()
 applyInitialAppearance()
 
 const currentServer = {

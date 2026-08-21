@@ -1,7 +1,8 @@
 import net from "node:net"
 import fs from "node:fs"
+import os from "node:os"
 import path from "node:path"
-import { randomUUID } from "node:crypto"
+import { createHash, randomUUID } from "node:crypto"
 import { spawn, type ChildProcess } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { TerminalHost, type TerminalLaunch } from "./terminal.js"
@@ -42,12 +43,17 @@ export type SupervisorMessage =
       args: unknown[]
     }
 
+const UNIX_SOCKET_MAX_BYTES = 100
+
 export function supervisorSocketPath(dataDir: string): string {
   if (process.platform === "win32") {
     const tag = dataDir.replace(/[^a-zA-Z0-9]/g, "").slice(-24) || "yaade"
     return `\\\\.\\pipe\\yaade-pty-${tag}`
   }
-  return path.join(dataDir, "pty-supervisor.sock")
+  const nested = path.join(path.resolve(dataDir), "pty-supervisor.sock")
+  if (Buffer.byteLength(nested) <= UNIX_SOCKET_MAX_BYTES) return nested
+  const digest = createHash("sha256").update(nested).digest("hex").slice(0, 16)
+  return path.join(os.tmpdir(), `yd-pty-${digest}.sock`)
 }
 
 export function supervisorPidPath(dataDir: string): string {
@@ -88,6 +94,21 @@ export class SupervisorFrameReader {
     }
     return out
   }
+}
+
+function requestClientId(op: string, args: unknown[]): string | null {
+  if (op === "create") return typeof args[2] === "string" ? args[2] : null
+  if (
+    op === "attach" ||
+    op === "armLiveViewer" ||
+    op === "markReplayReady" ||
+    op === "hasViewer"
+  ) {
+    return typeof args[1] === "string" ? args[1] : null
+  }
+  if (op === "acknowledgeData") return typeof args[2] === "string" ? args[2] : null
+  if (op === "resumeForClient") return typeof args[0] === "string" ? args[0] : null
+  return null
 }
 
 function applyOp(
@@ -133,6 +154,9 @@ function applyOp(
     case "resumeForClient":
       host.resumeForClient(String(args[0] ?? ""))
       return null
+    case "resumeAllLiveViewers":
+      host.resumeAllLiveViewers()
+      return null
     case "attach":
       return host.attach(
         String(args[0] ?? ""),
@@ -167,7 +191,13 @@ function applyOp(
     case "waitForExit":
       return host.waitForExit(String(args[0] ?? ""))
     case "ping":
-      return { ok: true, pid: process.pid }
+      return { ok: true, pid: process.pid, persistenceDegraded: host.persistenceDegraded }
+    case "forceCheckpoint":
+      return host.forceCheckpoint(String(args[0] ?? ""))
+    case "injectCheckpoint":
+      return host.injectCheckpoint(String(args[0] ?? ""), args[1])
+    case "dropClients":
+      return { ok: true }
     case "handshake":
       return {
         protocolVersion: 1,
@@ -175,7 +205,7 @@ function applyOp(
         supervisorEpoch: identity.supervisorEpoch,
         pid: process.pid,
         capabilities: {
-          checkpoints: false,
+          checkpoints: true,
           writerLeases: false,
           idempotentCreate: true,
         },
@@ -200,8 +230,9 @@ export async function listenTerminalSupervisor(
   close: () => Promise<void>
   manifest: SupervisorManifest
 }> {
-  const host = new TerminalHost()
+  const host = new TerminalHost({ flowControl: false })
   const clients = new Set<net.Socket>()
+  const clientIdsBySocket = new Map<net.Socket, Set<string>>()
   const manifest: SupervisorManifest = {
     schemaVersion: 1,
     supervisorId: randomUUID(),
@@ -214,12 +245,23 @@ export async function listenTerminalSupervisor(
   }
   host.setEmit((channel, args) => {
     const frame = encodeSupervisorFrame({ kind: "event", channel, args })
-    for (const client of clients) {
-      if (!client.destroyed) client.write(frame)
+    for (const client of [...clients]) {
+      if (client.destroyed) {
+        clients.delete(client)
+        continue
+      }
+      try {
+        client.write(frame)
+      } catch {
+        client.destroy()
+        clients.delete(client)
+      }
     }
+    if (clients.size === 0) host.resumeAllLiveViewers()
   })
   const server = net.createServer((socket) => {
     clients.add(socket)
+    clientIdsBySocket.set(socket, new Set())
     const reader = new SupervisorFrameReader()
     const write = (message: SupervisorMessage) => {
       if (socket.destroyed) return
@@ -235,12 +277,19 @@ export async function listenTerminalSupervisor(
       }
       for (const message of messages) {
         if (message.kind !== "req") continue
+        const clientId = requestClientId(message.op, message.args)
+        if (clientId) clientIdsBySocket.get(socket)?.add(clientId)
         void Promise.resolve()
           .then(() =>
             applyOp(host, message.op, message.args, manifest),
           )
           .then((value) => {
             write({ kind: "res", id: message.id, ok: true, value })
+            if (message.op === "dropClients") {
+              host.resumeAllLiveViewers()
+              for (const client of clients) client.destroy()
+              return
+            }
             if (message.op === "shutdown") {
               host.stopAll()
               options?.onShutdown?.()
@@ -256,8 +305,17 @@ export async function listenTerminalSupervisor(
           })
       }
     })
+    socket.on("error", () => {
+      socket.destroy()
+    })
     socket.on("close", () => {
+      const ids = clientIdsBySocket.get(socket)
+      clientIdsBySocket.delete(socket)
       clients.delete(socket)
+      if (ids) {
+        for (const clientId of ids) host.resumeForClient(clientId)
+      }
+      if (clients.size === 0) host.resumeAllLiveViewers()
     })
   })
   await new Promise<void>((resolve, reject) => {
@@ -549,11 +607,15 @@ function spawnSupervisorProcess(
   if (!args) {
     throw new Error("cannot spawn pty supervisor: Vite+ TypeScript runner is unavailable")
   }
+  const logPath = process.env.YAADE_PTY_SUPERVISOR_LOG ?? path.join(dataDir, "supervisor.log")
+  fs.mkdirSync(path.dirname(logPath), { recursive: true })
+  const logFd = fs.openSync(logPath, "a")
   const child = spawn(process.execPath, args, {
     detached: true,
-    stdio: "ignore",
+    stdio: ["ignore", logFd, logFd],
     env: { ...process.env, YAADE_PTY_SUPERVISOR_DATA_DIR: dataDir },
   })
+  fs.closeSync(logFd)
   child.unref()
   return child
 }

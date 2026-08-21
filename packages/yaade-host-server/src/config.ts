@@ -22,6 +22,17 @@ export type HostConfig = {
   ptySupervisor: boolean
   /** When true, shutdown kills PTYs (desktop). Server default is detach. */
   killPtysOnShutdown: boolean
+  /** Advertised runtime features, used for per-server capability isolation. */
+  features: {
+    terminalCheckpoints: boolean
+    nativeAgentResume: boolean
+  }
+}
+
+function parseOnOff(value: string | boolean | undefined): boolean | null {
+  if (value === true || value === "1" || value === "true") return true
+  if (value === false || value === "0" || value === "false") return false
+  return null
 }
 
 function parseArgs(argv: string[]): Record<string, string | boolean> {
@@ -64,15 +75,15 @@ export async function loadConfig(
     .split(",")
     .map(value => value.trim())
     .filter(Boolean)
-  const corsOrigins =
-    configuredCorsOrigins.length > 0
-      ? configuredCorsOrigins
-      : authToken
-        ? ["*"]
-        : []
+  const corsOrigins = configuredCorsOrigins
   if (!isLoopbackHostname(host) && !authToken) {
     throw new Error(
       `binding to ${host} requires --token or YAADE_HOST_TOKEN so the host API is not open on the network`,
+    )
+  }
+  if (!isLoopbackHostname(host) && !configuredCorsOrigins.some(origin => origin.startsWith("https:"))) {
+    console.warn(
+      `[host-server] non-loopback cleartext bind; approved HTTPS origins must be listed with --cors-origins`,
     )
   }
   if (!isLoopbackHostname(host)) {
@@ -128,26 +139,15 @@ export async function loadConfig(
 
   fs.mkdirSync(dataDir, { recursive: true })
 
-  const supervisorArg = args["pty-supervisor"]
   const supervisorExplicit =
-    supervisorArg === true || supervisorArg === "1" || supervisorArg === "true"
-      ? true
-      : supervisorArg === false ||
-          supervisorArg === "0" ||
-          supervisorArg === "false"
-        ? false
-        : process.env.JET_PTY_SUPERVISOR === "1"
-          ? true
-          : process.env.JET_PTY_SUPERVISOR === "0"
-            ? false
-            : null
+    parseOnOff(args["pty-supervisor"]) ?? parseOnOff(process.env.JET_PTY_SUPERVISOR)
   // Production default is on. Tests stay in-process unless they opt in.
   const runningTests =
     Boolean(process.env.NODE_TEST_CONTEXT) || process.env.VITEST === "true"
   const ptySupervisor = supervisorExplicit ?? !runningTests
   const killPtysOnShutdown =
-    args["kill-ptys-on-exit"] === true ||
-    process.env.JET_KILL_PTYS_ON_EXIT === "1" ||
+    parseOnOff(args["kill-ptys-on-exit"]) ??
+    parseOnOff(process.env.JET_KILL_PTYS_ON_EXIT) ??
     runningTests
 
   return {
@@ -163,5 +163,15 @@ export async function loadConfig(
     corsOrigins,
     ptySupervisor,
     killPtysOnShutdown,
+    features: {
+      terminalCheckpoints:
+        parseOnOff(args["terminal-checkpoints"]) ??
+        parseOnOff(process.env.JET_TERMINAL_CHECKPOINTS) ??
+        true,
+      nativeAgentResume:
+        parseOnOff(args["native-agent-resume"]) ??
+        parseOnOff(process.env.JET_NATIVE_AGENT_RESUME) ??
+        true,
+    },
   }
 }

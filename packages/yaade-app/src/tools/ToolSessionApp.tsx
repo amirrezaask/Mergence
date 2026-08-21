@@ -50,6 +50,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   FolderPlus,
+  Power,
   Settings,
 } from "lucide-react";
 import {
@@ -86,6 +87,8 @@ import {
   persistToolSessionRoute,
   parseToolSessionRoute,
   resolveToolSessionRoute,
+  sameLocalResource,
+  shouldHoldRequestedRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js";
 import type { ToolContextSelection } from "./ToolContextControls.js";
@@ -348,6 +351,9 @@ export function ToolSessionApp() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [stopDaemonPrompt, setStopDaemonPrompt] = useState<{
+    runningTerminals: number;
+  } | null>(null);
   const [paneChromeOverlayOpen, setPaneChromeOverlayOpen] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     AGENT_SIDEBAR_DEFAULT_WIDTH,
@@ -383,9 +389,94 @@ export function ToolSessionApp() {
   }, [client]);
 
   useEffect(() => {
+    const bridge = window.__yaadeAgent;
+    if (!bridge) return;
+    const previous = bridge.waitForReady.bind(bridge);
+    bridge.waitForReady = async () => {
+      await previous();
+      await new Promise<void>((resolve, reject) => {
+        const timeout = window.setTimeout(() => {
+          unsubscribe();
+          reject(new Error("timed out waiting for host hydrate"));
+        }, 30_000);
+        const ready = (): boolean => {
+          const snap = client.store.getSnapshot();
+          if (snap.connection !== "connected") return false;
+          const route = parseToolSessionRoute(location.href);
+          if (route.sessionId) {
+            const present = [...snap.sessionsById.keys()].some(id =>
+              sameLocalResource(id, route.sessionId),
+            );
+            if (present) return sameLocalResource(snap.activeSessionId, route.sessionId);
+          }
+          if (route.toolUseId) {
+            const present = [...snap.usesById.keys()].some(id =>
+              sameLocalResource(id, route.toolUseId),
+            );
+            if (present) return sameLocalResource(snap.activeToolUseId, route.toolUseId);
+          }
+          return true;
+        };
+        const unsubscribe = client.store.subscribe(() => {
+          if (!ready()) return;
+          window.clearTimeout(timeout);
+          unsubscribe();
+          resolve();
+        });
+        if (ready()) {
+          window.clearTimeout(timeout);
+          unsubscribe();
+          resolve();
+        }
+      });
+    };
+    return () => {
+      bridge.waitForReady = previous;
+    };
+  }, [client]);
+
+  useEffect(() => {
     if (serverConnections.snapshot.generation === 0) return;
+    const activeId = serverConnections.snapshot.activeServerId;
+    const current =
+      serverConnections.snapshot.connections.find(connection => connection.id === activeId) ??
+      serverConnections.snapshot.connections[0];
+    if (
+      current?.status === "offline" ||
+      current?.status === "incompatible" ||
+      current?.status === "revoked"
+    ) {
+      return;
+    }
     void client.reconcile().catch(() => undefined);
-  }, [client, serverConnections.snapshot.generation]);
+  }, [client, serverConnections.snapshot.generation, serverConnections.snapshot.connections, serverConnections.snapshot.activeServerId]);
+
+  useEffect(() => {
+    const activeId = serverConnections.snapshot.activeServerId;
+    const current =
+      serverConnections.snapshot.connections.find(connection => connection.id === activeId) ??
+      serverConnections.snapshot.connections[0];
+    if (!current) return;
+    if (
+      current.status === "offline" ||
+      current.status === "incompatible" ||
+      current.status === "revoked"
+    ) {
+      client.store.setConnection("offline");
+      return;
+    }
+    if (
+      current.status === "synchronizing" ||
+      current.status === "connecting" ||
+      current.status === "authenticating"
+    ) {
+      client.store.setConnection("reconciling");
+      return;
+    }
+    if (current.status === "connected") {
+      void client.reconcile().catch(() => undefined);
+    }
+  }, [client, serverConnections.snapshot]);
 
   useEffect(() => {
     let cancelled = false;
@@ -424,6 +515,24 @@ export function ToolSessionApp() {
       return undefined;
     }
   }, [hostPorts.tools, serverConnections.snapshot.activeServerId]);
+
+  const requestStopDaemon = useCallback(async () => {
+    const inspect = window.yaadeDesktop?.inspectDaemon;
+    if (!inspect) return;
+    const status = await inspect();
+    setStopDaemonPrompt({ runningTerminals: status.runningTerminals });
+  }, []);
+
+  const confirmStopDaemon = useCallback(async () => {
+    const stop = window.yaadeDesktop?.stopDaemon;
+    setStopDaemonPrompt(null);
+    if (!stop) return;
+    try {
+      await stop();
+    } catch (error) {
+      setActionError(errorMessage(error));
+    }
+  }, []);
 
   const observeTerminalCwd = useCallback(
     (useId: ToolUseId, cwdPath: string) => {
@@ -480,13 +589,22 @@ export function ToolSessionApp() {
 
   useEffect(() => {
     const route = resolveToolSessionRoute(location.href, localStorage);
+    if (shouldHoldRequestedRoute(route, snapshot, snapshot.connection)) {
+      return;
+    }
     const requestedUse = route.toolUseId
-      ? snapshot.usesById.get(route.toolUseId)
+      ? snapshot.usesById.get(route.toolUseId) ??
+        [...snapshot.usesById.values()].find(use =>
+          sameLocalResource(use.id, route.toolUseId),
+        )
       : undefined;
-    const session = chooseSession(route.sessionId ?? requestedUse?.sessionId, [
-      ...snapshot.sessionsById.values(),
-    ]);
+    const requestedSessionId = route.sessionId ?? requestedUse?.sessionId;
+    const sessions = [...snapshot.sessionsById.values()];
+    const session = requestedSessionId
+      ? chooseSession(requestedSessionId, sessions)
+      : chooseSession(undefined, sessions);
     if (!session) return;
+    if (requestedSessionId && !sameLocalResource(session.id, requestedSessionId)) return;
     const tabs = snapshot.visibleTabIdsBySession.get(session.id) ?? [];
     const tab = chooseTab(
       route.tabId,
@@ -525,6 +643,7 @@ export function ToolSessionApp() {
     snapshot.usesById,
     snapshot.visibleTabIdsBySession,
     snapshot.useIdsByTab,
+    snapshot.connection,
     routeRevision,
     isMobile,
     serverConnections.manager,
@@ -1635,6 +1754,16 @@ export function ToolSessionApp() {
     if (!activeSession || !activeTab || snapshot.connection !== "connected") {
       return;
     }
+    const route = parseToolSessionRoute(location.href);
+    if (
+      shouldHoldRequestedRoute(route, snapshot, snapshot.connection) ||
+      (route.sessionId && !sameLocalResource(activeSession.id, route.sessionId)) ||
+      (route.toolUseId &&
+        !sameLocalResource(snapshot.activeToolUseId, route.toolUseId) &&
+        [...snapshot.usesById.keys()].some(id => sameLocalResource(id, route.toolUseId)))
+    ) {
+      return;
+    }
     const emptyPanel = firstEmptyToolPanel(activeToolWorkspace);
     if (!emptyPanel) return;
 
@@ -1660,6 +1789,8 @@ export function ToolSessionApp() {
     activeToolWorkspace,
     createTool,
     snapshot.connection,
+    snapshot.activeToolUseId,
+    snapshot.usesById,
     useIds,
   ]);
 
@@ -1953,6 +2084,12 @@ export function ToolSessionApp() {
     if (binding) runToolSessionCommand(binding.command);
   };
 
+  const activeServerConnection =
+    serverConnections.snapshot.connections.find(
+      connection => connection.id === serverConnections.snapshot.activeServerId,
+    ) ?? serverConnections.snapshot.connections[0];
+  const hostAccessRevoked = activeServerConnection?.status === "revoked";
+
   return (
     <MotionConfig reducedMotion="user">
       <LazyMotion features={loadMotionFeatures}>
@@ -2108,6 +2245,20 @@ export function ToolSessionApp() {
                     <Settings />
                   </Button>
                 </ShortcutTooltip>
+                {window.yaadeDesktop ? (
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="ghost"
+                    aria-label="Stop daemon"
+                    onClick={() => void requestStopDaemon()}
+                    data-yaade-stop-daemon=""
+                    className="h-[var(--yaade-tab-pill-height)] shrink-0 gap-1.5 px-2 text-xs"
+                  >
+                    Stop daemon
+                    <Power />
+                  </Button>
+                ) : null}
               </header>
             ) : null}
             <div
@@ -2254,11 +2405,13 @@ export function ToolSessionApp() {
                 ) : null}
                 {snapshot.connection === "reconciling" ||
                 snapshot.connection === "offline" ? (
-                  <Alert className="m-4">
+                  <Alert className="m-4" data-yaade-connection={snapshot.connection}>
                     <AlertTitle>
-                      {snapshot.connection === "offline"
-                        ? "Host offline"
-                        : "Reconnecting"}
+                      {hostAccessRevoked
+                        ? "Access revoked"
+                        : snapshot.connection === "offline"
+                          ? "Host offline"
+                          : "Reconnecting"}
                     </AlertTitle>
                     <AlertDescription>
                       {snapshot.connection === "offline"
@@ -2410,6 +2563,45 @@ export function ToolSessionApp() {
               : undefined
           }
         />
+        {stopDaemonPrompt ? (
+          <Dialog
+            open
+            onOpenChange={open => {
+              if (!open) setStopDaemonPrompt(null);
+            }}
+          >
+            <DialogContent data-yaade-stop-daemon-confirm="">
+              <DialogHeader>
+                <DialogTitle>Stop daemon?</DialogTitle>
+                <DialogDescription>
+                  This will terminate {stopDaemonPrompt.runningTerminals} running
+                  {stopDaemonPrompt.runningTerminals === 1
+                    ? " terminal"
+                    : " terminals"}
+                  .
+                </DialogDescription>
+              </DialogHeader>
+              <DialogFooter>
+                <Button
+                  type="button"
+                  variant="outline"
+                  data-yaade-confirm="cancel"
+                  onClick={() => setStopDaemonPrompt(null)}
+                >
+                  Cancel
+                </Button>
+                <Button
+                  type="button"
+                  variant="destructive"
+                  data-yaade-confirm="accept"
+                  onClick={() => void confirmStopDaemon()}
+                >
+                  Stop daemon
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
+        ) : null}
         <ProjectDiscoveryPrompt
           path={projectCandidate?.path ?? null}
           pending={addingProjectPath === projectCandidate?.path}

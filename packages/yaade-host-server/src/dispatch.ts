@@ -1123,7 +1123,15 @@ async function createTerminalInstance(
     workspaceId?: string;
     launchRequestId?: string;
     args?: string[];
+    executable?: string;
     restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
+    nativeSessionRef?: {
+      provider: string;
+      kind: string;
+      value: string;
+      capturedAt: string;
+      driverVersion: number;
+    };
   };
   if (!body.projectId)
     throw new Error("terminal:createInstance requires projectId");
@@ -1157,7 +1165,21 @@ async function createTerminalInstance(
       ...(provider ? { provider } : {}),
       launchRequestId: body.launchRequestId,
       args: body.args,
+      ...(typeof body.executable === "string" && body.executable
+        ? { executable: body.executable }
+        : {}),
       restartPolicy: body.restartPolicy,
+      ...(body.nativeSessionRef && provider
+        ? {
+            nativeSessionRef: {
+              provider,
+              kind: body.nativeSessionRef.kind || "session",
+              value: body.nativeSessionRef.value,
+              capturedAt: body.nativeSessionRef.capturedAt || new Date().toISOString(),
+              driverVersion: body.nativeSessionRef.driverVersion || 1,
+            },
+          }
+        : {}),
     },
     clientId,
   );
@@ -1448,6 +1470,9 @@ async function handleTerminal(
       return runtime.leases.listViewers(str(args[0], "id"));
     case "terminal:write": {
       const id = str(args[0], "id");
+      if (!(await Promise.resolve(runtime.terminal.inspect(id)))) {
+        throw new NotFoundError({ message: `terminal ${id} not found`, resource: id });
+      }
       if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       const data = String(args[1] ?? "");
       const result = await Promise.resolve(runtime.terminal.write(id, data));
@@ -1460,16 +1485,15 @@ async function handleTerminal(
         data.includes("\u0003") ||
         data.includes("\u0004");
       if (commandBoundary) {
-        const instance = runtime.terminalInstances.byPtyId(id);
-        const interrupt = data.includes("\u0003") || data.includes("\u0004");
-        if (!instance?.provider || interrupt) {
-          runtime.requestTerminalAgentScan(id, true);
-        }
+        runtime.requestTerminalAgentScan(id, true);
       }
       return result;
     }
     case "terminal:writeBinary": {
       const id = str(args[0], "id");
+      if (!(await Promise.resolve(runtime.terminal.inspect(id)))) {
+        throw new NotFoundError({ message: `terminal ${id} not found`, resource: id });
+      }
       if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       return Promise.resolve(
         runtime.terminal.writeBinary(id, String(args[1] ?? "")),
@@ -1477,6 +1501,9 @@ async function handleTerminal(
     }
     case "terminal:resize": {
       const id = str(args[0], "id");
+      if (!(await Promise.resolve(runtime.terminal.inspect(id)))) {
+        throw new NotFoundError({ message: `terminal ${id} not found`, resource: id });
+      }
       if (!clientId.startsWith("legacy:")) runtime.leases.authorizeWrite(id, clientId);
       return Promise.resolve(
         runtime.terminal.resize(
@@ -1498,14 +1525,19 @@ async function handleTerminal(
       return Promise.resolve(
         runtime.terminal.markReplayReady(str(args[0], "id"), clientId),
       );
-    case "terminal:attach":
+    case "terminal:attach": {
+      const id = str(args[0], "id");
+      if (!clientId.startsWith("legacy:")) {
+        runtime.leases.attachClient(id, clientId);
+      }
       return Promise.resolve(
         runtime.terminal.attach(
-          str(args[0], "id"),
+          id,
           clientId,
           typeof args[1] === "number" ? args[1] : undefined,
         ),
       );
+    }
     case "terminal:getCwd":
       return Promise.resolve(runtime.terminal.getCwd(str(args[0], "id")));
     case "terminal:getForegroundProcess":

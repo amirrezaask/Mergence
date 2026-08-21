@@ -235,6 +235,30 @@ describe("ToolClient", () => {
     client.dispose()
   })
 
+  it("does not flash reconciling over a known offline connection", async () => {
+    const use = makeUse(1)
+    const session = AppSession.make({
+      id: "ses-client-test",
+      title: "Session",
+      position: 0,
+      activeToolUseId: use.id,
+      createdAt: use.createdAt,
+      updatedAt: use.createdAt,
+    })
+    const api = makeApi({ session, toolUses: [use] }, () => use)
+    let resolveList: ((value: ToolSessionSnapshot[]) => void) | undefined
+    api.listSessions = async () => new Promise(resolve => { resolveList = resolve })
+    const store = new ToolSessionStore()
+    store.setConnection("offline")
+    const client = new ToolClient({ api, window: new FakeWindow(), store })
+    const hydration = client.hydrate()
+    assert.equal(client.store.getSnapshot().connection, "offline")
+    resolveList?.([{ session, toolUses: [use] }])
+    await hydration
+    assert.equal(client.store.getSnapshot().connection, "connected")
+    client.dispose()
+  })
+
   it("reconciles after a protocol replay gap", async () => {
     let listCalls = 0
     const use = makeUse(1)

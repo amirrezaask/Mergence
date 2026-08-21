@@ -258,6 +258,7 @@ export type JetElectronTerminal = {
     workspaceId?: string;
     launchRequestId?: string;
     args?: string[];
+    executable?: string;
   }): Promise<TerminalInstanceInfo>;
   restartInstance(req: {
     id: string;

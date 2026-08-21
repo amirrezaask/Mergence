@@ -19,7 +19,10 @@ export function unregisterTerminalInstance(
 }
 
 function resolveTerminal(tabId?: string): GhosttyTerminalSurface | undefined {
-  if (tabId) return instances.get(tabId)
+  if (tabId) {
+    const exact = instances.get(tabId)
+    if (exact) return exact
+  }
 
   // Mux keeps off-screen terminals mounted so their PTYs survive retile/LRU
   // changes. Prefer the focused, measurable panel; otherwise a hidden

@@ -21,6 +21,7 @@ function config(root: string) {
     authToken: null,
     ptySupervisor: false,
     killPtysOnShutdown: true,
+    features: { terminalCheckpoints: true, nativeAgentResume: true },
   }
 }
 

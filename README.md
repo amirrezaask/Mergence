@@ -140,6 +140,7 @@ vp run test:server
 vp run test:web
 vp run test:desktop
 vp run test:web:e2e
+vp run test:e2e:critical
 vp run build
 ```
 
@@ -161,6 +162,11 @@ Terminal replay is bounded. Recent output is retained separately from the contro
 plane, and the supervisor records a bounded synthetic screen checkpoint before
 raw history rotates. Checkpoints are a recovery aid, not proof that a process is
 still alive.
+
+Durable-runtime coverage lives under `tests/runtime/` and related suite
+directories. Run `vp run test:e2e:critical` for P0 scenarios,
+`vp run test:e2e:all` for P0 and P1, `vp run test:platform:e2e` for storage
+and service checks, and `vp run test:soak` before a release.
 
 ### Remote host connections
 

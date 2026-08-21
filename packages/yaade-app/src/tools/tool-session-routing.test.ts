@@ -10,6 +10,7 @@ import {
   parseToolSessionRoute,
   persistToolSessionRoute,
   resolveToolSessionRoute,
+  shouldHoldRequestedRoute,
   toolSessionUrl,
 } from "./tool-session-routing.js"
 
@@ -26,10 +27,56 @@ describe("tool session routing", () => {
     assert.equal(parseToolSessionRoute("/dev/project").legacyPath, "/dev/project")
   })
 
-  it("ignores malformed ids and chooses the latest visible session", () => {
-    assert.equal(parseToolSessionRoute("/?s=project-id").sessionId, undefined)
-    assert.equal(chooseSession(undefined, [sessionA, sessionB])?.id, sessionB.id)
-    assert.equal(chooseSession(sessionA.id, [sessionA, sessionB])?.id, sessionA.id)
+  it("resolves host-local deep links against multi-server scoped ids", () => {
+    const local = Schema.decodeUnknownSync(SessionId)("ses-aaaa1111")
+    const scoped = Schema.decodeUnknownSync(SessionId)("ses-local--aaaa1111")
+    const other = Schema.decodeUnknownSync(SessionId)("ses-local--bbbb2222")
+    const scopedSession = AppSession.make({
+      id: scoped,
+      title: "A02",
+      position: 1,
+      createdAt: "2026-01-04",
+      updatedAt: "2026-01-04",
+    })
+    const otherSession = AppSession.make({
+      id: other,
+      title: "Session 1",
+      position: 0,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    })
+    assert.equal(chooseSession(local, [otherSession, scopedSession])?.id, scoped)
+    assert.equal(chooseSession(local, [otherSession]), undefined)
+    const route = parseToolSessionRoute(`/?s=${local}`)
+    const loaded = {
+      sessionsById: new Map([[scoped, scopedSession]]),
+      tabsById: new Map(),
+      usesById: new Map(),
+    }
+    assert.equal(shouldHoldRequestedRoute(route, loaded, "connecting"), false)
+    assert.equal(
+      shouldHoldRequestedRoute(route, { sessionsById: new Map(), tabsById: new Map(), usesById: new Map() }, "connecting"),
+      true,
+    )
+  })
+
+  it("holds a deep link until the requested session is loaded", () => {
+    const route = parseToolSessionRoute(toolSessionUrl(sessionA.id))
+    const empty = {
+      sessionsById: new Map(),
+      tabsById: new Map(),
+      usesById: new Map(),
+    }
+    const loaded = {
+      sessionsById: new Map([[sessionA.id, sessionA]]),
+      tabsById: new Map(),
+      usesById: new Map(),
+    }
+    assert.equal(shouldHoldRequestedRoute(route, empty, "connecting"), true)
+    assert.equal(shouldHoldRequestedRoute(route, empty, "reconciling"), true)
+    assert.equal(shouldHoldRequestedRoute(route, empty, "connected"), false)
+    assert.equal(shouldHoldRequestedRoute(route, loaded, "connecting"), false)
+    assert.equal(shouldHoldRequestedRoute(route, loaded, "connected"), false)
   })
 
   it("falls back to a session's persisted active use", () => {

@@ -1036,6 +1036,20 @@ export class GhosttyTerminalSurface {
   }
 
   getBufferText(): string {
+    if (this.disposed) return "";
+    try {
+      this.core.selectAll();
+      const selected = this.core.selectionText();
+      if (selected.trim().length > 0) return selected;
+    } catch {
+      /* Fall through to the visible viewport snapshot. */
+    } finally {
+      try {
+        this.clearSelection();
+      } catch {
+        /* Disposed during the inspection read. */
+      }
+    }
     const snapshot = this.getSnapshot();
     if (!snapshot) return "";
     return snapshot.rowData

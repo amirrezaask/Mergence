@@ -7,6 +7,7 @@ import type {
   ToolUse,
   ToolUseId,
 } from "@yaade/rpc"
+import { localResourceKey } from "./tool-session-routing.js"
 
 export type ToolStoreSnapshot = {
   readonly sessionsById: ReadonlyMap<SessionId, AppSession>
@@ -371,9 +372,10 @@ export class ToolSessionStore {
   }
 
   selectSession(id: SessionId): void {
-    if (!this.sessionsById.has(id) || this.activeSessionId === id) return
-    this.activeSessionId = id
-    this.activeTabId = this.selectedTabForSession(id)
+    const resolved = this.resolveSessionId(id)
+    if (!resolved || this.activeSessionId === resolved) return
+    this.activeSessionId = resolved
+    this.activeTabId = this.selectedTabForSession(resolved)
     this.activeToolUseId = this.activeTabId
       ? this.selectedUseForTab(this.activeTabId)
       : undefined
@@ -381,7 +383,7 @@ export class ToolSessionStore {
   }
 
   selectTab(id: SessionTabId): void {
-    const tab = this.tabsById.get(id)
+    const tab = this.tabsById.get(id) ?? this.findByLocalKey(this.tabsById, id)
     if (!tab || tab.archivedAt) return
     this.activeSessionId = tab.sessionId
     this.activeTabId = id
@@ -390,7 +392,7 @@ export class ToolSessionStore {
   }
 
   selectToolUse(id: ToolUseId): void {
-    const use = this.usesById.get(id)
+    const use = this.usesById.get(id) ?? this.findByLocalKey(this.usesById, id)
     if (!use || use.archivedAt) return
     const tabId = this.tabIdForUse(use)
     if (!tabId) return
@@ -652,6 +654,24 @@ export class ToolSessionStore {
     return tab?.activeToolUseId && ids.includes(tab.activeToolUseId)
       ? tab.activeToolUseId
       : ids[0]
+  }
+
+  private resolveSessionId(id: string): SessionId | undefined {
+    if (this.sessionsById.has(id as SessionId)) return id as SessionId
+    return this.findByLocalKey(this.sessionsById, id)?.id
+  }
+
+  private findByLocalKey<T extends { readonly id: string }>(
+    items: ReadonlyMap<string, T>,
+    requested: string,
+  ): T | undefined {
+    const exact = items.get(requested)
+    if (exact) return exact
+    const key = localResourceKey(requested)
+    for (const item of items.values()) {
+      if (localResourceKey(item.id) === key) return item
+    }
+    return undefined
   }
 
   private reconcileSelection(): void {

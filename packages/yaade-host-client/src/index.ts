@@ -11,6 +11,7 @@ export {
   websocketUrl,
   hostRealtimeReconnectDelay,
   readHostAuthToken,
+  consumeHostAuthTokenFromLocation,
   normalizeHostBaseUrl,
   type WebHostTransportOptions,
 } from "./web-transport.js";

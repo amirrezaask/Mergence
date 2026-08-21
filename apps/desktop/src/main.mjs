@@ -51,6 +51,7 @@ let shutdownPromise = null
 let shuttingDown = false
 /** @type {Promise<void> | null} */
 let bootPromise = null
+let recreatingWindow = false
 
 /** @param {number} milliseconds */
 function delay(milliseconds) {
@@ -133,6 +134,84 @@ async function saveServerDefinitions(value) {
   await fs.promises.rename(temporary, target)
 }
 
+function hostDataDir() {
+  return path.join(app.getPath("userData"), "host")
+}
+
+function readJsonFile(target) {
+  try {
+    return JSON.parse(fs.readFileSync(target, "utf8"))
+  } catch {
+    return null
+  }
+}
+
+function signalPid(pid, signal) {
+  if (typeof pid !== "number" || pid <= 0) return
+  try {
+    process.kill(pid, signal)
+  } catch {
+    /* already gone */
+  }
+}
+
+async function waitForPidExit(pid, timeoutMs) {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    try {
+      process.kill(pid, 0)
+    } catch {
+      return
+    }
+    await delay(50)
+  }
+}
+
+async function inspectLocalDaemon() {
+  const origin = services ? `http://${LOOPBACK_HOST}:${services.host.port}` : ""
+  if (!origin) {
+    return { running: false, runningTerminals: 0, origin: "", pid: 0 }
+  }
+  try {
+    const response = await fetch(`${origin}/health`, { signal: AbortSignal.timeout(1_500) })
+    if (!response.ok) {
+      return { running: false, runningTerminals: 0, origin, pid: 0 }
+    }
+    const body = await response.json()
+    const runningTerminals =
+      body && typeof body === "object" && body.health && typeof body.health.runningTerminals === "number"
+        ? body.health.runningTerminals
+        : 0
+    const runtime = readJsonFile(path.join(hostDataDir(), RUNTIME_MANIFEST_FILE))
+    return {
+      running: true,
+      runningTerminals,
+      origin,
+      pid: typeof runtime?.pid === "number" ? runtime.pid : 0,
+    }
+  } catch {
+    return { running: false, runningTerminals: 0, origin, pid: 0 }
+  }
+}
+
+async function stopLocalDaemon() {
+  const dataDir = hostDataDir()
+  const supervisor = readJsonFile(path.join(dataDir, "pty-supervisor.json"))
+  const runtime = readJsonFile(path.join(dataDir, RUNTIME_MANIFEST_FILE))
+  if (typeof supervisor?.pid === "number") {
+    signalPid(supervisor.pid, "SIGTERM")
+    await waitForPidExit(supervisor.pid, 4_000)
+    signalPid(supervisor.pid, "SIGKILL")
+  }
+  if (services?.host.child) {
+    await services.host.stop()
+  } else if (typeof runtime?.pid === "number") {
+    signalPid(runtime.pid, "SIGTERM")
+    await waitForPidExit(runtime.pid, 4_000)
+    signalPid(runtime.pid, "SIGKILL")
+  }
+}
+
 function installServerStorageIpc() {
   ipcMain.handle("yaade:servers:load", event => {
     if (!trustedIpcSender(event)) return []
@@ -141,6 +220,14 @@ function installServerStorageIpc() {
   ipcMain.handle("yaade:servers:save", async (event, value) => {
     if (!trustedIpcSender(event)) throw new Error("untrusted renderer")
     await saveServerDefinitions(value)
+  })
+  ipcMain.handle("yaade:daemon:inspect", event => {
+    if (!trustedIpcSender(event)) throw new Error("untrusted renderer")
+    return inspectLocalDaemon()
+  })
+  ipcMain.handle("yaade:daemon:stop", async event => {
+    if (!trustedIpcSender(event)) throw new Error("untrusted renderer")
+    await stopLocalDaemon()
   })
 }
 
@@ -330,7 +417,14 @@ async function launchHost(repoRoot, workspace) {
     String(port),
     "--data-dir",
     dataDir,
+    "--pty-supervisor",
+    "1",
+    "--kill-ptys-on-exit",
+    "0",
   ]
+  const allowedRoots = [app.getPath("home"), repoRoot]
+  if (workspace) allowedRoots.push(path.resolve(workspace))
+  args.push("--allowed-roots", [...new Set(allowedRoots)].join(","))
   let command
   let commandArgs
   let cwd
@@ -351,11 +445,16 @@ async function launchHost(repoRoot, workspace) {
   } else {
     command = resolveNodeBinary()
     commandArgs = [path.join(repoRoot, RUN_TS_ENTRY), path.join(repoRoot, HOST_ENTRY), ...args]
+    const webDist = path.join(repoRoot, "apps", "web", "dist")
+    if (isFile(path.join(webDist, "index.html"))) {
+      commandArgs.push("--static-dir", webDist)
+    }
     cwd = repoRoot
   }
 
   if (workspace) commandArgs.push(workspace)
 
+  const hostLog = fs.openSync(path.join(dataDir, "host.log"), "a")
   const child = spawn(command, commandArgs, {
     cwd,
     env: childEnvironment({
@@ -365,9 +464,10 @@ async function launchHost(repoRoot, workspace) {
       JET_SKIP_LOCAL_HOST: "1",
     }),
     detached: true,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["ignore", hostLog, hostLog],
     windowsHide: true,
   })
+  fs.closeSync(hostLog)
 
   const readPort = () => {
     try {
@@ -461,12 +561,22 @@ async function launchVite(repoRoot, hostPort) {
   }
 }
 
+/** @param {string} repoRoot */
+function useBuiltWeb(repoRoot) {
+  if (app.isPackaged) return true
+  if (process.env.YAADE_DESKTOP_VITE === "1") return false
+  return (
+    process.env.YAADE_DESKTOP_USE_DIST === "1" ||
+    isFile(path.join(repoRoot, "apps", "web", "dist", "index.html"))
+  )
+}
+
 /** @param {string | null} workspace */
 async function startServices(workspace) {
   const repoRoot = process.env.YAADE_REPO_ROOT ?? path.resolve(__dirname, "../../..")
   const host = await launchHost(repoRoot, workspace)
 
-  if (app.isPackaged) {
+  if (useBuiltWeb(repoRoot)) {
     const origin = `http://${LOOPBACK_HOST}:${host.port}`
     return { host, vite: null, url: `${origin}/`, origins: [origin] }
   }
@@ -548,14 +658,8 @@ function installWebContentsPolicy(contents, trustedOrigins) {
   contents.on("render-process-gone", (_event, details) => {
     console.error(`[desktop] renderer exited: ${details.reason}`)
     if (contents !== mainWindow?.webContents || shuttingDown) return
-    void dialog
-      .showMessageBox({
-        type: "error",
-        title: "YAADE stopped rendering",
-        message: "The desktop window closed unexpectedly.",
-        detail: "Restart YAADE to restore the workspace.",
-      })
-      .finally(() => requestQuit())
+    recreatingWindow = true
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.close()
   })
 }
 
@@ -574,6 +678,8 @@ function createMainWindow(url) {
 
   const window = new BrowserWindow({
     show: false,
+    width: 1280,
+    height: 800,
     backgroundColor: "#01040a",
     ...titleBarOptions,
     webPreferences: {
@@ -607,6 +713,12 @@ function createMainWindow(url) {
   // The app-wide web-contents hook is installed before this window is made.
   void window.loadURL(url).catch(error => {
     if (shuttingDown || window.isDestroyed()) return
+    const aborted =
+      error &&
+      typeof error === "object" &&
+      "errno" in error &&
+      error.errno === -3
+    if (aborted) return
     console.error("[desktop] failed to load the local application", error)
     dialog.showErrorBox(
       "YAADE could not open",
@@ -660,6 +772,10 @@ async function boot() {
     installAppWebContentsHook(services.origins)
     installServerStorageIpc()
     createMainWindow(services.url)
+    app.on("activate", () => {
+      if (shuttingDown || !services) return
+      if (!mainWindow || mainWindow.isDestroyed()) createMainWindow(services.url)
+    })
   })()
   return bootPromise
 }
@@ -684,7 +800,11 @@ if (!hasSingleInstanceLock) {
     // Validate the argument shape even though an already-running host owns the
     // workspace. Never forward arbitrary second-instance arguments to a shell.
     workspaceFromArgs(commandLine)
-    if (!mainWindow || mainWindow.isDestroyed()) return
+    if (!services) return
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      createMainWindow(services.url)
+      return
+    }
     if (mainWindow.isMinimized()) mainWindow.restore()
     mainWindow.show()
     mainWindow.focus()
@@ -696,6 +816,11 @@ if (!hasSingleInstanceLock) {
     void requestQuit()
   })
   app.on("window-all-closed", () => {
+    if (recreatingWindow) {
+      recreatingWindow = false
+      if (!shuttingDown && services) createMainWindow(services.url)
+      return
+    }
     void requestQuit()
   })
 
