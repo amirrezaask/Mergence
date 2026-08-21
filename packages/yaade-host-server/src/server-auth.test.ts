@@ -22,6 +22,8 @@ describe("host token gate", () => {
       dir,
       "--token",
       "s3cret",
+      "--cors-origins",
+      "https://client.example",
     ])
     const started = await startHostServer(config)
     const origin = `http://127.0.0.1:${started.port}`

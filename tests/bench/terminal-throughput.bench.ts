@@ -171,19 +171,14 @@ test("bench terminal-agent-flood-throughput", async () => {
 
           // Generate the flood in the PTY so host batching matches real agent CLIs
           // (many small onData chunks), not one giant RPC write.
-          const script = [
-            "python3 - <<'PY'",
-            "import sys",
-            "for i in range(2000):",
-            "    hide = i % 2 == 0",
-            "    sys.stdout.write(('\\x1b[?25l' if hide else '\\x1b[?25h') + f'\\rprogress {i}/2000   ')",
-            "    if i % 16 == 0:",
-            "        sys.stdout.flush()",
-            "sys.stdout.write('\\r\\n' + " + JSON.stringify(currentMarker) + " + '\\n')",
-            "sys.stdout.flush()",
-            "PY",
-            "",
-          ].join("\n")
+          // Keep the marker split in the command; terminal text includes the shell echo.
+          const markerSplit = Math.floor(currentMarker.length / 2)
+          const markerExpression =
+            `(${JSON.stringify(currentMarker.slice(0, markerSplit))} + ` +
+            `${JSON.stringify(currentMarker.slice(markerSplit))})`
+          const pythonCode =
+            `import sys; [sys.stdout.write(("\\x1b[?25l" if i % 2 == 0 else "\\x1b[?25h") + f"\\rprogress {i}/2000   ") or (sys.stdout.flush() if i % 16 == 0 else None) for i in range(2000)]; sys.stdout.write("\\r\\n" + ${markerExpression} + "\\n"); sys.stdout.flush()`
+          const script = `python3 -c ${JSON.stringify(pythonCode)}\n`
 
           const startedAt = performance.now()
           await terminal.write(ptyId, script)

@@ -1334,31 +1334,36 @@ export class MultiServerHostClient {
       },
       onEvent: callback => self.onToolEvent(callback),
       listProjects: async () => {
-        const results: Array<{ projectId: string; projectPath: string; projectName: string }> = []
-        for (const connection of self.connections.values()) {
-          try {
-            const values = await connection.api.tools.listProjects()
-            connection.status = "connected"
-            for (const project of values) {
-              self.projectOwners.set(project.projectId, {
-                serverId: connection.definition.id,
-                localId: project.projectId,
-              })
-              const scoped = scopedProjectId(connection.definition.id, project.projectId)
-              self.projectOwners.set(scoped, {
-                serverId: connection.definition.id,
-                localId: project.projectId,
-              })
-              results.push({ ...project, projectId: scoped })
-            }
-          } catch (error) {
-            connection.status = "offline"
-            connection.error = errorMessage(error)
-          }
+        // Projects are local to the active server. Sessions are aggregated
+        // across servers, but returning every server's projects here lets a
+        // newly selected remote session inherit the old server's project.
+        const connection = self.activeConnection()
+        try {
+          const values = await connection.api.tools.listProjects()
+          connection.status = "connected"
+          connection.error = undefined
+          const results = values.map(project => {
+            self.projectOwners.set(project.projectId, {
+              serverId: connection.definition.id,
+              localId: project.projectId,
+            })
+            const scoped = scopedProjectId(connection.definition.id, project.projectId)
+            self.projectOwners.set(scoped, {
+              serverId: connection.definition.id,
+              localId: project.projectId,
+            })
+            return { ...project, projectId: scoped }
+          })
+          self.snapshot = self.makeSnapshot()
+          self.publish()
+          return results
+        } catch (error) {
+          connection.status = "offline"
+          connection.error = errorMessage(error)
+          self.snapshot = self.makeSnapshot()
+          self.publish()
+          return []
         }
-        self.snapshot = self.makeSnapshot()
-        self.publish()
-        return results
       },
     }
   }

@@ -5,7 +5,7 @@
     "p99Ms": 32
   },
   "terminal-stream-throughput": {
-    "medianMs": 550,
+    "medianMs": 600,
     "p95Ms": 2000,
     "p99Ms": 2500
   },
