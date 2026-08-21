@@ -15,7 +15,6 @@ test("server identity survives API restart while epoch changes", async () => {
       "--port", "0",
       "--data-dir", path.join(root, "data"),
       "--allowed-roots", root,
-      "--pty-supervisor", "0",
     ]
     const first = await startHostServer(await loadConfig(args))
     const firstIdentity = first.runtime.identity

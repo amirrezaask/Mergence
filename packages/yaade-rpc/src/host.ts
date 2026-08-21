@@ -79,7 +79,6 @@ export type ServerCapabilities = Schema.Schema.Type<typeof ServerCapabilities>;
 export const RuntimeHealth = Schema.Struct({
   status: Schema.Literal("healthy", "degraded", "unhealthy"),
   database: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
-  supervisor: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
   eventLoop: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
   storage: Schema.Struct({ status: Schema.Literal("healthy", "degraded", "unhealthy"), message: Schema.String }),
   connectedClients: Schema.Number,

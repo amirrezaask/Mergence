@@ -1,6 +1,6 @@
 # YAADE
 
-**A browser multiplexer for Terminal and Git workflows.**
+**A browser terminal multiplexer.**
 
 YAADE runs a TypeScript host on your machine and exposes a browser Session shell. A Session contains Windows (tabs), and each Window contains tiled ToolUses. Each ToolUse owns its project and checkout.
 
@@ -11,65 +11,33 @@ http://localhost:5174/?s=ses-…&t=tab-…&u=use-… Deep link
 
 ## Tools
 
-| Tool | Behavior |
-| --- | --- |
-| **Terminal** | Persistent PTY with bounded replay, isolated client queues, mobile accessory keys, and support for running shell or agent CLIs directly. |
-| **Git History** | Virtualized commit history, changed files, and diffs for the selected checkout. |
+The only ToolKind is **Terminal**: an in-process PTY with bounded replay, isolated client queues, mobile accessory keys, and support for running shells, commands, and agent CLIs directly.
 
-Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. The top bar holds the Session dropdown, Window pills, and Settings. A resizable **Agents** sidebar appears when agent CLIs are running and focuses their session, window, and pane when selected.
+Git is retained only as a disconnected package for a future separate product. Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. The top bar holds the Session dropdown, Window pills, and Settings. A resizable **Agents** sidebar appears when agent CLIs are running and focuses their session, window, and pane when selected.
 
 ## Sessions
 
-- Sessions contain Windows; Windows contain tiled Terminal and Git ToolUses.
+- Sessions contain Windows; Windows contain tiled Terminal ToolUses.
 - Empty Windows open a Terminal automatically; empty panes use the same Terminal fallback.
-- Layout, project, checkout, and ToolUse metadata persist across reloads.
-- PTYs are owned by the detached supervisor, not by a browser/Electron window; browser reloads, disconnects, API restarts, and normal Electron close leave agents running.
-- Closing a Terminal ToolUse is the explicit destructive action that stops its PTY.
-- Reconnects keep the PTY on the supervisor. Current-generation terminals restore from an owner-side Ghostty snapshot; legacy terminals still use bounded raw replay. A slow viewer is resynchronized or disconnected and never pauses the PTY.
-- Supervisor generations can coexist during an upgrade: new terminals use the current owner while existing terminals remain on their original owner until drained.
+- Layout, project, checkout, and ToolUse metadata persist across browser reloads while the host is running.
+- The host process owns PTYs directly. Browser reloads and disconnects leave agents running; restarting the host intentionally kills every PTY and starts with a fresh Session.
+- Closing a Terminal ToolUse is the explicit destructive action that stops its PTY during normal operation.
+- Reconnects to the same host process restore from an in-memory Ghostty snapshot and bounded raw replay. A slow viewer is resynchronized or disconnected and never pauses the PTY.
 - Multiple viewers can attach to one terminal. Writer leases are explicit for input and resize; observers continue receiving output. A slow client is bounded or disconnected and never pauses the PTY.
 - Add projects from any ToolUse context with folder-path autocomplete; terminals offer to remember a newly visited folder after `cd`.
-- Mobile uses a list-first Terminal/Git shell with retained terminal surfaces.
-- Clicking a pane split control opens a Terminal by default; hold Cmd/Ctrl while clicking to choose a tool.
+- Mobile uses a list-first Terminal shell with retained terminal surfaces.
+- Clicking a pane split control opens a Terminal.
 - Settings → **Servers** lets you add multiple remote host URLs and optional access tokens. Sessions from every reachable host appear in the same session switcher; each session keeps its host context when you work in it.
 - The client host is shown automatically, while remote servers are optional. A new client can therefore start with no remote servers configured.
 
-## Keyboard
-
-Prefix: **`Mod-k`** (`⌘K` on macOS, `Ctrl+K` elsewhere). Press it twice in a terminal to send literal `^K`. Pane split shortcuts are direct chords; use the pane context menu if a browser claims one.
-
-| Chord | Action |
-| --- | --- |
-| `Mod-k t` | New Terminal |
-| `Mod-k g` | New Git |
-| `Mod-k j` / `k` | Next / previous tool |
-| `Mod-k h` / `l` | Previous / next Window |
-| `Mod-d` | Split focused pane right |
-| `Mod-Shift-d` | Split focused pane down |
-| `Mod-k u` | Switch tool |
-| `Mod-k b` | Toggle sidebar |
-| `Mod-k w` | Switch Session |
-| `Mod-k 1`–`9` | Jump to tool |
-| `Mod-k c` | New Session |
-| `Mod-k n` | New Window |
-| `Mod-k Shift-N` | Close Window |
-| `Mod-k x` | Close tool |
-| `Mod-k Shift-X` | Close Session |
-| `Mod-k z` | Zoom / unzoom pane |
-| `Mod-k ,` or `Mod-,` | Settings |
-| `Mod-=` / `Mod-Shift-=` | Increase UI and terminal font |
-| `Mod--` / `Mod-Shift--` | Decrease UI and terminal font |
-| `Mod-0` | Reset UI and terminal font |
-
 ## Applications
 
-YAADE has three isolated applications. Shared implementation lives in
+YAADE has two isolated applications. Shared implementation lives in
 `packages/`; the application directories contain only their executable
 wiring and packaging.
 
 - **Server** — `apps/server`, the HTTP/WebSocket host and PTY runtime.
 - **Web** — `apps/web`, the Vite+ browser application.
-- **Desktop** — `apps/desktop`, the sandboxed Electron wrapper.
 
 Start the web and server development processes together with hot reload:
 
@@ -82,7 +50,6 @@ Run an application individually when needed:
 ```bash
 vp run @yaade/server#dev # server only; defaults to port 4747
 vp run dev:web           # web/Vite+ only
-vp run dev:desktop       # Electron application
 ```
 
 The standalone server can be installed as a user-level service (systemd user
@@ -106,25 +73,8 @@ Build each isolated release artifact independently:
 ```bash
 vp run build:server   # dist/yaade-server, standalone server runtime
 vp run build:web      # apps/web/dist, standalone static web artifact
-vp run build:desktop  # Electron ZIP/DMG for the current platform
-vp run build          # all three artifacts, in order
+vp run build          # both artifacts, in order
 ```
-
-The desktop development application starts (or discovers) a local daemon so it can
-run independently. Closing the Electron window detaches from the daemon; it does
-not stop the daemon or its PTYs. The local runtime manifest is stored beside the
-host database, and the packaged runtime includes the PTY supervisor artifact.
-
-Package a desktop app directly after `build:desktop` with:
-
-```bash
-vp run package:desktop
-vp run make:desktop
-```
-
-The macOS DMG is written under `apps/desktop/out/make/`. The desktop window uses the top Session/Window tab bar as its custom titlebar while retaining native window controls.
-
-Pass a workspace explicitly with `--workspace /path/to/project`. Desktop builds keep host data under Electron's `userData` directory and do not register the browser PWA service worker. Forge packaging uses Node 22 LTS; set `YAADE_PACKAGER_NODE` when it is not discoverable locally.
 
 ## Development
 
@@ -139,7 +89,6 @@ vp run typecheck
 vp run lint
 vp run test:server
 vp run test:web
-vp run test:desktop
 vp run test:web:e2e
 vp run test:e2e:critical
 vp run build
@@ -147,29 +96,20 @@ vp run build
 
 The internal material gallery is available at `/__yaade/glass-gallery`.
 
-### Durability and recovery
+### Runtime lifetime
 
-YAADE makes these guarantees explicit:
+The host is a single multiplexer process. It owns every PTY directly and is the
+lifetime boundary for Sessions and agents. Browser refreshes, temporary network
+disconnects, and browser reloads reattach to that same process using bounded
+in-memory replay. A host restart kills all PTYs and discards Session,
+Window, and ToolUse state; the user is responsible for not restarting the host
+while a long-running agent matters.
 
-| Operation | Agent process |
-| --- | --- |
-| Browser refresh/offline | Continues; snapshot and terminal replay converge on reconnect |
-| Electron close/renderer crash | Continues; reopening reattaches |
-| API restart | Continues under the detached supervisor; the client receives a new epoch snapshot |
-| Supervisor crash | May be lost; the UI reports **Interrupted**, never Running |
-| Machine reboot | The arbitrary process does not survive; persisted layout returns and supported provider-native resume may launch a new generation |
-
-Terminal replay is bounded. Recent output is retained separately from the control
-plane, and the supervisor records a bounded synthetic screen checkpoint before
-raw history rotates. Checkpoints are a recovery aid, not proof that a process is
-still alive. Runtime architecture and the generation-draining upgrade policy
-are documented in `docs/architecture/terminal-runtime.md`; a legacy supervisor
-is not killed merely because a newer host/runtime is available.
-
-Durable-runtime coverage lives under `tests/runtime/` and related suite
-directories. Run `vp run test:e2e:critical` for P0 scenarios,
-`vp run test:e2e:all` for P0 and P1, `vp run test:platform:e2e` for storage
-and service checks, and `vp run test:soak` before a release.
+There is no detached supervisor, runtime generation handoff, disk-backed terminal
+recovery, or session-format compatibility promise. Breaking state changes may
+reset the database. This keeps the terminal path small, fast, and locally
+debuggable. The runtime design is documented in
+`docs/architecture/terminal-runtime.md`.
 
 ### Remote host connections
 
@@ -179,7 +119,7 @@ A remote host bound outside loopback must be started with a bearer token, for ex
 YAADE_HOST_TOKEN=replace-me vp run @yaade/server#dev -- --host 0.0.0.0 --token replace-me
 ```
 
-Token-authenticated hosts allow browser and desktop clients to connect from another origin. Modern WebSocket connections authenticate in-band rather than placing the token in the WebSocket URL. Browser server metadata is persisted in localStorage, while legacy bearer tokens are kept only for the current session during migration. Configure explicit origins with `YAADE_CORS_ORIGINS` when you want to restrict that access further.
+Token-authenticated hosts allow browser clients to connect from another origin. Modern WebSocket connections authenticate in-band rather than placing the token in the WebSocket URL. Browser server metadata is persisted in localStorage, while legacy bearer tokens are kept only for the current session during migration. Configure explicit origins with `YAADE_CORS_ORIGINS` when you want to restrict that access further.
 
 Authenticated administrators can create one-time device pairing codes at
 `POST /api/v1/security/pairing-code`. A paired device signs a short-lived

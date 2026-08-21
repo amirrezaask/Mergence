@@ -13,7 +13,7 @@ import {
   hasPtySpawn,
   launchJet,
   showTerminal,
-} from "../electron/_launch.js"
+} from "../web/e2e/_launch.js"
 
 const ptyAvailable = hasPtySpawn()
 

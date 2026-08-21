@@ -82,7 +82,6 @@ export async function readHealth(origin: string): Promise<{
   identity: { serverId: string; serverEpoch: string }
   health: {
     status: string
-    supervisor: { status: string; message: string }
     runningTerminals: number
   }
 }> {
@@ -93,7 +92,6 @@ export async function readHealth(origin: string): Promise<{
     identity: { serverId: string; serverEpoch: string }
     health: {
       status: string
-      supervisor: { status: string; message: string }
       runningTerminals: number
     }
   }

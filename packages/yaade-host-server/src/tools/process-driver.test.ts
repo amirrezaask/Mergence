@@ -16,7 +16,6 @@ import {
   restartTerminalInstance,
 } from "./process-driver.js";
 import { dispatchPromise } from "../dispatch.js";
-import { SupervisedTerminalHost } from "@yaade/node-host";
 import { loadConfig } from "../config.js";
 import { startHostServer } from "../server.js";
 
@@ -95,6 +94,59 @@ describe("process Tool driver", () => {
       assert.equal(restarted.id, first.id);
       assert.equal(restarted.generation, first.generation + 1);
       assert.notEqual(restarted.ptyId, first.ptyId);
+    } finally {
+      await host.close();
+      fs.rmSync(parent, { recursive: true, force: true });
+    }
+  });
+
+  it("runs an interactive shell and a direct command through the host", async () => {
+    const { host, parent, projectRoot } = await hostWithProject();
+    try {
+      const project = host.runtime.db
+        .projects()
+        .find((item) => item.rootPath === projectRoot);
+      assert.ok(project);
+
+      const shell = await createTerminalInstance(
+        host.runtime.terminalExecution,
+        {
+          projectId: project.id,
+          checkoutPath: projectRoot,
+          launchRequestId: "host-shell-test",
+        },
+        "host-shell-test",
+      );
+      assert.ok(shell.ptyId);
+      host.runtime.terminal.write(
+        shell.ptyId,
+        process.platform === "win32"
+          ? "Write-Output YAADE_HOST_SHELL_OK; exit\r"
+          : "printf 'YAADE_HOST_SHELL_OK\\n'; exit\n",
+      );
+      await host.runtime.terminal.waitForExit(shell.ptyId);
+      assert.match(
+        host.runtime.terminal.readOutput(shell.ptyId)?.output ?? "",
+        /YAADE_HOST_SHELL_OK/u,
+      );
+
+      const command = await createTerminalInstance(
+        host.runtime.terminalExecution,
+        {
+          projectId: project.id,
+          checkoutPath: projectRoot,
+          launchRequestId: "host-command-test",
+          executable: process.execPath,
+          args: ["-e", "process.stdout.write('YAADE_HOST_COMMAND_OK\\n')"],
+        },
+        "host-command-test",
+      );
+      assert.ok(command.ptyId);
+      await host.runtime.terminal.waitForExit(command.ptyId);
+      assert.match(
+        host.runtime.terminal.readOutput(command.ptyId)?.output ?? "",
+        /YAADE_HOST_COMMAND_OK/u,
+      );
     } finally {
       await host.close();
       fs.rmSync(parent, { recursive: true, force: true });
@@ -384,7 +436,7 @@ describe("process Tool driver", () => {
     }
   });
 
-  it("marks persisted live tools disconnected after a host restart", async () => {
+  it("discards persisted sessions after a host restart", async () => {
     const first = await hostWithProject();
     let currentHost = first.host;
     try {
@@ -425,155 +477,16 @@ describe("process Tool driver", () => {
         first.projectRoot,
       ]);
       currentHost = await startHostServer(config);
-      const disconnected = currentHost.runtime.toolSessions.getToolUse(created.id);
-      assert.equal(disconnected?.status, "disconnected");
-      assert.equal(disconnected?.output.kind, "process");
-      if (disconnected?.output.kind === "process") {
-        assert.equal(disconnected.output.processState, "disconnected");
-        assert.equal(disconnected.output.ptyId, undefined);
-      }
+      assert.equal(currentHost.runtime.toolSessions.getToolUse(created.id), null);
+      const resetSessions = currentHost.runtime.toolSessions.listSessions();
+      assert.equal(resetSessions.length, 1);
+      assert.notEqual(resetSessions[0]?.id, session.id);
+      assert.deepEqual(currentHost.runtime.terminalInstances.listAll(), []);
     } finally {
       await currentHost.close();
       fs.rmSync(first.parent, { recursive: true, force: true });
     }
   });
 
-  it("keeps live tools attached across an API restart when the PTY supervisor survives", async () => {
-    const first = await hostWithProject(["--pty-supervisor", "1"]);
-    let currentHost = first.host;
-    const dataDir = path.join(first.parent, "data");
-    try {
-      const project = currentHost.runtime.db
-        .projects()
-        .find((item) => item.rootPath === first.projectRoot);
-      assert.ok(project);
-      const session = currentHost.runtime.toolSessions.listSessions()[0];
-      assert.ok(session);
-      const created = Schema.decodeUnknownSync(ToolUse)(
-        await dispatchPromise(
-          currentHost.runtime,
-          "tools:createUse",
-          [
-            CreateToolUse.make({
-              sessionId: session.id,
-              kind: "terminal",
-              project: ProjectTarget.make({
-                projectId: project.id,
-                projectPath: project.rootPath,
-                projectName: project.name,
-              }),
-              checkout: MainCheckout.make({ kind: "main" }),
-              input: TerminalToolInput.make({ kind: "terminal" }),
-            }),
-          ],
-          "process-supervisor-durability-test",
-        ),
-      );
-      await waitFor(() => currentHost.runtime.toolSessions.getToolUse(created.id)?.status === "running");
-      const live = currentHost.runtime.toolSessions.getToolUse(created.id);
-      assert.ok(live);
-      assert.equal(live.output.kind, "process");
-      if (live.output.kind !== "process") return;
-      const ptyId = live.output.ptyId;
-      assert.ok(ptyId);
 
-      await currentHost.close({ killPtys: false });
-      const config = await loadConfig([
-        "--host", "127.0.0.1",
-        "--port", "0",
-        "--data-dir", dataDir,
-        "--allowed-roots", first.parent,
-        "--pty-supervisor", "1",
-        first.projectRoot,
-      ]);
-      currentHost = await startHostServer(config);
-      const restored = currentHost.runtime.toolSessions.getToolUse(created.id);
-      assert.equal(restored?.status, "running");
-      assert.equal(restored?.output.kind, "process");
-      if (restored?.output.kind === "process") {
-        assert.equal(restored.output.processState, "running");
-        assert.equal(restored.output.ptyId, ptyId);
-      }
-      const attached = await Promise.resolve(
-        currentHost.runtime.terminal.attach(ptyId, "durability-reattach"),
-      );
-      assert.ok(attached);
-      assert.equal(attached.status, "running");
-    } finally {
-      try {
-        const supervisor = await SupervisedTerminalHost.connect(dataDir);
-        await supervisor.shutdownSupervisor();
-      } catch {
-        /* supervisor may already be gone */
-      }
-      await currentHost.close({ killPtys: true });
-      fs.rmSync(first.parent, { recursive: true, force: true });
-    }
-  });
-
-  it("marks a missing terminal instance as disconnected during reconcile", async () => {
-    const { host, parent, projectRoot } = await hostWithProject();
-    try {
-      const project = host.runtime.db
-        .projects()
-        .find((item) => item.rootPath === projectRoot);
-      assert.ok(project);
-      const session = host.runtime.toolSessions.listSessions()[0];
-      assert.ok(session);
-      const created = Schema.decodeUnknownSync(ToolUse)(
-        await dispatchPromise(
-          host.runtime,
-          "tools:createUse",
-          [
-            CreateToolUse.make({
-              sessionId: session.id,
-              kind: "terminal",
-              project: ProjectTarget.make({
-                projectId: project.id,
-                projectPath: project.rootPath,
-                projectName: project.name,
-              }),
-              checkout: MainCheckout.make({ kind: "main" }),
-              input: TerminalToolInput.make({ kind: "terminal" }),
-            }),
-          ],
-          "process-reconcile-test",
-        ),
-      );
-      await waitFor(() => {
-        const use = host.runtime.toolSessions.getToolUse(created.id);
-        return use?.status === "running" && use.output.kind === "process";
-      });
-      const live = host.runtime.toolSessions.getToolUse(created.id);
-      assert.ok(live);
-      assert.equal(live.output.kind, "process");
-      if (live.output.kind !== "process") return;
-      const instance = host.runtime.terminalInstances.get(
-        live.output.terminalInstanceId,
-      );
-      assert.ok(instance);
-      // Remove the durable instance while the ToolUse is still live so reconcile
-      // can mark the missing process as disconnected.
-      host.runtime.terminalInstances.close(
-        instance.id,
-        instance.generation,
-        "",
-      );
-      host.runtime.toolService?.reconcile();
-      await waitFor(
-        () =>
-          host.runtime.toolSessions.getToolUse(created.id)?.status ===
-          "disconnected",
-      );
-      const disconnected = host.runtime.toolSessions.getToolUse(created.id);
-      assert.equal(disconnected?.status, "disconnected");
-      assert.equal(disconnected?.output.kind, "process");
-      if (disconnected?.output.kind === "process") {
-        assert.equal(disconnected.output.processState, "disconnected");
-      }
-    } finally {
-      await host.close();
-      fs.rmSync(parent, { recursive: true, force: true });
-    }
-  });
 });

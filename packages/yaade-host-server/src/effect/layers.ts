@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { Effect, Layer, PubSub, Stream } from "effect";
 import {
   makeTerminalHostScoped,
-  MultiGenerationTerminalHost,
   PerfHost,
   TerminalHost,
 } from "@yaade/node-host";
@@ -12,7 +11,7 @@ import type { HostConfig } from "../config.js";
 import { EventHub } from "../events.js";
 import {
   createRuntime,
-  prepareLiveTerminals,
+  discardPersistedSessions,
   type HostRuntime,
 } from "../host-runtime.js";
 import type { ServerIdentity } from "@yaade/rpc";
@@ -83,29 +82,7 @@ export function makeHostLayers(
         16 * 1024 * 1024,
         identity,
       );
-      const currentGeneration =
-        process.env.YAADE_TERMINAL_RUNTIME_GENERATION !== "legacy"
-      const runtimeOptions = currentGeneration
-        ? {
-            ensureCurrentGeneration: true,
-            requiredProtocol: 2,
-            requiredCapabilities: {
-              authoritativeLeases: true,
-              semanticTerminalState: true,
-            },
-          }
-        : {
-            ensureCurrentGeneration: false,
-            requiredProtocol: 1,
-          }
-      const terminal = config.ptySupervisor
-        ? yield* Effect.acquireRelease(
-            Effect.promise(() =>
-              MultiGenerationTerminalHost.connect(config.dataDir, runtimeOptions),
-            ),
-            (host) => Effect.promise(() => host.disconnect()),
-          )
-        : yield* makeTerminalHostScoped;
+      const terminal = yield* makeTerminalHostScoped;
 
       // Sliding: drop oldest under notification burst instead of unbounded growth.
       const pubsub = yield* Effect.acquireRelease(
@@ -128,7 +105,7 @@ export function makeHostLayers(
           Effect.runSync(PubSub.publish(pubsub, event));
         },
       });
-      yield* Effect.promise(() => prepareLiveTerminals(runtime));
+      discardPersistedSessions(runtime);
       return runtime;
     }),
   );

@@ -5,8 +5,6 @@ import {
   SessionTab,
   SessionTabConflict,
   SessionTabId,
-  GitToolInput,
-  GitToolOutput,
   ProcessToolOutput,
   type ResolvedToolContext,
   SessionId,
@@ -87,8 +85,8 @@ const now = (): string => new Date().toISOString();
 const sessionId = (): string => `ses-${randomUUID()}`;
 const tabId = (): string => `tab-${randomUUID()}`;
 const toolUseId = (): string => `use-${randomUUID()}`;
-const ToolUseInputSchema = Schema.Union(TerminalToolInput, GitToolInput);
-const ToolUseOutputSchema = Schema.Union(ProcessToolOutput, GitToolOutput);
+const ToolUseInputSchema = TerminalToolInput;
+const ToolUseOutputSchema = ProcessToolOutput;
 
 function assertPermutation(
   actual: readonly string[],
@@ -589,6 +587,15 @@ export class ToolSessionStore {
     this.db
       .prepare("UPDATE app_sessions SET active_tab_id=?,updated_at=?,revision=revision+1 WHERE id=?")
       .run(tab.id, timestamp, session.id);
+  }
+
+  reset(): void {
+    this.db.exec(`
+      DELETE FROM tool_uses;
+      DELETE FROM app_tabs;
+      DELETE FROM app_sessions;
+    `);
+    this.ensureVisibleSession();
   }
 
   private nextUsePosition(sessionIdValue: string): number {

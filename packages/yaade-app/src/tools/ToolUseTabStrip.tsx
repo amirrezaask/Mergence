@@ -10,7 +10,6 @@ import { AnimatePresence } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
 import {
   ArrowRight,
-  GitBranch,
   PanelLeftClose,
   PanelRightClose,
   Plus,
@@ -78,7 +77,6 @@ function toolStatusClass(status: ToolUse["status"]): string {
 
 const toolIcon = {
   terminal: TerminalIcon,
-  git: GitBranch,
 } satisfies Record<ToolKind, typeof TerminalIcon>;
 
 function checkoutTargetForUse(use: ToolUse): CheckoutTarget {
@@ -567,7 +565,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
     );
   };
 
-  const contextLaunchKinds: readonly ToolKind[] = ["terminal", "git"];
+  const contextLaunchKinds: readonly ToolKind[] = ["terminal"];
 
   const newToolActions = (
     <div
@@ -583,7 +581,7 @@ export function ToolUseTabStrip(props: ToolUseTabStripProps) {
         const Icon = toolIcon[kind];
         const label = `New ${toolKindLabel(kind)}`;
         const shortcut = toolSessionShortcutFor(
-          kind === "terminal" ? "tool.newTerminal" : "tool.newGit",
+          "tool.newTerminal",
         );
         return (
           <Popover

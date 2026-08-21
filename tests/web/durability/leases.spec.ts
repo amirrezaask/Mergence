@@ -76,7 +76,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L01 first controller plus second observer behaves deterministically", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,
@@ -108,7 +107,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L02 input carrying an expired or stale lease is rejected", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,
@@ -132,7 +130,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L03 observer resize cannot change authoritative PTY dimensions", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,
@@ -162,7 +159,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L04 control transfer is atomic under concurrent input", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,
@@ -188,7 +184,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L05 disconnect grace prevents lease flapping", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,
@@ -221,7 +216,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L06 mobile opens an existing terminal as observer by default", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,
@@ -245,7 +239,6 @@ test.describe("L — multi-client writer and resize leases", { tag: "@p1" }, () 
   test("L07 simultaneous lease acquisition has one deterministic winner", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const project = (await listProjects(api.origin))[0]
       const launched = await launchIdle(
         api.origin,

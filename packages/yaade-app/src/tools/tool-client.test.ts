@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { describe, it } from "vite-plus/test"
 import { AppSession, ProcessToolOutput, ProjectTarget, ToolEvent, ToolUse, ToolUseUpdated } from "@yaade/rpc"
-import type { JetElectronTools, ToolSessionSnapshot } from "@yaade/workspace"
+import type { HostTools, ToolSessionSnapshot } from "@yaade/workspace"
 import { Schema } from "effect"
 import { ToolClient } from "./tool-client.js"
 import { ToolSessionStore } from "./tool-store.js"
@@ -56,7 +56,7 @@ function makeUse(revision: number): ToolUse {
   })
 }
 
-function makeApi(initial: ToolSessionSnapshot, latest: () => ToolUse): JetElectronTools {
+function makeApi(initial: ToolSessionSnapshot, latest: () => ToolUse): HostTools {
   let eventListener: ((event: ToolEvent) => void) | undefined
   return {
     listSessions: async () => [initial],
@@ -86,7 +86,7 @@ function makeApi(initial: ToolSessionSnapshot, latest: () => ToolUse): JetElectr
     emit(event: ToolEvent): void {
       eventListener?.(event)
     },
-  } as JetElectronTools & { emit(event: ToolEvent): void }
+  } as HostTools & { emit(event: ToolEvent): void }
 }
 
 describe("ToolClient", () => {
@@ -114,7 +114,7 @@ describe("ToolClient", () => {
       occurredAt: recovered.updatedAt,
       toolUse: recovered,
     })
-    ;(api as JetElectronTools & { emit(event: ToolEvent): void }).emit(event)
+    ;(api as HostTools & { emit(event: ToolEvent): void }).emit(event)
     await new Promise(resolve => setTimeout(resolve, 0))
 
     assert.equal(client.store.getSnapshot().usesById.get(use.id)?.revision, 3)
@@ -139,7 +139,7 @@ describe("ToolClient", () => {
     const client = new ToolClient({ api, window })
     client.start()
     const hydration = client.hydrate()
-    ;(api as JetElectronTools & { emit(event: ToolEvent): void }).emit(
+    ;(api as HostTools & { emit(event: ToolEvent): void }).emit(
       ToolUseUpdated.make({
         eventId: "newer-event",
         toolUseId: newer.id,
@@ -172,7 +172,7 @@ describe("ToolClient", () => {
     await client.hydrate()
     client.dispose()
     client.start()
-    ;(api as JetElectronTools & { emit(event: ToolEvent): void }).emit(
+    ;(api as HostTools & { emit(event: ToolEvent): void }).emit(
       ToolUseUpdated.make({
         eventId: "after-restart",
         toolUseId: recovered.id,

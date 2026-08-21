@@ -20,7 +20,7 @@ export const SessionTabId = Schema.String.pipe(
 );
 export type SessionTabId = Schema.Schema.Type<typeof SessionTabId>;
 
-export const ToolKind = Schema.Literal("terminal", "git");
+export const ToolKind = Schema.Literal("terminal");
 export type ToolKind = Schema.Schema.Type<typeof ToolKind>;
 
 export const ToolUseStatus = Schema.Literal(
@@ -99,13 +99,7 @@ export class TerminalToolInput extends Schema.TaggedClass<TerminalToolInput>()(
   },
 ) {}
 
-/** Git is an interactive repository history/review surface, not a process. */
-export class GitToolInput extends Schema.TaggedClass<GitToolInput>()(
-  "GitToolInput",
-  { kind: Schema.Literal("git") },
-) {}
-
-export const ToolUseInput = Schema.Union(TerminalToolInput, GitToolInput);
+export const ToolUseInput = TerminalToolInput;
 export type ToolUseInput = Schema.Schema.Type<typeof ToolUseInput>;
 
 export const ProcessState = Schema.Literal(
@@ -143,12 +137,7 @@ export class ProcessToolOutput extends Schema.TaggedClass<ProcessToolOutput>()(
   },
 ) {}
 
-export class GitToolOutput extends Schema.TaggedClass<GitToolOutput>()(
-  "GitToolOutput",
-  { kind: Schema.Literal("git") },
-) {}
-
-export const ToolUseOutput = Schema.Union(ProcessToolOutput, GitToolOutput);
+export const ToolUseOutput = ProcessToolOutput;
 export type ToolUseOutput = Schema.Schema.Type<typeof ToolUseOutput>;
 
 export class AppSession extends Schema.Class<AppSession>("AppSession")({
@@ -201,19 +190,8 @@ const ToolUseRecord = Schema.Struct({
   archivedAt: Schema.optional(Schema.String),
 });
 
-/** A persisted invocation. The filter enforces the input/output kind pairing. */
-export const ToolUse = ToolUseRecord.pipe(
-  Schema.filter(
-    (value) =>
-      (value.kind === "git" &&
-        value.input.kind === "git" &&
-        value.output.kind === "git") ||
-      (value.kind === "terminal" &&
-        value.input.kind === "terminal" &&
-        value.output.kind === "process"),
-    { message: () => "ToolUse kind does not match its input and output" },
-  ),
-);
+/** A persisted terminal invocation. */
+export const ToolUse = ToolUseRecord;
 export type ToolUse = Schema.Schema.Type<typeof ToolUseRecord>;
 
 export class CreateSession extends Schema.TaggedClass<CreateSession>()(

@@ -120,7 +120,7 @@ export class TaskRunner {
 
     if (!this.handlers) {
       run.status = "failed"
-      run.output += "\nTasks require Electron.\n"
+      run.output += "\nTasks are unavailable.\n"
       run.exitCode = 1
       this.onDidChange.fire()
       return run

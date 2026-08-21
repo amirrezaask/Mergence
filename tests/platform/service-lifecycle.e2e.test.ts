@@ -59,18 +59,12 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         String(port),
         "--data-dir",
         dataDir,
-        "--pty-supervisor",
-        "1",
-        "--kill-ptys-on-exit",
-        "0",
         "--allowed-roots",
         `${REPO_ROOT},${root}`,
         workspace,
       ],
       env: {
         JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
-        JET_PTY_SUPERVISOR: "1",
-        JET_KILL_PTYS_ON_EXIT: "0",
       },
     }
     try {
@@ -129,18 +123,12 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         String(port),
         "--data-dir",
         harness.dataDir,
-        "--pty-supervisor",
-        "1",
-        "--kill-ptys-on-exit",
-        "0",
         "--allowed-roots",
         `${REPO_ROOT},${harness.root}`,
         harness.workspace,
       ],
       env: {
         JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
-        JET_PTY_SUPERVISOR: "1",
-        JET_KILL_PTYS_ON_EXIT: "0",
       },
     }
     try {

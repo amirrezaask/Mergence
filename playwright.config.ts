@@ -20,32 +20,14 @@ export default defineConfig({
   projects: [
     {
       name: "web-e2e",
-      testDir: "./tests/electron",
-      testMatch: "*.electron.spec.ts",
-      timeout: 180_000,
-    },
-    {
-      name: "runtime-e2e",
-      testDir: "./tests/runtime",
-      testMatch: "*.e2e.test.ts",
+      testDir: "./tests/web/e2e",
+      testMatch: "*.web.spec.ts",
       timeout: 180_000,
     },
     {
       name: "web-durability",
       testDir: "./tests/web/durability",
       testMatch: "*.spec.ts",
-      timeout: 180_000,
-    },
-    {
-      name: "desktop-e2e",
-      testDir: "./tests/desktop",
-      testMatch: "*.desktop.spec.ts",
-      timeout: 180_000,
-    },
-    {
-      name: "recovery-e2e",
-      testDir: "./tests/recovery",
-      testMatch: "*.e2e.test.ts",
       timeout: 180_000,
     },
     {
@@ -65,18 +47,6 @@ export default defineConfig({
       testDir: "./tests/platform",
       testMatch: "*.e2e.test.ts",
       timeout: 180_000,
-    },
-    {
-      name: "chaos-e2e",
-      testDir: "./tests/chaos",
-      testMatch: "*.e2e.test.ts",
-      timeout: 180_000,
-    },
-    {
-      name: "soak-e2e",
-      testDir: "./tests/soak",
-      testMatch: "*.soak.test.ts",
-      timeout: 3_600_000,
     },
     {
       name: "bench",

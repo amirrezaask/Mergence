@@ -21,6 +21,69 @@ test("rejects invalid PTY dimensions", () => {
   assert.equal(normalizeTerminalSize(80, -1), null)
 })
 
+async function waitForExit(terminal: TerminalHost, id: string, label: string): Promise<void> {
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  try {
+    await Promise.race([
+      terminal.waitForExit(id),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error(`${label} timed out`)), 10_000)
+      }),
+    ])
+  } finally {
+    if (timeout) clearTimeout(timeout)
+  }
+}
+
+test("runs an interactive shell and accepts a command", async () => {
+  const terminal = new TerminalHost()
+  const chunks: string[] = []
+  terminal.setEmit((channel, args) => {
+    if (channel === "terminal:data") chunks.push(String(args[1] ?? ""))
+  })
+
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      null,
+      "interactive-shell-test",
+    )
+    terminal.write(
+      created.id,
+      process.platform === "win32"
+        ? "Write-Output YAADE_SHELL_OK; exit\r"
+        : "printf 'YAADE_SHELL_OK\\n'; exit\n",
+    )
+    await waitForExit(terminal, created.id, "interactive shell command")
+    assert.match(chunks.join(""), /YAADE_SHELL_OK/u)
+  } finally {
+    terminal.stopAll()
+  }
+})
+
+test("runs a command directly inside a terminal", async () => {
+  const terminal = new TerminalHost()
+  const chunks: string[] = []
+  terminal.setEmit((channel, args) => {
+    if (channel === "terminal:data") chunks.push(String(args[1] ?? ""))
+  })
+
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      {
+        command: process.execPath,
+        args: ["-e", "process.stdout.write('YAADE_COMMAND_OK\\n')"],
+      },
+      "direct-command-test",
+    )
+    await waitForExit(terminal, created.id, "direct terminal command")
+    assert.match(chunks.join(""), /YAADE_COMMAND_OK/u)
+  } finally {
+    terminal.stopAll()
+  }
+})
+
 test("coalesces PTY output bursts and flushes all bytes before exit", async () => {
   const terminal = new TerminalHost()
   const chunks: string[] = []

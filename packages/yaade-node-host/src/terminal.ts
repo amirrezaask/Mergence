@@ -40,10 +40,6 @@ import {
   TerminalSemanticRuntime,
   type SemanticHistoryPage,
 } from "./terminal-semantic-runtime.js"
-import {
-  TerminalRecoveryStore,
-  type TerminalHistoryPersistence,
-} from "./terminal-recovery-store.js"
 
 /**
  * This is a bounded transcript, not a serialized terminal state. Once the
@@ -382,21 +378,15 @@ export type TerminalHostOptions = {
    * backpressure never pauses a PTY in any mode.
    */
   flowControl?: boolean
-  /** Current-generation terminals parse output with Ghostty. */
+  /** Parse terminal output with Ghostty for semantic snapshots and input encoding. */
   semanticState?: boolean
-  recovery?: {
-    readonly dataDir: string
-    readonly ownerId: string
-    readonly ownerEpoch: string
-    readonly persistence?: TerminalHistoryPersistence
-  }
 }
 
 export class TerminalHost {
   private readonly entries = new Map<string, TerminalEntry>()
   private seqCounter = 0
   private readonly titleCounts = new Map<string, number>()
-  /** Supervisor-epoch idempotency for create retries after a lost response. */
+  /** Idempotency for create retries after a lost response. */
   private readonly createRequests = new Map<string, TerminalCreateResult>()
   private readonly control = new TerminalControlRegistry()
   private emit: EmitFn = () => {}
@@ -404,12 +394,6 @@ export class TerminalHost {
   private readonly maxEntries: number
   private readonly killGraceMs: number
   private readonly semanticState: boolean
-  private readonly recoveryStore: TerminalRecoveryStore | null
-  private readonly recoveryOwner: {
-    readonly ownerId: string
-    readonly ownerEpoch: string
-  } | null
-  persistenceDegraded = false
 
   constructor(
     maxEntries: number | TerminalHostOptions = MAX_TERMINAL_ENTRIES,
@@ -418,8 +402,6 @@ export class TerminalHost {
       this.maxEntries = Math.max(1, Math.trunc(maxEntries))
       this.killGraceMs = 2_000
       this.semanticState = false
-      this.recoveryStore = null
-      this.recoveryOwner = null
     } else {
       this.maxEntries = Math.max(
         1,
@@ -427,18 +409,6 @@ export class TerminalHost {
       )
       this.killGraceMs = Math.max(20, Math.trunc(maxEntries.killGraceMs ?? 2_000))
       this.semanticState = maxEntries.semanticState === true
-      this.recoveryStore = maxEntries.recovery
-        ? new TerminalRecoveryStore({
-            dataDir: maxEntries.recovery.dataDir,
-            persistence: maxEntries.recovery.persistence ?? "screen-only",
-          })
-        : null
-      this.recoveryOwner = maxEntries.recovery
-        ? {
-            ownerId: maxEntries.recovery.ownerId,
-            ownerEpoch: maxEntries.recovery.ownerEpoch,
-          }
-        : null
     }
   }
 
@@ -624,7 +594,6 @@ export class TerminalHost {
             entry.terminalEpoch,
             snapshot,
           ])
-          this.persistSemantic(entry, snapshot)
         },
       })
     }
@@ -700,15 +669,7 @@ export class TerminalHost {
       osStartedAtMs,
       processIdentity,
       terminalEpoch,
-      ...(this.recoveryOwner
-        ? {
-            ownerId: this.recoveryOwner.ownerId,
-            ownerEpoch: this.recoveryOwner.ownerEpoch,
-            protocolVersion: this.semanticState ? 2 : 1,
-          }
-        : this.semanticState
-          ? { protocolVersion: 2 }
-          : {}),
+      ...(this.semanticState ? { protocolVersion: 2 } : {}),
     }
     if (requestId) {
       this.createRequests.set(requestId, result)
@@ -793,13 +754,7 @@ export class TerminalHost {
       osPid: entry.osPid,
       processIdentity: entry.processIdentity,
       terminalEpoch: entry.terminalEpoch,
-      ...(this.recoveryOwner
-        ? {
-            ownerId: this.recoveryOwner.ownerId,
-            ownerEpoch: this.recoveryOwner.ownerEpoch,
-            protocolVersion: this.semanticState ? 2 : 1,
-          }
-        : {}),
+      ...(this.semanticState ? { protocolVersion: 2 } : {}),
     }
   }
 
@@ -819,13 +774,7 @@ export class TerminalHost {
         osPid: entry.osPid,
         processIdentity: entry.processIdentity,
         terminalEpoch: entry.terminalEpoch,
-        ...(this.recoveryOwner
-          ? {
-              ownerId: this.recoveryOwner.ownerId,
-              ownerEpoch: this.recoveryOwner.ownerEpoch,
-              protocolVersion: this.semanticState ? 2 : 1,
-            }
-          : {}),
+        ...(this.semanticState ? { protocolVersion: 2 } : {}),
       })
     }
     return out
@@ -856,7 +805,7 @@ export class TerminalHost {
     return null
   }
 
-  /** Owner-side lease operations used by the versioned supervisor protocol. */
+  /** Authoritative in-process writer lease operations. */
   acquireLease(
     terminalId: string,
     terminalEpoch: string,
@@ -1102,51 +1051,12 @@ export class TerminalHost {
     }
   }
 
-  private persistSemantic(
-    entry: TerminalEntry,
-    snapshot: import("@yaade/rpc").TerminalSemanticSnapshot | null,
-  ): void {
-    const store = this.recoveryStore
-    const owner = this.recoveryOwner
-    if (!store || !owner || !snapshot) return
-    const payload = {
-      terminalEpoch: entry.terminalEpoch,
-      ownerId: owner.ownerId,
-      ownerEpoch: owner.ownerEpoch,
-      stateRevision: snapshot.revision,
-      activeScreen: snapshot.activeScreen,
-      snapshot,
-    }
-    setImmediate(() => {
-      void store.write(payload).then(result => {
-        if (result.written === false && result.reason === "io-error") {
-          this.persistenceDegraded = true
-        }
-      })
-    })
-  }
-
   private storeCheckpoint(entry: TerminalEntry): void {
     if (!entry.recorder) return
     entry.checkpoint = entry.recorder.checkpoint(entry.sequence)
     entry.checkpointSequence = entry.sequence
     entry.bytesSinceCheckpoint = 0
     entry.lastCheckpointAt = Date.now()
-    const directory =
-      process.env.JET_CHECKPOINT_DIR ??
-      (process.env.YAADE_PTY_SUPERVISOR_DATA_DIR
-        ? `${process.env.YAADE_PTY_SUPERVISOR_DATA_DIR}/pty-checkpoints`
-        : null)
-    if (!directory) return
-    try {
-      fs.mkdirSync(directory, { recursive: true })
-      const target = `${directory}/${entry.id}.json`
-      const temporary = `${target}.${process.pid}.tmp`
-      fs.writeFileSync(temporary, `${JSON.stringify(entry.checkpoint)}\n`)
-      fs.renameSync(temporary, target)
-    } catch {
-      this.persistenceDegraded = true
-    }
   }
 
   forceCheckpoint(id: string): boolean {
@@ -1217,15 +1127,7 @@ export class TerminalHost {
       id: entry.id,
       title: entry.title,
       terminalEpoch: entry.terminalEpoch,
-      ...(this.recoveryOwner
-        ? {
-            ownerId: this.recoveryOwner.ownerId,
-            ownerEpoch: this.recoveryOwner.ownerEpoch,
-            protocolVersion: this.semanticState ? 2 : 1,
-          }
-        : this.semanticState
-          ? { protocolVersion: 2 }
-          : {}),
+      ...(this.semanticState ? { protocolVersion: 2 } : {}),
       ...(checkpoint ? { checkpoint } : {}),
       replayQuality: checkpoint ? "checkpoint" : replayTruncated ? "degraded" : "exact",
       outputChunks: outputChunks.slice(replayOffset),

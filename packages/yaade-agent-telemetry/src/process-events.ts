@@ -1,4 +1,4 @@
-/** Build process lifecycle AgentEvents from the PTY supervisor (not hooks). */
+/** Build process lifecycle AgentEvents from the PTY host (not hooks). */
 import type { AgentEvent, AgentProvider } from "./types/events.js"
 import { makeAgentEventId } from "./ids.js"
 

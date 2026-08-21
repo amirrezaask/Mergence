@@ -20,7 +20,6 @@ test("modern realtime connections receive identity, snapshot, and post-snapshot 
       "--port", "0",
       "--data-dir", path.join(root, "data"),
       "--allowed-roots", root,
-      "--pty-supervisor", "0",
     ])
     started = await startHostServer(config)
     socket = new WebSocket(`ws://127.0.0.1:${started.port}/ws?protocol=2&clientId=protocol-test`)
@@ -84,7 +83,6 @@ test("modern websocket authentication does not put the token in the URL", async 
       "--data-dir", path.join(root, "data"),
       "--allowed-roots", root,
       "--token", "secret-token",
-      "--pty-supervisor", "0",
     ])
     started = await startHostServer(config)
     const url = `ws://127.0.0.1:${started.port}/ws?protocol=2&clientId=auth-test`

@@ -552,36 +552,6 @@ body {
   backdrop-filter: var(--yaade-material-chrome-filter);
 }
 
-/* Electron hides the native titlebar so the Session/Window strip becomes the
- * window's top chrome. Keep only the empty strip draggable; controls and tabs
- * must remain ordinary interactive DOM. */
-[data-yaade-electron-titlebar] {
-  app-region: drag;
-  -webkit-app-region: drag;
-  user-select: none;
-}
-
-[data-yaade-electron-titlebar] button,
-[data-yaade-electron-titlebar] input,
-[data-yaade-electron-titlebar] [role="tab"] {
-  app-region: no-drag;
-  -webkit-app-region: no-drag;
-}
-
-/* macOS traffic lights overlay the left side of the hidden titlebar. Windows
- * and Linux expose the native control area through the WCO env geometry. */
-[data-yaade-electron-titlebar][data-yaade-electron-platform="darwin"] {
-  padding-inline-start: 5rem;
-}
-
-[data-yaade-electron-titlebar][data-yaade-electron-platform="win32"],
-[data-yaade-electron-titlebar][data-yaade-electron-platform="linux"] {
-  padding-inline-end: max(
-    0.75rem,
-    calc(100% - env(titlebar-area-x, 0px) - env(titlebar-area-width, 100%))
-  );
-}
-
 [data-yaade-shell="tool-session"] [data-yaade-window-tabs] {
   height: var(--yaade-tab-bar-height);
   margin: 0;

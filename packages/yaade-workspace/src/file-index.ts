@@ -1,6 +1,6 @@
 import type { FileSystemProvider } from "./types.js"
 
-const IGNORE_DIRS = new Set([".git", "node_modules", "dist", "dist-electron", ".turbo"])
+const IGNORE_DIRS = new Set([".git", "node_modules", "dist", ".turbo"])
 
 export async function indexWorkspaceFiles(
   fs: FileSystemProvider,

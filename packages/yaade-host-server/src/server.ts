@@ -113,20 +113,7 @@ function sendReliableSocketJson(ws: WebSocket, value: unknown): boolean {
   return socketWriter(ws).enqueueReliable(JSON.stringify(value));
 }
 
-function runtimeOwnerEpoch(runtime: HostRuntime, terminalId: string | null): string | null {
-  if (terminalId) {
-    const inspected = runtime.terminal.inspect(terminalId)
-    if (inspected && !(inspected instanceof Promise)) {
-      if (typeof inspected.ownerEpoch === "string" && inspected.ownerEpoch.length > 0) {
-        return inspected.ownerEpoch
-      }
-    }
-  }
-  const terminal = runtime.terminal;
-  if ("currentSupervisorEpoch" in terminal) {
-    const epoch = terminal.currentSupervisorEpoch;
-    if (typeof epoch === "string" && epoch.length > 0) return epoch;
-  }
+function runtimeOwnerEpoch(runtime: HostRuntime): string {
   return runtime.identity.serverEpoch;
 }
 
@@ -168,7 +155,7 @@ function disposeSocketWriter(
     bufferedBytes: ws.bufferedAmount,
     pendingBytes: writer?.pendingBytes ?? 0,
     terminalId,
-    ownerEpoch: runtimeOwnerEpoch(runtime, terminalId),
+    ownerEpoch: runtimeOwnerEpoch(runtime),
   });
   writer?.dispose();
   SOCKET_WRITERS.delete(ws);
@@ -200,8 +187,7 @@ function armLiveViewerBestEffort(
   terminalId: string,
   clientId: string,
 ): void {
-  // Start from a resolved promise so both synchronous routing failures and
-  // asynchronous supervisor disconnects stay inside the handled chain.
+  // Keep a failed best-effort attach from tearing down the event socket.
   void Promise.resolve()
     .then(() => runtime.terminal.armLiveViewer(terminalId, clientId))
     .catch(() => undefined)
@@ -256,7 +242,7 @@ export async function startHostServer(
   options?: { eventHubCapacity?: number },
 ): Promise<{
   runtime: HostRuntime;
-  close: (options?: { killPtys?: boolean }) => Promise<void>;
+  close: () => Promise<void>;
   port: number;
 }> {
   const hostLayer = makeHostLayers(config, options);
@@ -354,11 +340,9 @@ export async function startHostServer(
   );
 
   let closePromise: Promise<void> | null = null;
-  const close = (options?: { killPtys?: boolean }) => {
+  const close = () => {
     closePromise ??= (async () => {
-      await shutdownRuntime(runtime, {
-        killPtys: options?.killPtys ?? config.killPtysOnShutdown,
-      });
+      await shutdownRuntime(runtime);
       const serverClosed = new Promise<void>((resolve, reject) => {
         server.close((err) => (err ? reject(err) : resolve()));
       });
@@ -515,24 +499,6 @@ function principalForRequest(
 }
 
 function runtimeHealth(runtime: HostRuntime) {
-  const supervisorState =
-    "connectionState" in runtime.terminal
-      ? String(runtime.terminal.connectionState)
-      : null;
-  const supervisorStatus =
-    supervisorState === "healthy" || supervisorState === null
-      ? "healthy"
-      : supervisorState === "connecting" || supervisorState === "reconnecting" || supervisorState === "degraded"
-        ? "degraded"
-        : "unhealthy";
-  const supervisorMessage =
-    supervisorState === null
-      ? "in-process terminal host"
-      : supervisorState === "reconnecting"
-        ? "Supervisor reconnecting"
-        : supervisorState === "incompatible"
-          ? "incompatible supervisor protocol"
-          : supervisorState;
   let databaseStatus: "healthy" | "degraded" = "healthy";
   try {
     runtime.db.session().prepare("SELECT 1").get();
@@ -547,25 +513,13 @@ function runtimeHealth(runtime: HostRuntime) {
     storageStatus = "degraded";
     storageMessage = "runtime storage probe failed";
   }
-  const persistenceDegraded =
-    "persistenceDegraded" in runtime.terminal && runtime.terminal.persistenceDegraded === true;
-  if (persistenceDegraded) {
-    storageStatus = "degraded";
-    storageMessage = "terminal recovery persistence is degraded";
-  }
   const eventLoopStatus = "healthy" as const
   const eventLoopMessage = "health request served on the HTTP event loop";
-  const degraded =
-    supervisorStatus === "degraded" ||
-    databaseStatus === "degraded" ||
-    storageStatus === "degraded";
-  const unhealthy =
-    supervisorStatus === "unhealthy" ||
-    databaseStatus === "degraded";
+  const degraded = databaseStatus === "degraded" || storageStatus === "degraded";
+  const unhealthy = databaseStatus === "degraded";
   return {
     status: unhealthy ? "unhealthy" : degraded ? "degraded" : "healthy",
     database: { status: databaseStatus, message: databaseStatus === "healthy" ? "SQLite WAL is available" : "SQLite probe failed" },
-    supervisor: { status: supervisorStatus, message: supervisorMessage },
     eventLoop: { status: eventLoopStatus, message: eventLoopMessage },
     storage: { status: storageStatus, message: storageMessage },
     connectedClients: ACTIVE_EVENT_SOCKETS.size,
@@ -869,7 +823,6 @@ async function handleHttp(
           config: {
             host: runtime.config.host,
             port: runtime.config.port,
-            ptySupervisor: runtime.config.ptySupervisor,
             features: runtime.config.features,
           },
           devices: runtime.devices.list().map(device => ({
@@ -1873,7 +1826,7 @@ function startModernEventSocket(
 function sendEventSocketMessage(
   ws: WebSocket,
   event: HostEvent,
-  _runtime?: { terminal: HostRuntime["terminal"] },
+  _runtime?: Pick<HostRuntime, "terminal" | "identity">,
   _attachedTerminals?: Set<string>,
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
@@ -1929,9 +1882,7 @@ function sendEventSocketMessage(
         const ownerEpoch =
           typeof eventOwnerEpoch === "string" && eventOwnerEpoch.length > 0
             ? eventOwnerEpoch
-            : _runtime && "currentSupervisorEpoch" in _runtime.terminal
-              ? _runtime.terminal.currentSupervisorEpoch ?? "local"
-              : "local"
+            : _runtime?.identity.serverEpoch ?? "local"
         const frame = encodeTerminalStreamV3({
           type: "terminal.snapshot",
           terminalId: semanticId,

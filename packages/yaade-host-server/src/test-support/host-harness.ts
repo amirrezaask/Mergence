@@ -9,7 +9,6 @@ import { startHostServer } from "../server.js"
 export type HostHarnessOptions = {
   readonly root?: string
   readonly token?: string
-  readonly ptySupervisor?: boolean
 }
 
 export type HostHarness = {
@@ -20,7 +19,7 @@ export type HostHarness = {
   readonly baseUrl: string
   fetch(pathname: string, init?: RequestInit): Promise<Response>
   connect(pathname?: string, options?: { readonly token?: string }): WebSocket
-  close(options?: { readonly killPtys?: boolean }): Promise<void>
+  close(): Promise<void>
 }
 
 export async function startHostHarness(
@@ -42,9 +41,6 @@ export async function startHostHarness(
     root,
   ]
   if (options.token) argv.push("--token", options.token)
-  if (options.ptySupervisor !== undefined) {
-    argv.push("--pty-supervisor", options.ptySupervisor ? "1" : "0")
-  }
   const config = await loadConfig(argv)
   const server = await startHostServer(config)
   const baseUrl = `http://127.0.0.1:${server.port}`
@@ -64,8 +60,8 @@ export async function startHostHarness(
       }
       return socket
     },
-    close: async closeOptions => {
-      await server.close(closeOptions)
+    close: async () => {
+      await server.close()
       await fs.promises.rm(root, { recursive: true, force: true })
     },
   }

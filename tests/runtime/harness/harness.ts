@@ -8,10 +8,8 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import {
   captureProcessIdentity,
-  isProcessAlive,
   type ProcessIdentity,
 } from "../../../packages/yaade-node-host/src/process-identity.js"
-import { TerminalRuntimeRegistry } from "../../../packages/yaade-node-host/src/terminal-runtime-registry.js"
 import { readDatabaseState } from "./database.js"
 import { waitForMockAgent } from "./mock-agent.js"
 import { assertProcessAlive, assertProcessDead, readProcessTree, waitForProcessIdentity } from "./process.js"
@@ -23,7 +21,6 @@ import {
   readHealth,
   type TerminalInstanceInfo,
 } from "./rpc.js"
-import { dropSupervisorClients, listSupervisorPtys, readSupervisorHandle, waitForSupervisor } from "./supervisor.js"
 import type {
   ApiHandle,
   BrowserHandle,
@@ -33,7 +30,6 @@ import type {
   ResourceMetrics,
   RuntimeSnapshot,
   ServerOptions,
-  SupervisorHandle,
 } from "./types.js"
 import { waitForHttpOk, waitUntil } from "./wait.js"
 
@@ -100,7 +96,6 @@ export type DurableRuntimeHarness = {
   api: ApiHandle | null
   startApi(): Promise<ApiHandle>
   startDaemon(): Promise<ApiHandle>
-  startSupervisor(): Promise<SupervisorHandle>
   startBrowser(userDataDir?: string, startPath?: string): Promise<BrowserHandle>
   startCompetingApi(): Promise<{
     origin: string
@@ -111,8 +106,6 @@ export type DurableRuntimeHarness = {
   }>
   startServer(options?: ServerOptions): Promise<ApiHandle>
   killApi(signal: NodeJS.Signals): Promise<void>
-  killSupervisor(signal: NodeJS.Signals): Promise<void>
-  interruptSupervisorSocket(): Promise<void>
   restartApi(): Promise<ApiHandle>
   restartDaemon(): Promise<ApiHandle>
   launchMockAgent(options?: MockAgentOptions): Promise<{
@@ -143,7 +136,6 @@ export async function createDurableRuntimeHarness(
   fs.writeFileSync(path.join(workspace, "README.md"), "runtime e2e workspace\n")
   const port = await freePort()
   const origin = `http://127.0.0.1:${port}`
-  const supervisorLog = path.join(dataDir, "supervisor.log")
   const browsers: BrowserHandle[] = []
   let apiProc: TestServerProcess | null = null
   let apiLogs = () => ""
@@ -155,10 +147,7 @@ export async function createDurableRuntimeHarness(
     ...process.env,
     JET_ALLOWED_ROOTS: `${REPO_ROOT},${root}`,
     YAADE_E2E: "1",
-    JET_PTY_SUPERVISOR: "1",
-    JET_KILL_PTYS_ON_EXIT: "0",
     JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
-    YAADE_PTY_SUPERVISOR_LOG: supervisorLog,
     ...options.env,
   })
 
@@ -176,10 +165,6 @@ export async function createDurableRuntimeHarness(
         String(port),
         "--data-dir",
         dataDir,
-        "--pty-supervisor",
-        "1",
-        "--kill-ptys-on-exit",
-        "0",
         "--allowed-roots",
         `${REPO_ROOT},${root}`,
         ...(hostToken ? ["--token", hostToken] : []),
@@ -267,11 +252,6 @@ export async function createDurableRuntimeHarness(
     await waitForExit(apiProc, 2_000)
     apiHandle = null
     harness.api = null
-  }
-
-  const startSupervisor = async (): Promise<SupervisorHandle> => {
-    if (!apiHandle) await startApi()
-    return waitForSupervisor(dataDir)
   }
 
   const startBrowser = async (userDataDir?: string, startPath = "/"): Promise<BrowserHandle> => {
@@ -381,7 +361,6 @@ export async function createDurableRuntimeHarness(
     api: null,
     startApi,
     startDaemon: startApi,
-    startSupervisor,
     startBrowser,
     startCompetingApi: async () => {
       const extraPort = await freePort()
@@ -397,10 +376,6 @@ export async function createDurableRuntimeHarness(
           String(extraPort),
           "--data-dir",
           dataDir,
-          "--pty-supervisor",
-          "1",
-          "--kill-ptys-on-exit",
-          "0",
           "--allowed-roots",
           `${REPO_ROOT},${root}`,
           workspace,
@@ -436,24 +411,6 @@ export async function createDurableRuntimeHarness(
     },
     startServer: async () => startApi(),
     killApi,
-    killSupervisor: async signal => {
-      const pids = new Set<number>()
-      const supervisor = readSupervisorHandle(dataDir)
-      if (supervisor) pids.add(supervisor.pid)
-      for (const manifest of new TerminalRuntimeRegistry(dataDir).listManifests()) {
-        if (manifest.pid > 0) pids.add(manifest.pid)
-      }
-      if (pids.size === 0) return
-      for (const pid of pids) signalPid(pid, signal)
-      await waitUntil(
-        () => [...pids].every(pid => !isProcessAlive(pid)),
-        8_000,
-        "supervisor generation exit",
-      )
-    },
-    interruptSupervisorSocket: async () => {
-      await dropSupervisorClients(dataDir)
-    },
     restartApi: async () => {
       await killApi("SIGTERM")
       return startApi()
@@ -525,13 +482,8 @@ export async function createDurableRuntimeHarness(
     retainDiagnostics: async outputDir => {
       fs.mkdirSync(outputDir, { recursive: true })
       fs.writeFileSync(path.join(outputDir, "api.log"), apiLogs())
-      if (fs.existsSync(supervisorLog)) {
-        fs.copyFileSync(supervisorLog, path.join(outputDir, "supervisor.log"))
-      }
       for (const name of [
         "runtime.json",
-        "pty-supervisor.json",
-        "pty-supervisor.pid",
         "jet.sqlite3",
         "jet.sqlite3-wal",
         "jet.sqlite3-shm",
@@ -559,13 +511,6 @@ export async function createDurableRuntimeHarness(
         }
       }
       await killApi("SIGTERM")
-      const supervisor = readSupervisorHandle(dataDir)
-      if (supervisor && isProcessAlive(supervisor.pid)) {
-        signalPid(supervisor.pid, "SIGTERM")
-        await waitUntil(() => !isProcessAlive(supervisor.pid), 5_000, "supervisor shutdown").catch(
-          () => signalPid(supervisor.pid, "SIGKILL"),
-        )
-      }
       fs.rmSync(root, { recursive: true, force: true })
     },
   }
@@ -588,4 +533,4 @@ export async function waitForInstance(
   return found
 }
 
-export { listSupervisorPtys, attachTerminal, listTerminalInstances, readHealth }
+export { attachTerminal, listTerminalInstances, readHealth }

@@ -26,7 +26,7 @@ const currentServer = {
 }
 const serverConnections = createMultiServerHostClient({
   currentServer,
-  servers: window.yaadeDesktop ? [] : loadStoredServerDefinitions(),
+  servers: loadStoredServerDefinitions(),
   globalTarget: {
     setYaade: value => {
       window.yaade = value

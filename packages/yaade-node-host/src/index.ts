@@ -78,8 +78,6 @@ export {
   type TerminalCheckpoint,
   type TerminalStateRecorder,
 } from "./terminal-state/recorder.js";
-export { SupervisedTerminalHost } from "./terminal-supervisor-client.js"
-export { SupervisorPeerWriter } from "./supervisor-peer-writer.js"
 export {
   TerminalControlError,
   TerminalControlRegistry,
@@ -87,65 +85,6 @@ export {
   type TerminalLeaseRequest,
   type TerminalMutationFence,
 } from "./terminal-control.js"
-export {
-  encodeSupervisorProtocolMessage,
-  decodeSupervisorProtocolMessage,
-  assertSupervisorDeadline,
-  assertPendingRequestCapacity,
-  SupervisorProtocolFrameReader,
-} from "./terminal-protocol/codec.js"
-export {
-  SupervisorProtocolError,
-  type SupervisorProtocolErrorCode,
-} from "./terminal-protocol/errors.js"
-export * from "./terminal-protocol/limits.js"
-export * from "./terminal-protocol/schema.js"
-export {
-  legacyEventToV2,
-  legacyRequestToCommand,
-  legacyResponseToV2,
-} from "./terminal-protocol/legacy-v1-adapter.js"
-export {
-  TerminalRuntimeRegistry,
-  parseRuntimeManifest,
-  runtimeManifestPath,
-  runtimeOwnerDirectory,
-  runtimeRegistryDirectory,
-  runtimeRegistryPath,
-  runtimeSocketPath,
-  runtimeProcessIsAlive,
-  runtimeSupports,
-  type TerminalRuntimeManifest,
-} from "./terminal-runtime-registry.js"
-export {
-  TerminalRuntimeRouter,
-  type RoutedTerminalRef,
-  type RuntimeConnection,
-  type RunningTerminalRef,
-} from "./terminal-runtime-router.js"
-export {
-  MultiGenerationTerminalHost,
-  type MultiGenerationRuntimeOptions,
-} from "./terminal-runtime-client.js"
-export {
-  TerminalRecoveryStore,
-  type RecoveryReadResult,
-  type RecoveryWriteResult,
-  type TerminalHistoryPersistence,
-  type TerminalRecoveryMetadata,
-  type TerminalRecoveryRecord,
-} from "./terminal-recovery-store.js";
-export {
-  ensureTerminalSupervisor,
-  ensureTerminalSupervisorGeneration,
-  listenTerminalSupervisor,
-  supervisorLockPath,
-  supervisorManifestPath,
-  supervisorSocketPath,
-  supervisorPidPath,
-  type SupervisorGenerationOptions,
-  type SupervisorManifest,
-} from "./terminal-supervisor.js";
 export {
   captureProcessIdentity,
   isProcessAlive,

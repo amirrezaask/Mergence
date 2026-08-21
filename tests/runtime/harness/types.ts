@@ -34,7 +34,6 @@ export type RuntimeSnapshot = {
   }
   health: {
     status: string
-    supervisor: { status: string; message: string }
     runningTerminals: number
   }
   port: number
@@ -52,14 +51,6 @@ export type ApiHandle = {
   dataDir: string
   processIdentity: ProcessIdentitySnapshot | null
   logs: () => string
-}
-
-export type SupervisorHandle = {
-  supervisorId: string
-  supervisorEpoch: string
-  pid: number
-  socketPath: string
-  processIdentity: ProcessIdentitySnapshot | null
 }
 
 export type DaemonHandle = ApiHandle

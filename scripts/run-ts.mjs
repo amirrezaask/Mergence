@@ -28,7 +28,7 @@ const server = await createServer({
 const runner = createServerModuleRunner(server.environments.ssr, { hmr: false });
 
 try {
-  // Long-running entries (the host and PTY supervisor) return after starting
+  // Long-running host entries return after starting
   // their service. Keep Vite's module runner alive for later request-driven
   // imports instead of closing it as soon as the entry function returns.
   await runner.import(entryPath);

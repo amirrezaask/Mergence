@@ -82,7 +82,7 @@ async function cwdOfPidDarwin(pid: number): Promise<string | null> {
           encoding: "utf8",
           timeout: 2_000,
           maxBuffer: 64 * 1024,
-          // Ignore inherited PATH so Electron GUI env cannot hide /usr/sbin.
+          // Ignore inherited PATH so restricted GUI environments cannot hide /usr/sbin.
           env: {
             ...process.env,
             PATH: "/usr/sbin:/usr/bin:/bin:/sbin",
@@ -102,7 +102,7 @@ async function cwdOfPidDarwin(pid: number): Promise<string | null> {
  * Resolve the current working directory of a process (async).
  * Used so mux splits inherit a shell's live cwd after `cd`.
  *
- * On macOS prefer absolute `lsof` paths — Electron/GUI hosts often inherit a
+ * On macOS prefer absolute `lsof` paths — GUI hosts often inherit a
  * PATH without `/usr/sbin`, so a bare `lsof` lookup returns ENOENT.
  */
 export async function cwdOfPid(pid: number): Promise<string | null> {

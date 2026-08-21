@@ -21,9 +21,9 @@ import {
 } from "@yaade/rpc"
 import type {
   AgentRunInfo,
-  JetElectronAgents,
-  JetElectronTerminal,
-  JetElectronTools,
+  HostAgents,
+  HostTerminal,
+  HostTools,
   YaadeHostAPI,
   ToolSessionSnapshot,
   TerminalInstanceEvent,
@@ -248,7 +248,7 @@ function scopedTerminalId(serverId: string, terminalId: string): string {
 }
 
 export class MultiServerHostClient {
-  readonly tools: JetElectronTools
+  readonly tools: HostTools
   readonly ports: YaadeHostAPI
 
   private readonly currentServerId: string
@@ -262,7 +262,7 @@ export class MultiServerHostClient {
   private readonly ptyOwners = new Map<string, Owner>()
   private readonly terminalInstanceOwners = new Map<string, Owner>()
   private readonly agentOwners = new Map<string, Owner>()
-  private readonly agentEventListeners = new Set<Parameters<JetElectronAgents["onEvent"]>[0]>()
+  private readonly agentEventListeners = new Set<Parameters<HostAgents["onEvent"]>[0]>()
   private readonly terminalExitListeners = new Set<(
     id: string,
     exitCode: number,
@@ -271,8 +271,8 @@ export class MultiServerHostClient {
   private readonly terminalInstanceListeners = new Set<
     (event: TerminalInstanceEvent) => void
   >()
-  private readonly aggregateTerminal: JetElectronTerminal
-  private readonly aggregateAgents: JetElectronAgents
+  private readonly aggregateTerminal: HostTerminal
+  private readonly aggregateAgents: HostAgents
   private activeServerId: string | undefined
   private generation = 0
   private globalTarget?: MultiServerGlobalTarget
@@ -802,7 +802,7 @@ export class MultiServerHostClient {
     return { ...run, runId, toolUseId, ptyId, projectId }
   }
 
-  private createAgents(): JetElectronAgents {
+  private createAgents(): HostAgents {
     const self = this
     const collectLive = async (projectId?: string): Promise<AgentRunInfo[]> => {
       const results: AgentRunInfo[] = []
@@ -883,7 +883,7 @@ export class MultiServerHostClient {
     }
   }
 
-  private createTerminal(): JetElectronTerminal {
+  private createTerminal(): HostTerminal {
     const self = this
     return {
       create: async (cwdUri, launch) => {
@@ -1116,7 +1116,7 @@ export class MultiServerHostClient {
     }
   }
 
-  private createTools(): JetElectronTools {
+  private createTools(): HostTools {
     const self = this
     return {
       listSessions: async includeArchived => {

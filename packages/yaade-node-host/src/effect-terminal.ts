@@ -21,7 +21,7 @@ import { TerminalHost } from "./terminal.js"
  */
 export const makeTerminalHostScoped: Effect.Effect<TerminalHost, never, Scope.Scope> =
   Effect.acquireRelease(
-    Effect.sync(() => new TerminalHost()),
+    Effect.sync(() => new TerminalHost({ semanticState: true })),
     host =>
       Effect.sync(() => {
         host.stopAll()

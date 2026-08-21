@@ -14,7 +14,7 @@ export type JetAgentState = {
   searchReady: boolean;
   shellView: "home" | "workspace";
   sessionLayout: "sidebar";
-  sessionMode: "terminal" | "git" | null;
+  sessionMode: "terminal" | null;
   route: "hq" | "project" | "session";
   sessionId: string | null;
   sessionCwd: string | null;
@@ -70,7 +70,7 @@ export type YaadeAgentAPI = {
   createTab?(): Promise<void>;
   selectTab?(tabId: string): Promise<void>;
   closeTab?(tabId: string): Promise<void>;
-  createToolUse?(kind: "terminal" | "git"): Promise<void>;
+  createToolUse?(kind: "terminal"): Promise<void>;
   selectToolUse?(toolUseId: string): Promise<void>;
   closeToolUse?(toolUseId: string): Promise<void>;
   closeSession?(sessionId: string, mode?: "keep-running" | "stop-tools"): Promise<void>;

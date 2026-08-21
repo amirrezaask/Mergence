@@ -1,4 +1,4 @@
-import { GitBranch, Terminal, type LucideIcon } from "lucide-react"
+import { Terminal, type LucideIcon } from "lucide-react"
 import type { ToolKind } from "@yaade/rpc"
 import { KeyBindingKbd } from "@yaade/ui/session"
 import {
@@ -24,13 +24,6 @@ const TOOL_TILES: readonly ToolTile[] = [
     hint: "Host shell",
     command: "tool.newTerminal",
     Icon: Terminal,
-  },
-  {
-    kind: "git",
-    label: "Git",
-    hint: "History and diff",
-    command: "tool.newGit",
-    Icon: GitBranch,
   },
 ]
 

@@ -39,7 +39,6 @@ export const TOOL_SESSION_PREFIX = SHELL_PREFIX;
 
 export type ToolSessionCommand =
   | "tool.newTerminal"
-  | "tool.newGit"
   | "tool.next"
   | "tool.previous"
   | "tab.next"
@@ -97,96 +96,22 @@ export type ToolSessionContextBinding = {
 export const TOOL_SESSION_PREFIX_GROUPS: readonly {
   readonly id: ToolSessionPrefixGroupId;
   readonly label: string;
-}[] = [
-  { id: "open", label: "Open" },
-  { id: "move", label: "Move" },
-  { id: "session", label: "Session" },
-];
+}[] = [];
 
-export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] =
-  [
-    {
-      key: "t",
-      command: "tool.newTerminal",
-      desc: "New Terminal",
-      group: "open",
-    },
-    { key: "g", command: "tool.newGit", desc: "New Git", group: "open" },
-    { key: "j", command: "tool.next", desc: "Next tool", group: "move" },
-    {
-      key: "k",
-      command: "tool.previous",
-      desc: "Previous tool",
-      group: "move",
-    },
-    { key: "l", command: "tab.next", desc: "Next tab", group: "move" },
-    { key: "h", command: "tab.previous", desc: "Previous tab", group: "move" },
-    { key: "z", command: "pane.zoom", desc: "Zoom pane", group: "move" },
-    { key: "u", command: "tool.switch", desc: "Switch tool", group: "move" },
-    {
-      key: "b",
-      command: "sidebar.toggle",
-      desc: "Toggle sidebar",
-      group: "move",
-    },
-    {
-      key: "w",
-      command: "session.switch",
-      desc: "Switch session",
-      group: "move",
-    },
-    { key: "1", command: "tool.jump", desc: "Jump tool 1–9", group: "move" },
-    { key: "c", command: "session.new", desc: "New session", group: "session" },
-    { key: "n", command: "tab.new", desc: "New tab", group: "session" },
-    {
-      key: "Shift-N",
-      command: "tab.close",
-      desc: "Close tab",
-      group: "session",
-    },
-    { key: "x", command: "tool.close", desc: "Close tool", group: "session" },
-    {
-      key: "Shift-X",
-      command: "session.close",
-      desc: "Close session",
-      group: "session",
-    },
-    { key: ",", command: "settings.show", desc: "Settings", group: "session" },
-  ];
+export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] = [];
 
 /**
  * Direct layout chords are deliberately supported even though browsers label
- * them as risky: Chromium/Electron delivers these keydowns and the app has
+ * them as risky: Chromium delivers these keydowns and the app has
  * visible context-menu fallbacks. Structural commands never repeat on hold.
  */
-export const TOOL_SESSION_DIRECT_BINDINGS: readonly ToolSessionDirectBinding[] =
-  [
-    { key: "Mod-,", command: "settings.show", desc: "Settings" },
-    {
-      key: "Mod-d",
-      command: "pane.splitRight",
-      desc: "Split right",
-      repeatable: false,
-      riskyReason:
-        "Direct pane layout is a high-frequency desktop action; the context menu remains available if a browser claims the chord.",
-    },
-    {
-      key: "Mod-Shift-d",
-      command: "pane.splitDown",
-      desc: "Split down",
-      repeatable: false,
-      riskyReason:
-        "Direct pane layout is a high-frequency desktop action; the context menu remains available if a browser claims the chord.",
-    },
-  ];
+export const TOOL_SESSION_DIRECT_BINDINGS: readonly ToolSessionDirectBinding[] = [];
 
 export const TOOL_SESSION_CONTEXT_BINDINGS: readonly ToolSessionContextBinding[] =
   [];
 
 /** Commands allowed both as prefix (HUD) and as a direct chord. */
-export const TOOL_SESSION_DUAL_PATH_COMMANDS: readonly ToolSessionCommand[] = [
-  "settings.show",
-];
+export const TOOL_SESSION_DUAL_PATH_COMMANDS: readonly ToolSessionCommand[] = [];
 
 const PREFIX_BINDING_BY_KEY = new Map(
   TOOL_SESSION_PREFIX_BINDINGS.map((binding) => [binding.key, binding]),
@@ -317,83 +242,11 @@ function commandResult(
  * second command after the timeout.
  */
 export function resolveToolSessionKeydown(
-  event: ToolSessionKeyEvent,
-  state: ToolSessionKeymapState,
-  context: ToolSessionKeydownContext,
-  now = Date.now(),
+  _event: ToolSessionKeyEvent,
+  _state: ToolSessionKeymapState,
+  _context: ToolSessionKeydownContext,
+  _now = Date.now(),
 ): ToolSessionKeydownResult | null {
-  if (event.isComposing || isModifierOnlyKey(event.key)) return null;
-  if (!chordIsActive(state, now)) clearChord(state);
-  if (context.overlayOpen) {
-    if (state.prefix != null) {
-      clearChord(state);
-      return { type: "prefix-cancelled" };
-    }
-    return null;
-  }
-
-  const prefixActive = chordIsActive(state, now) && state.prefix != null;
-  if (context.inEditable && !context.inTerminal) {
-    if (prefixActive) {
-      clearChord(state);
-      return { type: "prefix-cancelled" };
-    }
-    return null;
-  }
-
-  if (prefixActive && state.prefix) {
-    const prefix = state.prefix;
-    if (
-      event.key === "Tab" ||
-      (context.inPrefixButton && (event.key === "Enter" || event.key === " "))
-    ) {
-      return null;
-    }
-    if (event.key === "Escape") {
-      clearChord(state);
-      return { type: "prefix-cancelled" };
-    }
-    // Holding Mod-k must not be interpreted as the terminal literal prefix.
-    if (event.repeat && keyEventMatchesBinding(event, prefix)) {
-      return { type: "consume" };
-    }
-    if (context.inTerminal && keyEventMatchesBinding(event, prefix)) {
-      clearChord(state);
-      const byte = prefixLiteralByte(prefix);
-      return byte ? { type: "prefix-literal", byte } : { type: "consume" };
-    }
-
-    const key = serializeToolSessionPrefixKey(event);
-    if (isToolSessionJumpKey(key)) {
-      clearChord(state);
-      return {
-        type: "command",
-        command: "tool.jump",
-        jumpIndex: Number(key) - 1,
-      };
-    }
-    const binding = matchToolSessionPrefixBinding(key);
-    clearChord(state);
-    return binding ? commandResult(binding, event) : { type: "consume" };
-  }
-
-  const direct = matchToolSessionDirectBinding(event);
-  if (direct) return commandResult(direct, event);
-
-  const contextBinding = matchToolSessionContextBinding(
-    event,
-    context.contextKind,
-  );
-  if (contextBinding) return commandResult(contextBinding, event);
-
-  if (event.repeat && keyEventMatchesBinding(event, TOOL_SESSION_PREFIX)) {
-    return { type: "consume" };
-  }
-  if (keyEventMatchesBinding(event, TOOL_SESSION_PREFIX)) {
-    startChord(state, TOOL_SESSION_PREFIX, now);
-    return { type: "prefix-started", prefix: TOOL_SESSION_PREFIX };
-  }
-
   return null;
 }
 

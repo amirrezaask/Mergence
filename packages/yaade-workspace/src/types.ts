@@ -91,7 +91,7 @@ export interface FileSystemProvider {
   exists?(uri: string): Promise<boolean>;
 }
 
-export type JetElectronFS = FileSystemProvider & {
+export type HostFileSystem = FileSystemProvider & {
   readTextFile(uri: string): Promise<TextFileReadResult>;
   writeTextFile(
     uri: string,
@@ -135,7 +135,7 @@ export type ToolCheckoutTarget = {
   branch: string | null;
 };
 
-export type JetElectronTools = {
+export type HostTools = {
   listSessions(includeArchived?: boolean): Promise<ToolSessionSnapshot[]>;
   reorderSessions(command: ReorderSessions): Promise<AppSession[]>;
   createTab(command: CreateSessionTab): Promise<SessionTab>;
@@ -168,13 +168,13 @@ export type JetElectronTools = {
   listProjects(): Promise<ProjectTarget[]>;
 };
 
-export type JetElectronTasks = {
+export type HostTasks = {
   spawn(
     req: JetTaskSpawnRequest,
   ): Promise<{ exitCode: number; output: string }>;
 };
 
-export type JetElectronTerminal = {
+export type HostTerminal = {
   create(
     cwdUri: string,
     launch?: {
@@ -351,7 +351,7 @@ export type LaunchConfig = {
   source?: "default" | "explicit" | "external";
 };
 
-export type JetElectronGit = {
+export type HostGit = {
   isRepo(rootUri: string): Promise<boolean>;
   status(rootUri: string): Promise<GitStatusEntry[]>;
   diff(
@@ -419,12 +419,12 @@ export type OpenInAppId =
   | "xcode"
   | "intellij";
 
-export type JetElectronShell = {
+export type HostShell = {
   openInApp(appId: OpenInAppId, rootUri: string): Promise<{ ok: boolean }>;
   revealInFolder(rootUri: string): Promise<{ ok: boolean }>;
 };
 
-export type JetElectronNotifications = {
+export type HostNotifications = {
   list(
     req?: import("@yaade/shared").ListNotificationsRequest,
   ): Promise<import("@yaade/shared").ListNotificationsResponse>;
@@ -466,7 +466,7 @@ export type JetElectronNotifications = {
   ): () => void;
 };
 
-export type JetElectronAgents = {
+export type HostAgents = {
   listProviders(refresh?: boolean): Promise<
     Array<{
       provider: CliProvider;
@@ -604,14 +604,14 @@ export type AgentRunInfo = {
 
 /** Explicit domain ports consumed by the current Terminal + Git application. */
 export type YaadeHostPorts = {
-  fs: JetElectronFS;
-  terminal: JetElectronTerminal;
-  tasks: JetElectronTasks;
-  git: JetElectronGit;
-  shell: JetElectronShell;
-  notifications: JetElectronNotifications;
-  agents: JetElectronAgents;
-  tools: JetElectronTools;
+  fs: HostFileSystem;
+  terminal: HostTerminal;
+  tasks: HostTasks;
+  git: HostGit;
+  shell: HostShell;
+  notifications: HostNotifications;
+  agents: HostAgents;
+  tools: HostTools;
 };
 
 /**

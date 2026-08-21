@@ -71,7 +71,7 @@ const SYSTEM_BIN_DIRS = [
 ] as const
 
 /**
- * Enrich PATH for GUI-spawned host processes (Electron / DMG) so PTY shells and
+ * Enrich PATH for GUI-spawned host processes so PTY shells and
  * agent CLIs resolve the same binaries as a login terminal.
  *
  * Fully stripped macOS GUI PATHs get a full login-shell rebuild. Partially

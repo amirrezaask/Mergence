@@ -2,14 +2,11 @@
 
 ## Product
 
-YAADE is a browser multiplexer for **Terminal and Git**. The TypeScript host owns PTYs, persistence, filesystem access, and Git operations. The browser renders Sessions → Windows → tiled ToolUses.
+YAADE is a browser terminal multiplexer. The TypeScript host owns PTYs and persistence. The browser renders Sessions → Windows → tiled Terminal ToolUses.
 
-Supported ToolKinds are exactly:
+The only supported ToolKind is `terminal` — host PTY, replay, flow control, and mobile controls.
 
-- `terminal` — host PTY, replay, flow control, mobile controls
-- `git` — repository history and diff UI
-
-Do not add standalone Agent, Search, Editor, or Neovim ToolUses. Agent CLIs run inside Terminal.
+Git is isolated in `packages/yaade-git` for a future separate product and must not be exposed by YAADE. Do not add standalone Agent, Git, Search, Editor, or Neovim ToolUses. Agent CLIs run inside Terminal.
 
 ## Layout
 
@@ -19,11 +16,11 @@ Do not add standalone Agent, Search, Editor, or Neovim ToolUses. Agent CLIs run 
 - `packages/yaade-rpc` — Effect Schema contracts
 - `packages/yaade-host-server` — reusable HTTP/WS host and ToolUse lifecycle
 - `packages/yaade-host-client` — browser transport
-- `packages/yaade-node-host` — filesystem, Git, and PTY implementation
+- `packages/yaade-node-host` — filesystem and PTY implementation
 - `packages/yaade-panels` — dock tree
-- `packages/yaade-ui` — design system, Terminal and Git surfaces
+- `packages/yaade-ui` — design system and Terminal surfaces
 - `packages/yaade-workspace` — shared host API and keyboard helpers (legacy surface should continue shrinking)
-- `packages/yaade-agent-telemetry` — optional telemetry for agent CLIs launched in terminals
+- `packages/yaade-git` — disconnected Git implementation for a future separate product
 
 Keep package imports acyclic. Lower layers must not import React.
 
@@ -34,13 +31,10 @@ vp install
 vp run typecheck
 vp run test:server
 vp run test:web
-vp run test:desktop
 vp run lint
 vp run build:server
 vp run build:web
-vp run build:desktop
 vp run test:web:e2e
-vp run test:runtime:e2e
 vp run test:platform:e2e
 vp run test:e2e:critical
 ```
@@ -52,18 +46,16 @@ The web dev server runs through Vite+; start the Bun-backed host with
 
 ## Application isolation
 
-The repository has exactly three executable applications:
+The repository has exactly two executable applications:
 
 - `apps/server` owns only the server process entrypoint.
 - `apps/web` owns only Vite configuration and web packaging.
-- `apps/desktop` owns only Electron lifecycle and packaging.
 
 Reusable implementation belongs in `packages/`. Applications may depend on
-packages, but they must not import another application's source. The three
-root build and development commands are intentionally independent:
-`build:server`, `build:web`, `build:desktop` and `dev:server`, `dev:web`,
-`dev:desktop`. Web development does not start a host process; start
-`dev:server` separately when the web proxy needs one.
+packages, but they must not import another application's source. The root
+build and development commands are intentionally independent: `build:server`,
+`build:web`, `dev:server`, and `dev:web`. Web development does not start a host
+process; start `dev:server` separately when the web proxy needs one.
 
 ## Architecture invariants
 
@@ -76,18 +68,7 @@ root build and development commands are intentionally independent:
 - Host work must stay behind typed RPC boundaries.
 - Paths are validated against `allowedRoots` on the host.
 - Default bind is loopback and may stay open without a token. Binding off loopback requires `--token` / `YAADE_HOST_TOKEN`.
-- PTYs live in a detached supervisor by default so API restarts do not kill long-running agents. Desktop passes `--kill-ptys-on-exit`. Disable the supervisor with `JET_PTY_SUPERVISOR=0`.
-
-## Keyboard
-
-The canonical catalog is `packages/yaade-app/src/keybindings.ts`.
-
-- Prefix is `Mod-k`.
-- Tool creation keys: `t` Terminal, `g` Git.
-- Never bind browser-reserved chords.
-- A match must call both `preventDefault()` and `stopPropagation()`.
-- Never bind bare Escape globally.
-- Pressing the prefix twice in Terminal sends literal `^K`.
+- The host process owns PTYs directly. Browser disconnects do not kill PTYs, but host restart/shutdown kills all PTYs and resets Session/Window/ToolUse state. There is no detached supervisor or restart durability; users are responsible for keeping the host alive during long-running agents.
 
 ## UI rules
 
@@ -101,6 +82,7 @@ Read `packages/yaade-ui/AGENTS.md` before changing visible UI.
 ## Coding rules
 
 - Keep diffs minimal and follow existing ESM `.js` imports.
+- Backward compatibility for persisted Session state is not required yet. Prefer a database/state reset over migration or compatibility machinery when a breaking change keeps the implementation simpler.
 - No `any`, unsafe casts, or broad unvalidated external values.
 - Use Effect typed errors/services/layers where the surrounding host code does.
 - Package exports point to source, never stale `dist` output.
@@ -112,6 +94,5 @@ For UI work, assert scoped DOM state and resulting behavior. For list UIs, verif
 
 Core E2E suites:
 
-- `tests/electron/tool-sessions.electron.spec.ts`
-- `tests/electron/terminal-compatibility.electron.spec.ts`
-- `tests/electron/git-tool.electron.spec.ts`
+- `tests/web/e2e/tool-sessions.web.spec.ts`
+- `tests/web/e2e/terminal-compatibility.web.spec.ts`

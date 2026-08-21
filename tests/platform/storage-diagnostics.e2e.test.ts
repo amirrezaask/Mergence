@@ -39,7 +39,7 @@ async function withHarness(
 }
 
 test.describe("O — storage, diagnostics, and compatibility", { tag: "@p2" }, () => {
-  test("O03 database migration preserves sessions", async ({}, testInfo) => {
+  test("O03 host startup discards incompatible session state", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const dbPath = path.join(harness.dataDir, "jet.sqlite3")
       const db = new DatabaseSync(dbPath)
@@ -71,9 +71,9 @@ test.describe("O — storage, diagnostics, and compatibility", { tag: "@p2" }, (
       db.close()
       await harness.startApi()
       const sessions = await listSessions(harness.origin)
-      expect(
-        sessions.some(row => row.session.id === "ses-legacy-keep" || row.session.title === "Legacy session"),
-      ).toBe(true)
+      expect(sessions).toHaveLength(1)
+      expect(sessions[0]?.session.id).not.toBe("ses-legacy-keep")
+      expect(sessions[0]?.session.title).toBe("Session 1")
     })
   })
 
@@ -98,7 +98,6 @@ test.describe("O — storage, diagnostics, and compatibility", { tag: "@p2" }, (
   test("O05 database-busy degrades without corrupting live terminals", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const api = await harness.startApi()
-      await harness.startSupervisor()
       const launched = await harness.launchMockAgent({ mode: "idle" })
       const locker = new DatabaseSync(path.join(harness.dataDir, "jet.sqlite3"), { timeout: 50 })
       locker.exec("BEGIN EXCLUSIVE")

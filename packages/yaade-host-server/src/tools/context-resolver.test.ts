@@ -19,8 +19,6 @@ function config(root: string) {
     launchConfig: { workspacePath: root, source: "default" as const },
     staticDir: null,
     authToken: null,
-    ptySupervisor: false,
-    killPtysOnShutdown: true,
     features: { terminalCheckpoints: true, nativeAgentResume: true },
   }
 }

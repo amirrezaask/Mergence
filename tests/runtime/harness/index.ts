@@ -34,15 +34,6 @@ export {
   writeTerminal,
   writeTerminalResult,
 } from "./rpc.js"
-export {
-  dropSupervisorClients,
-  forceSupervisorCheckpoint,
-  injectSupervisorCheckpoint,
-  listSupervisorPtys,
-  pingSupervisor,
-  readSupervisorHandle,
-  startIncompatibleSupervisor,
-} from "./supervisor.js"
 export { assertProcessAlive, assertProcessDead, countMatchingProcesses, processRssBytes, waitForProcessIdentity } from "./process.js"
 export { reconstructAttachScreen } from "./reconstruct.js"
 export { waitUntil } from "./wait.js"

@@ -179,7 +179,7 @@ test("two websocket clients receive the same live PTY and survive one disconnect
   } finally {
     clientA?.terminate()
     clientB?.terminate()
-    await started?.close({ killPtys: true })
+    await started?.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

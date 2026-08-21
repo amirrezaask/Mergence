@@ -1124,9 +1124,7 @@ export class ProjectDatabase {
     const machine = normalized.machine.trim()
     if (!machine) throw new Error("invalid workspace session machine")
 
-    // Keep ptyId so a same-host reload can reattach. After an API restart the
-    // detached PTY supervisor still owns the process; attach succeeds while
-    // that supervisor is alive. Only supervisor death requires a new shell.
+    // Keep ptyId so a browser reload can reattach while this host process lives.
     const sessions = normalized.sessions.map(leaf => ({
       ...leaf,
       cwdRootUri: this.canonicalizeCwdUri(leaf.cwdRootUri),

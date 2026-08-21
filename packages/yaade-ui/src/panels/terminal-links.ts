@@ -85,7 +85,7 @@ export function openTerminalUrl(uri: string): void {
   try {
     win.opener = null
   } catch {
-    // Electron can throw when clearing opener.
+    // Browsers can throw when clearing opener.
   }
   win.location.href = href
 }

@@ -39,21 +39,6 @@ describe("loadConfig launch workspace", () => {
     )
   })
 
-    it("honors an explicit kill-ptys-on-exit disable under tests", async () => {
-      const config = await loadConfig([
-        "--host",
-        "127.0.0.1",
-        "--port",
-        "0",
-        "--pty-supervisor",
-        "1",
-        "--kill-ptys-on-exit",
-        "0",
-      ])
-      assert.equal(config.ptySupervisor, true)
-      assert.equal(config.killPtysOnShutdown, false)
-    })
-
   it("falls back to home when process cwd is outside allowed roots", async () => {
     const outside = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-host-cwd-"))
     const prev = process.cwd()

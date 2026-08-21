@@ -50,7 +50,6 @@ import {
   PanelRightClose,
   PanelRightOpen,
   FolderPlus,
-  Power,
   Settings,
 } from "lucide-react";
 import {
@@ -157,11 +156,6 @@ const TerminalToolRenderer = lazy(() =>
     default: ProcessToolView,
   })),
 );
-const GitToolRenderer = lazy(() =>
-  import("./renderers/GitToolView.js").then(({ GitToolView }) => ({
-    default: GitToolView,
-  })),
-);
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
 const EMPTY_TOOL_USE_IDS: readonly ToolUseId[] = [];
 
@@ -235,7 +229,6 @@ function processNameForWindowTab(
   use: ToolUse,
   runtimeTitle?: RuntimeToolTitle,
 ): string {
-  if (use.kind === "git") return "git";
   const raw = runtimeTitle?.title?.trim() ?? "";
   const token = raw.split(/[\s/\\·]+/).find(part => part.length > 0);
   return token ?? "terminal";
@@ -351,9 +344,6 @@ export function ToolSessionApp() {
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [toolUseSwitcherOpen, setToolUseSwitcherOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [stopDaemonPrompt, setStopDaemonPrompt] = useState<{
-    runningTerminals: number;
-  } | null>(null);
   const [paneChromeOverlayOpen, setPaneChromeOverlayOpen] = useState(false);
   const [agentSidebarWidth, setAgentSidebarWidth] = useState(
     AGENT_SIDEBAR_DEFAULT_WIDTH,
@@ -379,7 +369,6 @@ export function ToolSessionApp() {
   const focusedToolUseRef = useRef<ToolUse | undefined>(undefined);
   const overlayWasOpenRef = useRef(false);
   const isMobile = useIsMobile();
-  const desktopPlatform = window.yaadeDesktop?.platform;
   toolUsesRef.current = snapshot.usesById;
 
   useEffect(() => {
@@ -515,24 +504,6 @@ export function ToolSessionApp() {
       return undefined;
     }
   }, [hostPorts.tools, serverConnections.snapshot.activeServerId]);
-
-  const requestStopDaemon = useCallback(async () => {
-    const inspect = window.yaadeDesktop?.inspectDaemon;
-    if (!inspect) return;
-    const status = await inspect();
-    setStopDaemonPrompt({ runningTerminals: status.runningTerminals });
-  }, []);
-
-  const confirmStopDaemon = useCallback(async () => {
-    const stop = window.yaadeDesktop?.stopDaemon;
-    setStopDaemonPrompt(null);
-    if (!stop) return;
-    try {
-      await stop();
-    } catch (error) {
-      setActionError(errorMessage(error));
-    }
-  }, []);
 
   const observeTerminalCwd = useCallback(
     (useId: ToolUseId, cwdPath: string) => {
@@ -1031,10 +1002,7 @@ export function ToolSessionApp() {
           setActionError("No project available.");
           return undefined;
         }
-        const input: ToolUseInput =
-          nextKind === "git"
-            ? { _tag: "GitToolInput", kind: "git" }
-            : { _tag: "TerminalToolInput", kind: "terminal" };
+        const input: ToolUseInput = { _tag: "TerminalToolInput", kind: "terminal" };
         const targetUseIds =
           liveSnapshot.useIdsByTab.get(liveTab.id) ?? EMPTY_TOOL_USE_IDS;
         const currentWorkspace =
@@ -1515,9 +1483,6 @@ export function ToolSessionApp() {
         }
         case "tool.newTerminal":
           void createTool("terminal");
-          return;
-        case "tool.newGit":
-          void createTool("git");
           return;
         case "session.switch":
           setSwitcherOpen(true);
@@ -2173,8 +2138,6 @@ export function ToolSessionApp() {
                 className="flex h-[var(--yaade-tab-bar-height)] shrink-0 items-center gap-2 px-3"
                 data-yaade-session-tabs=""
                 data-yaade-top-tabbar=""
-                data-yaade-electron-titlebar={desktopPlatform ? "" : undefined}
-                data-yaade-electron-platform={desktopPlatform}
               >
                 {hasRunningAgents ? (
                   <ShortcutTooltip
@@ -2245,20 +2208,6 @@ export function ToolSessionApp() {
                     <Settings />
                   </Button>
                 </ShortcutTooltip>
-                {window.yaadeDesktop ? (
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Stop daemon"
-                    onClick={() => void requestStopDaemon()}
-                    data-yaade-stop-daemon=""
-                    className="h-[var(--yaade-tab-pill-height)] shrink-0 gap-1.5 px-2 text-xs"
-                  >
-                    Stop daemon
-                    <Power />
-                  </Button>
-                ) : null}
               </header>
             ) : null}
             <div
@@ -2563,45 +2512,6 @@ export function ToolSessionApp() {
               : undefined
           }
         />
-        {stopDaemonPrompt ? (
-          <Dialog
-            open
-            onOpenChange={open => {
-              if (!open) setStopDaemonPrompt(null);
-            }}
-          >
-            <DialogContent data-yaade-stop-daemon-confirm="">
-              <DialogHeader>
-                <DialogTitle>Stop daemon?</DialogTitle>
-                <DialogDescription>
-                  This will terminate {stopDaemonPrompt.runningTerminals} running
-                  {stopDaemonPrompt.runningTerminals === 1
-                    ? " terminal"
-                    : " terminals"}
-                  .
-                </DialogDescription>
-              </DialogHeader>
-              <DialogFooter>
-                <Button
-                  type="button"
-                  variant="outline"
-                  data-yaade-confirm="cancel"
-                  onClick={() => setStopDaemonPrompt(null)}
-                >
-                  Cancel
-                </Button>
-                <Button
-                  type="button"
-                  variant="destructive"
-                  data-yaade-confirm="accept"
-                  onClick={() => void confirmStopDaemon()}
-                >
-                  Stop daemon
-                </Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        ) : null}
         <ProjectDiscoveryPrompt
           path={projectCandidate?.path ?? null}
           pending={addingProjectPath === projectCandidate?.path}
@@ -2751,11 +2661,7 @@ function SelectedToolUse(props: {
         </div>
       }
     >
-      {use.kind === "git" ? (
-        <GitToolRenderer {...rendererProps} />
-      ) : (
-        <TerminalToolRenderer {...rendererProps} />
-      )}
+      <TerminalToolRenderer {...rendererProps} />
     </Suspense>
   );
 }

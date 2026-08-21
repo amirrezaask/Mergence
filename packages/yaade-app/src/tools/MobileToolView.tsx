@@ -15,7 +15,6 @@ import {
   ArrowUp,
   ChevronRight,
   Clipboard,
-  GitBranch,
   Plus,
   Settings2,
   Terminal as TerminalIcon,
@@ -63,12 +62,12 @@ import {
 } from "./tool-title.js"
 
 const MAX_RETAINED_MOBILE_TERMINALS = 6
-const MOBILE_TOOL_KINDS = ["terminal", "git"] as const
+const MOBILE_TOOL_KINDS = ["terminal"] as const
 
 type MobileToolKind = (typeof MOBILE_TOOL_KINDS)[number]
 
 function isMobileToolKind(kind: ToolKind): kind is MobileToolKind {
-  return kind === "terminal" || kind === "git"
+  return kind === "terminal"
 }
 
 function statusClass(use: ToolUse): string {
@@ -129,7 +128,6 @@ function statusLabel(use: ToolUse): string {
 }
 
 const TOOL_KIND_META = {
-  git: { label: "Git", Icon: GitBranch },
   terminal: { label: "Terminal", Icon: TerminalIcon },
 } satisfies Record<
   MobileToolKind,
@@ -292,9 +290,7 @@ export function MobileToolView(props: MobileToolViewProps) {
               setSelectedToolUseId(null)
             }}
           >
-            {selectedUse.kind === "git"
-              ? props.renderTool(selectedUse, true, true)
-              : null}
+            {props.renderTool(selectedUse, true, true)}
           </MobileToolDetail>
         )}
       </AnimatePresence>

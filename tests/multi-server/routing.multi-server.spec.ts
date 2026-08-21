@@ -18,7 +18,6 @@ import {
   readHealth,
   readSystem,
   rpcErrorCode,
-  startIncompatibleSupervisor,
   waitForMockAgent,
   writeTerminal,
 } from "../runtime/harness/index.js"
@@ -84,7 +83,6 @@ test.describe("M — multi-server routing and convergence", { tag: "@p1" }, () =
   test("M01 identical local resource IDs on two servers never collide", async ({}, testInfo) => {
     await withPair(testInfo, async (a, b) => {
       const apiA = await a.startApi()
-      await a.startSupervisor()
       const session = await createSession(apiA.origin, "shared")
       await a.killApi("SIGTERM")
       cloneHostDatabase(a.dataDir, b.dataDir, "server-b-fixture")
@@ -107,8 +105,6 @@ test.describe("M — multi-server routing and convergence", { tag: "@p1" }, () =
     await withPair(testInfo, async (a, b) => {
       const apiA = await a.startApi()
       const apiB = await b.startApi()
-      await a.startSupervisor()
-      await b.startSupervisor()
       const projectA = (await listProjects(apiA.origin))[0]
       const projectB = (await listProjects(apiB.origin))[0]
       const launchedA = await launchIdle(apiA.origin, projectA!.id, a.workspace, path.join(a.root, "m02-a.json"), "A")
@@ -132,8 +128,6 @@ test.describe("M — multi-server routing and convergence", { tag: "@p1" }, () =
     await withPair(testInfo, async (a, b) => {
       const apiA = await a.startApi()
       const apiB = await b.startApi()
-      await a.startSupervisor()
-      await b.startSupervisor()
       const projectA = (await listProjects(apiA.origin))[0]
       const projectB = (await listProjects(apiB.origin))[0]
       const launchedA = await launchIdle(apiA.origin, projectA!.id, a.workspace, path.join(a.root, "m03-a.json"), "A")
@@ -157,8 +151,6 @@ test.describe("M — multi-server routing and convergence", { tag: "@p1" }, () =
     await withPair(testInfo, async (a, b) => {
       const apiA = await a.startApi()
       const apiB = await b.startApi()
-      await a.startSupervisor()
-      await b.startSupervisor()
       const projectA = (await listProjects(apiA.origin))[0]
       const launchedA = await launchIdle(apiA.origin, projectA!.id, a.workspace, path.join(a.root, "m04-a.json"), "A")
       await b.killApi("SIGKILL")
@@ -237,8 +229,6 @@ test.describe("M — multi-server routing and convergence", { tag: "@p1" }, () =
     await withPair(testInfo, async (a, b) => {
       const apiA = await a.startApi()
       const apiB = await b.startApi()
-      await a.startSupervisor()
-      await b.startSupervisor()
       await createSession(apiA.origin, "Keep A")
       await createSession(apiB.origin, "Drop B")
       const browser = await a.startBrowser()
@@ -261,54 +251,11 @@ test.describe("M — multi-server routing and convergence", { tag: "@p1" }, () =
     })
   })
 
-  test("M08 incompatible server and capability differences are isolated", async ({}, testInfo) => {
-    const a = await createDurableRuntimeHarness()
-    const b = await createDurableRuntimeHarness()
-    const c = await createDurableRuntimeHarness({
-      env: {
-        JET_TERMINAL_CHECKPOINTS: "0",
-        JET_NATIVE_AGENT_RESUME: "0",
-      },
-    })
-    try {
-      const fixture = await startIncompatibleSupervisor(b.dataDir)
-      try {
-        const apiA = await a.startApi()
-        const apiB = await b.startApi()
-        const apiC = await c.startApi()
-        await a.startSupervisor()
-        await c.startSupervisor()
-        const sysA = await readSystem(apiA.origin)
-        const healthB = await readHealth(apiB.origin)
-        const sysC = await readSystem(apiC.origin)
-        expect(sysA.capabilities.features.terminalCheckpoints).toBe(true)
-        expect(sysA.capabilities.features.nativeAgentResume).toBe(true)
-        expect(healthB.health.supervisor.status).toBe("unhealthy")
-        expect(healthB.health.supervisor.message).toMatch(/incompatible/i)
-        expect(sysC.capabilities.features.terminalCheckpoints).toBe(false)
-        expect(sysC.capabilities.features.nativeAgentResume).toBe(false)
-        expect(sysA.identity.serverId).not.toBe(sysC.identity.serverId)
-      } finally {
-        await fixture.close()
-      }
-    } catch (error) {
-      await a.retainDiagnostics(path.join(testInfo.outputDir, "server-a")).catch(() => undefined)
-      await b.retainDiagnostics(path.join(testInfo.outputDir, "server-b")).catch(() => undefined)
-      await c.retainDiagnostics(path.join(testInfo.outputDir, "server-c")).catch(() => undefined)
-      throw error
-    } finally {
-      await a.close()
-      await b.close()
-      await c.close()
-    }
-  })
 
   test("M10 remote agent-sidebar selection and deep links open the owning server resource", async ({}, testInfo) => {
     await withPair(testInfo, async (a, b) => {
       const apiA = await a.startApi()
       const apiB = await b.startApi()
-      await a.startSupervisor()
-      await b.startSupervisor()
       const projectA = (await listProjects(apiA.origin))[0]
       const projectB = (await listProjects(apiB.origin))[0]
       const sessionA = await createSession(apiA.origin, "Host A")

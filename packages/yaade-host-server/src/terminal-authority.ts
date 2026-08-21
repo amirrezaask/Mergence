@@ -9,13 +9,10 @@ import type { RuntimeTerminal } from "./host-runtime.js"
 import type { RequestPrincipal } from "./principal.js"
 
 export function usesAuthoritativeLeases(
-  terminal: RuntimeTerminal,
-  id: string,
+  _terminal: RuntimeTerminal,
+  _id: string,
 ): boolean {
-  if ("authoritativeLeasesFor" in terminal) {
-    return terminal.authoritativeLeasesFor(id)
-  }
-  return typeof terminal.writeFenced === "function"
+  return true
 }
 
 export function projectRuntimeLease(

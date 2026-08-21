@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { GitBranch, Terminal as TerminalIcon } from "lucide-react";
+import { Terminal as TerminalIcon } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
 import type {
   CheckoutTarget,
@@ -70,12 +70,6 @@ const paneToolKinds: readonly PaneTool[] = [
     label: "Terminal",
     icon: TerminalIcon,
     command: "tool.newTerminal",
-  },
-  {
-    kind: "git",
-    label: "Git",
-    icon: GitBranch,
-    command: "tool.newGit",
   },
 ];
 

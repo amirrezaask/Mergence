@@ -11,7 +11,6 @@ import {
   rpcErrorCode,
 } from "../runtime/harness/index.js"
 import { waitUntil } from "../runtime/harness/wait.js"
-import { desktopDisplayAvailable, launchDesktop, closeDesktop } from "../desktop/_launch.js"
 
 const HOST_TOKEN = "yaade-security-e2e-token"
 
@@ -231,45 +230,6 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
     })
   })
 
-  test("S02 Electron pairs as a separate device", async ({}, testInfo) => {
-    test.skip(!desktopDisplayAvailable(), "Electron secure-storage pairing needs a display")
-    await withHarness(testInfo, async harness => {
-      const browserDevice = await pairNamedDevice(harness.origin, "Browser")
-      const electronDevice = await pairNamedDevice(harness.origin, "Electron")
-      expect(electronDevice.deviceId).not.toBe(browserDevice.deviceId)
-      const desktop = await launchDesktop()
-      try {
-        await desktop.window.evaluate(
-          async payload => {
-            await window.yaadeDesktop?.saveServerDefinitions([
-              {
-                id: "srv-remote",
-                name: "Paired remote",
-                url: payload.url,
-                token: payload.token,
-              },
-            ])
-          },
-          { url: harness.origin, token: electronDevice.token },
-        )
-        const stored = path.join(desktop.userDataDir, "server-definitions.bin")
-        await waitUntil(() => fs.existsSync(stored), 10_000, "encrypted server definitions")
-        const encoded = fs.readFileSync(stored, "utf8")
-        expect(encoded).not.toContain(electronDevice.token)
-        expect(encoded).not.toContain(HOST_TOKEN)
-        const loaded = await desktop.window.evaluate(async () => {
-          return window.yaadeDesktop?.loadServerDefinitions() ?? []
-        })
-        const remote = (loaded as Array<{ id: string; token?: string }>).find(
-          server => server.id === "srv-remote",
-        )
-        expect(remote?.token).toBe(electronDevice.token)
-      } finally {
-        await closeDesktop(desktop)
-      }
-    })
-  })
-
   test("S03 revoking a device mid-session closes its live connection", async ({ page }, testInfo) => {
     await withHarness(testInfo, async harness => {
       const device = await pairNamedDevice(harness.origin, "Browser")
@@ -310,25 +270,25 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
   test("S04 revoking one device leaves other devices connected", async ({}, testInfo) => {
     await withHarness(testInfo, async harness => {
       const browser = await pairNamedDevice(harness.origin, "Browser")
-      const electron = await pairNamedDevice(harness.origin, "Electron")
+      const secondBrowser = await pairNamedDevice(harness.origin, "Second browser")
       const browserSocket = await connectAuthedSocket(harness.origin, browser.token)
-      const electronSocket = await connectAuthedSocket(harness.origin, electron.token)
+      const secondBrowserSocket = await connectAuthedSocket(harness.origin, secondBrowser.token)
       const browserClosed = closeCode(browserSocket).then(result => result.code)
       await jsonRequest(harness.origin, `/api/v1/security/devices/${browser.deviceId}`, {
         method: "DELETE",
         token: HOST_TOKEN,
       })
       expect(await browserClosed).toBe(4003)
-      expect(electronSocket.readyState).toBe(WebSocket.OPEN)
+      expect(secondBrowserSocket.readyState).toBe(WebSocket.OPEN)
       const stillLive = await hostRpcResult(
         harness.origin,
         "tools:listSessions",
         [false],
-        "s04-electron",
-        electron.token,
+        "s04-second-browser",
+        secondBrowser.token,
       )
       expect(stillLive.ok).toBe(true)
-      electronSocket.close()
+      secondBrowserSocket.close()
     })
   })
 

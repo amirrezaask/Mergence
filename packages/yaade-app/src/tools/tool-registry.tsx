@@ -1,5 +1,5 @@
 import type { ComponentType } from "react";
-import { GitBranch, Terminal } from "lucide-react";
+import { Terminal } from "lucide-react";
 import type {
   CheckoutTarget,
   ProjectTarget,
@@ -46,17 +46,6 @@ const entries: readonly RegistryEntry[] = [
     loadRenderer: async () => {
       const module = await import("./renderers/ProcessToolView.js");
       return { default: module.ProcessToolView as ComponentType<ToolRendererProps> };
-    },
-  },
-  {
-    kind: "git",
-    label: "Git History",
-    icon: GitBranch,
-    mountPolicy: "remountable",
-    describeInput: () => "history",
-    loadRenderer: async () => {
-      const module = await import("./renderers/GitToolView.js");
-      return { default: module.GitToolView as ComponentType<ToolRendererProps> };
     },
   },
 ];

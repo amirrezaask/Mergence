@@ -5,13 +5,13 @@ import type {
   ToolUse,
   ToolUseId,
 } from "@yaade/rpc"
-import type { JetElectronTools, ToolSessionSnapshot } from "@yaade/workspace"
+import type { HostTools, ToolSessionSnapshot } from "@yaade/workspace"
 import {
   ToolSessionStore,
   type ToolRevisionGap,
 } from "./tool-store.js"
 
-type ToolApi = JetElectronTools
+type ToolApi = HostTools
 
 type ToolClientOptions = {
   readonly api?: ToolApi

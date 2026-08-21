@@ -18,7 +18,7 @@ export function toolUseWorkTitle(
   return (
     runtimeTitle?.title ||
     compactToolTitle(use.title) ||
-    (use.kind === "git" ? "Git History" : "Terminal")
+    "Terminal"
   );
 }
 

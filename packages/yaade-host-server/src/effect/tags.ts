@@ -1,8 +1,6 @@
 import { Context, type PubSub } from "effect";
 import type {
-  MultiGenerationTerminalHost,
   PerfHost,
-  SupervisedTerminalHost,
   TerminalHost,
 } from "@yaade/node-host";
 import type { NotificationStreamEvent } from "@yaade/shared";
@@ -41,7 +39,7 @@ export class NotificationEventPubSub extends Context.Tag(
 export { GitServiceTag, type GitService } from "./git.js";
 export class TerminalHostTag extends Context.Tag("yaade/TerminalHost")<
   TerminalHostTag,
-  TerminalHost | SupervisedTerminalHost | MultiGenerationTerminalHost
+  TerminalHost
 >() {}
 
 export class ToolServiceTag extends Context.Tag("yaade/ToolService")<

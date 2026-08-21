@@ -96,7 +96,7 @@ test("paired observe scope cannot mutate RPC or device administration", async ()
     })
     assert.equal(devices.status, 403)
   } finally {
-    await started.close({ killPtys: true })
+    await started.close()
     fs.rmSync(root, { recursive: true, force: true })
   }
 })

@@ -24,7 +24,7 @@ function leaseFailure(error: unknown, codes: readonly string[]): boolean {
 }
 
 test("owner-fenced writes reject stale writers, observers, and duplicate commands", async () => {
-  const harness = await startHostHarness({ ptySupervisor: false })
+  const harness = await startHostHarness()
   try {
     const created = await dispatchPromise(
       harness.server.runtime,
@@ -176,12 +176,12 @@ test("owner-fenced writes reject stale writers, observers, and duplicate command
       (error: unknown) => leaseFailure(error, ["WRITER_LEASE_STALE"]),
     )
   } finally {
-    await harness.close({ killPtys: true })
+    await harness.close()
   }
 })
 
 test("observe-only devices cannot mutate a terminal", async () => {
-  const harness = await startHostHarness({ ptySupervisor: false })
+  const harness = await startHostHarness()
   try {
     const created = await dispatchPromise(
       harness.server.runtime,
@@ -204,6 +204,6 @@ test("observe-only devices cannot mutate a terminal", async () => {
       ),
     )
   } finally {
-    await harness.close({ killPtys: true })
+    await harness.close()
   }
 })

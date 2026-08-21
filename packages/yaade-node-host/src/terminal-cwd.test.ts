@@ -34,12 +34,12 @@ test("cwdOfPid caches within TTL", async () => {
   assert.equal(a, b)
 })
 
-test("cwdOfPid still works when PATH hides lsof (Electron-like)", async () => {
+test("cwdOfPid still works when PATH hides lsof (restricted GUI-like)", async () => {
   clearTerminalCwdCaches()
   if (process.platform !== "darwin") return
   const previous = process.env.PATH
   try {
-    // Mimic GUI/Electron PATH: system bins only, no /usr/sbin → bare `lsof` ENOENT.
+    // Mimic restricted GUI PATH: system bins only, no /usr/sbin → bare `lsof` ENOENT.
     process.env.PATH = "/usr/bin:/bin:/Applications/Yaade.app/Contents/MacOS"
     const cwd = await cwdOfPid(process.pid)
     assert.ok(cwd, "expected absolute lsof lookup to succeed")

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import { Effect, Schema } from "effect";
 import {
   CreateToolUse,
-  GitToolOutput,
   InvalidToolInput,
   ProcessToolOutput,
   SessionArchived,
@@ -33,15 +32,13 @@ import {
   processOutput,
   type ProcessDriverDependencies,
 } from "./process-driver.js";
-import { GitToolDriver } from "./git-driver.js";
 import { ToolRegistry } from "./registry.js";
 
 function eventId(prefix: string, id: string): string {
   return `${prefix}:${id}:${randomUUID()}`;
 }
 
-function pendingOutput(kind: "terminal" | "git"): ToolUseOutput {
-  if (kind === "git") return GitToolOutput.make({ kind: "git" });
+function pendingOutput(_kind: "terminal"): ToolUseOutput {
   return ProcessToolOutput.make({
     kind: "process",
     terminalInstanceId: "pending",
@@ -78,10 +75,7 @@ export class ToolService {
   private readonly operationTails = new Map<ToolUseId, Promise<void>>();
 
   constructor(private readonly deps: ToolServiceDependencies) {
-    this.registry = new ToolRegistry([
-      new ProcessToolDriver(deps.process),
-      new GitToolDriver(),
-    ]);
+    this.registry = new ToolRegistry([new ProcessToolDriver(deps.process)]);
   }
 
   async create(command: CreateToolUse): Promise<ToolUse> {
@@ -654,8 +648,7 @@ export class ToolService {
 
   private assertInputPair(command: CreateToolUse): void {
     const valid =
-      (command.kind === "terminal" && command.input.kind === "terminal") ||
-      (command.kind === "git" && command.input.kind === "git");
+      command.kind === "terminal" && command.input.kind === "terminal";
     if (!valid) {
       throw new InvalidToolInput({
         message: "tool kind does not match input",
@@ -711,5 +704,5 @@ export class ToolService {
 }
 
 function defaultTitle(kind: CreateToolUse["kind"]): string {
-  return kind === "terminal" ? "Terminal" : "Git History";
+  return "Terminal";
 }

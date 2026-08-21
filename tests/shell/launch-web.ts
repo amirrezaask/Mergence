@@ -216,9 +216,6 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
       String(port),
       "--data-dir",
       serverData,
-      "--pty-supervisor",
-      "0",
-      "--kill-ptys-on-exit",
       ...(options.launchWithoutWorkspace ? [] : [workspace]),
     ],
     {

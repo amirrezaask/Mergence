@@ -1,9 +1,7 @@
 import os from "node:os";
 import { randomUUID } from "node:crypto";
 import {
-  MultiGenerationTerminalHost,
   PerfHost,
-  SupervisedTerminalHost,
   type TerminalHost,
 } from "@yaade/node-host";
 import {
@@ -37,12 +35,9 @@ import {
   ToolService,
   type ToolServiceDependencies,
 } from "./tools/service.js";
-import {
-  resumeTerminalInstance,
-  type ProcessDriverDependencies,
-} from "./tools/process-driver.js";
+import type { ProcessDriverDependencies } from "./tools/process-driver.js";
 
-export type RuntimeTerminal = TerminalHost | SupervisedTerminalHost | MultiGenerationTerminalHost;
+export type RuntimeTerminal = TerminalHost;
 
 export type HostRuntime = {
   config: HostConfig;
@@ -341,27 +336,6 @@ export function createRuntime(
   }
   requestHookQueueDrain();
   requestTerminalAgentScan();
-  if (
-    terminal instanceof SupervisedTerminalHost ||
-    terminal instanceof MultiGenerationTerminalHost
-  ) {
-    terminal.onState(state => {
-      events.emit("connection:status", [state]);
-      if (state === "lost") {
-        processInstances.markSupervisorInterrupted("supervisor_epoch_changed");
-        runtime.toolService.reconcile();
-      } else if (state === "reconnecting" || state === "degraded") {
-        processInstances.markSupervisorDisconnected("supervisor_unavailable");
-        runtime.toolService.reconcile();
-      } else if (state === "healthy") {
-        void Promise.resolve(terminal.listRunning()).then(live => {
-          processInstances.markSupervisorRecovered(new Set(live.map(item => item.id)));
-          runtime.toolService.reconcile();
-        });
-      }
-    });
-  }
-
   return runtime;
 }
 
@@ -400,54 +374,9 @@ export function buildRuntimeSnapshot(runtime: HostRuntime): RuntimeSnapshot {
   };
 }
 
-export async function prepareLiveTerminals(runtime: HostRuntime): Promise<void> {
-  let liveIds = new Set<string>();
-  try {
-    const live = await Promise.resolve(runtime.terminal.listRunning());
-    liveIds = new Set(live.map((item) => item.id));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("SUPERVISOR_PROTOCOL_INCOMPATIBLE")) return;
-    throw error;
-  }
-  runtime.terminalInstances.reconcileHostStart(liveIds);
-  runtime.toolService.reconcile();
-
-  const recoverable = runtime.terminalInstances
-    .listAll()
-    .filter(
-      instance =>
-        instance.processState === "interrupted" &&
-        instance.restartPolicy === "resume-on-daemon-start" &&
-        instance.provider &&
-        instance.nativeSessionRef,
-    );
-  await Promise.all(
-    recoverable.map(async instance => {
-      try {
-        await resumeTerminalInstance(
-          runtime.terminalExecution,
-          instance,
-          "daemon-restore",
-        );
-      } catch (error) {
-        const current = runtime.terminalInstances.get(instance.id);
-        const reason = error instanceof Error ? error.message : String(error);
-        runtime.terminalInstances.markRestoreFailed(
-          instance.id,
-          current?.generation ?? instance.generation,
-          reason,
-        );
-        if (current?.processState === "starting") {
-          runtime.terminalInstances.fail(
-            instance.id,
-            current.generation,
-            reason,
-          );
-        }
-      }
-    }),
-  );
+export function discardPersistedSessions(runtime: HostRuntime): void {
+  runtime.toolSessions.reset();
+  runtime.db.session().exec("DELETE FROM terminal_instances;");
 }
 
 async function drainHookQueue(
@@ -605,7 +534,6 @@ function handleTerminalExit(
 
 export async function shutdownRuntime(
   runtime: HostRuntime,
-  options?: { killPtys?: boolean },
 ): Promise<void> {
   runtime.events.emit("server:shuttingDown", []);
   clearInterval(runtime.hookQueueTimer);
@@ -614,14 +542,5 @@ export async function shutdownRuntime(
   runtime.terminalInstances.dispose();
   await runtime.pendingHookQueueDrain();
   await runtime.toolService?.close();
-  const killPtys = options?.killPtys ?? runtime.config.killPtysOnShutdown;
-  if (
-    runtime.terminal instanceof SupervisedTerminalHost ||
-    runtime.terminal instanceof MultiGenerationTerminalHost
-  ) {
-    if (killPtys) await runtime.terminal.shutdownSupervisor();
-    else await runtime.terminal.disconnect();
-  } else {
-    runtime.terminal.stopAll();
-  }
+  runtime.terminal.stopAll();
 }

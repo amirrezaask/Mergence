@@ -70,12 +70,6 @@ export async function bundleBackends(
   fs.mkdirSync(backendDir, { recursive: true })
 
   packBackendEntry(backendDir, entryPoint, "host-server.mjs", true)
-  packBackendEntry(
-    backendDir,
-    path.join(repoRoot, "packages/yaade-node-host/src/pty-supervisor-bin.ts"),
-    "pty-supervisor.mjs",
-    false,
-  )
 }
 
 function writeBackendPackageJson(backendDir) {

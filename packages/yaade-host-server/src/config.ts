@@ -18,10 +18,6 @@ export type HostConfig = {
   authToken: string | null
   /** Browser origins allowed to use this host from another origin. */
   corsOrigins?: string[]
-  /** Own PTYs in a detached supervisor so API restarts do not kill agents. */
-  ptySupervisor: boolean
-  /** When true, shutdown kills PTYs (desktop). Server default is detach. */
-  killPtysOnShutdown: boolean
   /** Advertised runtime features, used for per-server capability isolation. */
   features: {
     terminalCheckpoints: boolean
@@ -139,17 +135,6 @@ export async function loadConfig(
 
   fs.mkdirSync(dataDir, { recursive: true })
 
-  const supervisorExplicit =
-    parseOnOff(args["pty-supervisor"]) ?? parseOnOff(process.env.JET_PTY_SUPERVISOR)
-  // Production default is on. Tests stay in-process unless they opt in.
-  const runningTests =
-    Boolean(process.env.NODE_TEST_CONTEXT) || process.env.VITEST === "true"
-  const ptySupervisor = supervisorExplicit ?? !runningTests
-  const killPtysOnShutdown =
-    parseOnOff(args["kill-ptys-on-exit"]) ??
-    parseOnOff(process.env.JET_KILL_PTYS_ON_EXIT) ??
-    runningTests
-
   return {
     host,
     port,
@@ -161,8 +146,6 @@ export async function loadConfig(
     staticDir,
     authToken,
     corsOrigins,
-    ptySupervisor,
-    killPtysOnShutdown,
     features: {
       terminalCheckpoints:
         parseOnOff(args["terminal-checkpoints"]) ??
