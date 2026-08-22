@@ -1,8 +1,8 @@
 # YAADE
 
-**A browser terminal multiplexer.**
+**A server-hosted browser multiplexer for running coding agents.**
 
-YAADE runs a TypeScript host on your machine and exposes a browser Session shell. A Session contains Windows (tabs), and each Window contains tiled terminals.
+YAADE runs a TypeScript host on the server and exposes a browser Session shell. The server launches and owns PTYs; the browser is a control and observation client. A Session contains Windows (tabs), and each Window contains tiled terminals.
 
 ```text
 http://localhost:5174/                         Session shell
@@ -11,17 +11,18 @@ http://localhost:5174/?s=ses-…&t=tab-…&term=term-… Deep link
 
 ## Terminals
 
-The only terminal type is **Terminal**: an in-process PTY with disk-backed, incrementally paged replay, isolated client queues, mobile accessory keys, and support for running shells and commands directly.
+The only terminal type is **Terminal**: a server-side PTY with disk-backed, incrementally paged replay, isolated client queues, mobile accessory keys, and support for running shells, commands, and coding-agent CLIs directly.
 
-YAADE has no separate workspace, Git, search, or editor surfaces. The top bar holds the Session dropdown, Window pills, and Settings.
+Agent CLIs are ordinary processes inside server-side terminals, not a separate chat or agent runtime. YAADE has no separate workspace, Git, search, editor, or agent surfaces. The top bar holds the Session dropdown, Window pills, and Settings.
 
 ## Sessions
 
 - Sessions contain Windows; Windows contain tiled terminals.
+- Windows and panes organize independent server-side shell, command, and agent runs.
 - Empty Windows open a Terminal automatically; empty panes use the same Terminal fallback.
 - Layout and terminal metadata persist across browser reloads while the host is running.
-- The host process owns PTYs directly. Browser reloads and disconnects leave terminal processes running; restarting the host intentionally kills every PTY and starts with a fresh Session.
-- Closing a terminal is the explicit destructive action that stops its PTY during normal operation.
+- The host process owns PTYs directly. Browser reloads and disconnects leave terminal and agent processes running; restarting the host intentionally kills every PTY and starts with a fresh Session.
+- Closing a terminal is the explicit destructive action that stops its PTY and any agent running inside it during normal operation.
 - Reconnects to the same host process restore from a Ghostty snapshot plus sequence-indexed, block-compressed history under the host data directory. History is delivered in bounded pages instead of one large payload.
 - Multiple viewers can attach to one terminal. Every authenticated client with control scope can write input and resize; explicitly observe-only clients remain viewers. Each viewer acknowledges consumed output independently; a lagging viewer is resynchronized from durable history without disconnecting other terminals. Disk-writer backpressure may briefly pause only the producing PTY to keep host memory bounded.
 - Mobile uses a list-first Terminal shell with retained terminal surfaces.
@@ -35,8 +36,8 @@ YAADE has two isolated applications. Shared implementation lives in
 `packages/`; the application directories contain only their executable
 wiring and packaging.
 
-- **Server** — `apps/server`, the HTTP/WebSocket host and PTY runtime.
-- **Web** — `apps/web`, the Vite+ browser application.
+- **Server** — `apps/server`, the HTTP/WebSocket host and execution boundary for server-side PTYs, commands, and agent processes.
+- **Web** — `apps/web`, the Vite+ browser control and observation application; it never owns agent processes.
 
 Start the web and server development processes together; the web process has hot reload:
 
@@ -105,12 +106,13 @@ The internal material gallery is available at `/__yaade/glass-gallery`.
 
 ### Runtime lifetime
 
-The host is a single multiplexer process. It owns every PTY directly and is the
-lifetime boundary for Sessions and terminal processes. Browser refreshes, temporary network
-disconnects, and browser reloads reattach to that same process using bounded
-in-memory replay. A host restart kills all PTYs and discards Session,
-Window, and terminal state; the user is responsible for not restarting the host
-while a long-running command matters.
+The host is a single multiplexer process and the server-side execution boundary
+for Sessions, terminals, and agent processes. It owns every PTY directly.
+Browser refreshes, temporary network disconnects, and browser reloads reattach to
+that same process using bounded in-memory replay. A host restart kills all PTYs,
+interrupts running agents, and discards Session, Window, and terminal state; the
+user is responsible for not restarting the host while a long-running agent or
+command matters.
 
 There is no detached supervisor, runtime generation handoff, disk-backed terminal
 recovery, or session-format compatibility promise. Breaking state changes may
@@ -120,7 +122,9 @@ debuggable. The runtime design is documented in
 
 ### Remote host connections
 
-A remote host bound outside loopback must be started with a bearer token, for example:
+Run the server on the machine where agents should execute and connect to it from
+any browser you trust. A remote host bound outside loopback must be started with
+a bearer token, for example:
 
 ```bash
 YAADE_HOST_TOKEN=replace-me vp run @yaade/server#dev -- --host 0.0.0.0 --token replace-me

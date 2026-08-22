@@ -29,7 +29,7 @@ Keep the liquid materials centralized in primitives and global selectors. Do not
 
 ## Terminal surfaces
 
-The terminal panel owns PTY rendering, input, resize, replay, and terminal links. Keep PTY bytes out of React state. Stable terminal IDs must be used for registry and list keys. Session, window, pane, and terminal chrome should remain terminal-only; do not reintroduce editor, Git, search, notification, or agent surfaces.
+The terminal panel owns PTY rendering, input, resize, replay, and terminal links. Keep PTY bytes out of React state. Stable terminal IDs must be used for registry and list keys. Agent CLIs run on the server as ordinary terminal processes and use this same surface; do not add provider-specific agent chat or process controls. Session, window, pane, and terminal chrome should remain terminal-only; do not reintroduce editor, Git, search, notification, or standalone agent surfaces.
 
 ## Rules
 

@@ -2,11 +2,11 @@
 
 ## Product
 
-YAADE is a browser terminal multiplexer. The TypeScript host owns PTYs and persistence. The browser renders Sessions → Windows → tiled terminals.
+YAADE is a server-hosted browser terminal multiplexer for running coding agents. The TypeScript server owns PTYs, child processes, and persistence; the browser renders Sessions → Windows → tiled terminals as a control and observation UI.
 
-The only supported terminal type is `terminal` — host PTY, replay, flow control, and mobile controls.
+The only supported terminal type is `terminal` — a server-side PTY with replay, flow control, and mobile controls. Coding agents are ordinary CLI processes launched inside these terminals.
 
-Do not add standalone Git, search, editor, or file-browser surfaces. External command-line programs run inside terminals like any other command.
+Do not add standalone Git, search, editor, file-browser, or agent-chat surfaces. Agent input and output belong in the terminal multiplexer; agents run on the server, never in the browser.
 
 ## Layout
 
@@ -14,9 +14,9 @@ Do not add standalone Git, search, editor, or file-browser surfaces. External co
 - `apps/web` — thin Vite web executable that uses `@yaade/app`
 - `packages/yaade-app` — React Session shell
 - `packages/yaade-rpc` — Effect Schema contracts
-- `packages/yaade-host-server` — reusable HTTP/WS host and terminal lifecycle
-- `packages/yaade-host-client` — browser transport
-- `packages/yaade-node-host` — filesystem and PTY implementation
+- `packages/yaade-host-server` — reusable HTTP/WS host, session multiplexer, and terminal lifecycle
+- `packages/yaade-host-client` — browser control and observation transport
+- `packages/yaade-node-host` — server filesystem, PTY, and child-process implementation
 - `packages/yaade-panels` — dock tree
 - `packages/yaade-ui` — design system and Terminal surfaces
 - `packages/yaade-workspace` — shared terminal host ports and keyboard helpers
@@ -46,26 +46,29 @@ The web dev server runs through Vite+; start the Bun-backed host with
 
 The repository has exactly two executable applications:
 
-- `apps/server` owns only the server process entrypoint.
-- `apps/web` owns only Vite configuration and web packaging.
+- `apps/server` owns the server process entrypoint and the server-side execution boundary.
+- `apps/web` owns only Vite configuration and browser packaging.
 
 Reusable implementation belongs in `packages/`. Applications may depend on
 packages, but they must not import another application's source. The root
 build and development commands are intentionally independent: `build:server`,
 `build:web`, `dev:server`, and `dev:web`. Web development does not start a host
-process; start `dev:server` separately when the web proxy needs one.
+process; start `dev:server` separately when the web proxy needs one. Never add a
+separate agent server or provider-specific process boundary: launch agent CLIs
+through the existing server terminal runtime.
 
 ## Architecture invariants
 
 - `/?s=&t=&term=` identifies Session, Window, and terminal.
 - PTY output never enters React state.
-- Browser disconnect/reload unsubscribes but does not kill a PTY.
-- Explicit terminal close kills its PTY.
+- Browser disconnect/reload unsubscribes but does not kill a PTY or the agent running inside it.
+- Agents always run on the server inside a terminal PTY; the browser only sends input and renders output through typed host APIs.
+- Explicit terminal close kills its PTY and the agent process it owns.
 - Terminal control uses the binary WebSocket path with replay and flow control.
 - Host work must stay behind typed RPC boundaries.
 - Paths are validated against `allowedRoots` on the host.
 - Default bind is loopback and may stay open without a token. Binding off loopback requires `--token` / `YAADE_HOST_TOKEN`.
-- The host process owns PTYs directly. Browser disconnects do not kill PTYs, but host restart/shutdown kills all PTYs and resets Session/Window/terminal state. There is no detached supervisor or restart durability; users are responsible for keeping the host alive during long-running commands.
+- The host process owns PTYs directly. Browser disconnects do not kill PTYs, but host restart/shutdown kills all PTYs and resets Session/Window/terminal state. There is no detached supervisor, agent control plane, or restart durability; users are responsible for not restarting the host while a long-running agent or command matters.
 
 ## UI rules
 
