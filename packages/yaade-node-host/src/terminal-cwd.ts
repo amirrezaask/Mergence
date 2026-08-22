@@ -215,33 +215,9 @@ async function listProcesses(fresh = false): Promise<ProcRow[]> {
 
 /**
  * Deepest descendant of `rootPid` in the process tree (BFS), preferring
- * children over the leader so a shell running nvim reports nvim's cwd.
+ * children over the leader so a terminal reports its foreground process.
  * Returns the root itself when it has no children.
  */
-const AGENT_PROCESS_NAMES = new Set([
-  "claude",
-  "codex",
-  "cursor-agent",
-  "cursor",
-  "opencode",
-  "grok",
-  "pi",
-])
-
-function processName(comm: string): string {
-  return basenameOfComm(comm).replace(/\.exe$/i, "").toLowerCase()
-}
-
-function agentNameFromCommand(command: string): string | null {
-  const direct = processName(command)
-  if (AGENT_PROCESS_NAMES.has(direct)) return direct
-  for (const token of command.split(/\s+/)) {
-    const name = processName(token)
-    if (AGENT_PROCESS_NAMES.has(name)) return name
-  }
-  return null
-}
-
 function descendantPids(rootPid: number, rows: ProcRow[]): number[] {
   const children = new Map<number, number[]>()
   for (const row of rows) {
@@ -273,15 +249,7 @@ export function deepestDescendantPid(
 }
 
 export function preferredForegroundPid(rootPid: number, rows: ProcRow[]): number {
-  const found = descendantPids(rootPid, rows)
-  let agentPid: number | null = null
-  for (const pid of found) {
-    if (pid === rootPid) continue
-    const row = rows.find(item => item.pid === pid)
-    if (!row) continue
-    if (agentNameFromCommand(row.comm)) agentPid = pid
-  }
-  return agentPid ?? (found[found.length - 1] ?? rootPid)
+  return deepestDescendantPid(rootPid, rows)
 }
 
 function basenameOfComm(comm: string): string {
@@ -318,9 +286,7 @@ export async function foregroundProcessOf(
   }
   const fgPid = preferredForegroundPid(leaderPid, rows)
   const row = rows.find(r => r.pid === fgPid)
-  const name = row
-    ? (agentNameFromCommand(row.comm) ?? basenameOfComm(row.comm.split(/\s+/)[0] ?? row.comm))
-    : ""
+  const name = row ? basenameOfComm(row.comm.split(/\s+/)[0] ?? row.comm) : ""
   if (!name) {
     putCache(fgCache, leaderPid, null)
     return null

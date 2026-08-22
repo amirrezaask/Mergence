@@ -1,4 +1,0 @@
-- run codex with --enable-hooks
-- agent sessions should have this feature to show the diff of that agent's work in pierrediffs
-- changes should have a seperate worktree switcher
-- 3 column TODO board for projects

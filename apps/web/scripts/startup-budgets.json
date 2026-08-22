@@ -9,5 +9,5 @@
     "warmHostMedianMs": 300,
     "rendererMedianMs": 280
   },
-  "notes": "Regression guards from 2026-07-12 post-Shiki measurement (cold≈589 warm≈473 renderer≈251). Aspirational Plan 002 targets (400/300/280) remain blocked by ~2.1 MB main chunk + webview/host process init — not Shiki preload. Raise only with measured before/after + reviewer approval."
+  "notes": "Raise only with measured before/after results and reviewer approval."
 }

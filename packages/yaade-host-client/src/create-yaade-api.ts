@@ -1,16 +1,12 @@
-import type { WorkspaceFileChangeKind, YaadeHostAPI } from "@yaade/workspace";
+import type { YaadeHostAPI } from "@yaade/workspace"
 import { Schema } from "effect";
 import {
-  ToolEvent,
+  MuxEvent,
   TerminalPatchMessage,
   TerminalResyncRequiredMessage,
   TerminalSnapshotMessage,
 } from "@yaade/rpc";
 import type { YaadeHostTransport } from "./transport.js";
-import {
-  readFileWithDiagnostics,
-  readTextFileWithDiagnostics,
-} from "./fs-read-diagnostics.js";
 import { TerminalV3Store } from "./terminal-v3-store.js";
 
 // Host owns the authoritative terminal replay. This buffer only bridges the
@@ -271,16 +267,6 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     );
   });
 
-  transport.on("fs:changed",  (...args: unknown[]) => {
-    const uri = args[0] as string;
-    const rawKind = args[1];
-    const kind: WorkspaceFileChangeKind =
-      rawKind === "created" || rawKind === "deleted" ? rawKind : "changed";
-    for (const cb of fileChangeListeners) cb(uri, kind);
-  });
-  transport.on("yaade:close-tab", () => {
-    window.dispatchEvent(new CustomEvent("jet-close-tab"));
-  });
   transport.on("terminal:data", (...args: unknown[]) => {
     const id = args[0] as string;
     const data = args[1] as string;
@@ -358,261 +344,58 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       /* Ignore malformed resync notices; the next attach reconciles state. */
     }
   });
-  transport.on("terminal-instances:event", (...args: unknown[]) => {
-    const event = args[0] as import("@yaade/workspace").TerminalInstanceEvent;
-    for (const cb of terminalInstanceListeners) cb(event);
-  });
-  transport.on("notifications:event", (...args: unknown[]) => {
-    const event = args[0] as import("@yaade/shared").NotificationStreamEvent;
-    for (const cb of notificationEventListeners) cb(event);
-  });
-  transport.on("agents:event", (...args: unknown[]) => {
-    const event = args[0] as {
-      type: "agents.snapshot" | "agents.event" | "agents.run";
-      sessionId: string;
-      snapshot?: import("@yaade/agent-telemetry").AgentSessionSnapshot;
-      nativeSessionId?: string;
-      event?: import("@yaade/agent-telemetry").AgentEvent;
-    };
-    for (const cb of agentEventListeners) cb(event);
-  });
-  transport.on("tools:event", (...args: unknown[]) => {
+  transport.on("mux:event", (...args: unknown[]) => {
     try {
-      const event = Schema.decodeUnknownSync(ToolEvent)(args[0]);
-      for (const cb of toolEventListeners) cb(event);
+      const event = Schema.decodeUnknownSync(MuxEvent)(args[0]);
+      for (const cb of muxEventListeners) cb(event);
     } catch {
       // Malformed generic events are ignored; the next reconciliation refetches state.
     }
   });
 
-  const fileChangeListeners = new Set<
-    (uri: string, kind: WorkspaceFileChangeKind) => void
-  >();
   const terminalExitListeners = new Set<
     (id: string, exitCode: number, signal?: number) => void
   >();
-  const terminalInstanceListeners = new Set<
-    (event: import("@yaade/workspace").TerminalInstanceEvent) => void
-  >();
-  const notificationEventListeners = new Set<
-    (event: import("@yaade/shared").NotificationStreamEvent) => void
-  >();
-  const agentEventListeners = new Set<
-    (event: {
-      type: "agents.snapshot" | "agents.event" | "agents.run";
-      sessionId: string;
-      snapshot?: import("@yaade/agent-telemetry").AgentSessionSnapshot;
-      nativeSessionId?: string;
-      event?: import("@yaade/agent-telemetry").AgentEvent;
-      kind?: "run.created" | "run.updated" | "run.ended";
-      run?: import("@yaade/workspace").AgentRunInfo;
-    }) => void
-  >();
-  const toolEventListeners = new Set<
-    (event: import("@yaade/rpc").ToolEvent) => void
+  const muxEventListeners = new Set<
+    (event: import("@yaade/rpc").MuxEvent) => void
   >();
   return {
-    fs: {
-      readFile: (uri) =>
-        readFileWithDiagnostics(uri, () =>
-          transport.invoke("fs:readFile", uri),
-        ),
-      writeFile: (uri, content) =>
-        transport.invoke("fs:writeFile", uri, content),
-      readTextFile: (uri) =>
-        readTextFileWithDiagnostics(uri, () =>
-          transport.readTextFile
-            ? transport.readTextFile(uri)
-            : transport.invoke("fs:readTextFile", uri),
-        ),
-      writeTextFile: (uri, content, options) =>
-        transport.writeTextFile
-          ? transport.writeTextFile(uri, content, options)
-          : transport.invoke("fs:writeTextFile", uri, content, options),
-      writeTempDrop: (name, contentBase64) =>
-        transport.invoke("fs:writeTempDrop", name, contentBase64),
-      readDir: (uri) => transport.invoke("fs:readDir", uri),
-      stat: (uri) => transport.invoke("fs:stat", uri),
-      exists: (uri) => transport.invoke("fs:exists", uri),
-      createFile: (uri) => transport.invoke("fs:createFile", uri),
-      mkdir: (uri) => transport.invoke("fs:mkdir", uri),
-      rename: (sourceUri, targetUri) =>
-        transport.invoke("fs:rename", sourceUri, targetUri),
-      trash: (uri) => transport.invoke("fs:trash", uri),
-      restoreTrash: (id, targetUri) =>
-        targetUri
-          ? transport.invoke("fs:restoreTrash", id, targetUri)
-          : transport.invoke("fs:restoreTrash", id),
-      listTrash: () => transport.invoke("fs:listTrash"),
-      emptyTrash: () => transport.invoke("fs:emptyTrash"),
-      showOpenFolderDialog: () => transport.invoke("fs:showOpenFolderDialog"),
-      showSaveFileDialog: (defaultPath?: string) =>
-        transport.invoke("fs:showSaveFileDialog", defaultPath),
-      onFileChanged: (callback) => {
-        fileChangeListeners.add(callback);
-        return () => fileChangeListeners.delete(callback);
-      },
-    },
-    tasks: {
-      spawn: (req) => transport.invoke("tasks:spawn", req),
-    },
-    git: {
-      isRepo: (rootUri) => transport.invoke("git:isRepo", rootUri),
-      status: (rootUri) => transport.invoke("git:status", rootUri),
-      diff: (rootUri, opts) => transport.invoke("git:diff", rootUri, opts),
-      show: (rootUri, path, ref) =>
-        transport.invoke("git:show", rootUri, { path, ref }),
-      commitFileContents: (rootUri, hash, file) =>
-        transport.invoke("git:commitFileContents", rootUri, hash, file),
-      branch: (rootUri) => transport.invoke("git:branch", rootUri),
-      summary: (rootUri) => transport.invoke("git:summary", rootUri),
-      branches: (rootUri) => transport.invoke("git:branches", rootUri),
-      stage: (rootUri, paths) => transport.invoke("git:stage", rootUri, paths),
-      unstage: (rootUri, paths) =>
-        transport.invoke("git:unstage", rootUri, paths),
-      discard: (rootUri, paths) =>
-        transport.invoke("git:discard", rootUri, paths),
-      commit: (rootUri, summary, body) =>
-        body === undefined
-          ? transport.invoke("git:commit", rootUri, summary)
-          : transport.invoke("git:commit", rootUri, summary, body),
-      checkout: (rootUri, branch) =>
-        transport.invoke("git:checkout", rootUri, branch),
-      fetch: (rootUri) => transport.invoke("git:fetch", rootUri),
-      pull: (rootUri) => transport.invoke("git:pull", rootUri),
-      push: (rootUri) => transport.invoke("git:push", rootUri),
-      history: (rootUri, limit) =>
-        transport.invoke("git:history", rootUri, limit),
-      historyPage: (rootUri, cursor, pageSize) => {
-        if (cursor === undefined) {
-          if (pageSize === undefined) {
-            return transport.invoke("git:historyPage", rootUri)
-          }
-          return transport.invoke("git:historyPage", rootUri, null, pageSize)
-        }
-        if (pageSize === undefined) {
-          return transport.invoke("git:historyPage", rootUri, cursor)
-        }
-        return transport.invoke("git:historyPage", rootUri, cursor, pageSize)
-      },
-      numstat: (rootUri) => transport.invoke("git:numstat", rootUri),
-      commitFiles: (rootUri, hash) =>
-        transport.invoke("git:commitFiles", rootUri, hash),
-      applyPatch: (rootUri, patch, opts) =>
-        transport.invoke("git:applyPatch", rootUri, patch, opts),
-      worktreeList: (rootUri) => transport.invoke("git:worktreeList", rootUri),
-      worktreeAdd: (rootUri, worktreePath, opts) =>
-        transport.invoke("git:worktreeAdd", rootUri, worktreePath, opts),
-      worktreeRemove: (rootUri, worktreePath, opts) =>
-        transport.invoke("git:worktreeRemove", rootUri, worktreePath, opts),
-      defaultBranch: (rootUri) =>
-        transport.invoke("git:defaultBranch", rootUri),
-    },
-    shell: {
-      openInApp: (appId, rootUri) =>
-        transport.invoke("shell:openInApp", appId, rootUri),
-      revealInFolder: (rootUri) =>
-        transport.invoke("shell:revealInFolder", rootUri),
-    },
-    notifications: {
-      list: (req) => transport.invoke("notifications:list", req ?? {}),
-      counts: () => transport.invoke("notifications:counts"),
-      get: (id) => transport.invoke("notifications:get", id),
-      ingest: (req) => transport.invoke("notifications:ingest", req),
-      markRead: (id) => transport.invoke("notifications:markRead", id),
-      markUnread: (id) => transport.invoke("notifications:markUnread", id),
-      dismiss: (id) => transport.invoke("notifications:dismiss", id),
-      restore: (id) => transport.invoke("notifications:restore", id),
-      acknowledge: (id) => transport.invoke("notifications:acknowledge", id),
-      markAllRead: (req) =>
-        transport.invoke("notifications:markAllRead", req ?? {}),
-      unreadBySession: () =>
-        transport.invoke("notifications:unreadBySession"),
-      markSessionUnread: (sessionId) =>
-        transport.invoke("notifications:markSessionUnread", sessionId),
-      getPreferences: () => transport.invoke("notifications:getPreferences"),
-      setPreferences: (prefs) =>
-        transport.invoke("notifications:setPreferences", prefs),
-      bindSession: (req) => transport.invoke("notifications:bindSession", req),
-      onEvent: (callback) => {
-        notificationEventListeners.add(callback);
-        return () => notificationEventListeners.delete(callback);
-      },
-    },
-    tools: {
+    mux: {
       listSessions: (includeArchived) =>
-        transport.invoke("tools:listSessions", includeArchived === true),
+        transport.invoke("mux:listSessions", includeArchived === true),
       reorderSessions: (command) =>
-        transport.invoke("tools:reorderSessions", command),
-      createTab: (command) => transport.invoke("tools:createTab", command),
-      renameTab: (command) => transport.invoke("tools:renameTab", command),
+        transport.invoke("mux:reorderSessions", command),
+      createTab: (command) => transport.invoke("mux:createTab", command),
+      renameTab: (command) => transport.invoke("mux:renameTab", command),
       saveTabLayout: (command) =>
-        transport.invoke("tools:saveTabLayout", command),
-      reorderTabs: (command) => transport.invoke("tools:reorderTabs", command),
-      archiveTab: (command) => transport.invoke("tools:archiveTab", command),
-      selectTab: (command) => transport.invoke("tools:selectTab", command),
+        transport.invoke("mux:saveTabLayout", command),
+      reorderTabs: (command) => transport.invoke("mux:reorderTabs", command),
+      archiveTab: (command) => transport.invoke("mux:archiveTab", command),
+      selectTab: (command) => transport.invoke("mux:selectTab", command),
       archiveSession: (command) =>
-        transport.invoke("tools:archiveSession", command),
+        transport.invoke("mux:archiveSession", command),
       restoreSession: (command) =>
-        transport.invoke("tools:restoreSession", command),
-      createSession: (title) => transport.invoke("tools:createSession", title),
+        transport.invoke("mux:restoreSession", command),
+      createSession: (title) => transport.invoke("mux:createSession", title),
       renameSession: (sessionId, title) =>
-        transport.invoke("tools:renameSession", sessionId, title),
+        transport.invoke("mux:renameSession", sessionId, title),
       getSession: (sessionId) =>
-        transport.invoke("tools:getSession", sessionId),
-      createUse: (command) => transport.invoke("tools:createUse", command),
-      getUse: (toolUseId) => transport.invoke("tools:getUse", toolUseId),
-      reorderUses: (command) => transport.invoke("tools:reorderUses", command),
-      updateUseContext: (command) =>
-        transport.invoke("tools:updateUseContext", command),
-      selectUse: (sessionId, toolUseId) =>
-        transport.invoke("tools:selectUse", sessionId, toolUseId),
-      cancelUse: (toolUseId, revision) =>
-        transport.invoke("tools:cancelUse", toolUseId, revision),
-      restartUse: (toolUseId, revision) =>
-        transport.invoke("tools:restartUse", toolUseId, revision),
-      archiveUse: (command) => transport.invoke("tools:archiveUse", command),
-      renameUse: (toolUseId, title) =>
-        transport.invoke("tools:renameUse", toolUseId, title),
-      listCheckoutTargets: (projectId) =>
-        transport.invoke("tools:listCheckoutTargets", {
-          _tag: "ListCheckoutTargets",
-          projectId,
-        }),
-      addProject: (rootPath) =>
-        transport.invoke("tools:addProject", rootPath),
+        transport.invoke("mux:getSession", sessionId),
+      createTerminal: (command) => transport.invoke("mux:createTerminal", command),
+      getTerminal: (muxTerminalId) => transport.invoke("mux:getTerminal", muxTerminalId),
+      reorderTerminals: (command) => transport.invoke("mux:reorderTerminals", command),
+      selectTerminal: (sessionId, muxTerminalId) =>
+        transport.invoke("mux:selectTerminal", sessionId, muxTerminalId),
+      stopTerminal: (muxTerminalId, revision) =>
+        transport.invoke("mux:stopTerminal", muxTerminalId, revision),
+      restartTerminal: (muxTerminalId, revision) =>
+        transport.invoke("mux:restartTerminal", muxTerminalId, revision),
+      closeTerminal: (command) => transport.invoke("mux:closeTerminal", command),
+      renameTerminal: (muxTerminalId, title) =>
+        transport.invoke("mux:renameTerminal", muxTerminalId, title),
       onEvent: (callback) => {
-        toolEventListeners.add(callback);
-        return () => toolEventListeners.delete(callback);
-      },
-      listProjects: () => transport.invoke("tools:listProjects"),
-    },
-    agents: {
-      listProviders: (refresh) =>
-        transport.invoke("agents:listProviders", refresh === true),
-      launch: (req) => transport.invoke("agents:launch", req),
-      stop: (req) => transport.invoke("agents:stop", req),
-      close: (req) => transport.invoke("agents:close", req),
-      listLive: (projectId) =>
-        projectId === undefined
-          ? transport.invoke("agents:listLive")
-          : transport.invoke("agents:listLive", projectId),
-      listProject: (projectId) =>
-        transport.invoke("agents:listProject", projectId),
-      get: (runId) => transport.invoke("agents:get", runId),
-      getTranscript: (runId) => transport.invoke("agents:getTranscript", runId),
-      listActivity: (opts) =>
-        transport.invoke("agents:listActivity", opts ?? {}),
-      getSnapshot: (sessionId) =>
-        transport.invoke("agents:getSnapshot", sessionId),
-      listEvents: (sessionId, opts) =>
-        transport.invoke("agents:listEvents", sessionId, opts ?? {}),
-      ingestNative: (req) => transport.invoke("agents:ingestNative", req),
-      installProjectHooks: (req) =>
-        transport.invoke("agents:installProjectHooks", req),
-      onEvent: (callback) => {
-        agentEventListeners.add(callback);
-        return () => agentEventListeners.delete(callback);
+        muxEventListeners.add(callback);
+        return () => muxEventListeners.delete(callback);
       },
     },
     terminal: {
@@ -724,20 +507,6 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         terminalReplayFloors.delete(id);
         return transport.invoke("terminal:dispose", id);
       },
-      listInstances: (projectId) =>
-        transport.invoke("terminal:listInstances", projectId),
-      createInstance: (req) => transport.invoke("terminal:createInstance", req),
-      restartInstance: (req) =>
-        transport.invoke("terminal:restartInstance", req),
-      resumeInstance: (req) =>
-        transport.invoke("terminal:resumeInstance", req),
-      closeInstance: (req) => transport.invoke("terminal:closeInstance", req),
-      getInstanceTranscript: (id) =>
-        transport.invoke("terminal:getInstanceTranscript", id),
-      onInstanceEvent: (callback) => {
-        terminalInstanceListeners.add(callback);
-        return () => terminalInstanceListeners.delete(callback);
-      },
       acquireLease: (id, mode) =>
         mode === undefined
           ? transport.invoke("terminal:acquireLease", id)
@@ -751,16 +520,5 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         transport.invoke("terminal:transferControl", id, leaseId, targetClientId),
       listViewers: id => transport.invoke("terminal:listViewers", id),
     },
-    getLaunchConfig: () => transport.invoke("yaade:getLaunchConfig"),
-    getHomeDir: () => transport.invoke("yaade:getHomeDir"),
-    loadGlobalYaadercScanRoots: () =>
-      transport.invoke("yaade:loadGlobalYaadercScanRoots"),
-    onLaunch: (cb) => {
-      return transport.on("yaade:launch", (...args: unknown[]) => {
-        cb(args[0] as import("@yaade/workspace").LaunchConfig);
-      });
-    },
-    recordStartup: (record) => transport.invoke("perf:recordStartup", record),
-    getStartupLogPath: () => transport.invoke("perf:getStartupLogPath"),
   };
 }

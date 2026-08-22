@@ -22,7 +22,7 @@ export class AppErrorBoundary extends Component<
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    console.error("[jet] renderer crashed", error, info.componentStack)
+    console.error("[yaade] renderer crashed", error, info.componentStack)
   }
 
   render(): ReactNode {
@@ -38,7 +38,7 @@ export class AppErrorBoundary extends Component<
               <AlertTriangle aria-hidden />
               <AlertTitle>The interface hit an unexpected error</AlertTitle>
               <AlertDescription>
-                Your project files and terminal processes were not modified. Reload to reconnect.
+                Your files and terminal processes were not modified. Reload to reconnect.
               </AlertDescription>
             </Alert>
             <pre className="max-h-32 overflow-auto rounded-md border bg-muted/40 p-3 font-mono text-xs text-muted-foreground">

@@ -9,7 +9,6 @@ import {
 } from "react"
 import type { YaadeServerDefinition } from "@yaade/shared"
 import {
-  loadStoredServerDefinitions,
   saveStoredServerDefinitions,
   type MultiServerHostClient,
   type MultiServerSnapshot,

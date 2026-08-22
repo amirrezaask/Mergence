@@ -1,12 +1,12 @@
 /**
- * Process identity for Superlogical-style Deck icons and pane titles.
+ * Process identity for terminal pane icons and titles.
  * Maps a foreground process basename to a glyph + tint.
  */
 
 export type ProcessIdentity = {
-  /** Short glyph shown inside the deck tile (1–2 chars or emoji-like mark). */
+  /** Short glyph shown inside the terminal pane (1–2 chars or emoji-like mark). */
   glyph: string
-  /** oklch hue for the deck tile background. */
+  /** oklch hue for the terminal pane background. */
   hue: number
   /** Display label override (defaults to process basename). */
   label?: string
@@ -37,14 +37,6 @@ const IDENTITY: ProcessIdentityMap = {
   btop: { glyph: "◈", hue: 230 },
   top: { glyph: "◈", hue: 220 },
   htop: { glyph: "◈", hue: 225 },
-  claude: { glyph: "✦", hue: 40, label: "Claude" },
-  codex: { glyph: "◇", hue: 265, label: "Codex" },
-  opencode: { glyph: "◇", hue: 280 },
-  "cursor-agent": { glyph: "◆", hue: 195, label: "Cursor" },
-  agent: { glyph: "✦", hue: 265, label: "Agent" },
-  editor: { glyph: "Ed", hue: 215, label: "Editor" },
-  search: { glyph: "⌕", hue: 195, label: "Search" },
-  git: { glyph: "⌥", hue: 25 },
   node: { glyph: "js", hue: 130 },
   python: { glyph: "py", hue: 210 },
   python3: { glyph: "py", hue: 210 },
@@ -61,18 +53,6 @@ export function processIdentity(processName: string | null | undefined): Process
   if (!base) return DEFAULT_SHELL
   if (SHELLS.has(base)) return DEFAULT_SHELL
   return IDENTITY[base] ?? { ...DEFAULT_UNKNOWN, label: base }
-}
-
-export type DeckTileStyle = {
-  backgroundColor: string
-  color: string
-}
-
-export function deckTileStyle(identity: ProcessIdentity): DeckTileStyle {
-  return {
-    backgroundColor: `oklch(0.64 0.15 ${identity.hue})`,
-    color: "oklch(0.98 0.01 255)",
-  }
 }
 
 /**

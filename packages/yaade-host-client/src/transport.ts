@@ -2,9 +2,6 @@ import type {
   HostRouteArgs,
   HostRouteName,
   HostRouteResult,
-  TextFileReadResult,
-  TextFileWriteOptions,
-  TextFileWriteResult,
 } from "@yaade/rpc";
 
 /** Platform-neutral bridge between the renderer and the Yaade host process. */
@@ -14,7 +11,7 @@ export interface YaadeHostTransport {
     channel: Name,
     ...args: HostRouteArgs<Name>
   ): Promise<HostRouteResult<Name>>;
-  /** @deprecated Only adapters still carrying an untyped legacy channel may use this overload. */
+  /** @deprecated Only adapters still carrying an untyped legacy channel may terminal this overload. */
   invoke(channel: string, ...args: unknown[]): Promise<unknown>;
   /** Optional per-request cancellation used by intent-driven cold-path queries. */
   invokeWithSignal?<Name extends HostRouteName>(
@@ -28,12 +25,6 @@ export interface YaadeHostTransport {
     args: unknown[],
     signal: AbortSignal,
   ): Promise<unknown>;
-  readTextFile?(uri: string): Promise<TextFileReadResult>;
-  writeTextFile?(
-    uri: string,
-    content: string,
-    options: TextFileWriteOptions,
-  ): Promise<TextFileWriteResult>;
   /** Observable realtime invoke. Resolves only after the host applies the command. */
   invokeRealtime?<Name extends HostRouteName>(
     channel: Name,

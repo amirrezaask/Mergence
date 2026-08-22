@@ -20,7 +20,7 @@ const materials: readonly GlassMaterial[] = [
 const materialDescriptions = {
   shell: "Application frame and structural navigation",
   chrome: "Tabs, pane headers, and compact controls",
-  content: "Matte work surfaces for terminal and editor content",
+  content: "Matte work surfaces for terminal content",
   floating: "Search, palette, menus, and temporary actions",
 } satisfies Record<GlassMaterial, string>
 
@@ -129,7 +129,7 @@ export function GlassMaterialGallery() {
             </div>
             <div className="mt-5 flex items-center justify-between gap-3 border-t border-border/40 pt-4 text-xs text-muted-foreground">
               <span className="font-mono">~/src/yaade</span>
-              <span>3 tools</span>
+              <span>3 terminals</span>
             </div>
           </GlassSurface>
 
@@ -139,9 +139,8 @@ export function GlassMaterialGallery() {
               Matte content
             </div>
             <pre className="mt-4 overflow-auto rounded-[var(--yaade-material-control-radius)] bg-background/80 p-4 font-mono text-3xs leading-relaxed text-muted-foreground">
-{`$ git status --short
- M packages/yaade-ui/src/styles/materials.css
-?? material-gallery
+{`$ pwd
+~/src/yaade
 
 ready for focused work`}
             </pre>
@@ -158,7 +157,7 @@ ready for focused work`}
               </kbd>
             </div>
             <div className="mt-3 grid gap-1">
-              {["ToolSessionApp.tsx", "materials.css", "GlassMaterialGallery.tsx"].map((item, index) => (
+              {["MuxSessionApp.tsx", "materials.css", "GlassMaterialGallery.tsx"].map((item, index) => (
                 <GlassFocusRing asChild key={item}>
                   <button
                     type="button"

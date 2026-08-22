@@ -5,7 +5,7 @@ import { EventHub } from "./events.js"
 test("event replay is bounded by both count and serialized bytes", () => {
   const events = new EventHub(3, 220)
   for (let index = 0; index < 6; index += 1) {
-    events.emit("fs:changed", [`file://x-${index}-${"y".repeat(40)}`])
+    events.emit("mux:event", [`file://x-${index}-${"y".repeat(40)}`])
   }
   const replay = events.replayAfter(0)
   assert.ok(replay.length >= 1)
@@ -15,8 +15,8 @@ test("event replay is bounded by both count and serialized bytes", () => {
 
 test("drops a single event that exceeds the byte budget", () => {
   const events = new EventHub(3, 100)
-  events.emit("fs:changed", ["x".repeat(1_000)])
-  events.emit("fs:changed", ["y".repeat(1_000)])
+  events.emit("mux:event", ["x".repeat(1_000)])
+  events.emit("mux:event", ["y".repeat(1_000)])
   assert.deepEqual(events.replayAfter(0), [])
   assert.equal(events.replayWindow(1).historyEvicted, true)
 })
@@ -41,7 +41,7 @@ test("replay window explicitly reports when retained history was evicted", () =>
 test("event replay preserves sequence order after repeated queue compaction", () => {
   const events = new EventHub(128, 1024 * 1024)
   for (let index = 0; index < 10_000; index += 1) {
-    events.emit("fs:changed", [`file://path-${index}`])
+    events.emit("mux:event", [`file://path-${index}`])
   }
 
   const replay = events.replayAfter(9_950)
@@ -58,11 +58,11 @@ test("terminal:data is live-only — never retained in replay history", () => {
     if (event.channel === "terminal:data") seen.push(String(event.args[1]))
   })
 
-  events.emit("notifications:event", [{ type: "keep-me" }])
+  events.emit("mux:event", [{ type: "keep-me" }])
   for (let index = 0; index < 500; index += 1) {
     events.emit("terminal:data", ["pty", `chunk-${index}`, index])
   }
-  events.emit("fs:changed", ["file://after-flood"])
+  events.emit("mux:event", ["file://after-flood"])
 
   assert.equal(seen.length, 500)
   const replay = events.replayAfter(0)
@@ -72,7 +72,7 @@ test("terminal:data is live-only — never retained in replay history", () => {
   )
   assert.deepEqual(
     replay.map(event => event.channel),
-    ["notifications:event", "fs:changed"],
+    ["mux:event", "mux:event"],
   )
   // Sequences still advance for ephemeral frames.
   assert.equal(events.lastSequence, 502)

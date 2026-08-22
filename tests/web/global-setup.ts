@@ -53,7 +53,7 @@ function distIsFresh(): boolean {
 }
 
 export default function globalSetup(): void {
-  if (process.env.JET_SKIP_E2E_BUILD === "1") return
+  if (process.env.YAADE_SKIP_E2E_BUILD === "1") return
   if (distIsFresh()) {
     console.log("[global-setup] apps/web/dist is newer than sources; skipping SPA build")
     return

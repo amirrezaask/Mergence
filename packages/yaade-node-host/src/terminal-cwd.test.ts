@@ -74,7 +74,7 @@ test("deepestDescendantPid returns root when alone", () => {
   assert.equal(deepestDescendantPid(42, [{ pid: 42, ppid: 1, comm: "zsh" }]), 42)
 })
 
-test("deepestDescendantPid walks to the child", () => {
+test("deepestDescendantPid walks through terminal commands", () => {
   assert.equal(
     deepestDescendantPid(1, [
       { pid: 1, ppid: 0, comm: "zsh" },
@@ -85,14 +85,14 @@ test("deepestDescendantPid walks to the child", () => {
   )
 })
 
-test("preferredForegroundPid prefers an agent descendant over node", () => {
+test("preferredForegroundPid follows the deepest terminal command", () => {
   assert.equal(
     preferredForegroundPid(1, [
       { pid: 1, ppid: 0, comm: "zsh" },
-      { pid: 2, ppid: 1, comm: "/bin/sh /tmp/bin/claude /tmp/mock.mjs" },
-      { pid: 3, ppid: 2, comm: "node /tmp/mock.mjs" },
+      { pid: 2, ppid: 1, comm: "/bin/sh /tmp/bin/command" },
+      { pid: 3, ppid: 2, comm: "node /tmp/command.mjs" },
     ]),
-    2,
+    3,
   )
 })
 

@@ -15,7 +15,7 @@ export function usesAuthoritativeLeases(
   return true
 }
 
-export function projectRuntimeLease(
+export function toRuntimeLease(
   lease: RuntimeTerminalLease,
   terminalId: string,
 ): TerminalLease {

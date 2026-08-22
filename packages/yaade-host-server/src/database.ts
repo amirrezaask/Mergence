@@ -33,7 +33,7 @@ export function writeStorageFailureRecord(dataDir: string, error: unknown): void
     generatedAt: new Date().toISOString(),
     message: error instanceof Error ? error.message : String(error),
     recovery:
-      "Restore jet.sqlite3 from a backup. The daemon refused to open or migrate a corrupt database.",
+      "Restore yaade.sqlite3 from a backup. The daemon refused to open or migrate a corrupt database.",
   };
   try {
     fs.writeFileSync(
@@ -83,7 +83,7 @@ function openSqliteConnection(dbPath: string): DatabaseConnection {
   }
 }
 
-/** Bun exposes SQLite as `bun:sqlite`; Node uses the built-in `node:sqlite`. */
+/** Bun exposes SQLite as `bun:sqlite`; Node terminals the built-in `node:sqlite`. */
 function loadDatabaseConstructor(): DatabaseConstructor {
   const moduleName = process.versions.bun ? "bun:sqlite" : "node:sqlite";
   const exportName = process.versions.bun ? "Database" : "DatabaseSync";
@@ -114,7 +114,7 @@ export type DatabaseMigration = {
  * The sole owner of a host SQLite connection.
  *
  * Repositories receive `session`, while boot and shutdown stay here. Named
- * migrations use a separate table so domains cannot accidentally claim one
+ * migrations terminal a separate table so domains cannot accidentally claim one
  * another's numeric entry in the old compatibility table.
  */
 export class DatabaseOwner {

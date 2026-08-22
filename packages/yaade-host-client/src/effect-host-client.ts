@@ -1,6 +1,5 @@
 import { Context, Effect, Layer, Schema } from "effect"
 import {
-  CheckoutResolutionFailed,
   ConflictError,
   decodeHostRpcRequest,
   decodeHostRouteArgs,
@@ -9,24 +8,21 @@ import {
   type HostRouteArgs,
   type HostRouteName,
   type HostRouteResult,
-  FileChangedError,
   HostDisconnectedError,
   HostRpcRequest,
   HostRpcResponse,
   InvalidRpcPayloadError,
-  InvalidToolCommand,
-  InvalidToolInput,
+  InvalidMuxCommand,
+  InvalidTerminalInput,
   NotFoundError,
   OperationFailedError,
   PathOutsideRootsError,
-  PayloadTooLargeError,
-  ProjectTargetUnavailable,
   SessionNotFound,
   SessionTabConflict,
   SessionTabNotFound,
-  ToolRuntimeFailure,
-  ToolUseConflict,
-  ToolUseNotFound,
+  TerminalRuntimeFailure,
+  TerminalConflict,
+  TerminalNotFound,
   type HostRpcError,
 } from "@yaade/rpc"
 import type { YaadeHostTransport } from "./transport.js"
@@ -52,9 +48,6 @@ function mapFetchError(
   details?: Record<string, unknown>,
 ): HostRpcError {
   if (code === "PATH_OUTSIDE_ALLOWED_ROOTS" || message.includes("PATH_OUTSIDE")) {
-    if (typeof details?.projectPath === "string") {
-      return new ProjectTargetUnavailable({ projectPath: details.projectPath, message })
-    }
     return new PathOutsideRootsError({
       message,
       ...(typeof details?.path === "string" ? { path: details.path } : {}),
@@ -63,9 +56,9 @@ function mapFetchError(
   if (code === "CONFLICT") {
     const expectedRevision = typeof details?.expectedRevision === "number" ? details.expectedRevision : undefined
     const actualRevision = typeof details?.actualRevision === "number" ? details.actualRevision : undefined
-    const toolUseId = typeof details?.toolUseId === "string" ? details.toolUseId : undefined
-    if (toolUseId && expectedRevision !== undefined && actualRevision !== undefined) {
-      return new ToolUseConflict({ toolUseId, expectedRevision, actualRevision, message })
+    const muxTerminalId = typeof details?.muxTerminalId === "string" ? details.muxTerminalId : undefined
+    if (muxTerminalId && expectedRevision !== undefined && actualRevision !== undefined) {
+      return new TerminalConflict({ muxTerminalId, expectedRevision, actualRevision, message })
     }
     const tabId = typeof details?.tabId === "string" ? details.tabId : undefined
     if (tabId && expectedRevision !== undefined && actualRevision !== undefined) {
@@ -76,34 +69,17 @@ function mapFetchError(
   if (code === "NOT_FOUND") {
     if (typeof details?.sessionId === "string") return new SessionNotFound({ sessionId: details.sessionId, message })
     if (typeof details?.tabId === "string") return new SessionTabNotFound({ tabId: details.tabId, message })
-    if (typeof details?.toolUseId === "string") return new ToolUseNotFound({ toolUseId: details.toolUseId, message })
+    if (typeof details?.muxTerminalId === "string") return new TerminalNotFound({ muxTerminalId: details.muxTerminalId, message })
     return new NotFoundError({ message })
   }
-  if (code === "PAYLOAD_TOO_LARGE") return new PayloadTooLargeError({ message })
-  if (
-    code === "FILE_CHANGED" &&
-    typeof details?.uri === "string" &&
-    typeof details.actualVersion === "string"
-  ) {
-    return new FileChangedError({
-      message,
-      uri: details.uri,
-      actualVersion: details.actualVersion,
-      ...(typeof details.expectedVersion === "string"
-        ? { expectedVersion: details.expectedVersion }
-        : {}),
-    })
-  }
-  switch (details?.toolError) {
-    case "InvalidToolInput":
-      return new InvalidToolInput({ message })
-    case "InvalidToolCommand":
-      return new InvalidToolCommand({ message })
-    case "CheckoutResolutionFailed":
-      return new CheckoutResolutionFailed({ message })
-    case "ToolRuntimeFailure":
-      if (typeof details.toolUseId === "string") {
-        return new ToolRuntimeFailure({ toolUseId: details.toolUseId, message })
+  switch (details?.terminalError) {
+    case "InvalidTerminalInput":
+      return new InvalidTerminalInput({ message })
+    case "InvalidMuxCommand":
+      return new InvalidMuxCommand({ message })
+    case "TerminalRuntimeFailure":
+      if (typeof details.muxTerminalId === "string") {
+        return new TerminalRuntimeFailure({ muxTerminalId: details.muxTerminalId, message })
       }
       break
   }
@@ -208,7 +184,7 @@ export function invokeHostRpcUnchecked(
       const error = "error" in payload ? payload.error : undefined
       return yield* Effect.fail(
         mapFetchError(
-          error?.message ?? `Jet API request failed (${response.status})`,
+          error?.message ?? `YAADE API request failed (${response.status})`,
           error?.code,
           error?.details,
         ),

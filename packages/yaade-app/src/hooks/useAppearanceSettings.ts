@@ -10,7 +10,7 @@ import {
   preloadNerdFont,
   siblingThemeForScheme,
   type ColorSchemeMode,
-  type JetAppearanceSettings,
+  type YaadeAppearanceSettings,
   type SessionLayout,
   applyColorScheme,
 } from "@yaade/ui/appearance"
@@ -26,22 +26,21 @@ function isStringValue(value: PersistedAppearanceValue): value is string {
   return value === String(value)
 }
 
-const THEME_ID_STORAGE_KEY = "jet-theme-id"
-const COLOR_SCHEME_KEY = "jet-color-scheme"
-const APPEARANCE_STORAGE_KEY = "jet-appearance-settings"
+const THEME_ID_STORAGE_KEY = "yaade-theme-id"
+const COLOR_SCHEME_KEY = "yaade-color-scheme"
+const APPEARANCE_STORAGE_KEY = "yaade-appearance-settings"
 export const DEFAULT_UI_FONT_SIZE = 13
 export const DEFAULT_SIDEBAR_WIDTH = 300
 export const MIN_SIDEBAR_WIDTH = 240
 export const MAX_SIDEBAR_WIDTH = 480
 
-export const DEFAULT_APPEARANCE_SETTINGS: JetAppearanceSettings = {
+export const DEFAULT_APPEARANCE_SETTINGS: YaadeAppearanceSettings = {
   themeId: defaultThemeId,
   colorSchemeMode: "system",
   monoFontFamily: DEFAULT_MONO_FONT_NAME,
   sessionLayout: "tabs",
   sidebarCollapsed: false,
   sidebarWidth: DEFAULT_SIDEBAR_WIDTH,
-  sidebarProjectFilterPath: null,
 }
 
 function clampNumber(
@@ -89,26 +88,9 @@ export function themeIdForColorSchemeMode(
 }
 
 export function normalizeSessionLayout(_value: PersistedAppearanceValue): SessionLayout {
-  // The Tool Session shell now keeps session and tool navigation in one top tab bar.
-  // Older sidebar preferences migrate to the simplified layout.
+  // The multiplexer keeps session and terminal navigation in one top tab bar.
+  // Older layout preferences migrate to the simplified layout.
   return "tabs"
-}
-
-function normalizeProjectFilterPath(value: PersistedAppearanceValue): string | null {
-  if (value == null || value === "" || value === "all") return null
-  if (!isStringValue(value)) return null
-  const trimmed = value.trim()
-  if (!trimmed) return null
-  // Older builds briefly persisted root URIs — accept those too.
-  if (trimmed.startsWith("file://")) {
-    try {
-      const path = decodeURIComponent(trimmed.replace(/^file:\/\//, ""))
-      return path.length > 0 ? path : null
-    } catch {
-      return null
-    }
-  }
-  return trimmed
 }
 
 function preferredColorScheme(): ColorScheme {
@@ -163,14 +145,14 @@ function normalizeMonoFontFamily(value: PersistedAppearanceValue): string {
   const primary = trimmed.includes(",")
     ? trimmed.split(",")[0]?.trim().replace(/^["']|["']$/g, "")
     : trimmed.replace(/^["']|["']$/g, "")
-  // Commit Mono was the bundled default before the compact editor refresh.
+  // Commit Mono was the bundled default before the compact terminal refresh.
   if (!primary || primary === "Commit Mono") return DEFAULT_MONO_FONT_NAME
   return primary
 }
 
-export function loadAppearanceSettings(): JetAppearanceSettings {
+export function loadAppearanceSettings(): YaadeAppearanceSettings {
   const storedTheme = loadStoredTheme()
-  const base: JetAppearanceSettings = {
+  const base: YaadeAppearanceSettings = {
     ...DEFAULT_APPEARANCE_SETTINGS,
     ...storedTheme,
   }
@@ -224,18 +206,13 @@ export function loadAppearanceSettings(): JetAppearanceSettings {
         MIN_SIDEBAR_WIDTH,
         MAX_SIDEBAR_WIDTH,
       ),
-      sidebarProjectFilterPath: normalizeProjectFilterPath(
-        parsed.sidebarProjectFilterPath ??
-          parsed.sidebarProjectFilterRootUri ??
-          parsed.sidebarProjectFilterId,
-      ),
     }
   } catch {
     return base
   }
 }
 
-function persistAppearanceSettings(settings: JetAppearanceSettings): void {
+function persistAppearanceSettings(settings: YaadeAppearanceSettings): void {
   try {
     localStorage.setItem(APPEARANCE_STORAGE_KEY, JSON.stringify(settings))
     localStorage.setItem(THEME_ID_STORAGE_KEY, settings.themeId)
@@ -246,7 +223,7 @@ function persistAppearanceSettings(settings: JetAppearanceSettings): void {
 }
 
 /** Apply persisted appearance tokens onto :root. */
-export function applyAppearanceCss(settings: JetAppearanceSettings): void {
+export function applyAppearanceCss(settings: YaadeAppearanceSettings): void {
   const root = document.documentElement
   root.style.fontSize = `${DEFAULT_UI_FONT_SIZE}px`
   root.style.setProperty("--font-sans", DEFAULT_UI_FONT_FAMILY)
@@ -255,10 +232,10 @@ export function applyAppearanceCss(settings: JetAppearanceSettings): void {
     buildMonoFontStack(settings.monoFontFamily) || DEFAULT_MONO_FONT_FAMILY,
   )
   preloadNerdFont()
-  root.style.setProperty("--yaade-editor-line-height", "1.45")
+  root.style.setProperty("--yaade-terminal-line-height", "1.45")
   root.style.setProperty("--yaade-terminal-line-height", "1")
   root.style.setProperty("--yaade-terminal-cursor-blink", "1")
-  root.dataset.jetDensity = "compact"
+  root.dataset.yaadeDensity = "compact"
   root.dataset.yaadeReducedMotion = "false"
   delete root.dataset.yaadeReducedTransparency
   // Keep the authored UI scale and liquid material treatment fixed. System-level
@@ -268,7 +245,7 @@ export function applyAppearanceCss(settings: JetAppearanceSettings): void {
 }
 
 /** Apply persisted appearance before React mounts to avoid a theme flash. */
-export function applyInitialAppearance(): JetAppearanceSettings {
+export function applyInitialAppearance(): YaadeAppearanceSettings {
   const settings = loadAppearanceSettings()
   const theme = getThemeById(settings.themeId)
   applyColorScheme(theme.scheme ?? "dark", theme)
@@ -277,7 +254,7 @@ export function applyInitialAppearance(): JetAppearanceSettings {
 }
 
 export function useAppearanceSettings() {
-  const [appearanceSettings, setAppearanceSettings] = useState<JetAppearanceSettings>(() =>
+  const [appearanceSettings, setAppearanceSettings] = useState<YaadeAppearanceSettings>(() =>
     loadAppearanceSettings(),
   )
   const appearanceSettingsRef = useRef(appearanceSettings)

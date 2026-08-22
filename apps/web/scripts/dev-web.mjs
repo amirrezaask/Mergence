@@ -3,7 +3,7 @@
  * Start only the web application.
  *
  * The host is a separate application. Run `vp run @yaade/server#dev` in another
- * terminal and point the Vite proxy at it with JET_PORT when it is not on the
+ * terminal and point the Vite proxy at it with YAADE_PORT when it is not on the
  * default port.
  */
 import os from "node:os"
@@ -38,10 +38,10 @@ function lanAddresses() {
 }
 
 const appDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
-const host = optionValue("--host") ?? process.env.JET_WEB_HOST ?? process.env.JET_HOST ?? "127.0.0.1"
-const port = Number(process.env.JET_WEB_PORT ?? 5174)
+const host = optionValue("--host") ?? process.env.YAADE_WEB_HOST ?? process.env.YAADE_HOST ?? "127.0.0.1"
+const port = Number(process.env.YAADE_WEB_PORT ?? 5174)
 
-if (process.env.JET_SKIP_LOCAL_HOST !== "1") {
+if (process.env.YAADE_SKIP_LOCAL_HOST !== "1") {
   const registration = ensureLocalHostRegistration()
   if (registration.changed) console.log(`[dev-web] registered ${LOCAL_HOSTNAME} → 127.0.0.1`)
 }
@@ -60,8 +60,8 @@ const vite = spawn(vpBin, ["dev", ...process.argv.slice(2)], {
   stdio: "inherit",
   env: {
     ...process.env,
-    JET_WEB_HOST: host,
-    JET_WEB_PORT: String(port),
+    YAADE_WEB_HOST: host,
+    YAADE_WEB_PORT: String(port),
   },
 })
 

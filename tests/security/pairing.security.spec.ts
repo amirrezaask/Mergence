@@ -1,8 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { generateKeyPairSync, sign } from "node:crypto"
 import http from "node:http"
-import fs from "node:fs"
-import path from "node:path"
 import {
   createDurableRuntimeHarness,
   expireUnusedPairingCodes,
@@ -10,8 +8,6 @@ import {
   listAuditEvents,
   rpcErrorCode,
 } from "../runtime/harness/index.js"
-import { waitUntil } from "../runtime/harness/wait.js"
-
 const HOST_TOKEN = "yaade-security-e2e-token"
 
 type JsonRecord = Record<string, unknown>
@@ -218,7 +214,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       expect(record?.name).toBe("Browser")
       const sessions = await hostRpcResult(
         harness.origin,
-        "tools:listSessions",
+        "mux:listSessions",
         [false],
         "s01-browser",
         device.token,
@@ -239,7 +235,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
         sessionStorage.setItem("yaade-host-token", token)
       }, device.token)
       await page.goto(harness.origin, { waitUntil: "domcontentloaded" })
-      await page.waitForFunction(() => window.__yaadeAgent != null, null, { timeout: 30_000 })
+      await page.waitForFunction(() => window.__yaadeTest != null, null, { timeout: 30_000 })
       await page.locator("[data-yaade-session-settings]").click()
       await page.locator('[data-yaade-settings-category="servers"]').click()
       const revoke = await jsonRequest(
@@ -257,7 +253,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       await expect(page.getByText("Access revoked").first()).toBeVisible()
       const denied = await hostRpcResult(
         harness.origin,
-        "tools:listSessions",
+        "mux:listSessions",
         [false],
         "s03-revoked",
         device.token,
@@ -282,7 +278,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       expect(secondBrowserSocket.readyState).toBe(WebSocket.OPEN)
       const stillLive = await hostRpcResult(
         harness.origin,
-        "tools:listSessions",
+        "mux:listSessions",
         [false],
         "s04-second-browser",
         secondBrowser.token,
@@ -297,7 +293,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       const requests: string[] = []
       page.on("request", request => requests.push(request.url()))
       await page.goto(`${harness.origin}/?token=${HOST_TOKEN}`, { waitUntil: "domcontentloaded" })
-      await page.waitForFunction(() => window.__yaadeAgent != null, null, { timeout: 30_000 })
+      await page.waitForFunction(() => window.__yaadeTest != null, null, { timeout: 30_000 })
       await expect.poll(() => new URL(page.url()).searchParams.get("token")).toBeNull()
       const storage = await page.evaluate(() => ({
         local: { ...localStorage },
@@ -466,7 +462,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       expect(rotated.body.device && (rotated.body.device as JsonRecord).id).toBe(device.deviceId)
       const stale = await hostRpcResult(
         harness.origin,
-        "tools:listSessions",
+        "mux:listSessions",
         [false],
         "s09-stale",
         device.token,
@@ -474,7 +470,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       expect(stale.ok).toBe(false)
       const fresh = await hostRpcResult(
         harness.origin,
-        "tools:listSessions",
+        "mux:listSessions",
         [false],
         "s09-fresh",
         nextToken,
@@ -492,7 +488,7 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       const observer = await pairNamedDevice(harness.origin, "Observer", ["observe"])
       const listed = await hostRpcResult(
         harness.origin,
-        "tools:listSessions",
+        "mux:listSessions",
         [false],
         "s10-observe",
         observer.token,
@@ -509,8 +505,8 @@ test.describe("S — device pairing, authentication, and audit", { tag: "@p1" },
       expect(rpcErrorCode(write.error)).toBe("SCOPE_DENIED")
       const stop = await hostRpcResult(
         harness.origin,
-        "agents:stop",
-        [{ runId: "run-1" }],
+        "mux:createSession",
+        ["forbidden"],
         "s10-stop",
         observer.token,
       )

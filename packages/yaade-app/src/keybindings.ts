@@ -5,7 +5,7 @@
  * chords in components. Prefix commands have one key each; direct layout
  * commands are explicit exceptions (settings is the sole dual-path command).
  *
- *   Tool Session (`/`)           canonical — edit TOOL_SESSION_* tables
+ *   Terminal Session (`/`)           canonical — edit MUX_SESSION_* tables
  *
  * Browser-reserved chords stay unbound in normal keymaps. Shell actions live behind Mod-k
  * (⌘K on macOS, Ctrl+K elsewhere). Press the prefix twice in a terminal to
@@ -13,66 +13,64 @@
  * delivers it and preventDefault wins; it is the only free-enough multiplexer
  * chord that matches editor muscle memory.
  *
- * Removed Tool Session aliases (do not reintroduce):
+ * Removed Terminal Session aliases (do not reintroduce):
  *   prefix p, Mod-k as a direct chord, Mod-Shift-p
  *
  * Not command bindings (stay local, listed so this file is the inventory):
  *   Widget nav     arrows / Home / End / Enter / Space / Escape in listers,
  *                  tab strips, rename fields, sidebar resize
- *   Overlay        Escape closes; CdOverlay confirms with Mod-Enter
+ *   Overlay        Escape closes; terminal overlays handle their own confirmation
  *   Terminal PTY   packages/yaade-ui/src/panels/terminal-keybindings.ts
  *                  (Shift-Enter, Escape, mac Option/Cmd arrows + Backspace)
  */
 
 import {
-  chordIsActive,
   clearChord,
   createChordState,
   keyEventMatchesBinding,
-  startChord,
   type ChordState,
   type KeyEventLike,
 } from "@yaade/workspace";
 
 export const SHELL_PREFIX = "Mod-k";
-export const TOOL_SESSION_PREFIX = SHELL_PREFIX;
+export const MUX_SESSION_PREFIX = SHELL_PREFIX;
 
-export type ToolSessionCommand =
-  | "tool.newTerminal"
-  | "tool.next"
-  | "tool.previous"
+export type MuxSessionCommand =
+  | "terminal.newTerminal"
+  | "terminal.next"
+  | "terminal.previous"
   | "tab.next"
   | "tab.previous"
   | "pane.zoom"
   | "pane.splitRight"
   | "pane.splitDown"
-  | "tool.switch"
+  | "terminal.switch"
   | "sidebar.toggle"
   | "session.switch"
-  | "tool.jump"
+  | "terminal.jump"
   | "session.new"
   | "tab.new"
   | "tab.close"
-  | "tool.close"
+  | "terminal.close"
   | "session.close"
   | "settings.show";
 
-export type ToolSessionPrefixGroupId = "open" | "move" | "session";
+export type MuxSessionPrefixGroupId = "open" | "move" | "session";
 
-export type ToolSessionPrefixBinding = {
+export type MuxSessionPrefixBinding = {
   readonly key: string;
-  readonly command: ToolSessionCommand;
+  readonly command: MuxSessionCommand;
   readonly desc: string;
-  readonly group: ToolSessionPrefixGroupId;
+  readonly group: MuxSessionPrefixGroupId;
   /** When false, the binding still works but stays off the HUD. */
   readonly hud?: boolean;
   /** Whether holding the key may repeat the command. Defaults to true. */
   readonly repeatable?: boolean;
 };
 
-export type ToolSessionDirectBinding = {
+export type MuxSessionDirectBinding = {
   readonly key: string;
-  readonly command: ToolSessionCommand;
+  readonly command: MuxSessionCommand;
   readonly desc: string;
   /** Whether holding the key may repeat the command. Defaults to true. */
   readonly repeatable?: boolean;
@@ -80,84 +78,99 @@ export type ToolSessionDirectBinding = {
   readonly riskyReason?: string;
 };
 
-export type ToolSessionContextKind = never;
+export type MuxSessionContextKind = never;
 
-export type ToolSessionContextBinding = {
+export type MuxSessionContextBinding = {
   readonly key: string;
-  readonly command: ToolSessionCommand;
+  readonly command: MuxSessionCommand;
   readonly desc: string;
-  readonly when: readonly ToolSessionContextKind[];
+  readonly when: readonly MuxSessionContextKind[];
   /** Risky chord — only legal with a written reason. */
   readonly riskyReason?: string;
   /** Whether holding the key may repeat the command. Defaults to true. */
   readonly repeatable?: boolean;
 };
 
-export const TOOL_SESSION_PREFIX_GROUPS: readonly {
-  readonly id: ToolSessionPrefixGroupId;
+export const MUX_SESSION_PREFIX_GROUPS: readonly {
+  readonly id: MuxSessionPrefixGroupId;
   readonly label: string;
 }[] = [];
 
-export const TOOL_SESSION_PREFIX_BINDINGS: readonly ToolSessionPrefixBinding[] = [];
+export const MUX_SESSION_PREFIX_BINDINGS: readonly MuxSessionPrefixBinding[] = [];
 
 /**
  * Direct layout chords are deliberately supported even though browsers label
  * them as risky: Chromium delivers these keydowns and the app has
  * visible context-menu fallbacks. Structural commands never repeat on hold.
  */
-export const TOOL_SESSION_DIRECT_BINDINGS: readonly ToolSessionDirectBinding[] = [];
+export const MUX_SESSION_DIRECT_BINDINGS: readonly MuxSessionDirectBinding[] = [
+  {
+    key: "Mod-d",
+    command: "pane.splitRight",
+    desc: "Split right",
+    repeatable: false,
+    riskyReason: "Mod-d is the terminal multiplexer split chord.",
+  },
+  {
+    key: "Mod-Shift-d",
+    command: "pane.splitDown",
+    desc: "Split down",
+    repeatable: false,
+    riskyReason: "Mod-Shift-d is the terminal multiplexer split chord.",
+  },
+];
 
-export const TOOL_SESSION_CONTEXT_BINDINGS: readonly ToolSessionContextBinding[] =
+export const MUX_SESSION_CONTEXT_BINDINGS: readonly MuxSessionContextBinding[] =
   [];
 
 /** Commands allowed both as prefix (HUD) and as a direct chord. */
-export const TOOL_SESSION_DUAL_PATH_COMMANDS: readonly ToolSessionCommand[] = [];
+export const MUX_SESSION_DUAL_PATH_COMMANDS: readonly MuxSessionCommand[] = [];
 
 const PREFIX_BINDING_BY_KEY = new Map(
-  TOOL_SESSION_PREFIX_BINDINGS.map((binding) => [binding.key, binding]),
+  MUX_SESSION_PREFIX_BINDINGS.map((binding) => [binding.key, binding]),
 );
 
-export type ToolSessionKeyEvent = KeyEventLike &
+export type MuxSessionKeyEvent = KeyEventLike &
   Pick<KeyboardEvent, "repeat" | "isComposing">;
 
-export type ToolSessionKeymapState = ChordState;
+export type MuxSessionKeymapState = ChordState;
 
-export function createToolSessionKeymapState(): ToolSessionKeymapState {
+export function createMuxSessionKeymapState(): MuxSessionKeymapState {
   return createChordState();
 }
 
-export function clearToolSessionKeymapState(
-  state: ToolSessionKeymapState,
+export function clearMuxSessionKeymapState(
+  state: MuxSessionKeymapState,
 ): void {
   clearChord(state);
 }
 
-export function toolSessionPrefixBindingKey(
+export function muxSessionPrefixBindingKey(
   key: string,
-  prefix = TOOL_SESSION_PREFIX,
+  prefix = MUX_SESSION_PREFIX,
 ): string {
   return `${prefix} ${key}`;
 }
 
-export function toolSessionShortcutFor(command: string): string | undefined {
-  const binding = TOOL_SESSION_PREFIX_BINDINGS.find(
+export function muxSessionShortcutFor(command: string): string | undefined {
+  const binding = MUX_SESSION_PREFIX_BINDINGS.find(
     (item) => item.command === command && item.hud !== false,
   );
-  return binding ? toolSessionPrefixBindingKey(binding.key) : undefined;
+  return binding ? muxSessionPrefixBindingKey(binding.key) : undefined;
 }
 
-export function toolSessionDirectShortcutFor(
+export function muxSessionDirectShortcutFor(
   command: string,
 ): string | undefined {
-  return TOOL_SESSION_DIRECT_BINDINGS.find((item) => item.command === command)
+  return MUX_SESSION_DIRECT_BINDINGS.find((item) => item.command === command)
     ?.key;
 }
 
-export function toolSessionHudBindings(): readonly ToolSessionPrefixBinding[] {
-  return TOOL_SESSION_PREFIX_BINDINGS.filter((item) => item.hud !== false);
+export function muxSessionHudBindings(): readonly MuxSessionPrefixBinding[] {
+  return MUX_SESSION_PREFIX_BINDINGS.filter((item) => item.hud !== false);
 }
 
-export function serializeToolSessionPrefixKey(
+export function serializeMuxSessionPrefixKey(
   event: Pick<KeyEventLike, "key" | "shiftKey">,
 ): string {
   if (event.shiftKey && event.key.length === 1) {
@@ -167,32 +180,32 @@ export function serializeToolSessionPrefixKey(
   return event.key;
 }
 
-export function isToolSessionJumpKey(key: string): boolean {
+export function isMuxSessionJumpKey(key: string): boolean {
   return /^[1-9]$/.test(key);
 }
 
-export function matchToolSessionPrefixBinding(
+export function matchMuxSessionPrefixBinding(
   key: string,
-): ToolSessionPrefixBinding | undefined {
+): MuxSessionPrefixBinding | undefined {
   return PREFIX_BINDING_BY_KEY.get(key);
 }
 
-export function matchToolSessionDirectBinding(
+export function matchMuxSessionDirectBinding(
   event: KeyEventLike,
-): ToolSessionDirectBinding | undefined {
-  return TOOL_SESSION_DIRECT_BINDINGS.find((item) =>
+): MuxSessionDirectBinding | undefined {
+  return MUX_SESSION_DIRECT_BINDINGS.find((item) =>
     keyEventMatchesBinding(event, item.key),
   );
 }
 
-export function matchToolSessionContextBinding(
+export function matchMuxSessionContextBinding(
   _event: KeyEventLike,
   _kind: string | undefined,
-): ToolSessionContextBinding | undefined {
+): MuxSessionContextBinding | undefined {
   return undefined;
 }
 
-export type ToolSessionKeydownContext = {
+export type MuxSessionKeydownContext = {
   readonly overlayOpen: boolean;
   readonly inEditable: boolean;
   readonly inTerminal: boolean;
@@ -201,36 +214,24 @@ export type ToolSessionKeydownContext = {
   readonly contextKind?: string;
 };
 
-export type ToolSessionKeydownResult =
+export type MuxSessionKeydownResult =
   | { readonly type: "prefix-started"; readonly prefix: string }
   | {
       readonly type: "command";
-      readonly command: ToolSessionCommand;
+      readonly command: MuxSessionCommand;
       readonly jumpIndex?: number;
     }
   | { readonly type: "prefix-literal"; readonly byte: string }
   | { readonly type: "prefix-cancelled" }
   | { readonly type: "consume" };
 
-function isModifierOnlyKey(key: string): boolean {
-  return (
-    key === "Alt" ||
-    key === "Control" ||
-    key === "Meta" ||
-    key === "Shift" ||
-    key === "OS" ||
-    key === "CapsLock" ||
-    key === "Fn"
-  );
-}
-
 function commandResult(
   binding:
-    | ToolSessionPrefixBinding
-    | ToolSessionDirectBinding
-    | ToolSessionContextBinding,
-  event: ToolSessionKeyEvent,
-): ToolSessionKeydownResult {
+    | MuxSessionPrefixBinding
+    | MuxSessionDirectBinding
+    | MuxSessionContextBinding,
+  event: MuxSessionKeyEvent,
+): MuxSessionKeydownResult {
   if (binding.repeatable === false && event.repeat) return { type: "consume" };
   return { type: "command", command: binding.command };
 }
@@ -241,13 +242,14 @@ function commandResult(
  * mutates the small chord state machine so stale closures cannot dispatch a
  * second command after the timeout.
  */
-export function resolveToolSessionKeydown(
-  _event: ToolSessionKeyEvent,
-  _state: ToolSessionKeymapState,
-  _context: ToolSessionKeydownContext,
-  _now = Date.now(),
-): ToolSessionKeydownResult | null {
-  return null;
+export function resolveMuxSessionKeydown(
+  event: MuxSessionKeyEvent,
+  _state: MuxSessionKeymapState,
+  context: MuxSessionKeydownContext,
+): MuxSessionKeydownResult | null {
+  if (context.overlayOpen || context.inEditable || context.inPrefixButton) return null;
+  const binding = matchMuxSessionDirectBinding(event);
+  return binding ? commandResult(binding, event) : null;
 }
 
 /**

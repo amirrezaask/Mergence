@@ -14,12 +14,12 @@ describe("lister fuzzy", () => {
   it("ranks exact / prefix ahead of subsequence", () => {
     const items = [
       { searchText: "open file" },
-      { searchText: "workspace.openFile" },
+      { searchText: "terminal.open" },
       { searchText: "foo" },
     ]
     const out = fuzzyFilter("open", items).map(i => i.searchText)
     assert.equal(out[0], "open file")
-    assert.ok(out.includes("workspace.openFile"))
+    assert.ok(out.includes("terminal.open"))
     assert.ok(!out.includes("foo"))
   })
 
@@ -29,6 +29,6 @@ describe("lister fuzzy", () => {
   })
 
   it("matches subsequence", () => {
-    assert.ok(fuzzyScore("wpf", "workspace.openFile") !== null)
+    assert.ok(fuzzyScore("top", "terminal.open") !== null)
   })
 })

@@ -4,11 +4,11 @@ import { deviceMayInvoke } from "./device-scopes.js"
 
 test("observe scope allows attach and denies write", () => {
   assert.equal(deviceMayInvoke(["observe"], "terminal:attach"), true)
-  assert.equal(deviceMayInvoke(["observe"], "tools:listSessions"), true)
+  assert.equal(deviceMayInvoke(["observe"], "mux:listSessions"), true)
   assert.equal(deviceMayInvoke(["observe"], "terminal:write"), false)
-  assert.equal(deviceMayInvoke(["observe"], "agents:stop"), false)
-  assert.equal(deviceMayInvoke(["observe"], "tools:createUse"), false)
+  assert.equal(deviceMayInvoke(["observe"], "mux:createSession"), false)
+  assert.equal(deviceMayInvoke(["observe"], "mux:createTerminal"), false)
   assert.equal(deviceMayInvoke(["control"], "terminal:write"), true)
-  assert.equal(deviceMayInvoke(["admin"], "tools:archiveSession"), true)
+  assert.equal(deviceMayInvoke(["admin"], "mux:archiveSession"), true)
   assert.equal(deviceMayInvoke(undefined, "terminal:write"), true)
 })

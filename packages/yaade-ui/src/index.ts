@@ -18,52 +18,13 @@ export {
   type PanelFloatingPopoverProps,
   type PanelFloatCorner,
 } from "./dock/PanelFloatingPopover.js"
-export { AppShell } from "./shell/AppShell.js"
-export {
-  InstanceSidebar,
-  type InstanceSidebarItem,
-  type InstanceSidebarProps,
-} from "./shell/InstanceSidebar.js"
-export {
-  ProjectSidebar,
-  type ProjectSidebarProject,
-  type ProjectSidebarProps,
-} from "./shell/ProjectSidebar.js"
 export { SidebarShell, type SidebarShellProps } from "./shell/SidebarShell.js"
-export {
-  RunningAgentsSidebar,
-  type RunningAgentSidebarItem,
-  type RunningAgentSidebarStatus,
-  type RunningAgentsSidebarProps,
-} from "./shell/RunningAgentsSidebar.js"
 export { useIsMobile } from "./hooks/use-mobile.js"
 export {
-  ProjectWorkspaceSidebar,
-  type ProjectWorkspaceSidebarProcess,
-  type ProjectWorkspaceSidebarProps,
-  type ProjectWorkspaceSidebarSearch,
-  type ProjectWorkspaceSidebarView,
-  type ProjectWorkspaceSidebarWorktree,
-} from "./shell/ProjectWorkspaceSidebar.js"
-export {
-  ModalEditorTabBar,
   SessionHeaderChromeProvider,
   SessionHeaderChromePortal,
   sessionHeaderContextRef,
-  AGENT_CLI_DRIVERS,
-  agentCliDriverById,
-  AgentProviderIcon,
-  AgentCliPickerOverlay,
-  type AgentCliDriver,
-  type AgentCliLaunchSelection,
-  type AgentCliPickerOverlayProps,
-  type AgentCliPickerProject,
-  type ModalEditorBuffer,
-  type ModalEditorTabBarProps,
-} from "./home/index.js"
-export { SidebarProvider, SidebarInset, SidebarTrigger } from "./components/ui/sidebar.js"
-export { focusExplorerPanel } from "./explorer/focus.js"
-export { CommandPalette } from "./components/CommandPalette.js"
+} from "./home/session-header-chrome.js"
 export {
   PaletteShell,
   type PaletteShellItem,
@@ -89,33 +50,10 @@ export {
   type MeasureLongestItemOptions,
   type PaletteRowLayout,
 } from "./lister/index.js"
-export { GotoLineModal } from "./components/GotoLineModal.js"
-export { QuickOpenOverlay, type QuickOpenWorkspace } from "./components/QuickOpenOverlay.js"
-export { BufferListOverlay } from "./components/BufferListOverlay.js"
-export {
-  LocationList,
-  ReferencesLocationList,
-  DefinitionsLocationList,
-  DiagnosticsLocationList,
-  problemsToListItems,
-  searchHitToListItem,
-  taskErrorsToListItems,
-  lspLocationToListItem,
-  lspLocationsToListItems,
-  type LocationListProps,
-  type LocationListTabProps,
-} from "./panels/location-list/index.js"
-export { ExplorerTab, type ExplorerSelection } from "./tabs/ExplorerTab.js"
-export {
-  PierreWorkspaceFileTree,
-  type PierreWorkspaceFileTreeProps,
-} from "./tabs/PierreWorkspaceFileTree.js"
-export { CdOverlay } from "./components/CdOverlay.js"
-export { ProjectSwitcherOverlay } from "./components/ProjectSwitcherOverlay.js"
 export {
   SettingsOverlay,
   type ColorSchemeMode,
-  type JetAppearanceSettings,
+  type YaadeAppearanceSettings,
   type SessionLayout,
   type SettingsOverlayProps,
 } from "./components/SettingsOverlay.js"
@@ -135,7 +73,6 @@ export {
   type WhichKeyGroup,
 } from "./components/WhichKeyPanel.js"
 export { KeyBindingKbd } from "./components/KeyBindingKbd.js"
-export { PromptDialog, type PromptDialogProps } from "./components/PromptDialog.js"
 export {
   bundledThemes,
   bundledThemeList,
@@ -185,42 +122,12 @@ export {
 } from "./components/glass.js"
 export { formatKeyBinding } from "./lib/format-key.js"
 export { TooltipProvider } from "./components/ui/tooltip.js"
-export { MessageScroller } from "./components/ui/message-scroller.js"
-export { Toaster } from "./components/ui/sonner.js"
-export {
-  ConfirmDialogHost,
-  requestConfirm,
-  requestSaveDiscard,
-  type SaveDiscardDecision,
-  type SaveDiscardOptions,
-} from "./components/ConfirmDialogHost.js"
-export { showYaadeToast } from "./toast.js"
-export {
-  registerListPanel,
-  getListPanel,
-  getListItems,
-  focusListPanel,
-  focusFirstListItem,
-  getListPanelController,
-  type ListFocusAction,
-  type ListPanelController,
-} from "./lib/list-registry.js"
-export { ListRow, type ListRowProps } from "./components/ListRow.js"
 export { PanelEmpty } from "./components/PanelEmpty.js"
 export {
   MuxPaneChrome,
   processIdentity,
-  deckTileStyle,
   formatMuxTitle,
   type MuxPaneChromeProps,
   type ProcessIdentity,
   type TabOrientation,
 } from "./mux/index.js"
-export {
-  NotificationCenter,
-  NotificationItem,
-  groupNotificationsByTime,
-  formatRelativeTime,
-  type NotificationCenterProps,
-  type NotificationItemProps,
-} from "./notifications/index.js"

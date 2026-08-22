@@ -34,7 +34,7 @@ describe("host token gate", () => {
       const denied = await fetch(`${origin}/api/v1/rpc`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ channel: "yaade:getHomeDir", args: [] }),
+        body: JSON.stringify({ channel: "mux:listSessions", args: [false] }),
       })
       assert.equal(denied.status, 401)
 
@@ -44,11 +44,11 @@ describe("host token gate", () => {
           "content-type": "application/json",
           authorization: "Bearer s3cret",
         },
-        body: JSON.stringify({ channel: "yaade:getHomeDir", args: [] }),
+        body: JSON.stringify({ channel: "mux:listSessions", args: [false] }),
       })
       assert.equal(allowed.status, 200)
-      const body = (await allowed.json()) as { value: string }
-      assert.equal(typeof body.value, "string")
+      const body = (await allowed.json()) as { value: unknown }
+      assert.ok(Array.isArray(body.value))
 
       const crossOrigin = await fetch(`${origin}/api/v1/rpc`, {
         method: "POST",
@@ -57,7 +57,7 @@ describe("host token gate", () => {
           authorization: "Bearer s3cret",
           origin: "https://client.example",
         },
-        body: JSON.stringify({ channel: "yaade:getHomeDir", args: [] }),
+        body: JSON.stringify({ channel: "mux:listSessions", args: [false] }),
       })
       assert.equal(crossOrigin.status, 200)
       assert.equal(

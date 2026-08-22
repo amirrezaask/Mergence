@@ -7,14 +7,14 @@ import { loadConfig } from "./config.js"
 
 describe("loadConfig launch workspace", () => {
   it("defaults to an ephemeral port when none is configured", async () => {
-    const previous = process.env.JET_PORT
-    delete process.env.JET_PORT
+    const previous = process.env.YAADE_PORT
+    delete process.env.YAADE_PORT
     try {
       const config = await loadConfig(["--host", "127.0.0.1"])
       assert.equal(config.port, 0)
     } finally {
-      if (previous === undefined) delete process.env.JET_PORT
-      else process.env.JET_PORT = previous
+      if (previous === undefined) delete process.env.YAADE_PORT
+      else process.env.YAADE_PORT = previous
     }
   })
 
@@ -91,20 +91,15 @@ describe("loadConfig launch workspace", () => {
     }
   })
 
-  it("can advertise disabled checkpoint and resume features", async () => {
-    const previousCheckpoints = process.env.JET_TERMINAL_CHECKPOINTS
-    const previousResume = process.env.JET_NATIVE_AGENT_RESUME
-    process.env.JET_TERMINAL_CHECKPOINTS = "0"
-    process.env.JET_NATIVE_AGENT_RESUME = "0"
+  it("can advertise disabled terminal checkpoints", async () => {
+    const previousCheckpoints = process.env.YAADE_TERMINAL_CHECKPOINTS
+    process.env.YAADE_TERMINAL_CHECKPOINTS = "0"
     try {
       const config = await loadConfig(["--host", "127.0.0.1", "--port", "0"])
       assert.equal(config.features.terminalCheckpoints, false)
-      assert.equal(config.features.nativeAgentResume, false)
     } finally {
-      if (previousCheckpoints === undefined) delete process.env.JET_TERMINAL_CHECKPOINTS
-      else process.env.JET_TERMINAL_CHECKPOINTS = previousCheckpoints
-      if (previousResume === undefined) delete process.env.JET_NATIVE_AGENT_RESUME
-      else process.env.JET_NATIVE_AGENT_RESUME = previousResume
+      if (previousCheckpoints === undefined) delete process.env.YAADE_TERMINAL_CHECKPOINTS
+      else process.env.YAADE_TERMINAL_CHECKPOINTS = previousCheckpoints
     }
   })
 })

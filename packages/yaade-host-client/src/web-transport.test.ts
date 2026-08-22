@@ -23,16 +23,16 @@ test("websocket URL follows the page origin and carries replay sequence", () => 
     "ws://example.test:4747/ws?since=42",
   )
   assert.equal(
-    websocketUrl({ protocol: "https:", host: "jet.example" } as Location),
-    "wss://jet.example/ws?since=0",
+    websocketUrl({ protocol: "https:", host: "yaade.example" } as Location),
+    "wss://yaade.example/ws?since=0",
   )
   assert.equal(
     websocketUrl(
-      { protocol: "https:", host: "jet.example" } as Location,
+      { protocol: "https:", host: "yaade.example" } as Location,
       9,
       "client id/with reserved chars",
     ),
-    "wss://jet.example/ws?since=9&clientId=client%20id%2Fwith%20reserved%20chars",
+    "wss://yaade.example/ws?since=9&clientId=client%20id%2Fwith%20reserved%20chars",
   )
   assert.equal(
     websocketUrl(
@@ -188,7 +188,7 @@ test("hot path accepts terminal frames structurally", () => {
     isHotPathHostEvent({
       protocolVersion: 1,
       sequence: 1,
-      channel: "notifications:event",
+      channel: "mux:event",
       args: [],
     }),
     false,
@@ -202,10 +202,10 @@ test("cold path still Schema-decodes low-rate events", async () => {
     decodeRealtimeHostEvent({
       protocolVersion: 1,
       sequence: 2,
-      channel: "workspace:gitBranch",
+      channel: "connection:status",
       args: ["main"],
     }),
   )
-  assert.equal(decoded.channel, "workspace:gitBranch")
+  assert.equal(decoded.channel, "connection:status")
   assert.deepEqual(decoded.args, ["main"])
 })

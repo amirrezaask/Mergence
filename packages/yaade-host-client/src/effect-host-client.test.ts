@@ -21,7 +21,7 @@ test("generic host invokes preserve structured conflict codes", async () => {
     )
   try {
     const error = await Effect.runPromise(
-      Effect.flip(invokeHostRpc("test-client", "fs:restoreTrash", ["id"])),
+      Effect.flip(invokeHostRpc("test-client", "mux:listSessions", [false])),
     )
     assert.equal(error.code, "CONFLICT")
   } finally {
@@ -29,22 +29,22 @@ test("generic host invokes preserve structured conflict codes", async () => {
   }
 })
 
-test("tool RPC errors decode their typed details", async () => {
+test("terminal RPC errors decode their typed details", async () => {
   const originalFetch = globalThis.fetch
   globalThis.fetch = async () => new Response(JSON.stringify({
     error: {
       code: "CONFLICT",
-      message: "stale tool use",
-      details: { toolUseId: "use-a", expectedRevision: 2, actualRevision: 3 },
+      message: "stale terminal",
+      details: { muxTerminalId: "term-a", expectedRevision: 2, actualRevision: 3 },
     },
   }), { status: 409, headers: { "content-type": "application/json" } })
   try {
     const error = await Effect.runPromise(
-      Effect.flip(invokeHostRpc("test-client", "tools:cancelUse", ["use-a", 2])),
+      Effect.flip(invokeHostRpc("test-client", "mux:stopTerminal", ["term-a", 2])),
     )
-    assert.equal(error._tag, "ToolUseConflict")
-    if (error._tag === "ToolUseConflict") {
-      assert.equal(error.toolUseId, "use-a")
+    assert.equal(error._tag, "TerminalConflict")
+    if (error._tag === "TerminalConflict") {
+      assert.equal(error.muxTerminalId, "term-a")
       assert.equal(error.expectedRevision, 2)
       assert.equal(error.actualRevision, 3)
     }

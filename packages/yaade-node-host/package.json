@@ -23,7 +23,6 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "@vscode/ripgrep": "1.18.0",
     "@yaade/ghostty-core": "workspace:*",
     "@yaade/rpc": "workspace:*",
     "@yaade/shared": "workspace:*",

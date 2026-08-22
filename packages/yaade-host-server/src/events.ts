@@ -21,7 +21,7 @@ type RetainedHostEvent = {
 
 /**
  * Hot PTY paint frames. Still sequenced + fan-out live to WS subscribers, but
- * never retained in EventHub history — reconnect uses per-PTY `attach()` replay.
+ * never retained in EventHub history — reconnect terminals per-PTY `attach()` replay.
  * Keeping them in history filled the 1024/16MB ring and evicted every other channel.
  */
 const EPHEMERAL_CHANNELS = new Set(["terminal:data"])

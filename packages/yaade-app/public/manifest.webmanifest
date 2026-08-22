@@ -2,7 +2,7 @@
   "id": "/",
   "name": "YAADE",
   "short_name": "YAADE",
-  "description": "A browser IDE for terminal and Git workflows on your machine.",
+  "description": "A browser terminal multiplexer for your machine.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",

@@ -1,0 +1,38 @@
+export type TestState = {
+  route: "session"
+  activeSessionId?: string | null
+  activeTabId?: string | null
+  activeMuxTerminalId?: string | null
+  sessions?: readonly unknown[]
+  tabs?: readonly unknown[]
+  muxTerminals?: readonly unknown[]
+  connection?: string
+}
+
+export type YaadeTestAPI = {
+  getState(): TestState
+  waitForReady(): Promise<void>
+  getPerfMeasures(names?: string[]): { name: string; durationMs: number }[]
+  createSession?(): Promise<void>
+  selectSession?(sessionId: string): Promise<void>
+  createTab?(): Promise<void>
+  selectTab?(tabId: string): Promise<void>
+  closeTab?(tabId: string): Promise<void>
+  createMuxTerminal?(kind: "terminal"): Promise<void>
+  selectMuxTerminal?(muxTerminalId: string): Promise<void>
+  closeMuxTerminal?(muxTerminalId: string): Promise<void>
+  closeSession?(sessionId: string, mode?: "keep-running" | "stop-terminals"): Promise<void>
+  getTerminalText(tabId?: string): string
+  getTerminalCellHeight(tabId?: string): number
+  getTerminalCellSize(tabId?: string): { width: number; height: number } | null
+  getTerminalDims(tabId?: string): { cols: number; rows: number } | null
+  getTerminalCursor(tabId?: string): { x: number; y: number; hidden: boolean } | null
+  getTerminalViewportY(tabId?: string): number | null
+  scrollTerminalLines(amount: number, tabId?: string): boolean
+  focusTerminal(tabId?: string): boolean
+  findTerminalText(needle: string, tabId?: string): { col: number; viewportRow: number; cols: number; rows: number } | null
+}
+
+declare global {
+  interface Window { __yaadeTest?: YaadeTestAPI }
+}

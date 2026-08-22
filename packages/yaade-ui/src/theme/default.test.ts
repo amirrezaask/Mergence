@@ -89,7 +89,7 @@ describe("bundled Yaade themes", () => {
     assert.equal(siblingThemeForScheme("removed-theme", "light").id, "default-light")
   })
 
-  it("provides shell, editor, terminal, source, and swatch metadata for every theme", () => {
+  it("provides shell, terminal, and swatch metadata for every theme", () => {
     for (const theme of bundledThemeList) {
       assert.ok(theme.scheme === "dark" || theme.scheme === "light")
       assert.ok(theme.family)
@@ -130,10 +130,6 @@ describe("bundled Yaade themes", () => {
         ["success", tokens.successForeground, tokens.success, 4.5],
         ["warning", tokens.warningForeground, tokens.warning, 4.5],
         ["info", tokens.infoForeground, tokens.info, 4.5],
-        ["git added", tokens.gitAddedForeground, tokens.gitAdded, 4.5],
-        ["git modified", tokens.gitModifiedForeground, tokens.gitModified, 4.5],
-        ["git deleted", tokens.gitDeletedForeground, tokens.gitDeleted, 4.5],
-        ["git conflict", tokens.gitConflictForeground, tokens.gitConflict, 4.5],
         ["sidebar", tokens.sidebarForeground, tokens.sidebar, 7],
         [
           "sidebar primary",

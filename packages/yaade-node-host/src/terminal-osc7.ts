@@ -49,7 +49,7 @@ function integrationRoot(): string {
 }
 
 const ZSHRC = `# yaade-shell-integration ${INTEGRATION_VERSION}
-# Report cwd via OSC 7 so mux neovim/git splits follow \`cd\`.
+# Report cwd via OSC 7 so mux terminal panes follow \`cd\`.
 _yaade_user_zdotdir="\${YAADE_USER_ZDOTDIR:-$HOME}"
 [[ -o login && -f "$_yaade_user_zdotdir/.zprofile" ]] && source "$_yaade_user_zdotdir/.zprofile"
 [[ -f "$_yaade_user_zdotdir/.zshrc" ]] && source "$_yaade_user_zdotdir/.zshrc"
@@ -123,7 +123,7 @@ export function ensureShellIntegrationFiles(): string {
 
 /**
  * Wrap a default-shell spawn so interactive zsh/bash/fish emit OSC 7 at
- * command prompts. Custom launch commands (nvim, agents) are left unchanged.
+ * command prompts. Custom launch commands are left unchanged.
  */
 export function applyShellCwdReporting(
   command: string,

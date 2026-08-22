@@ -15,10 +15,7 @@
     "test": "vp test"
   },
   "dependencies": {
-    "@yaade/agent-telemetry": "workspace:*",
-    "@yaade/rpc": "workspace:*",
-    "@yaade/shared": "workspace:*",
-    "@yaade/panels": "workspace:*"
+    "@yaade/rpc": "workspace:*"
   },
   "devDependencies": {
     "typescript": "^7.0.2"

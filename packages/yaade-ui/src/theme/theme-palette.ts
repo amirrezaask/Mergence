@@ -1,11 +1,11 @@
 import type {
-  JetHighlightColors,
-  JetTerminalAnsiColors,
-  JetTerminalColors,
+  YaadeHighlightColors,
+  YaadeTerminalAnsiColors,
+  YaadeTerminalColors,
   YaadeSemanticTokens,
   YaadeTheme,
 } from "@yaade/shared"
-import { jetColorsFromTokens } from "@yaade/shared"
+import { yaadeColorsFromTokens } from "@yaade/shared"
 import { toSrgbColor } from "@yaade/shared"
 
 export type ColorScheme = "dark" | "light"
@@ -21,9 +21,9 @@ export type PaletteThemeInput = {
   sourceUrl?: string
   license?: string
   tokens: YaadeSemanticTokens
-  highlights: JetHighlightColors
-  terminalAnsi: JetTerminalAnsiColors
-  terminal?: JetTerminalColors
+  highlights: YaadeHighlightColors
+  terminalAnsi: YaadeTerminalAnsiColors
+  terminal?: YaadeTerminalColors
 }
 
 function swatches(theme: Pick<PaletteThemeInput, "tokens" | "highlights" | "terminalAnsi">): string[] {
@@ -46,7 +46,7 @@ export function makeTheme(input: PaletteThemeInput): YaadeTheme {
     ...input,
     highlights: mapCompatibilityColors(input.highlights),
     terminalAnsi: mapCompatibilityColors(input.terminalAnsi),
-    colors: jetColorsFromTokens(input.tokens),
+    colors: yaadeColorsFromTokens(input.tokens),
     previewSwatches: swatches(input),
   }
 }
@@ -76,7 +76,7 @@ export function paletteHighlights(input: {
   field?: string
   module?: string
   label?: string
-}): JetHighlightColors {
+}): YaadeHighlightColors {
   return {
     keyword: input.keyword,
     controlKeyword: input.controlKeyword ?? input.keyword,
@@ -113,7 +113,7 @@ export function paletteAnsi(input: {
   brightMagenta?: string
   brightCyan?: string
   brightWhite?: string
-}): JetTerminalAnsiColors {
+}): YaadeTerminalAnsiColors {
   return {
     ...input,
     brightBlack: input.brightBlack ?? input.black,

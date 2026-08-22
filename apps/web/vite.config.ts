@@ -8,13 +8,13 @@ const appRoot = path.resolve(__dirname, "../../packages/yaade-app");
 const uiRoot = path.resolve(__dirname, "../../packages/yaade-ui/src");
 
 const browserTargets = ["chrome107", "edge107", "firefox104", "safari16"];
-const viteHost = process.env.JET_WEB_HOST ?? process.env.JET_HOST ?? "127.0.0.1";
+const viteHost = process.env.YAADE_WEB_HOST ?? process.env.YAADE_HOST ?? "127.0.0.1";
 const rawProxyHost =
-  process.env.JET_PROXY_HOST ??
+  process.env.YAADE_PROXY_HOST ??
   (viteHost === "0.0.0.0" || viteHost === "::" ? "127.0.0.1" : viteHost);
 const proxyHost =
   rawProxyHost.includes(":") && !rawProxyHost.startsWith("[") ? `[${rawProxyHost}]` : rawProxyHost;
-const configuredAllowedHosts = (process.env.JET_ALLOWED_HOSTS ?? "")
+const configuredAllowedHosts = (process.env.YAADE_ALLOWED_HOSTS ?? "")
   .split(",")
   .map((host) => host.trim())
   .filter(Boolean);
@@ -46,10 +46,6 @@ function yaadeBuildBranding(command: "build" | "serve"): Plugin {
 
 export default defineConfig(({ command }) => ({
   base: "/",
-  // Pierre @pierre/diffs worker is an ES module (code-splitting); iife fails the build.
-  worker: {
-    format: "es",
-  },
   build: {
     target: browserTargets,
     cssTarget: browserTargets,
@@ -57,30 +53,7 @@ export default defineConfig(({ command }) => ({
     emptyOutDir: true,
     rolldownOptions: {
       input: { index: path.resolve(appRoot, "index.html") },
-      output: {
-        codeSplitting: {
-          groups: [
-            {
-              name: "diffs",
-              test: (id) =>
-                id.includes("node_modules") &&
-                (id.includes("@pierre/diffs") || id.includes("@pierre/trees")),
-              includeDependenciesRecursively: false,
-            },
-            {
-              name: (id) => {
-                const shikiLang = /@shikijs\/langs\/dist\/([^/.]+)/.exec(id)?.[1];
-                if (shikiLang) return `shiki-lang-${shikiLang}`;
-                if (id.includes("shiki") || id.includes("@shikijs")) return "shiki";
-                return null;
-              },
-              test: (id) =>
-                id.includes("node_modules") && (id.includes("shiki") || id.includes("@shikijs")),
-              includeDependenciesRecursively: false,
-            },
-          ],
-        },
-      },
+
     },
   },
   plugins: lazyPlugins(() => [
@@ -99,16 +72,16 @@ export default defineConfig(({ command }) => ({
     },
   },
   server: {
-    port: Number(process.env.JET_WEB_PORT ?? 5174),
+    port: Number(process.env.YAADE_WEB_PORT ?? 5174),
     // Prefer the configured port; if busy, Vite picks the next free one.
     strictPort: false,
     host: viteHost,
     allowedHosts,
     proxy: {
-      "/api": `http://${proxyHost}:${process.env.JET_PORT ?? 4747}`,
-      "/health": `http://${proxyHost}:${process.env.JET_PORT ?? 4747}`,
+      "/api": `http://${proxyHost}:${process.env.YAADE_PORT ?? 4747}`,
+      "/health": `http://${proxyHost}:${process.env.YAADE_PORT ?? 4747}`,
       "/ws": {
-        target: `ws://${proxyHost}:${process.env.JET_PORT ?? 4747}`,
+        target: `ws://${proxyHost}:${process.env.YAADE_PORT ?? 4747}`,
         ws: true,
       },
     },

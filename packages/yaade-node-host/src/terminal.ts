@@ -51,9 +51,9 @@ function envInt(name: string, fallback: number): number {
   return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : fallback
 }
 
-const MAX_TERMINAL_REPLAY = envInt("JET_TERMINAL_REPLAY_BYTES", 2 * 1024 * 1024)
-const CHECKPOINT_BYTES = envInt("JET_CHECKPOINT_BYTES", 512 * 1024)
-const CHECKPOINT_INTERVAL_MS = envInt("JET_CHECKPOINT_INTERVAL_MS", 2_000)
+const MAX_TERMINAL_REPLAY = envInt("YAADE_TERMINAL_REPLAY_BYTES", 2 * 1024 * 1024)
+const CHECKPOINT_BYTES = envInt("YAADE_CHECKPOINT_BYTES", 512 * 1024)
+const CHECKPOINT_INTERVAL_MS = envInt("YAADE_CHECKPOINT_INTERVAL_MS", 2_000)
 /** Shrink ring after exit so disposed-but-reattachable PTYs do not keep 2 MB. */
 const EXITED_TERMINAL_REPLAY = 256 * 1024
 const MAX_WRITE_BYTES = 1024 * 1024
@@ -492,9 +492,16 @@ export class TerminalHost {
       launchEnv,
     )
 
+    // Bun's macOS child-process implementation can close node-pty's master
+    // descriptor while shell setup or `ps`-based identity capture runs. That
+    // sends SIGHUP to the PTY immediately, so keep this runtime path free of
+    // post-spawn subprocess work. Production Node hosts retain both features.
+    const bunDarwin =
+      process.platform === "darwin" && Boolean(process.versions.bun)
+
     for (const candidate of candidates) {
       try {
-        const launchSpec = custom
+        const launchSpec = custom || bunDarwin
           ? { command: candidate.command, args: candidate.args, env: baseEnv }
           : applyShellCwdReporting(candidate.command, candidate.args, baseEnv)
         proc = pty.spawn(launchSpec.command, launchSpec.args, {
@@ -514,7 +521,7 @@ export class TerminalHost {
     const id = `term-${Date.now()}-${++this.seqCounter}`
     let title: string | null = null
     let titleKey: string | null = null
-    if (!custom) {
+    if (!custom && !bunDarwin) {
       const base = path.basename(proc.process || defaultShell().command)
       titleKey = `${cwd}\0${base}`
       const n = (this.titleCounts.get(titleKey) ?? 0) + 1
@@ -523,7 +530,8 @@ export class TerminalHost {
     }
 
     const osPid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : null
-    const processIdentity = osPid === null ? null : captureProcessIdentity(osPid)
+    const processIdentity =
+      osPid === null || bunDarwin ? null : captureProcessIdentity(osPid)
     const osStartedAtMs = Date.now()
     const terminalEpoch = randomUUID()
     const entry: TerminalEntry = {
@@ -723,7 +731,7 @@ export class TerminalHost {
 
   /**
    * Basename of the foreground process under this PTY (e.g. `nvim`, `fish`).
-   * Used for Deck icons / tab titles. `fresh` bypasses the process-table cache
+   * Used for terminal pane icons and titles. `fresh` bypasses the process-table cache
    * for event-driven foreground transitions.
    */
   async getForegroundProcess(
@@ -758,7 +766,7 @@ export class TerminalHost {
     }
   }
 
-  /** Running (non-disposed) PTYs — used by HQ when session payload lags behind. */
+  /** Running (non-disposed) PTYs — used by YAADE when session payload lags behind. */
   listRunning(): TerminalInspectSnapshot[] {
     const out: TerminalInspectSnapshot[] = []
     for (const entry of this.entries.values()) {
@@ -1160,7 +1168,7 @@ export class TerminalHost {
     return Boolean(entry && !entry.disposed && entry.viewers.has(clientId))
   }
 
-  /** Bounded replay snapshot for an agent-owned PTY; does not attach or change ownership. */
+  /** Bounded replay snapshot for a terminal PTY; does not attach or change ownership. */
   readOutput(id: string, maxBytes = EXITED_TERMINAL_REPLAY): { output: string; truncated: boolean } | null {
     const entry = this.entries.get(id)
     if (!entry || entry.disposed) return null

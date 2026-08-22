@@ -12,14 +12,10 @@ import {
   type HostRouteArgs,
   type HostRouteName,
   type HostRouteResult,
-  type TextFileReadResult,
-  type TextFileWriteOptions,
-  type TextFileWriteResult,
   type TerminalWsHotOp,
 } from "@yaade/rpc";
 import { Duration, Effect, Fiber } from "effect";
 import { invokeHostRpcUnchecked } from "./effect-host-client.js";
-import { readTextFileHttp, writeTextFileHttp } from "./text-file-http.js";
 
 async function runInvokePromise<T>(
   effect: Effect.Effect<T, HostRpcError>,
@@ -55,7 +51,7 @@ export function normalizeHostBaseUrl(baseUrl?: string): string {
     typeof window === "undefined" ? "http://localhost" : window.location.origin;
   const url = new URL(baseUrl ?? fallback, fallback);
   if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("YAADE server URL must use http or https");
+    throw new Error("YAADE server URL must terminal http or https");
   }
   if (url.username || url.password) {
     throw new Error("YAADE server URLs cannot contain credentials");
@@ -151,7 +147,7 @@ type RealtimeWakeDocument = RealtimeWakeTarget & {
 
 export type WebHostTransportOptions = {
   readonly baseUrl?: string;
-  /** `undefined` uses the legacy query/session token; `null` sends no token. */
+  /** `undefined` terminals the legacy query/session token; `null` sends no token. */
   readonly authToken?: string | null;
 };
 
@@ -210,7 +206,7 @@ export function subscribeRealtimeWake(
  * Host realtime WS client.
  *
  * - Reconnect owned by an Effect Fiber (interrupt on `close`)
- * - `terminal:data` / `terminal:exit` use structural decode (no Schema)
+ * - `terminal:data` / `terminal:exit` terminal structural decode (no Schema)
  * - Binary `terminal:data` frames skip JSON.stringify/parse on the hot path
  * - Hot terminal control (`write`/`ack`/`resize`) sent fire-and-forget on WS
  * - In-flight HTTP invokes aborted with `HostDisconnectedError` on WS drop / close
@@ -325,30 +321,6 @@ export class WebHostTransport implements YaadeHostTransport {
       signal.removeEventListener("abort", abort);
       this.pendingAborts.delete(ac);
     }
-  }
-
-  readTextFile(uri: string): Promise<TextFileReadResult> {
-    return this.runTextFileRequest((signal) =>
-      readTextFileHttp(uri, {
-        signal,
-        baseUrl: this.baseUrl,
-        authToken: this.authToken,
-      }),
-    );
-  }
-
-  writeTextFile(
-    uri: string,
-    content: string,
-    options: TextFileWriteOptions,
-  ): Promise<TextFileWriteResult> {
-    return this.runTextFileRequest((signal) =>
-      writeTextFileHttp(uri, content, options, {
-        signal,
-        baseUrl: this.baseUrl,
-        authToken: this.authToken,
-      }),
-    );
   }
 
   invokeRealtime<Name extends HostRouteName>(
@@ -756,19 +728,6 @@ export class WebHostTransport implements YaadeHostTransport {
       pending.reject(error);
     }
     this.pendingRealtime.clear();
-  }
-
-  private async runTextFileRequest<T>(
-    request: (signal: AbortSignal) => Promise<T>,
-  ): Promise<T> {
-    if (this.closed) throw new Error("host transport closed");
-    const controller = new AbortController();
-    this.pendingAborts.add(controller);
-    try {
-      return await request(controller.signal);
-    } finally {
-      this.pendingAborts.delete(controller);
-    }
   }
 
   private dispatch(channel: string, ...args: unknown[]): void {

@@ -746,7 +746,7 @@ export class GhosttyTerminalCore {
    * Read the render state into the JS row cache.
    *
    * Painting owns dirty-flag acknowledgement. Inspection callers pass false so
-   * an agent/debug read cannot steal a pending repaint from renderFrame().
+   * a debug read cannot steal a pending repaint from renderFrame().
    */
   snapshot(consumeDirty = true): GhosttySnapshot {
     this.ensureActive();

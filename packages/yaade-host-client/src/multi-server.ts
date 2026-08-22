@@ -2,32 +2,27 @@ import { Schema } from "effect"
 import {
   ArchiveSession,
   ArchiveSessionTab,
-  ArchiveToolUse,
+  CloseTerminal,
   CreateSessionTab,
-  CreateToolUse,
+  CreateTerminal,
   RenameSessionTab,
   ReorderSessionTabs,
-  ReorderToolUses,
+  ReorderTerminals,
   RestoreSession,
   SaveSessionTabLayout,
   SelectSessionTab,
   SessionId,
   SessionTabId,
-  ToolUseId,
-  UpdateToolUseContext,
+  MuxTerminalId,
   type AppSession as AppSessionValue,
-  type ToolEvent as ToolEventValue,
-  type ToolUse,
+  type MuxEvent as MuxEventValue,
+  type MuxTerminal,
 } from "@yaade/rpc"
 import type {
-  AgentRunInfo,
-  HostAgents,
   HostTerminal,
-  HostTools,
+  HostMux,
   YaadeHostAPI,
-  ToolSessionSnapshot,
-  TerminalInstanceEvent,
-  TerminalInstanceInfo,
+  MuxSessionSnapshot,
 } from "@yaade/workspace"
 import type {
   YaadeServerConnection,
@@ -60,9 +55,8 @@ type ManagedConnection = {
   sessionCount: number
   error?: string
   disposeStatus: () => void
-  disposeTools: () => void
+  disposeMux: () => void
   disposeTerminal: () => void
-  disposeAgents: () => void
 }
 
 export type MultiServerSnapshot = {
@@ -201,7 +195,7 @@ export function saveStoredServerDefinitions(
 }
 
 function scopedId(
-  prefix: "ses" | "tab" | "use",
+  prefix: "ses" | "tab" | "term",
   serverId: string,
   localId: string,
 ): string {
@@ -216,31 +210,12 @@ function publicTabId(value: string): SessionTabId {
   return Schema.decodeUnknownSync(SessionTabId)(value)
 }
 
-function publicToolUseId(value: string): ToolUseId {
-  return Schema.decodeUnknownSync(ToolUseId)(value)
+function publicMuxTerminalId(value: string): MuxTerminalId {
+  return Schema.decodeUnknownSync(MuxTerminalId)(value)
 }
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function localProjectId(
-  owner: Owner,
-  publicProjectId: string,
-  projectOwners: ReadonlyMap<string, Owner>,
-): string {
-  const projectOwner = projectOwners.get(publicProjectId)
-  if (projectOwner && projectOwner.serverId === owner.serverId) {
-    return projectOwner.localId
-  }
-  const marker = `${owner.serverId}::`
-  return publicProjectId.startsWith(marker)
-    ? publicProjectId.slice(marker.length)
-    : publicProjectId
-}
-
-function scopedProjectId(serverId: string, projectId: string): string {
-  return `${serverId}::${projectId}`
 }
 
 function scopedTerminalId(serverId: string, terminalId: string): string {
@@ -248,31 +223,23 @@ function scopedTerminalId(serverId: string, terminalId: string): string {
 }
 
 export class MultiServerHostClient {
-  readonly tools: HostTools
+  readonly mux: HostMux
   readonly ports: YaadeHostAPI
 
   private readonly currentServerId: string
   private readonly connections = new Map<string, ManagedConnection>()
   private readonly listeners = new Set<Listener>()
-  private readonly toolEventListeners = new Set<(event: ToolEventValue) => void>()
+  private readonly muxEventListeners = new Set<(event: MuxEventValue) => void>()
   private readonly sessionOwners = new Map<string, Owner>()
   private readonly tabOwners = new Map<string, Owner>()
-  private readonly toolUseOwners = new Map<string, Owner>()
-  private readonly projectOwners = new Map<string, Owner>()
+  private readonly muxTerminalOwners = new Map<string, Owner>()
   private readonly ptyOwners = new Map<string, Owner>()
-  private readonly terminalInstanceOwners = new Map<string, Owner>()
-  private readonly agentOwners = new Map<string, Owner>()
-  private readonly agentEventListeners = new Set<Parameters<HostAgents["onEvent"]>[0]>()
   private readonly terminalExitListeners = new Set<(
     id: string,
     exitCode: number,
     signal?: number,
   ) => void>()
-  private readonly terminalInstanceListeners = new Set<
-    (event: TerminalInstanceEvent) => void
-  >()
   private readonly aggregateTerminal: HostTerminal
-  private readonly aggregateAgents: HostAgents
   private activeServerId: string | undefined
   private generation = 0
   private globalTarget?: MultiServerGlobalTarget
@@ -286,8 +253,7 @@ export class MultiServerHostClient {
     this.currentServerId = options.currentServer.id
     this.globalTarget = options.globalTarget
     this.aggregateTerminal = this.createTerminal()
-    this.aggregateAgents = this.createAgents()
-    this.tools = this.createTools()
+    this.mux = this.createMux()
     this.syncDefinitions(options.currentServer, options.servers ?? [])
     this.ports = this.createPorts(options.currentServer)
     this.snapshot = this.makeSnapshot()
@@ -332,8 +298,8 @@ export class MultiServerHostClient {
     if (owner) this.selectServer(owner.serverId)
   }
 
-  selectToolUse(toolUseId: string): void {
-    const owner = this.toolUseOwners.get(toolUseId)
+  selectMuxTerminal(muxTerminalId: string): void {
+    const owner = this.muxTerminalOwners.get(muxTerminalId)
     if (owner) this.selectServer(owner.serverId)
   }
 
@@ -342,9 +308,9 @@ export class MultiServerHostClient {
     return owner ? this.connectionInfo(owner.serverId) : undefined
   }
 
-  onToolEvent(callback: (event: ToolEventValue) => void): () => void {
-    this.toolEventListeners.add(callback)
-    return () => this.toolEventListeners.delete(callback)
+  onMuxEvent(callback: (event: MuxEventValue) => void): () => void {
+    this.muxEventListeners.add(callback)
+    return () => this.muxEventListeners.delete(callback)
   }
 
   async testServer(definition: YaadeServerDefinition): Promise<ServerTestResult> {
@@ -362,7 +328,7 @@ export class MultiServerHostClient {
     })
     const api = createYaadeApi(transport)
     try {
-      const sessions = await api.tools.listSessions(false)
+      const sessions = await api.mux.listSessions(false)
       return { ok: true, sessionCount: sessions.length }
     } catch (error) {
       return { ok: false, error: errorMessage(error) }
@@ -374,7 +340,7 @@ export class MultiServerHostClient {
   private createPorts(currentServer: YaadeServerDefinition): YaadeHostAPI {
     const connection = this.connections.get(currentServer.id)
     if (connection) {
-      return { ...connection.api, tools: this.tools, terminal: this.aggregateTerminal, agents: this.aggregateAgents }
+      return { ...connection.api, mux: this.mux, terminal: this.aggregateTerminal }
     }
     // The current connection is installed by syncDefinitions immediately after
     // construction. This branch only keeps the object creation type-safe.
@@ -427,10 +393,9 @@ export class MultiServerHostClient {
       status: "connecting",
       sessionCount: 0,
       disposeStatus: () => undefined,
-      disposeTools: () => undefined,
+      disposeMux: () => undefined,
       disposeTerminal: () => undefined,
-      disposeAgents: () => undefined,
-    }
+      }
     const disposeConnectionStatus = transport.on("connection:status", (...args) => {
       const status = args[0]
       if (status === "connected") {
@@ -458,36 +423,24 @@ export class MultiServerHostClient {
       disposeConnectionStatus()
       disposeProtocolErrors()
     }
-    connection.disposeTools = api.tools.onEvent(event => {
+    connection.disposeMux = api.mux.onEvent(event => {
       const scoped = this.scopeEvent(connection, event)
-      for (const listener of this.toolEventListeners) listener(scoped)
+      for (const listener of this.muxEventListeners) listener(scoped)
     })
     const disposeExit = api.terminal.onExit((id, exitCode, signal) => {
       const scopedId = this.scopePtyId(connection.definition.id, id)
       for (const listener of this.terminalExitListeners) listener(scopedId, exitCode, signal)
     })
-    const disposeInstance = api.terminal.onInstanceEvent(event => {
-      const scoped = this.scopeTerminalInstance(connection, event.instance)
-      for (const listener of this.terminalInstanceListeners) {
-        listener({ ...event, instance: scoped })
-      }
-    })
     connection.disposeTerminal = () => {
       disposeExit()
-      disposeInstance()
     }
-    connection.disposeAgents = api.agents.onEvent(event => {
-      const run = event.run ? this.scopeAgentRun(connection, event.run) : event.run
-      for (const listener of this.agentEventListeners) listener({ ...event, run })
-    })
     return connection
   }
 
   private disposeConnection(connection: ManagedConnection): void {
     connection.disposeStatus()
-    connection.disposeTools()
+    connection.disposeMux()
     connection.disposeTerminal()
-    connection.disposeAgents()
     connection.transport.close()
   }
 
@@ -530,18 +483,10 @@ export class MultiServerHostClient {
     return owner
   }
 
-  private ownerForToolUse(toolUseId: string): Owner {
-    const owner = this.toolUseOwners.get(toolUseId)
-    if (!owner) throw new Error("Tool is not available on a connected server")
+  private ownerForMuxTerminal(muxTerminalId: string): Owner {
+    const owner = this.muxTerminalOwners.get(muxTerminalId)
+    if (!owner) throw new Error("Terminal is not available on a connected server")
     return owner
-  }
-
-  private ownerForProject(projectId: string): Owner {
-    const activeServerId = this.activeConnection().definition.id
-    const mapped = this.projectOwners.get(projectId)
-    return mapped?.serverId === activeServerId
-      ? mapped
-      : { serverId: activeServerId, localId: projectId }
   }
 
   private keepLocalIds(connection: ManagedConnection): boolean {
@@ -560,8 +505,8 @@ export class MultiServerHostClient {
       ...(session.activeTabId
         ? { activeTabId: publicTabId(scopedId("tab", owner.serverId, session.activeTabId)) }
         : {}),
-      ...(session.activeToolUseId
-        ? { activeToolUseId: publicToolUseId(scopedId("use", owner.serverId, session.activeToolUseId)) }
+      ...(session.activeMuxTerminalId
+        ? { activeMuxTerminalId: publicMuxTerminalId(scopedId("term", owner.serverId, session.activeMuxTerminalId)) }
         : {}),
     }
   }
@@ -580,54 +525,42 @@ export class MultiServerHostClient {
       ...tab,
       id,
       sessionId,
-      ...(tab.activeToolUseId
-        ? { activeToolUseId: publicToolUseId(scopedId("use", owner.serverId, tab.activeToolUseId)) }
+      ...(tab.activeMuxTerminalId
+        ? { activeMuxTerminalId: publicMuxTerminalId(scopedId("term", owner.serverId, tab.activeMuxTerminalId)) }
         : {}),
     }
   }
 
-  private scopeToolUse(connection: ManagedConnection, use: ToolUse): ToolUse {
-    const owner = { serverId: connection.definition.id, localId: use.id }
-    this.toolUseOwners.set(use.id, owner)
-    const sessionOwner = { serverId: connection.definition.id, localId: use.sessionId }
-    this.sessionOwners.set(use.sessionId, sessionOwner)
-    const localProjectIdValue = use.context.project.projectId
-    const projectOwner = {
-      serverId: owner.serverId,
-      localId: localProjectIdValue,
-    }
-    this.projectOwners.set(localProjectIdValue, projectOwner)
-    if (use.output.kind === "process" && use.output.ptyId) {
-      this.ptyOwners.set(use.output.ptyId, {
+  private scopeMuxTerminal(connection: ManagedConnection, terminal: MuxTerminal): MuxTerminal {
+    const owner = { serverId: connection.definition.id, localId: terminal.id }
+    this.muxTerminalOwners.set(terminal.id, owner)
+    const sessionOwner = { serverId: connection.definition.id, localId: terminal.sessionId }
+    this.sessionOwners.set(terminal.sessionId, sessionOwner)
+    if (terminal.output.kind === "process" && terminal.output.ptyId) {
+      this.ptyOwners.set(terminal.output.ptyId, {
         serverId: owner.serverId,
-        localId: use.output.ptyId,
+        localId: terminal.output.ptyId,
       })
     }
-    if (this.keepLocalIds(connection)) return use
-    const id = publicToolUseId(scopedId("use", owner.serverId, owner.localId))
-    this.toolUseOwners.set(id, owner)
+    if (this.keepLocalIds(connection)) return terminal
+    const id = publicMuxTerminalId(scopedId("term", owner.serverId, owner.localId))
+    this.muxTerminalOwners.set(id, owner)
     const sessionId = publicSessionId(scopedId("ses", sessionOwner.serverId, sessionOwner.localId))
     this.sessionOwners.set(sessionId, sessionOwner)
-    const projectId = scopedProjectId(owner.serverId, localProjectIdValue)
-    this.projectOwners.set(projectId, projectOwner)
-    const output = this.scopeProcessOutput(owner.serverId, use.output)
-    if (use.output.kind === "process" && use.output.ptyId) {
-      this.ptyOwners.set(this.scopePtyId(owner.serverId, use.output.ptyId), {
+    const output = this.scopeProcessOutput(owner.serverId, terminal.output)
+    if (terminal.output.kind === "process" && terminal.output.ptyId) {
+      this.ptyOwners.set(this.scopePtyId(owner.serverId, terminal.output.ptyId), {
         serverId: owner.serverId,
-        localId: use.output.ptyId,
+        localId: terminal.output.ptyId,
       })
     }
     return {
-      ...use,
+      ...terminal,
       id,
       sessionId,
-      ...(use.tabId
-        ? { tabId: publicTabId(scopedId("tab", owner.serverId, use.tabId)) }
+      ...(terminal.tabId
+        ? { tabId: publicTabId(scopedId("tab", owner.serverId, terminal.tabId)) }
         : {}),
-      context: {
-        ...use.context,
-        project: { ...use.context.project, projectId },
-      },
       output,
     }
   }
@@ -636,6 +569,7 @@ export class MultiServerHostClient {
     if (serverId === this.currentServerId) return localId
     return scopedTerminalId(serverId, localId)
   }
+
 
   private ownerForPty(ptyId: string): Owner {
     const owner = this.ptyOwners.get(ptyId)
@@ -646,44 +580,10 @@ export class MultiServerHostClient {
     }
   }
 
-  private scopeTerminalInstance(
-    connection: ManagedConnection,
-    instance: TerminalInstanceInfo,
-  ): TerminalInstanceInfo {
-    const owner = { serverId: connection.definition.id, localId: instance.id }
-    this.terminalInstanceOwners.set(instance.id, owner)
-    if (instance.ptyId) {
-      this.ptyOwners.set(instance.ptyId, {
-        serverId: owner.serverId,
-        localId: instance.ptyId,
-      })
-    }
-    if (this.keepLocalIds(connection)) return instance
-    const id = scopedTerminalId(owner.serverId, owner.localId)
-    this.terminalInstanceOwners.set(id, owner)
-    if (instance.ptyId) {
-      this.ptyOwners.set(this.scopePtyId(owner.serverId, instance.ptyId), {
-        serverId: owner.serverId,
-        localId: instance.ptyId,
-      })
-    }
-    return {
-      ...instance,
-      id,
-      projectId: scopedProjectId(owner.serverId, instance.projectId),
-      ...(instance.workspaceId
-        ? { workspaceId: scopedId("ses", owner.serverId, instance.workspaceId) }
-        : {}),
-      ...(instance.ptyId
-        ? { ptyId: this.scopePtyId(owner.serverId, instance.ptyId) }
-        : {}),
-    }
-  }
-
   private scopeProcessOutput(
     serverId: string,
-    output: ToolUse["output"],
-  ): ToolUse["output"] {
+    output: MuxTerminal["output"],
+  ): MuxTerminal["output"] {
     if (output.kind !== "process") return output
     return {
       ...output,
@@ -696,21 +596,21 @@ export class MultiServerHostClient {
 
   private scopeSnapshot(
     connection: ManagedConnection,
-    snapshot: ToolSessionSnapshot,
-  ): ToolSessionSnapshot {
+    snapshot: MuxSessionSnapshot,
+  ): MuxSessionSnapshot {
     return {
       session: this.scopeSession(connection, snapshot.session),
       ...(snapshot.tabs
         ? { tabs: snapshot.tabs.map(tab => this.scopeTab(connection, tab)) }
         : {}),
-      toolUses: snapshot.toolUses.map(use => this.scopeToolUse(connection, use)),
+      muxTerminals: snapshot.muxTerminals.map(terminal => this.scopeMuxTerminal(connection, terminal)),
     }
   }
 
   private scopeEvent(
     connection: ManagedConnection,
-    event: ToolEventValue,
-  ): ToolEventValue {
+    event: MuxEventValue,
+  ): MuxEventValue {
     switch (event._tag) {
       case "SessionCreated":
       case "SessionUpdated":
@@ -721,16 +621,16 @@ export class MultiServerHostClient {
       case "SessionTabUpdated":
       case "SessionTabArchived":
         return { ...event, tab: this.scopeTab(connection, event.tab) }
-      case "ToolUseCreated":
-      case "ToolUseUpdated":
+      case "MuxTerminalCreated":
+      case "MuxTerminalUpdated":
         return {
           ...event,
-          toolUseId: this.keepLocalIds(connection)
-            ? event.toolUseId
-            : publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
-          toolUse: this.scopeToolUse(connection, event.toolUse),
+          muxTerminalId: this.keepLocalIds(connection)
+            ? event.muxTerminalId
+            : publicMuxTerminalId(scopedId("term", connection.definition.id, event.muxTerminalId)),
+          muxTerminal: this.scopeMuxTerminal(connection, event.muxTerminal),
         }
-      case "ToolUseOutputChanged":
+      case "TerminalOutputChanged":
         if (event.output.kind === "process" && event.output.ptyId) {
           const ptyId = this.keepLocalIds(connection)
             ? event.output.ptyId
@@ -742,144 +642,20 @@ export class MultiServerHostClient {
         }
         return {
           ...event,
-          toolUseId: this.keepLocalIds(connection)
-            ? event.toolUseId
-            : publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
+          muxTerminalId: this.keepLocalIds(connection)
+            ? event.muxTerminalId
+            : publicMuxTerminalId(scopedId("term", connection.definition.id, event.muxTerminalId)),
           output: this.keepLocalIds(connection)
             ? event.output
             : this.scopeProcessOutput(connection.definition.id, event.output),
         }
-      case "ToolUseArchived":
+      case "MuxTerminalArchived":
         return {
           ...event,
-          toolUseId: this.keepLocalIds(connection)
-            ? event.toolUseId
-            : publicToolUseId(scopedId("use", connection.definition.id, event.toolUseId)),
+          muxTerminalId: this.keepLocalIds(connection)
+            ? event.muxTerminalId
+            : publicMuxTerminalId(scopedId("term", connection.definition.id, event.muxTerminalId)),
         }
-    }
-  }
-
-  private ownerForAgent(runId: string): Owner {
-    const owner = this.agentOwners.get(runId)
-    if (owner) return owner
-    return {
-      serverId: this.activeConnection().definition.id,
-      localId: runId,
-    }
-  }
-
-  private scopeAgentRun(connection: ManagedConnection, run: AgentRunInfo): AgentRunInfo {
-    const owner = { serverId: connection.definition.id, localId: run.runId }
-    this.agentOwners.set(run.runId, owner)
-    if (run.toolUseId) {
-      this.toolUseOwners.set(run.toolUseId, {
-        serverId: owner.serverId,
-        localId: run.toolUseId,
-      })
-    }
-    if (run.ptyId) {
-      this.ptyOwners.set(run.ptyId, { serverId: owner.serverId, localId: run.ptyId })
-    }
-    if (this.keepLocalIds(connection)) return run
-    const runId = `run-${owner.serverId}--${owner.localId}`
-    this.agentOwners.set(runId, owner)
-    const toolUseId = run.toolUseId
-      ? publicToolUseId(scopedId("use", owner.serverId, run.toolUseId))
-      : run.toolUseId
-    if (toolUseId && run.toolUseId) {
-      this.toolUseOwners.set(toolUseId, {
-        serverId: owner.serverId,
-        localId: run.toolUseId,
-      })
-    }
-    const ptyId = run.ptyId ? this.scopePtyId(owner.serverId, run.ptyId) : run.ptyId
-    if (ptyId && run.ptyId) {
-      this.ptyOwners.set(ptyId, { serverId: owner.serverId, localId: run.ptyId })
-    }
-    const projectId = scopedProjectId(owner.serverId, run.projectId)
-    this.projectOwners.set(projectId, { serverId: owner.serverId, localId: run.projectId })
-    this.projectOwners.set(run.projectId, { serverId: owner.serverId, localId: run.projectId })
-    return { ...run, runId, toolUseId, ptyId, projectId }
-  }
-
-  private createAgents(): HostAgents {
-    const self = this
-    const collectLive = async (projectId?: string): Promise<AgentRunInfo[]> => {
-      const results: AgentRunInfo[] = []
-      for (const connection of self.connections.values()) {
-        try {
-          const values = projectId === undefined
-            ? await connection.api.agents.listLive()
-            : await connection.api.agents.listLive(projectId)
-          connection.status = "connected"
-          for (const run of values) results.push(self.scopeAgentRun(connection, run))
-        } catch (error) {
-          connection.status = "offline"
-          connection.error = errorMessage(error)
-        }
-      }
-      self.snapshot = self.makeSnapshot()
-      self.publish()
-      return results
-    }
-    return {
-      listProviders: refresh => self.activeConnection().api.agents.listProviders(refresh),
-      launch: req => self.activeConnection().api.agents.launch(req),
-      stop: req => {
-        const owner = self.ownerForAgent(req.runId)
-        return self.connectionForOwner(owner).api.agents.stop({ ...req, runId: owner.localId })
-      },
-      close: req => {
-        const owner = self.ownerForAgent(req.runId)
-        return self.connectionForOwner(owner).api.agents.close({ ...req, runId: owner.localId })
-      },
-      listLive: projectId => collectLive(projectId),
-      listProject: async projectId => {
-        const owner = self.ownerForProject(projectId)
-        const values = await self.connectionForOwner(owner).api.agents.listProject(
-          localProjectId(owner, projectId, self.projectOwners),
-        )
-        return values.map(run => self.scopeAgentRun(self.connectionForOwner(owner), run))
-      },
-      get: async runId => {
-        const owner = self.ownerForAgent(runId)
-        const local = await self.connectionForOwner(owner).api.agents.get(owner.localId)
-        return local ? self.scopeAgentRun(self.connectionForOwner(owner), local) : null
-      },
-      getTranscript: runId => {
-        const owner = self.ownerForAgent(runId)
-        return self.connectionForOwner(owner).api.agents.getTranscript(owner.localId)
-      },
-      listActivity: async opts => {
-        const runs: AgentRunInfo[] = []
-        let nextCursor: string | null = null
-        for (const connection of self.connections.values()) {
-          try {
-            const page = await connection.api.agents.listActivity(opts)
-            connection.status = "connected"
-            for (const run of page.runs) runs.push(self.scopeAgentRun(connection, run))
-            if (page.nextCursor) nextCursor = page.nextCursor
-          } catch (error) {
-            connection.status = "offline"
-            connection.error = errorMessage(error)
-          }
-        }
-        return { runs, nextCursor }
-      },
-      getSnapshot: sessionId => {
-        const owner = self.ownerForSession(sessionId)
-        return self.connectionForOwner(owner).api.agents.getSnapshot(owner.localId)
-      },
-      listEvents: (sessionId, opts) => {
-        const owner = self.ownerForSession(sessionId)
-        return self.connectionForOwner(owner).api.agents.listEvents(owner.localId, opts)
-      },
-      ingestNative: req => self.activeConnection().api.agents.ingestNative(req),
-      installProjectHooks: req => self.activeConnection().api.agents.installProjectHooks(req),
-      onEvent: callback => {
-        self.agentEventListeners.add(callback)
-        return () => self.agentEventListeners.delete(callback)
-      },
     }
   }
 
@@ -936,49 +712,6 @@ export class MultiServerHostClient {
       dispose: (id) => {
         const owner = self.ownerForPty(id)
         return self.connectionForOwner(owner).api.terminal.dispose(owner.localId)
-      },
-      listInstances: async projectId => {
-        const owner = self.ownerForProject(projectId)
-        const values = await self.connectionForOwner(owner).api.terminal.listInstances(
-          localProjectId(owner, projectId, self.projectOwners),
-        )
-        return values.map(value => self.scopeTerminalInstance(self.connectionForOwner(owner), value))
-      },
-      createInstance: async request => {
-        const owner = self.ownerForProject(request.projectId)
-        const connection = self.connectionForOwner(owner)
-        const local = await connection.api.terminal.createInstance({
-          ...request,
-          projectId: localProjectId(owner, request.projectId, self.projectOwners),
-        })
-        return self.scopeTerminalInstance(connection, local)
-      },
-      restartInstance: async request => {
-        const owner = self.terminalInstanceOwners.get(request.id) ?? self.ownerForPty(request.id)
-        const localId = self.terminalInstanceOwners.get(request.id)?.localId ?? owner.localId
-        const local = await self.connectionForOwner(owner).api.terminal.restartInstance({ ...request, id: localId })
-        return local ? self.scopeTerminalInstance(self.connectionForOwner(owner), local) : null
-      },
-      resumeInstance: async request => {
-        const owner = self.terminalInstanceOwners.get(request.id) ?? self.ownerForPty(request.id)
-        const localId = self.terminalInstanceOwners.get(request.id)?.localId ?? owner.localId
-        const local = await self.connectionForOwner(owner).api.terminal.resumeInstance({ ...request, id: localId })
-        return local ? self.scopeTerminalInstance(self.connectionForOwner(owner), local) : null
-      },
-      closeInstance: async request => {
-        const owner = self.terminalInstanceOwners.get(request.id) ?? self.ownerForPty(request.id)
-        const localId = self.terminalInstanceOwners.get(request.id)?.localId ?? owner.localId
-        const local = await self.connectionForOwner(owner).api.terminal.closeInstance({ ...request, id: localId })
-        return local ? self.scopeTerminalInstance(self.connectionForOwner(owner), local) : null
-      },
-      getInstanceTranscript: (id) => {
-        const owner = self.terminalInstanceOwners.get(id) ?? self.ownerForPty(id)
-        const localId = self.terminalInstanceOwners.get(id)?.localId ?? owner.localId
-        return self.connectionForOwner(owner).api.terminal.getInstanceTranscript(localId)
-      },
-      onInstanceEvent: (callback) => {
-        self.terminalInstanceListeners.add(callback)
-        return () => self.terminalInstanceListeners.delete(callback)
       },
       acquireLease: (id, mode) => {
         const owner = self.ownerForPty(id)
@@ -1043,46 +776,7 @@ export class MultiServerHostClient {
         const owner = this.ownerForSession(String(command.sessionId))
         return { ...command, sessionId: publicSessionId(owner.localId) }
       }
-      case "CreateToolUse": {
-        const owner = this.ownerForSession(String(command.sessionId))
-        const project = isRecord(command.project)
-          ? {
-              ...command.project,
-              projectId: localProjectId(
-                owner,
-                String(command.project.projectId),
-                this.projectOwners,
-              ),
-            }
-          : command.project
-        return {
-          ...command,
-          sessionId: publicSessionId(owner.localId),
-          ...(command.tabId
-            ? { tabId: publicTabId(this.ownerForTab(String(command.tabId)).localId) }
-            : {}),
-          project,
-        }
-      }
-      case "UpdateToolUseContext": {
-        const owner = this.ownerForToolUse(String(command.toolUseId))
-        const project = isRecord(command.project)
-          ? {
-              ...command.project,
-              projectId: localProjectId(
-                owner,
-                String(command.project.projectId),
-                this.projectOwners,
-              ),
-            }
-          : command.project
-        return {
-          ...command,
-          toolUseId: publicToolUseId(owner.localId),
-          project,
-        }
-      }
-      case "ReorderToolUses": {
+      case "CreateTerminal": {
         const owner = this.ownerForSession(String(command.sessionId))
         return {
           ...command,
@@ -1090,24 +784,34 @@ export class MultiServerHostClient {
           ...(command.tabId
             ? { tabId: publicTabId(this.ownerForTab(String(command.tabId)).localId) }
             : {}),
-          toolUseIds: Array.isArray(command.toolUseIds)
-            ? command.toolUseIds.map(value => publicToolUseId(this.ownerForToolUse(String(value)).localId))
-            : command.toolUseIds,
         }
       }
-      case "CancelToolUse":
-      case "RestartToolUse":
-      case "ArchiveToolUse": {
-        const owner = this.ownerForToolUse(String(command.toolUseId))
-        return { ...command, toolUseId: publicToolUseId(owner.localId) }
-      }
-      case "SelectSessionToolUse": {
+      case "ReorderTerminals": {
         const owner = this.ownerForSession(String(command.sessionId))
         return {
           ...command,
           sessionId: publicSessionId(owner.localId),
-          ...(command.toolUseId
-            ? { toolUseId: publicToolUseId(this.ownerForToolUse(String(command.toolUseId)).localId) }
+          ...(command.tabId
+            ? { tabId: publicTabId(this.ownerForTab(String(command.tabId)).localId) }
+            : {}),
+          muxTerminalIds: Array.isArray(command.muxTerminalIds)
+            ? command.muxTerminalIds.map(value => publicMuxTerminalId(this.ownerForMuxTerminal(String(value)).localId))
+            : command.muxTerminalIds,
+        }
+      }
+      case "CancelMuxTerminal":
+      case "RestartMuxTerminal":
+      case "CloseTerminal": {
+        const owner = this.ownerForMuxTerminal(String(command.muxTerminalId))
+        return { ...command, muxTerminalId: publicMuxTerminalId(owner.localId) }
+      }
+      case "SelectSessionMuxTerminal": {
+        const owner = this.ownerForSession(String(command.sessionId))
+        return {
+          ...command,
+          sessionId: publicSessionId(owner.localId),
+          ...(command.muxTerminalId
+            ? { muxTerminalId: publicMuxTerminalId(this.ownerForMuxTerminal(String(command.muxTerminalId)).localId) }
             : {}),
         }
       }
@@ -1116,7 +820,7 @@ export class MultiServerHostClient {
     }
   }
 
-  private createTools(): HostTools {
+  private createMux(): HostMux {
     const self = this
     return {
       listSessions: async includeArchived => {
@@ -1124,7 +828,7 @@ export class MultiServerHostClient {
         const results = await Promise.all(
           [...self.connections.values()].map(async connection => {
             try {
-              const snapshots = await connection.api.tools.listSessions(includeArchived)
+              const snapshots = await connection.api.mux.listSessions(includeArchived)
               connection.status = "connected"
               connection.error = undefined
               connection.sessionCount = snapshots.filter(snapshot => !snapshot.session.archivedAt).length
@@ -1156,7 +860,7 @@ export class MultiServerHostClient {
         for (const [serverId, sessionIds] of grouped) {
           const connection = self.connections.get(serverId)
           if (!connection) continue
-          const local = await connection.api.tools.reorderSessions({ ...command, sessionIds })
+          const local = await connection.api.mux.reorderSessions({ ...command, sessionIds })
           results.push(...local.map(session => self.scopeSession(connection, session)))
         }
         return results
@@ -1164,7 +868,7 @@ export class MultiServerHostClient {
       createTab: async command => {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.createTab(
+        const local = await connection.api.mux.createTab(
           Schema.decodeUnknownSync(CreateSessionTab)(self.toLocalCommand(command)),
         )
         return self.scopeTab(connection, local)
@@ -1172,7 +876,7 @@ export class MultiServerHostClient {
       renameTab: async command => {
         const owner = self.ownerForTab(command.tabId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.renameTab(
+        const local = await connection.api.mux.renameTab(
           Schema.decodeUnknownSync(RenameSessionTab)(self.toLocalCommand(command)),
         )
         return self.scopeTab(connection, local)
@@ -1180,7 +884,7 @@ export class MultiServerHostClient {
       saveTabLayout: async command => {
         const owner = self.ownerForTab(command.tabId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.saveTabLayout(
+        const local = await connection.api.mux.saveTabLayout(
           Schema.decodeUnknownSync(SaveSessionTabLayout)(self.toLocalCommand(command)),
         )
         return self.scopeTab(connection, local)
@@ -1188,7 +892,7 @@ export class MultiServerHostClient {
       reorderTabs: async command => {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.reorderTabs(
+        const local = await connection.api.mux.reorderTabs(
           Schema.decodeUnknownSync(ReorderSessionTabs)(self.toLocalCommand(command)),
         )
         return local.map(tab => self.scopeTab(connection, tab))
@@ -1196,7 +900,7 @@ export class MultiServerHostClient {
       archiveTab: async command => {
         const owner = self.ownerForTab(command.tabId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.archiveTab(
+        const local = await connection.api.mux.archiveTab(
           Schema.decodeUnknownSync(ArchiveSessionTab)(self.toLocalCommand(command)),
         )
         return self.scopeTab(connection, local)
@@ -1205,7 +909,7 @@ export class MultiServerHostClient {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
         self.selectServer(owner.serverId)
-        const local = await connection.api.tools.selectTab(
+        const local = await connection.api.mux.selectTab(
           Schema.decodeUnknownSync(SelectSessionTab)(self.toLocalCommand(command)),
         )
         return self.scopeSession(connection, local)
@@ -1213,7 +917,7 @@ export class MultiServerHostClient {
       archiveSession: async command => {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.archiveSession(
+        const local = await connection.api.mux.archiveSession(
           Schema.decodeUnknownSync(ArchiveSession)(self.toLocalCommand(command)),
         )
         return self.scopeSession(connection, local)
@@ -1221,150 +925,88 @@ export class MultiServerHostClient {
       restoreSession: async command => {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.restoreSession(
+        const local = await connection.api.mux.restoreSession(
           Schema.decodeUnknownSync(RestoreSession)(self.toLocalCommand(command)),
         )
         return self.scopeSession(connection, local)
       },
       createSession: async title => {
         const connection = self.activeConnection()
-        const local = await connection.api.tools.createSession(title)
+        const local = await connection.api.mux.createSession(title)
         return self.scopeSession(connection, local)
       },
       renameSession: async (sessionId, title) => {
         const owner = self.ownerForSession(sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.renameSession(publicSessionId(owner.localId), title)
+        const local = await connection.api.mux.renameSession(publicSessionId(owner.localId), title)
         return self.scopeSession(connection, local)
       },
       getSession: async sessionId => {
         const owner = self.ownerForSession(sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.getSession(publicSessionId(owner.localId))
+        const local = await connection.api.mux.getSession(publicSessionId(owner.localId))
         return local ? self.scopeSnapshot(connection, local) : null
       },
-      createUse: async command => {
+      createTerminal: async command => {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
         self.selectServer(owner.serverId)
-        const local = await connection.api.tools.createUse(
-          Schema.decodeUnknownSync(CreateToolUse)(self.toLocalCommand(command)),
+        const local = await connection.api.mux.createTerminal(
+          Schema.decodeUnknownSync(CreateTerminal)(self.toLocalCommand(command)),
         )
-        return self.scopeToolUse(connection, local)
+        return self.scopeMuxTerminal(connection, local)
       },
-      getUse: async toolUseId => {
-        const owner = self.ownerForToolUse(toolUseId)
+      getTerminal: async muxTerminalId => {
+        const owner = self.ownerForMuxTerminal(muxTerminalId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.getUse(publicToolUseId(owner.localId))
-        return local ? self.scopeToolUse(connection, local) : null
+        const local = await connection.api.mux.getTerminal(publicMuxTerminalId(owner.localId))
+        return local ? self.scopeMuxTerminal(connection, local) : null
       },
-      reorderUses: async command => {
+      reorderTerminals: async command => {
         const owner = self.ownerForSession(command.sessionId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.reorderUses(
-          Schema.decodeUnknownSync(ReorderToolUses)(self.toLocalCommand(command)),
+        const local = await connection.api.mux.reorderTerminals(
+          Schema.decodeUnknownSync(ReorderTerminals)(self.toLocalCommand(command)),
         )
-        return local.map(use => self.scopeToolUse(connection, use))
+        return local.map(terminal => self.scopeMuxTerminal(connection, terminal))
       },
-      updateUseContext: async command => {
-        const owner = self.ownerForToolUse(command.toolUseId)
-        const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.updateUseContext(
-          Schema.decodeUnknownSync(UpdateToolUseContext)(self.toLocalCommand(command)),
-        )
-        return self.scopeToolUse(connection, local)
-      },
-      selectUse: async (sessionId, toolUseId) => {
+      selectTerminal: async (sessionId, muxTerminalId) => {
         const owner = self.ownerForSession(sessionId)
         const connection = self.connectionForOwner(owner)
         self.selectServer(owner.serverId)
-        const local = await connection.api.tools.selectUse(
+        const local = await connection.api.mux.selectTerminal(
           publicSessionId(owner.localId),
-          toolUseId ? publicToolUseId(self.ownerForToolUse(toolUseId).localId) : undefined,
+          muxTerminalId ? publicMuxTerminalId(self.ownerForMuxTerminal(muxTerminalId).localId) : undefined,
         )
         return self.scopeSession(connection, local)
       },
-      cancelUse: async (toolUseId, revision) => {
-        const owner = self.ownerForToolUse(toolUseId)
+      stopTerminal: async (muxTerminalId, revision) => {
+        const owner = self.ownerForMuxTerminal(muxTerminalId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.cancelUse(publicToolUseId(owner.localId), revision)
-        return self.scopeToolUse(connection, local)
+        const local = await connection.api.mux.stopTerminal(publicMuxTerminalId(owner.localId), revision)
+        return self.scopeMuxTerminal(connection, local)
       },
-      restartUse: async (toolUseId, revision) => {
-        const owner = self.ownerForToolUse(toolUseId)
+      restartTerminal: async (muxTerminalId, revision) => {
+        const owner = self.ownerForMuxTerminal(muxTerminalId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.restartUse(publicToolUseId(owner.localId), revision)
-        return self.scopeToolUse(connection, local)
+        const local = await connection.api.mux.restartTerminal(publicMuxTerminalId(owner.localId), revision)
+        return self.scopeMuxTerminal(connection, local)
       },
-      archiveUse: async command => {
-        const owner = self.ownerForToolUse(command.toolUseId)
+      closeTerminal: async command => {
+        const owner = self.ownerForMuxTerminal(command.muxTerminalId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.archiveUse(
-          Schema.decodeUnknownSync(ArchiveToolUse)(self.toLocalCommand(command)),
+        const local = await connection.api.mux.closeTerminal(
+          Schema.decodeUnknownSync(CloseTerminal)(self.toLocalCommand(command)),
         )
-        return self.scopeToolUse(connection, local)
+        return self.scopeMuxTerminal(connection, local)
       },
-      renameUse: async (toolUseId, title) => {
-        const owner = self.ownerForToolUse(toolUseId)
+      renameTerminal: async (muxTerminalId, title) => {
+        const owner = self.ownerForMuxTerminal(muxTerminalId)
         const connection = self.connectionForOwner(owner)
-        const local = await connection.api.tools.renameUse(publicToolUseId(owner.localId), title)
-        return self.scopeToolUse(connection, local)
+        const local = await connection.api.mux.renameTerminal(publicMuxTerminalId(owner.localId), title)
+        return self.scopeMuxTerminal(connection, local)
       },
-      listCheckoutTargets: async projectId => {
-        const owner = self.ownerForProject(projectId)
-        const connection = self.connectionForOwner(owner)
-        const targets = await connection.api.tools.listCheckoutTargets(
-          localProjectId(owner, projectId, self.projectOwners),
-        )
-        return targets
-      },
-      addProject: async rootPath => {
-        const connection = self.activeConnection()
-        const project = await connection.api.tools.addProject(rootPath)
-        self.projectOwners.set(project.projectId, {
-          serverId: connection.definition.id,
-          localId: project.projectId,
-        })
-        const scoped = scopedProjectId(connection.definition.id, project.projectId)
-        self.projectOwners.set(scoped, {
-          serverId: connection.definition.id,
-          localId: project.projectId,
-        })
-        return { ...project, projectId: scoped }
-      },
-      onEvent: callback => self.onToolEvent(callback),
-      listProjects: async () => {
-        // Projects are local to the active server. Sessions are aggregated
-        // across servers, but returning every server's projects here lets a
-        // newly selected remote session inherit the old server's project.
-        const connection = self.activeConnection()
-        try {
-          const values = await connection.api.tools.listProjects()
-          connection.status = "connected"
-          connection.error = undefined
-          const results = values.map(project => {
-            self.projectOwners.set(project.projectId, {
-              serverId: connection.definition.id,
-              localId: project.projectId,
-            })
-            const scoped = scopedProjectId(connection.definition.id, project.projectId)
-            self.projectOwners.set(scoped, {
-              serverId: connection.definition.id,
-              localId: project.projectId,
-            })
-            return { ...project, projectId: scoped }
-          })
-          self.snapshot = self.makeSnapshot()
-          self.publish()
-          return results
-        } catch (error) {
-          connection.status = "offline"
-          connection.error = errorMessage(error)
-          self.snapshot = self.makeSnapshot()
-          self.publish()
-          return []
-        }
-      },
+      onEvent: callback => self.onMuxEvent(callback),
     }
   }
 
@@ -1397,9 +1039,8 @@ export class MultiServerHostClient {
       : undefined
     if (active) {
       Object.assign(this.ports, active.api, {
-        tools: this.tools,
+        mux: this.mux,
         terminal: this.aggregateTerminal,
-        agents: this.aggregateAgents,
       })
     }
     this.globalTarget?.setYaade(this.ports)

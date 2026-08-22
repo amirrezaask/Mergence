@@ -78,8 +78,6 @@ function writeBackendPackageJson(backendDir) {
     private: true,
     type: "module",
     dependencies: {
-      "@ff-labs/fff-node": "^0.9.6",
-      "@vscode/ripgrep": "1.18.0",
       "node-pty": "^1.1.0",
     },
   }
@@ -98,39 +96,6 @@ function installBackendNatives(backendDir) {
   writeBackendPackageJson(backendDir)
   run("npm", ["install", "--omit=dev", "--no-fund", "--no-audit"], backendDir)
   fixPackagedNodePtyPerms(backendDir)
-
-  const rgBinName = process.platform === "win32" ? "rg.exe" : "rg"
-  const vscodeMods = path.join(backendDir, "node_modules", "@vscode")
-  if (fs.existsSync(vscodeMods)) {
-    for (const entry of fs.readdirSync(vscodeMods)) {
-      if (!entry.startsWith("ripgrep-")) continue
-      const rgBin = path.join(vscodeMods, entry, "bin", rgBinName)
-      if (fs.existsSync(rgBin)) fs.chmodSync(rgBin, 0o755)
-    }
-  }
-
-  const probe = spawnSync(
-    process.execPath,
-    [
-      "-e",
-      `import { rgPath } from "@vscode/ripgrep";
-import fs from "node:fs";
-if (!rgPath || !fs.existsSync(rgPath)) {
-  console.error("rgPath missing:", rgPath);
-  process.exit(1);
-}
-console.log("rgPath ok:", rgPath);
-`,
-    ],
-    { cwd: backendDir, encoding: "utf8" },
-  )
-  if (probe.status !== 0) {
-    console.error(probe.stderr || probe.stdout)
-    throw new Error(
-      `Bundled @vscode/ripgrep failed to resolve for ${process.platform}-${process.arch}`,
-    )
-  }
-  process.stdout.write(probe.stdout)
   console.log("Installed backend native deps")
 }
 
@@ -225,7 +190,7 @@ exec "$ROOT/node/${nodeRel}" "$ROOT/backend/host-server.mjs" \\
 ${staticArg}  "$@"
 `
   const launcherPath = path.join(packDir, launcherName)
-  for (const stale of ["yaade", "yaade-server", "yaade-agent"]) {
+  for (const stale of ["yaade", "yaade-server"]) {
     if (stale !== launcherName) fs.rmSync(path.join(packDir, stale), { force: true })
   }
   fs.writeFileSync(launcherPath, launcher)

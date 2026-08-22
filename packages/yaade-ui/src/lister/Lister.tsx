@@ -12,7 +12,6 @@ import {
 } from "react"
 import { ChevronRight, SearchIcon } from "lucide-react"
 import { useVirtualizer } from "@tanstack/react-virtual"
-import { SidebarContent, SidebarMenuSubButton } from "@/components/ui/sidebar.js"
 import { yaadeInteractiveRowClass } from "@/motion/tokens.js"
 import { registerListPanel, registerListPanelController, type ListPanelController } from "@/lib/list-registry.js"
 import { cn } from "@/lib/utils.js"
@@ -20,7 +19,7 @@ import { fuzzyFilter } from "./fuzzy.js"
 import { filterTreeRows } from "./filter-tree.js"
 import {
   measureLongestItemContentWidth,
-  readLocationRowHeight,
+  readFlatRowHeight,
   readTreeRowHeights,
 } from "./measure.js"
 import { ListerTreeState, type FlatEntry } from "./tree-state.js"
@@ -126,10 +125,8 @@ function TreeRowChrome<T>({
 }) {
   const paddingLeft = 4 + ctx.depth * indentPx
   return (
-    <SidebarMenuSubButton
-      asChild
-      size="sm"
-      isActive={ctx.selected || ctx.active}
+    <div
+      data-active={ctx.selected || ctx.active ? "true" : undefined}
       className={cn(
         "group/tree-row h-[var(--yaade-row-height)] w-full shrink-0 cursor-pointer gap-1 rounded-sm px-2",
         yaadeInteractiveRowClass,
@@ -175,7 +172,7 @@ function TreeRowChrome<T>({
           <span className="ml-auto flex shrink-0 items-center">{rowActions(entry.node)}</span>
         ) : null}
       </div>
-    </SidebarMenuSubButton>
+    </div>
   )
 }
 
@@ -391,12 +388,12 @@ export function Lister<T>({
 
   const scrollRef = useRef<HTMLElement | null>(null)
   const [treeHeights, setTreeHeights] = useState(readTreeRowHeights)
-  const [flatHeight, setFlatHeight] = useState(readLocationRowHeight)
+  const [flatHeight, setFlatHeight] = useState(readFlatRowHeight)
 
   useLayoutEffect(() => {
     const measure = () => {
       setTreeHeights(readTreeRowHeights())
-      setFlatHeight(readLocationRowHeight())
+      setFlatHeight(readFlatRowHeight())
     }
     measure()
     const raf = requestAnimationFrame(measure)
@@ -441,7 +438,7 @@ export function Lister<T>({
       if (!row) return flatHeight
       if (estimateSize) return estimateSize(row.node, row.depth)
       if (mode === "tree") {
-        return row.depth === 0 ? treeHeights.project : treeHeights.child
+        return row.depth === 0 ? treeHeights.root : treeHeights.child
       }
       return flatHeight
     },
@@ -650,7 +647,7 @@ export function Lister<T>({
             }
             const rowHeight =
               estimateSize?.(entry.node, entry.depth) ??
-              (entry.depth === 0 ? treeHeights.project : treeHeights.child)
+              (entry.depth === 0 ? treeHeights.root : treeHeights.child)
             const row = (
               <TreeRowChrome
                 entry={flatEntry}
@@ -744,7 +741,7 @@ export function Lister<T>({
 
   const scrollEl =
     mode === "tree" ? (
-      <SidebarContent
+      <div
         id={listElementId}
         ref={el => {
           scrollRef.current = el
@@ -756,7 +753,7 @@ export function Lister<T>({
         aria-label={ariaLabel}
       >
         {body}
-      </SidebarContent>
+      </div>
     ) : (
       <div
         id={listElementId}

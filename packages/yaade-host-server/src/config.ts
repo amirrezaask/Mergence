@@ -16,12 +16,11 @@ export type HostConfig = {
   staticDir: string | null
   /** Shared bearer token. Required when binding off loopback. */
   authToken: string | null
-  /** Browser origins allowed to use this host from another origin. */
+  /** Browser origins allowed to terminal this host from another origin. */
   corsOrigins?: string[]
   /** Advertised runtime features, used for per-server capability isolation. */
   features: {
     terminalCheckpoints: boolean
-    nativeAgentResume: boolean
   }
 }
 
@@ -61,12 +60,12 @@ export async function loadConfig(
 ): Promise<HostConfig> {
   const args = parseArgs(argv)
   const home = os.homedir()
-  const host = String(args.host ?? process.env.JET_HOST ?? "127.0.0.1")
+  const host = String(args.host ?? process.env.YAADE_HOST ?? "127.0.0.1")
   const authToken = String(
-    args.token ?? process.env.YAADE_HOST_TOKEN ?? process.env.JET_HOST_TOKEN ?? "",
+    args.token ?? process.env.YAADE_HOST_TOKEN ?? "",
   ).trim() || null
   const configuredCorsOrigins = String(
-    args["cors-origins"] ?? process.env.YAADE_CORS_ORIGINS ?? process.env.JET_CORS_ORIGINS ?? "",
+    args["cors-origins"] ?? process.env.YAADE_CORS_ORIGINS ?? process.env.YAADE_CORS_ORIGINS ?? "",
   )
     .split(",")
     .map(value => value.trim())
@@ -88,11 +87,11 @@ export async function loadConfig(
     )
   }
   // 0 = OS-assigned ephemeral port so concurrent instances do not share 4747.
-  const port = Number(args.port ?? process.env.JET_PORT ?? 0)
+  const port = Number(args.port ?? process.env.YAADE_PORT ?? 0)
   const dataDir = path.resolve(
-    String(args["data-dir"] ?? process.env.JET_DATA_DIR ?? path.join(home, ".local", "share", "jet")),
+    String(args["data-dir"] ?? process.env.YAADE_DATA_DIR ?? path.join(home, ".local", "share", "yaade")),
   )
-  const allowedFromEnv = (process.env.JET_ALLOWED_ROOTS ?? "")
+  const allowedFromEnv = (process.env.YAADE_ALLOWED_ROOTS ?? "")
     .split(",")
     .map(s => s.trim())
     .filter(Boolean)
@@ -124,7 +123,7 @@ export async function loadConfig(
     }
   }
 
-  const staticOverride = args["static-dir"] ?? process.env.JET_STATIC_DIR
+  const staticOverride = args["static-dir"] ?? process.env.YAADE_STATIC_DIR
   const staticCandidate =
     typeof staticOverride === "string" && staticOverride.trim()
       ? path.resolve(staticOverride.trim())
@@ -140,7 +139,7 @@ export async function loadConfig(
     port,
     dataDir,
     allowedRoots,
-    openBrowser: Boolean(args.open ?? process.env.JET_OPEN_BROWSER === "1"),
+    openBrowser: Boolean(args.open ?? process.env.YAADE_OPEN_BROWSER === "1"),
     launchPath,
     launchConfig,
     staticDir,
@@ -149,11 +148,7 @@ export async function loadConfig(
     features: {
       terminalCheckpoints:
         parseOnOff(args["terminal-checkpoints"]) ??
-        parseOnOff(process.env.JET_TERMINAL_CHECKPOINTS) ??
-        true,
-      nativeAgentResume:
-        parseOnOff(args["native-agent-resume"]) ??
-        parseOnOff(process.env.JET_NATIVE_AGENT_RESUME) ??
+        parseOnOff(process.env.YAADE_TERMINAL_CHECKPOINTS) ??
         true,
     },
   }

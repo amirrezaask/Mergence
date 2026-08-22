@@ -3,7 +3,7 @@ import { TerminalLeaseError, type TerminalLease } from "@yaade/rpc"
 
 const LEASE_TTL_MS = 15_000
 const DISCONNECT_GRACE_MS = (() => {
-  const raw = Number(process.env.JET_LEASE_DISCONNECT_GRACE_MS)
+  const raw = Number(process.env.YAADE_LEASE_DISCONNECT_GRACE_MS)
   return Number.isFinite(raw) && raw >= 0 ? Math.trunc(raw) : 2_000
 })()
 

@@ -1,8 +1,8 @@
 import { lazy, Suspense, useEffect, useState } from "react"
 import { RefreshCw } from "lucide-react"
 import { Button } from "@yaade/ui/primitives"
-import { basicAgentBridge } from "./basic-agent-bridge.js"
-import { ToolSessionApp } from "./tools/ToolSessionApp.js"
+import { basicTestBridge } from "./basic-test-bridge.js"
+import { TerminalMultiplexer } from "./mux/TerminalMultiplexer.js"
 import { applyPwaUpdate, isPwaUpdateReady } from "./pwa.js"
 
 const GlassMaterialGallery = lazy(() => import("@yaade/ui/gallery"))
@@ -10,13 +10,11 @@ const GlassMaterialGallery = lazy(() => import("@yaade/ui/gallery"))
 /** The Session shell is now the only browser app surface. */
 export function AppRoot() {
   const [updateReady, setUpdateReady] = useState(isPwaUpdateReady)
-  window.__yaadeAgent ??= basicAgentBridge({ route: "hq", workspace: "/" })
+  window.__yaadeTest ??= basicTestBridge()
 
   useEffect(() => {
     return () => {
-      if (window.__yaadeAgent?.getState().route === "hq") {
-        delete window.__yaadeAgent
-      }
+      delete window.__yaadeTest
     }
   }, [])
 
@@ -36,7 +34,7 @@ export function AppRoot() {
   }
   return (
     <>
-      <ToolSessionApp />
+      <TerminalMultiplexer />
       {updateReady ? (
         <aside
           className="yaade-pwa-update fixed inset-x-3 bottom-[max(0.75rem,env(safe-area-inset-bottom))] z-50 mx-auto flex max-w-sm items-center gap-3 rounded-[var(--yaade-island-radius)] border border-border bg-popover/95 p-2 pl-3 text-popover-foreground shadow-xl backdrop-blur-xl"

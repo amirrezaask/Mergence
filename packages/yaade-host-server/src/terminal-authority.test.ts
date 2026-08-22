@@ -1,7 +1,6 @@
 import assert from "node:assert/strict"
 import { pathToFileURL } from "node:url"
 import { test } from "vite-plus/test"
-import { TerminalLeaseError } from "@yaade/rpc"
 import { dispatchPromise } from "./dispatch.js"
 import { makePairedDevicePrincipal } from "./principal.js"
 import { startHostHarness } from "./test-support/host-harness.js"

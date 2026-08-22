@@ -14,7 +14,6 @@
   "dependencies": {
     "@effect/platform": "0.97.1",
     "@effect/platform-node": "0.99.0",
-    "@yaade/agent-telemetry": "workspace:*",
     "@yaade/node-host": "workspace:*",
     "@yaade/rpc": "workspace:*",
     "@yaade/shared": "workspace:*",

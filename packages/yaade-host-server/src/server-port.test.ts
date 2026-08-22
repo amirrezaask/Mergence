@@ -96,7 +96,7 @@ describe("startHostServer port fallback", () => {
 
     // Other test servers may occupy one or more subsequent ports while the
     // test runner executes files concurrently; the contract is to advance,
-    // not to use a specific adjacent port.
+    // not to terminal a specific adjacent port.
     assert.ok(started.port > preferred)
     assert.equal(config.port, started.port)
 

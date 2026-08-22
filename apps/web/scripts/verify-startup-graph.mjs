@@ -22,30 +22,10 @@ const visitStaticImports = fileName => {
   }
 }
 visitStaticImports(entryMatch[1])
-const mandatorySource = [...mandatoryChunks.values()].join("\n")
-const forbidden = ["shiki-", "diffs-", "agents-entry-"]
-const forbiddenMarkers = [
-  "lexical.dev",
-  "LegendList",
-  "react-markdown",
-  "rehype-raw",
-  "data-yaade-settings-tabs",
-  "data-yaade-todo-board-columns",
-]
-const violations = [
-  ...forbidden.filter(name => [...mandatoryChunks.keys()].some(chunk => chunk.startsWith(name))),
-  ...forbiddenMarkers.filter(name => mandatorySource.includes(name)),
-]
-if (violations.length > 0) {
-  throw new Error(`optional chunks leaked into the startup graph: ${violations.join(", ")}`)
-}
-
 const mandatoryGzipBytes = [...mandatoryChunks.values()].reduce(
   (total, source) => total + gzipSync(source).byteLength,
   0,
 )
-// Rolldown's shared-chunk graph is larger than the former Rollup graph, but
-// still keeps the expensive diff and syntax chunks out of startup execution.
 // Keep a small headroom for normal dependency updates.
 const mandatoryGzipBudget = 360 * 1024
 if (mandatoryGzipBytes > mandatoryGzipBudget) {

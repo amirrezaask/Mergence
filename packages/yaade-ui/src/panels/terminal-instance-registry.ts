@@ -26,7 +26,7 @@ function resolveTerminal(tabId?: string): GhosttyTerminalSurface | undefined {
 
   // Mux keeps off-screen terminals mounted so their PTYs survive retile/LRU
   // changes. Prefer the focused, measurable panel; otherwise a hidden
-  // zero-sized panel can satisfy the selector and make agent reads look blank
+  // zero-sized panel can satisfy the selector and make test reads look blank
   // while the visible canvas is rendering a different surface.
   const panels = [
     ...document.querySelectorAll<HTMLElement>(
@@ -46,7 +46,7 @@ function resolveTerminal(tabId?: string): GhosttyTerminalSurface | undefined {
   return last[last.length - 1]
 }
 
-/** Buffer-backed terminal text for E2E / agent bridge. */
+/** Buffer-backed terminal text for E2E / test bridge. */
 export function readTerminalBufferText(tabId?: string): string {
   const ghostty = resolveTerminal(tabId)?.getBufferText() ?? ""
   if (ghostty.trim().length > 0) return ghostty
@@ -73,7 +73,7 @@ export function readTerminalViewportY(tabId?: string): number | null {
   return resolveTerminal(tabId)?.getViewportY() ?? null
 }
 
-/** Scroll the active terminal by N lines (E2E / agent). */
+/** Scroll the active terminal by N lines (E2E / test). */
 export function scrollTerminalLines(amount: number, tabId?: string): boolean {
   const terminal = resolveTerminal(tabId)
   if (!terminal || !Number.isFinite(amount) || amount === 0) return false

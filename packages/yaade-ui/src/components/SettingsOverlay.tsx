@@ -4,7 +4,6 @@ import type {
   YaadeTheme,
 } from "@yaade/shared"
 import {
-  Bell,
   Brush,
   Check,
   CircleAlert,
@@ -28,7 +27,6 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.js"
 import { Badge } from "@/components/ui/badge.js"
 import { Button } from "@/components/ui/button.js"
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card.js"
-import { Checkbox } from "@/components/ui/checkbox.js"
 import {
   Combobox,
   ComboboxEmpty,
@@ -77,23 +75,17 @@ import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 /** Navigation chrome for the Session shell. */
 export type SessionLayout = "tabs" | "two-sidebars" | "single-sidebar"
 export type ColorSchemeMode = "system" | "light" | "dark"
-export type JetAppearanceSettings = {
+export type YaadeAppearanceSettings = {
   themeId: string
   colorSchemeMode: ColorSchemeMode
   /** Primary monospace face name (CSS stack built via `buildMonoFontStack`). */
   monoFontFamily: string
-  /** Session and ToolUse navigation chrome. */
+  /** Session and MuxTerminal navigation chrome. */
   sessionLayout: SessionLayout
-  /** Whether the Session/ToolUse sidebars are collapsed. */
+  /** Whether the Session/MuxTerminal sidebars are collapsed. */
   sidebarCollapsed: boolean
   /** Sidebar expanded width in px (clamped 240–480). */
-  sidebarWidth: number
-  /**
-   * Project filter (`null` = All).
-   * Persisted as absolute project path (stable across reloads).
-   */
-  sidebarProjectFilterPath: string | null
-}
+  sidebarWidth: number}
 
 const EMPTY_SERVER_DEFINITIONS: readonly YaadeServerDefinition[] = []
 const EMPTY_SERVER_CONNECTIONS: readonly YaadeServerConnection[] = []
@@ -102,13 +94,9 @@ export type SettingsOverlayProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   themes: YaadeTheme[]
-  settings: JetAppearanceSettings
-  onSettingsChange: (settings: JetAppearanceSettings) => void
+  settings: YaadeAppearanceSettings
+  onSettingsChange: (settings: YaadeAppearanceSettings) => void
   onReset: () => void
-  notificationPrefs?: import("@yaade/shared").NotificationPreferences | null
-  onNotificationPrefsChange?: (
-    patch: Partial<import("@yaade/shared").NotificationPreferences>,
-  ) => void
   servers?: readonly YaadeServerDefinition[]
   serverConnections?: readonly YaadeServerConnection[]
   currentServerId?: string
@@ -121,9 +109,9 @@ export type SettingsOverlayProps = {
 }
 
 function settingPatch(
-  settings: JetAppearanceSettings,
-  patch: Partial<JetAppearanceSettings>,
-): JetAppearanceSettings {
+  settings: YaadeAppearanceSettings,
+  patch: Partial<YaadeAppearanceSettings>,
+): YaadeAppearanceSettings {
   return { ...settings, ...patch }
 }
 
@@ -252,10 +240,10 @@ function ThemeButton({
   )
 }
 
-type SettingsCategory = "appearance" | "servers" | "notifications"
+type SettingsCategory = "appearance" | "servers"
 
 function isSettingsCategory(value: string): value is SettingsCategory {
-  return value === "appearance" || value === "servers" || value === "notifications"
+  return value === "appearance" || value === "servers"
 }
 
 const SETTINGS_CATEGORIES = {
@@ -268,11 +256,6 @@ const SETTINGS_CATEGORIES = {
     label: "Servers",
     description: "Connect to the machines that hold your sessions.",
     icon: Server,
-  },
-  notifications: {
-    label: "Notifications",
-    description: "Choose which events can interrupt you.",
-    icon: Bell,
   },
 } satisfies Record<
   SettingsCategory,
@@ -669,42 +652,17 @@ export function SettingsOverlay({
   settings,
   onSettingsChange,
   onReset,
-  notificationPrefs: notificationPrefsProp,
-  onNotificationPrefsChange: onNotificationPrefsChangeProp,
   servers = EMPTY_SERVER_DEFINITIONS,
   serverConnections = EMPTY_SERVER_CONNECTIONS,
   currentServerId,
   onServersChange,
   onTestServer,
 }: SettingsOverlayProps) {
-  const [localPrefs, setLocalPrefs] = useState<
-    import("@yaade/shared").NotificationPreferences | null
-  >(null)
   const [category, setCategory] = useState<SettingsCategory>("appearance")
   const compactNavigation = useCompactSettingsNavigation()
 
-  useEffect(() => {
-    if (!open || notificationPrefsProp) return
-    const api = window.yaade?.notifications
-    if (!api) return
-    void api
-      .getPreferences()
-      .then(setLocalPrefs)
-      .catch(() => {})
-  }, [open, notificationPrefsProp])
-
-  const notificationPrefs = notificationPrefsProp ?? localPrefs
-  const onNotificationPrefsChange =
-    onNotificationPrefsChangeProp ??
-    ((patch: Partial<import("@yaade/shared").NotificationPreferences>) => {
-      const api = window.yaade?.notifications
-      if (!api) return
-      void api.setPreferences(patch).then(setLocalPrefs)
-    })
-
   const categories: SettingsCategory[] = ["appearance"]
   if (onServersChange) categories.push("servers")
-  if (notificationPrefs) categories.push("notifications")
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -721,7 +679,7 @@ export function SettingsOverlay({
         <DialogHeader className="sr-only">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure appearance and notifications.
+            Configure terminal appearance and server connections.
           </DialogDescription>
         </DialogHeader>
         <Tabs
@@ -976,101 +934,6 @@ export function SettingsOverlay({
               </TabsContent>
             ) : null}
 
-            {notificationPrefs ? (
-              <TabsContent
-                value="notifications"
-                className="min-h-0 flex-1"
-                data-yaade-settings-panel="notifications"
-              >
-                <ScrollArea className="size-full">
-                  <section
-                    className="flex flex-col gap-6 p-5 sm:p-7"
-                    data-yaade-notification-prefs=""
-                  >
-                    <SettingsSectionHeader category="notifications" />
-                    <Separator />
-                    <FieldGroup className="divide-y divide-border gap-0">
-                      {(
-                        [
-                          [
-                            "desktopEnabled",
-                            "Desktop notifications",
-                            "Show native notifications outside YAADE.",
-                          ],
-                          [
-                            "soundEnabled",
-                            "Notification sounds",
-                            "Allow native notifications to play a sound.",
-                          ],
-                          [
-                            "notifyOnCompleted",
-                            "Turn completed",
-                            "Notify when an agent finishes its current turn.",
-                          ],
-                          [
-                            "notifyOnInputRequired",
-                            "Input required",
-                            "Notify when a session is waiting for your response.",
-                          ],
-                          [
-                            "notifyOnPermissionRequired",
-                            "Permission required",
-                            "Notify when a session needs approval to continue.",
-                          ],
-                          [
-                            "notifyOnFailure",
-                            "Failures",
-                            "Notify when a session fails.",
-                          ],
-                          [
-                            "includeBackgroundOutput",
-                            "Background terminal output",
-                            "Include output produced by terminals that are not focused.",
-                          ],
-                        ] as const
-                      ).map(([key, label, detail]) => {
-                        const id = `yaade-notification-${key}`
-                        const disabled =
-                          key === "soundEnabled" &&
-                          !notificationPrefs.desktopEnabled
-                        return (
-                          <Field
-                            key={key}
-                            orientation="responsive"
-                            className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
-                          >
-                            <FieldContent className="min-w-0">
-                              <FieldLabel
-                                htmlFor={id}
-                                className="text-sm font-medium leading-snug text-foreground"
-                              >
-                                {label}
-                              </FieldLabel>
-                              <FieldDescription className="mt-1 text-xs leading-relaxed">
-                                {detail}
-                              </FieldDescription>
-                            </FieldContent>
-                            <div className="flex justify-start sm:justify-end">
-                              <Checkbox
-                                id={id}
-                                checked={Boolean(notificationPrefs[key])}
-                                disabled={disabled}
-                                data-yaade-notification-pref={key}
-                                onCheckedChange={(checked) =>
-                                  onNotificationPrefsChange({
-                                    [key]: checked === true,
-                                  })
-                                }
-                              />
-                            </div>
-                          </Field>
-                        )
-                      })}
-                    </FieldGroup>
-                  </section>
-                </ScrollArea>
-              </TabsContent>
-            ) : null}
           </main>
         </Tabs>
       </DialogContent>

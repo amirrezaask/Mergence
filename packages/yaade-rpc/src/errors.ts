@@ -1,5 +1,5 @@
 import { Data } from "effect"
-import type { ToolSessionError } from "./tool-session.js"
+import type { MuxSessionError } from "./mux-session.js"
 
 /** Host / shared wire error codes (stable JSON). */
 export type HostErrorCode =
@@ -8,8 +8,6 @@ export type HostErrorCode =
   | "OPERATION_FAILED"
   | "NOT_FOUND"
   | "CONFLICT"
-  | "FILE_CHANGED"
-  | "PAYLOAD_TOO_LARGE"
   | "HOST_DISCONNECTED"
   | "WRITER_LEASE_REQUIRED"
   | "WRITER_LEASE_STALE"
@@ -61,36 +59,6 @@ export class ConflictError extends Data.TaggedError("Conflict")<{
   readonly code = "CONFLICT" as const
 }
 
-/** Optimistic text-file write rejected because the disk version no longer matches. */
-export class FileChangedError extends Data.TaggedError("FileChanged")<{
-  readonly message: string
-  readonly uri: string
-  readonly expectedVersion?: string
-  readonly actualVersion: string
-}> {
-  readonly code = "FILE_CHANGED" as const
-}
-
-export class PayloadTooLargeError extends Data.TaggedError("PayloadTooLarge")<{
-  readonly message: string
-}> {
-  readonly code = "PAYLOAD_TOO_LARGE" as const
-}
-
-export class LspCrashedError extends Data.TaggedError("LspCrashed")<{
-  readonly sessionId: string
-  readonly message: string
-}> {
-  readonly code = "OPERATION_FAILED" as const
-}
-
-/** @deprecated Legacy agent RPC error tag; in-app agent control plane removed. */
-export class AgentRpcTaggedError extends Data.TaggedError("AgentRpcError")<{
-  readonly message: string
-  readonly method?: string
-  readonly cause?: unknown
-}> {}
-
 export class InvalidRpcPayloadError extends Data.TaggedError("InvalidRpcPayload")<{
   readonly message: string
   readonly cause?: unknown
@@ -124,14 +92,6 @@ export class TerminalLeaseError extends Data.TaggedError("TerminalLeaseError")<{
   }
 }
 
-/** Git CLI failed (non-zero exit / spawn error). Wire code stays OPERATION_FAILED. */
-export class GitCommandFailedError extends Data.TaggedError("GitCommandFailed")<{
-  readonly message: string
-  readonly cause?: unknown
-}> {
-  readonly code = "OPERATION_FAILED" as const
-}
-
 export class ScopeDeniedError extends Data.TaggedError("ScopeDenied")<{
   readonly message: string
   readonly channel?: string
@@ -145,15 +105,11 @@ export type HostRpcError =
   | OperationFailedError
   | NotFoundError
   | ConflictError
-  | FileChangedError
-  | PayloadTooLargeError
-  | LspCrashedError
   | InvalidRpcPayloadError
   | HostDisconnectedError
   | TerminalLeaseError
-  | GitCommandFailedError
   | ScopeDeniedError
-  | ToolSessionError
+  | MuxSessionError
 
 export function hostErrorHttpStatus(error: HostRpcError): number {
   switch (error._tag) {
@@ -163,10 +119,7 @@ export function hostErrorHttpStatus(error: HostRpcError): number {
     case "NotFound":
       return 404
     case "Conflict":
-    case "FileChanged":
       return 409
-    case "PayloadTooLarge":
-      return 413
     case "HostDisconnected":
       return 503
     case "TerminalLeaseError":
@@ -182,19 +135,11 @@ export function hostErrorWire(error: HostRpcError): {
   details: Record<string, unknown>
 } {
   const details =
-    error._tag === "FileChanged"
-      ? {
-          uri: error.uri,
-          expectedVersion: error.expectedVersion,
-          actualVersion: error.actualVersion,
-        }
-      : error._tag === "ProjectTargetUnavailable"
-        ? { projectPath: error.projectPath, toolError: error._tag }
-        : error._tag === "PathOutsideRoots"
+    error._tag === "PathOutsideRoots"
           ? (error.path ? { path: error.path } : {})
-          : error._tag === "ToolUseConflict"
+          : error._tag === "TerminalConflict"
           ? {
-              toolUseId: error.toolUseId,
+              muxTerminalId: error.muxTerminalId,
               expectedRevision: error.expectedRevision,
               actualRevision: error.actualRevision,
             }
@@ -208,16 +153,16 @@ export function hostErrorWire(error: HostRpcError): {
             ? { sessionId: error.sessionId }
             : error._tag === "SessionTabNotFound"
               ? { tabId: error.tabId }
-              : error._tag === "ToolUseNotFound"
-            ? { toolUseId: error.toolUseId }
+              : error._tag === "TerminalNotFound"
+            ? { muxTerminalId: error.muxTerminalId }
               : error._tag === "ScopeDenied"
                 ? (error.channel ? { channel: error.channel } : {})
-                : error._tag === "InvalidToolInput" ||
-                error._tag === "InvalidToolCommand" ||
-                error._tag === "CheckoutResolutionFailed"
-              ? { toolError: error._tag }
-              : error._tag === "ToolRuntimeFailure"
-                ? { toolError: error._tag, toolUseId: error.toolUseId }
+                : error._tag === "InvalidTerminalInput" ||
+                error._tag === "InvalidMuxCommand" ||
+                false
+              ? {}
+              : error._tag === "TerminalRuntimeFailure"
+                ? { terminalError: error._tag, muxTerminalId: error.muxTerminalId }
                 : {}
   return {
     code: error.code,

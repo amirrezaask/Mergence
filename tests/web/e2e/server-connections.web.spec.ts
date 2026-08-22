@@ -63,7 +63,7 @@ async function startRemoteHost(): Promise<{
       cwd: process.cwd(),
       env: {
         ...process.env,
-        JET_ALLOWED_ROOTS: root,
+        YAADE_ALLOWED_ROOTS: root,
         YAADE_CORS_ORIGINS: "*",
       },
       stdio: "ignore",
@@ -77,7 +77,7 @@ async function startRemoteHost(): Promise<{
       authorization: `Bearer ${token}`,
     },
     body: JSON.stringify({
-      channel: "tools:createSession",
+      channel: "mux:createSession",
       args: ["Remote session"],
       clientId: "server-connections-e2e",
     }),
@@ -141,10 +141,8 @@ test("settings manage multiple remote server definitions and aggregate sessions"
     await expect(remoteSessions.getByText("Staging machine").first()).toBeVisible()
 
     await remoteSessions.filter({ hasText: "Build machine" }).first().click()
-    await expect.poll(async () => {
-      const projects = await page.evaluate(() => window.yaade?.tools.listProjects())
-      return projects?.[0]?.projectPath.includes("yaade-remote-e2e-") ?? false
-    }).toBe(true)
+    await expect(page.locator('[data-yaade-session-switcher-popover=""]')).toHaveCount(0)
+    await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible()
   } finally {
     if (closeApp) await closeApp().catch(() => undefined)
     await remote.close()

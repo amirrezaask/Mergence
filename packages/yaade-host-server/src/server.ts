@@ -8,20 +8,12 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { Effect, ManagedRuntime, Schema } from "effect";
 import { WebSocketServer, WebSocket } from "ws";
-import {
-  MAX_READ_BYTES,
-  MAX_TEXT_FILE_BYTES,
-  uriToPath,
-  readTextFile,
-  writeTextFile,
-} from "@yaade/node-host";
+import { fileUriToPath } from "@yaade/shared"
 import {
   decodeHostRouteArgs,
-  FileChangedError,
   HostRpcRequest,
   InvalidRpcPayloadError,
   PathOutsideRootsError,
-  PayloadTooLargeError,
   encodeTerminalDataFrame,
   encodeTerminalStreamV3,
   TerminalSemanticSnapshot,
@@ -31,7 +23,6 @@ import {
   tryDecodeTerminalWsCommand,
   ScopeDeniedError,
   type HostRpcError,
-  type TextFileWriteOptions,
 } from "@yaade/rpc";
 import type { HostEvent } from "./events.js";
 import type { HostConfig } from "./config.js";
@@ -43,7 +34,7 @@ import {
   shutdownRuntime,
   type HostRuntime,
 } from "./host-runtime.js";
-import { pathAllowed, pathStaysWithin } from "./sandbox.js";
+import { pathAllowed } from "./sandbox.js";
 import {
   isAllowedCorsOrigin,
   isAllowedWebSocketOrigin,
@@ -62,7 +53,6 @@ import {
 import { principalMayInvoke, principalMayUseCapability } from "./route-policy.js";
 import { httpRouteCapability } from "./http-route-policy.js";
 import { diagnosticBundle } from "./diagnostics.js";
-import { normalizeProviderHookRequest } from "./notifications/index.js";
 import { ClientSocketWriter } from "./ws/client-socket-writer.js";
 import {
   removeDaemonRuntimeManifest,
@@ -523,7 +513,10 @@ function runtimeHealth(runtime: HostRuntime) {
     eventLoop: { status: eventLoopStatus, message: eventLoopMessage },
     storage: { status: storageStatus, message: storageMessage },
     connectedClients: ACTIVE_EVENT_SOCKETS.size,
-    runningTerminals: runtime.terminalInstances.listLive().length,
+    runningTerminals: runtime.muxSessions.listSessions(false).reduce(
+      (count, session) => count + runtime.muxSessions.listMuxTerminals(session.id).filter(terminal => terminal.status === "running").length,
+      0,
+    ),
   } as const;
 }
 
@@ -544,7 +537,6 @@ function serverCapabilities(runtime: HostRuntime) {
       runtimeSnapshot: true,
       terminalCheckpoints: runtime.config.features.terminalCheckpoints,
       writerLeases: true,
-      nativeAgentResume: runtime.config.features.nativeAgentResume,
       deviceAuthentication: true,
       persistedTerminalHistory: false,
     },
@@ -839,95 +831,6 @@ async function handleHttp(
     return;
   }
 
-  if (pathname === "/api/v1/fs/text-file") {
-    const uri = url.searchParams.get("uri");
-    if (!uri || !uri.startsWith("file://")) {
-      sendJson(res, 400, {
-        error: {
-          code: "INVALID_URI",
-          message: "absolute file:// uri is required",
-          details: {},
-        },
-      });
-      return;
-    }
-
-    if (req.method === "GET") {
-      try {
-        const result = await readTextFile(uri);
-        res.writeHead(200, {
-          "content-type": "text/plain; charset=utf-8",
-          "content-length": Buffer.byteLength(result.content, "utf8"),
-          "cache-control": "no-store",
-          "x-yaade-file-version": result.version,
-          "x-yaade-file-size": result.size,
-        });
-        res.end(result.content);
-      } catch (error) {
-        sendTextFileError(res, error);
-      }
-      return;
-    }
-
-    if (req.method === "PUT") {
-      let filePath: string;
-      try {
-        filePath = uriToPath(uri);
-      } catch {
-        sendJson(res, 400, {
-          error: {
-            code: "INVALID_URI",
-            message: "invalid file uri",
-            details: {},
-          },
-        });
-        return;
-      }
-      if (!pathAllowed(filePath, runtime.config.allowedRoots)) {
-        sendJson(res, 403, {
-          error: {
-            code: "PATH_OUTSIDE_ALLOWED_ROOTS",
-            message: "text file path outside allowed roots",
-            details: {},
-          },
-        });
-        return;
-      }
-
-      const expectedVersion = url.searchParams.get("expectedVersion");
-      const create = url.searchParams.get("create") === "1";
-      if (create === (expectedVersion !== null)) {
-        sendJson(res, 400, {
-          error: {
-            code: "INVALID_WRITE_OPTIONS",
-            message: "exactly one of expectedVersion or create is required",
-            details: {},
-          },
-        });
-        return;
-      }
-
-      try {
-        const content = await readUtf8Body(req, MAX_TEXT_FILE_BYTES);
-        const options: TextFileWriteOptions = create
-          ? { create: true }
-          : { expectedVersion: expectedVersion ?? "" };
-        const result = await writeTextFile(uri, content, options);
-        res.writeHead(200, {
-          "content-length": 0,
-          "cache-control": "no-store",
-          "x-yaade-file-version": result.version,
-          "x-yaade-file-size": result.size,
-        });
-        res.end();
-      } catch (error) {
-        req.resume();
-        sendTextFileError(res, error);
-      }
-      return;
-    }
-  }
-
   if (req.method === "POST" && pathname === "/api/v1/rpc") {
     if (!rpcGate.beginRpc()) {
       sendJson(res, 503, {
@@ -1023,426 +926,6 @@ async function handleHttp(
       rpcGate.endRpc();
     }
     return;
-  }
-
-  // Provider hooks (Claude / Codex / Cursor / OpenCode) → ADE agent events.
-  if (req.method === "POST" && pathname === "/api/v1/notifications/ingest") {
-    const body = await readJson(req);
-    try {
-      const principal = principalForRequest(
-        runtime,
-        req,
-        url,
-        randomUUID(),
-        rpcGate.principalRegistry,
-        "hook",
-      );
-      if (!principal || !principalMayInvoke(principal, "notifications:ingest")) {
-        throw new ScopeDeniedError({
-          message: "principal does not have the capability for this operation",
-          channel: "notifications:ingest",
-        });
-      }
-      const providerParam = url.searchParams.get("provider");
-      const sessionIdParam = url.searchParams.get("sessionId");
-      const { parseAgentProviderParam } = await import("./agents/index.js");
-      const agentProvider = parseAgentProviderParam(providerParam);
-      if (agentProvider && sessionIdParam) {
-        runtime.agents.ingestNative(body, {
-          provider: agentProvider,
-          sessionId: sessionIdParam,
-          projectId: url.searchParams.get("projectId") ?? undefined,
-          projectName: url.searchParams.get("projectName") ?? undefined,
-          sessionTitle: url.searchParams.get("sessionTitle") ?? undefined,
-        });
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      const normalized = normalizeProviderHookRequest(body, {
-        provider: providerParam,
-        sessionId: sessionIdParam,
-        projectId: url.searchParams.get("projectId"),
-        projectName: url.searchParams.get("projectName"),
-        sessionTitle: url.searchParams.get("sessionTitle"),
-      });
-      const ingest = await runHostRpc(
-        managed,
-        "notifications:ingest",
-        [normalized],
-        principal,
-      );
-      if (!ingest.ok) {
-        const wire = hostErrorWire(ingest.error);
-        sendJson(res, hostErrorHttpStatus(ingest.error), { error: wire });
-        return;
-      }
-      // Hook consumers interpret response bodies as control output. An empty 2xx
-      // acknowledges delivery without accidentally feeding Yaade data back
-      // into the provider's conversation.
-      res.writeHead(204);
-      res.end();
-    } catch (error) {
-      sendJson(res, 400, {
-        error: {
-          code: "OPERATION_FAILED",
-          message: error instanceof Error ? error.message : String(error),
-          details: {},
-        },
-      });
-    }
-    return;
-  }
-
-  if (pathname === "/api/v1/projects") {
-    if (req.method === "GET") {
-      sendJson(res, 200, runtime.db.projects());
-      return;
-    }
-    if (req.method === "POST") {
-      const body = (await readJson(req)) as {
-        rootPath?: string;
-        name?: string;
-      };
-      if (!body.rootPath) {
-        sendJson(res, 400, {
-          error: {
-            code: "INVALID_PROJECT_PATH",
-            message: "rootPath required",
-            details: {},
-          },
-        });
-        return;
-      }
-      if (!pathAllowed(body.rootPath, runtime.config.allowedRoots)) {
-        sendJson(res, 403, {
-          error: {
-            code: "PATH_OUTSIDE_ALLOWED_ROOTS",
-            message: "project path outside allowed roots",
-            details: {},
-          },
-        });
-        return;
-      }
-      let projectStat: fs.Stats;
-      try {
-        projectStat = fs.statSync(body.rootPath);
-      } catch {
-        sendJson(res, 404, {
-          error: {
-            code: "PROJECT_PATH_NOT_FOUND",
-            message: "project path does not exist",
-            details: {},
-          },
-        });
-        return;
-      }
-      if (!projectStat.isDirectory()) {
-        sendJson(res, 400, {
-          error: {
-            code: "PROJECT_PATH_NOT_DIRECTORY",
-            message: "project path is not a directory",
-            details: {},
-          },
-        });
-        return;
-      }
-      try {
-        const project = runtime.db.addProject(body.rootPath, body.name);
-        sendJson(res, 201, project);
-      } catch (error) {
-        sendJson(res, 400, {
-          error: {
-            code: "INVALID_PROJECT_PATH",
-            message: String(error),
-            details: {},
-          },
-        });
-      }
-      return;
-    }
-  }
-
-  if (pathname === "/api/v1/projects/open" && req.method === "POST") {
-    const body = (await readJson(req)) as { rootPath?: string; name?: string };
-    const rootPath =
-      typeof body.rootPath === "string" ? body.rootPath.trim() : "";
-    if (!rootPath) {
-      sendJson(res, 400, {
-        error: {
-          code: "INVALID_PROJECT_PATH",
-          message: "rootPath required",
-          details: {},
-        },
-      });
-      return;
-    }
-    if (!pathAllowed(rootPath, runtime.config.allowedRoots)) {
-      sendJson(res, 403, {
-        error: {
-          code: "FORBIDDEN",
-          message: "project path outside allowed roots",
-          details: {},
-        },
-      });
-      return;
-    }
-    let stat: fs.Stats;
-    try {
-      stat = fs.statSync(rootPath);
-    } catch {
-      sendJson(res, 404, {
-        error: {
-          code: "NOT_FOUND",
-          message: "project path does not exist",
-          details: {},
-        },
-      });
-      return;
-    }
-    if (!stat.isDirectory()) {
-      sendJson(res, 400, {
-        error: {
-          code: "NOT_DIRECTORY",
-          message: "project path is not a directory",
-          details: {},
-        },
-      });
-      return;
-    }
-    try {
-      const opened = runtime.db.openProject(
-        rootPath,
-        typeof body.name === "string" ? body.name : undefined,
-      );
-      sendJson(res, 200, opened);
-    } catch (error) {
-      sendJson(res, 400, {
-        error: {
-          code: "INVALID_PROJECT_PATH",
-          message: error instanceof Error ? error.message : String(error),
-          details: {},
-        },
-      });
-    }
-    return;
-  }
-
-  const surfaceStateMatch =
-    /^\/api\/v1\/projects\/([^/]+)\/surface-state$/.exec(pathname);
-  if (surfaceStateMatch) {
-    const projectId = decodeURIComponent(surfaceStateMatch[1]!);
-    if (!runtime.db.project(projectId)) {
-      sendJson(res, 404, {
-        error: {
-          code: "PROJECT_NOT_FOUND",
-          message: "project not found",
-          details: {},
-        },
-      });
-      return;
-    }
-    if (req.method === "GET") {
-      sendJson(
-        res,
-        200,
-        runtime.db.projectSurfaceState(projectId, runtime.machineHostname),
-      );
-      return;
-    }
-    if (req.method === "PUT") {
-      const body = (await readJson(req)) as {
-        surface?: string;
-        state?: unknown;
-      };
-      if (
-        typeof body.surface !== "string" ||
-        !body.state ||
-        typeof body.state !== "object" ||
-        Array.isArray(body.state)
-      ) {
-        sendJson(res, 400, {
-          error: {
-            code: "INVALID_SURFACE_STATE",
-            message: "surface and state are required",
-            details: {},
-          },
-        });
-        return;
-      }
-      try {
-        sendJson(
-          res,
-          200,
-          runtime.db.putProjectSurfaceState({
-            projectId,
-            machine: runtime.machineHostname,
-            surface: body.surface,
-            state: body.state as Record<string, unknown>,
-          }),
-        );
-      } catch (error) {
-        sendJson(res, 400, {
-          error: {
-            code: "INVALID_SURFACE_STATE",
-            message: error instanceof Error ? error.message : String(error),
-            details: {},
-          },
-        });
-      }
-      return;
-    }
-  }
-
-  const projectMatch = /^\/api\/v1\/projects\/([^/]+)(?:\/(file|files))?$/.exec(
-    pathname,
-  );
-  if (projectMatch) {
-    const projectId = decodeURIComponent(projectMatch[1]!);
-    const sub = projectMatch[2];
-    const project = runtime.db.project(projectId);
-    if (!project) {
-      sendJson(res, 404, {
-        error: {
-          code: "PROJECT_NOT_FOUND",
-          message: "project not found",
-          details: {},
-        },
-      });
-      return;
-    }
-
-    if (!sub && req.method === "DELETE") {
-      runtime.db.removeProject(projectId);
-      res.writeHead(204);
-      res.end();
-      return;
-    }
-
-    if (!sub && req.method === "GET") {
-      sendJson(res, 200, project);
-      return;
-    }
-
-    if (sub === "files" && req.method === "GET") {
-      const rel = url.searchParams.get("path") ?? "";
-      const abs = pathStaysWithin(project.rootPath, rel || ".");
-      if (!abs || !pathAllowed(abs, runtime.config.allowedRoots)) {
-        sendJson(res, 403, {
-          error: {
-            code: "PATH_TRAVERSAL",
-            message: "invalid path",
-            details: {},
-          },
-        });
-        return;
-      }
-      try {
-        const entries = fs
-          .readdirSync(abs, { withFileTypes: true })
-          .map((entry) => ({
-            name: entry.name,
-            isDirectory: entry.isDirectory(),
-          }))
-          .sort((a, b) => a.name.localeCompare(b.name));
-        sendJson(res, 200, entries);
-      } catch {
-        sendJson(res, 404, {
-          error: {
-            code: "FILE_NOT_FOUND",
-            message: "directory not found",
-            details: {},
-          },
-        });
-      }
-      return;
-    }
-
-    if (sub === "file") {
-      const rel = url.searchParams.get("path") ?? "";
-      if (req.method === "GET") {
-        const abs = pathStaysWithin(project.rootPath, rel);
-        if (!abs || !pathAllowed(abs, runtime.config.allowedRoots)) {
-          sendJson(res, 403, {
-            error: {
-              code: "PATH_TRAVERSAL",
-              message: "invalid path",
-              details: {},
-            },
-          });
-          return;
-        }
-        try {
-          const st = fs.statSync(abs);
-          if (st.isDirectory()) {
-            sendJson(res, 404, {
-              error: {
-                code: "FILE_NOT_FOUND",
-                message: "not a file",
-                details: {},
-              },
-            });
-            return;
-          }
-          if (st.size > MAX_READ_BYTES) {
-            sendJson(res, 413, {
-              error: {
-                code: "FILE_TOO_LARGE",
-                message: `file too large: ${st.size} bytes (max ${MAX_READ_BYTES})`,
-                details: { size: st.size, max: MAX_READ_BYTES },
-              },
-            });
-            return;
-          }
-          const content = fs.readFileSync(abs, "utf8");
-          sendJson(res, 200, { path: rel, content, version: fileVersion(abs) });
-        } catch {
-          sendJson(res, 404, {
-            error: {
-              code: "FILE_NOT_FOUND",
-              message: "file not found",
-              details: {},
-            },
-          });
-        }
-        return;
-      }
-      if (req.method === "PUT") {
-        const body = (await readJson(req)) as {
-          path?: string;
-          content?: string;
-          expectedVersion?: string;
-        };
-        const fileRel = body.path ?? rel;
-        const abs = pathStaysWithin(project.rootPath, fileRel ?? "");
-        if (!abs || !pathAllowed(abs, runtime.config.allowedRoots)) {
-          sendJson(res, 403, {
-            error: {
-              code: "PATH_TRAVERSAL",
-              message: "invalid path",
-              details: {},
-            },
-          });
-          return;
-        }
-        if (body.expectedVersion && body.expectedVersion !== fileVersion(abs)) {
-          sendJson(res, 409, {
-            error: {
-              code: "FILE_CHANGED",
-              message: "file changed on disk",
-              details: {},
-            },
-          });
-          return;
-        }
-        const tmp = `${abs}.jet-write-${randomUUID()}`;
-        fs.mkdirSync(path.dirname(abs), { recursive: true });
-        fs.writeFileSync(tmp, body.content ?? "", "utf8");
-        fs.renameSync(tmp, abs);
-        sendJson(res, 200, { path: fileRel, version: fileVersion(abs) });
-        return;
-      }
-    }
   }
 
   if (req.method === "GET" && runtime.config.staticDir) {
@@ -1932,9 +1415,6 @@ function validateRpcPathsOrThrow(
   if (!route) return;
   switch (route.pathPolicy.kind) {
     case "none":
-    case "read-only-path":
-      // Read-only file routes intentionally allow module-cache and standard
-      // library paths outside allowedRoots.
       return;
     case "terminal-id-or-path": {
       const first = args[0];
@@ -1942,18 +1422,6 @@ function validateRpcPathsOrThrow(
       if (!pathAllowed(uriOrPath(first), config.allowedRoots)) {
         throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
       }
-      return;
-    }
-    case "trash-restore": {
-      const target = args[1];
-      if (
-        typeof target === "string" &&
-        !pathAllowed(uriOrPath(target), config.allowedRoots)
-      ) {
-        throw new Error("PATH_OUTSIDE_ALLOWED_ROOTS");
-      }
-      // Without an override, dispatch validates the original path stored in
-      // the host-owned trash metadata before restoring it.
       return;
     }
     case "allowed-root":
@@ -1971,16 +1439,7 @@ function validateRpcPathsOrThrow(
 }
 
 function uriOrPath(value: string): string {
-  return value.startsWith("file:") ? uriToPath(value) : value;
-}
-
-function fileVersion(abs: string): string {
-  try {
-    const st = fs.statSync(abs);
-    return `${Math.trunc(st.mtimeMs * 1e6)}:${st.size}`;
-  } catch {
-    return "missing";
-  }
+  return value.startsWith("file:") ? fileUriToPath(value) : value;
 }
 
 function acceptsEncoding(
@@ -2080,79 +1539,6 @@ async function readJson(req: IncomingMessage): Promise<unknown> {
   }
   if (chunks.length === 0) return {};
   return JSON.parse(Buffer.concat(chunks).toString("utf8"));
-}
-
-async function readUtf8Body(
-  req: IncomingMessage,
-  maxBytes: number,
-): Promise<string> {
-  const declaredLength = req.headers["content-length"];
-  if (declaredLength !== undefined) {
-    const bytes = Number(declaredLength);
-    if (!Number.isSafeInteger(bytes) || bytes < 0) {
-      throw new HttpError(400, "invalid content-length");
-    }
-    if (bytes > maxBytes) throw new HttpError(413, "request body too large");
-  }
-
-  const chunks: Buffer[] = [];
-  let totalBytes = 0;
-  for await (const chunk of req) {
-    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-    totalBytes += buffer.length;
-    if (totalBytes > maxBytes) {
-      throw new HttpError(413, "request body too large");
-    }
-    chunks.push(buffer);
-  }
-  try {
-    return new TextDecoder("utf-8", { fatal: true }).decode(
-      Buffer.concat(chunks),
-    );
-  } catch {
-    throw new HttpError(400, "request body must be valid UTF-8");
-  }
-}
-
-function nodeErrorCode(error: unknown): string | undefined {
-  if (typeof error !== "object" || error === null || !("code" in error)) {
-    return undefined;
-  }
-  return typeof error.code === "string" ? error.code : undefined;
-}
-
-function sendTextFileError(res: ServerResponse, error: unknown): void {
-  if (
-    error instanceof FileChangedError ||
-    error instanceof PayloadTooLargeError
-  ) {
-    sendJson(res, hostErrorHttpStatus(error), { error: hostErrorWire(error) });
-    return;
-  }
-  if (error instanceof HttpError) {
-    sendJson(res, error.status, {
-      error: {
-        code: error.status === 413 ? "PAYLOAD_TOO_LARGE" : "OPERATION_FAILED",
-        message: error.message,
-        details: {},
-      },
-    });
-    return;
-  }
-  const code = nodeErrorCode(error);
-  if (code === "ENOENT" || code === "ENOTDIR") {
-    sendJson(res, 404, {
-      error: { code: "NOT_FOUND", message: "text file not found", details: {} },
-    });
-    return;
-  }
-  sendJson(res, 400, {
-    error: {
-      code: "OPERATION_FAILED",
-      message: error instanceof Error ? error.message : String(error),
-      details: {},
-    },
-  });
 }
 
 function sendJson(res: ServerResponse, status: number, body: unknown): void {

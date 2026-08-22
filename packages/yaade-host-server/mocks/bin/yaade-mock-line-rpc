@@ -1,7 +1,0 @@
-#!/usr/bin/env bash
-# Thin launcher for the TypeScript mock Codex app-server (line JSON-RPC) peer.
-set -euo pipefail
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_run-ts.sh
-source "$BIN_DIR/_run-ts.sh"
-exec_run_ts "$BIN_DIR/../mock-line-rpc.ts" "$@"

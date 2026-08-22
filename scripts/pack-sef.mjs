@@ -84,8 +84,6 @@ if [ ! -f "$READY" ]; then
   chmod +x "$CACHE/${launcherName}" 2>/dev/null || true
   if [ -x "$CACHE/node/bin/node" ]; then chmod +x "$CACHE/node/bin/node"; fi
   find "$CACHE/backend/node_modules/node-pty" -name 'spawn-helper' -exec chmod +x {} + 2>/dev/null || true
-  find "$CACHE/backend/node_modules/@vscode" -path '*/bin/rg' -exec chmod +x {} + 2>/dev/null || true
-  find "$CACHE/backend/node_modules/@vscode" -path '*/bin/rg.exe' -exec chmod +x {} + 2>/dev/null || true
   touch "$READY"
 fi
 exec "$CACHE/${launcherName}" "$@"

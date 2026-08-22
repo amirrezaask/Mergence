@@ -4,7 +4,7 @@ export function prefersReducedMotion(): boolean {
     matchMedia?: (query: string) => { matches: boolean; addEventListener?: (type: string, fn: () => void) => void; removeEventListener?: (type: string, fn: () => void) => void }
     document?: { documentElement: { dataset: Record<string, string | undefined> } }
   }
-  const override = g.document?.documentElement.dataset.jetReducedMotion
+  const override = g.document?.documentElement.dataset.yaadeReducedMotion
   if (override === "true") return true
   if (override === "false") return false
   if (typeof g.matchMedia !== "function") return false
@@ -35,7 +35,7 @@ export function onReducedMotionChange(listener: (reduced: boolean) => void): () 
     : null
   observer?.observe(root!, {
     attributes: true,
-    attributeFilter: ["data-jet-reduced-motion", "data-yaade-reduced-motion"],
+    attributeFilter: ["data-yaade-reduced-motion", "data-yaade-reduced-motion"],
   })
   return () => {
     mq?.removeEventListener("change", handler)

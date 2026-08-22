@@ -64,7 +64,7 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         workspace,
       ],
       env: {
-        JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
+        YAADE_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
       },
     }
     try {
@@ -128,7 +128,7 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         harness.workspace,
       ],
       env: {
-        JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
+        YAADE_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
       },
     }
     try {
@@ -155,7 +155,7 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
       expect(manifest.port).toBe(port)
       expect(manifest.serverId).toBeTruthy()
       const browser = await harness.startBrowser()
-      await browser.page.waitForFunction(() => window.__yaadeAgent != null, null, {
+      await browser.page.waitForFunction(() => window.__yaadeTest != null, null, {
         timeout: 30_000,
       })
       const health = await fetch(`http://127.0.0.1:${port}/health`)

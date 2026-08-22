@@ -7,8 +7,8 @@ export type TerminalAttachStatus =
 
 /**
  * attachOnly panels must not treat a missing PTY as a dead session while the
- * host is still binding one. The first ToolUseCreated event has no ptyId;
- * ToolUseUpdated arrives a moment later. The setup effect re-runs when the id
+ * host is still binding one. The first MuxTerminalCreated event has no ptyId;
+ * MuxTerminalUpdated arrives a moment later. The setup effect re-runs when the id
  * appears.
  */
 export function shouldWaitForExistingPty(options: {

@@ -14,7 +14,6 @@
     "test": "vp test"
   },
   "dependencies": {
-    "@yaade/agent-telemetry": "workspace:*",
     "@yaade/rpc": "workspace:*",
     "@yaade/shared": "workspace:*",
     "@yaade/workspace": "workspace:*",

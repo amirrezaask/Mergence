@@ -12,7 +12,7 @@ export function capturePanelLeafRects(): Map<number, PanelRect> {
   const map = new Map<number, PanelRect>()
   for (const el of document.querySelectorAll<HTMLElement>("[data-yaade-panel-leaf]")) {
     if (el.closest("[data-yaade-layout-morph-clone]")) continue
-    const id = Number(el.dataset.jetPanelLeaf)
+    const id = Number(el.dataset.yaadePanelLeaf)
     if (!Number.isFinite(id)) continue
     const r = el.getBoundingClientRect()
     map.set(id, { x: r.left, y: r.top, w: r.width, h: r.height })
@@ -29,7 +29,7 @@ export type LayoutMorphOptions = {
 
 function clonePanelShell(): HTMLElement {
   const shell = document.createElement("div")
-  shell.dataset.jetLayoutMorphClone = ""
+  shell.dataset.yaadeLayoutMorphClone = ""
   shell.setAttribute("aria-hidden", "true")
   shell.className =
     "pointer-events-none fixed top-0 left-0 z-[100] overflow-hidden rounded-sm border border-border/80 bg-background shadow-md"
@@ -70,7 +70,7 @@ export function animateLayoutMorph(
 
   for (const el of document.querySelectorAll<HTMLElement>("[data-yaade-panel-leaf]")) {
     if (el.closest("[data-yaade-layout-morph-clone]")) continue
-    const id = Number(el.dataset.jetPanelLeaf)
+    const id = Number(el.dataset.yaadePanelLeaf)
     if (!Number.isFinite(id)) continue
     const toRect = el.getBoundingClientRect()
     const to: PanelRect = { x: toRect.left, y: toRect.top, w: toRect.width, h: toRect.height }

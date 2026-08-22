@@ -8,14 +8,14 @@ import { DatabaseOwner, type DatabaseMigration } from "./database.js"
 
 const CountRow = Schema.Struct({ count: Schema.Number })
 
-test("Project host identity remains stable across database reopen", async () => {
-  const { ProjectDatabase } = await import("./persistence.js")
+test("Host identity remains stable across database reopen", async () => {
+  const { RuntimeDatabase } = await import("./runtime-database.js")
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-host-identity-"))
   const file = path.join(dir, "host.sqlite3")
-  const first = new ProjectDatabase(file)
+  const first = new RuntimeDatabase(file)
   const serverId = first.serverId()
   first.close()
-  const second = new ProjectDatabase(file)
+  const second = new RuntimeDatabase(file)
   try {
     assert.equal(second.serverId(), serverId)
   } finally {
@@ -26,7 +26,7 @@ test("Project host identity remains stable across database reopen", async () => 
 
 test("DatabaseOwner refuses a corrupt database without wiping it", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-corrupt-db-"))
-  const file = path.join(dir, "jet.sqlite3")
+  const file = path.join(dir, "yaade.sqlite3")
   fs.writeFileSync(file, "this is not a sqlite database\n")
   try {
     assert.throws(() => new DatabaseOwner(file))

@@ -14,11 +14,11 @@ recovery.
 ## Lifetime
 
 - Browser reloads and disconnects only remove viewers. PTYs continue running.
-- Closing a Terminal ToolUse disposes its PTY.
+- Closing a terminal disposes its PTY.
 - Host shutdown or crash ends all PTYs.
-- Host startup discards persisted Session, Window, ToolUse, and terminal-instance
+- Host startup discards persisted Session, Window, terminal, and terminal-instance
   rows, then creates one fresh Session.
-- Users must not restart the host while a long-running agent matters.
+- Users must not restart the host while a long-running command matters.
 
 
 ## Data path

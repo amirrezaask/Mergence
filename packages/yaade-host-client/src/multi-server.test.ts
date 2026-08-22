@@ -1,17 +1,16 @@
 import assert from "node:assert/strict"
 import {
   AppSession,
-  ProcessToolOutput,
-  ProjectTarget,
+  TerminalOutput,
   SessionId,
   SessionTab,
   SessionTabId,
-  ToolUse,
-  ToolUseId,
+  MuxTerminal,
+  MuxTerminalId,
 } from "@yaade/rpc"
 import { Schema } from "effect"
 import { test } from "vite-plus/test"
-import type { ToolSessionSnapshot } from "@yaade/workspace"
+import type { MuxSessionSnapshot } from "@yaade/workspace"
 import {
   createMultiServerHostClient,
   decodeStoredServerDefinitions,
@@ -61,13 +60,13 @@ test("requires a stable id and rejects embedded credentials", () => {
 test("keeps scoped terminal ownership pointed at the PTY id", async () => {
   const sessionId = Schema.decodeUnknownSync(SessionId)("ses-test")
   const tabId = Schema.decodeUnknownSync(SessionTabId)("tab-test")
-  const useId = Schema.decodeUnknownSync(ToolUseId)("use-test")
+  const terminalId = Schema.decodeUnknownSync(MuxTerminalId)("term-test")
   const session = AppSession.make({
     id: sessionId,
     title: "Session",
     position: 0,
     activeTabId: tabId,
-    activeToolUseId: useId,
+    activeMuxTerminalId: terminalId,
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
   })
@@ -76,32 +75,21 @@ test("keeps scoped terminal ownership pointed at the PTY id", async () => {
     sessionId: session.id,
     title: "Window",
     position: 0,
-    activeToolUseId: useId,
+    activeMuxTerminalId: terminalId,
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   })
-  const use = Schema.decodeUnknownSync(ToolUse)({
-    id: useId,
+  const terminal = Schema.decodeUnknownSync(MuxTerminal)({
+    id: terminalId,
     sessionId: session.id,
     tabId: tab.id,
     kind: "terminal",
     title: "Terminal",
     position: 0,
     status: "running",
-    context: {
-      project: ProjectTarget.make({
-        projectId: "project-test",
-        projectPath: "/tmp/project",
-        projectName: "Project",
-      }),
-      checkoutKey: "main",
-      checkoutPath: "/tmp/project",
-      checkoutLabel: "Main",
-      managedWorktree: false,
-    },
-    input: { _tag: "TerminalToolInput", kind: "terminal" },
+    input: { _tag: "TerminalInput", kind: "terminal" },
     inputRevision: 1,
-    output: ProcessToolOutput.make({
+    output: TerminalOutput.make({
       kind: "process",
       terminalInstanceId: "instance-test",
       ptyId: "term-test",
@@ -115,10 +103,10 @@ test("keeps scoped terminal ownership pointed at the PTY id", async () => {
     createdAt: session.createdAt,
     updatedAt: session.updatedAt,
   })
-  const snapshot: ToolSessionSnapshot = {
+  const snapshot: MuxSessionSnapshot = {
     session,
     tabs: [tab],
-    toolUses: [use],
+    muxTerminals: [terminal],
   }
   const calls: Array<{ channel: string; args: unknown[] }> = []
   const previousFetch = globalThis.fetch
@@ -132,7 +120,7 @@ test("keeps scoped terminal ownership pointed at the PTY id", async () => {
     const channel = body.channel ?? ""
     const args = body.args ?? []
     calls.push({ channel, args })
-    const value = channel === "tools:listSessions"
+    const value = channel === "mux:listSessions"
       ? [snapshot]
       : channel === "terminal:attach"
         ? {
@@ -161,8 +149,8 @@ test("keeps scoped terminal ownership pointed at the PTY id", async () => {
         url: "http://yaade.test",
       },
     })
-    const snapshots = await client.tools.listSessions(false)
-    const output = snapshots[0]?.toolUses[0]?.output
+    const snapshots = await client.mux.listSessions(false)
+    const output = snapshots[0]?.muxTerminals[0]?.output
     assert.equal(output?.kind, "process")
     if (output?.kind !== "process" || !output.ptyId) throw new Error("missing scoped PTY")
     await client.ports.terminal.attach(output.ptyId)

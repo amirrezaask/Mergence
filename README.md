@@ -2,29 +2,28 @@
 
 **A browser terminal multiplexer.**
 
-YAADE runs a TypeScript host on your machine and exposes a browser Session shell. A Session contains Windows (tabs), and each Window contains tiled ToolUses. Each ToolUse owns its project and checkout.
+YAADE runs a TypeScript host on your machine and exposes a browser Session shell. A Session contains Windows (tabs), and each Window contains tiled terminals.
 
 ```text
 http://localhost:5174/                         Session shell
-http://localhost:5174/?s=ses-…&t=tab-…&u=use-… Deep link
+http://localhost:5174/?s=ses-…&t=tab-…&term=term-… Deep link
 ```
 
-## Tools
+## Terminals
 
-The only ToolKind is **Terminal**: an in-process PTY with bounded replay, isolated client queues, mobile accessory keys, and support for running shells, commands, and agent CLIs directly.
+The only terminal type is **Terminal**: an in-process PTY with bounded replay, isolated client queues, mobile accessory keys, and support for running shells and commands directly.
 
-Git is retained only as a disconnected package for a future separate product. Search, browser editors, standalone AgentTool, and Neovim ToolUse were retired. Run Codex, Claude, Pi, or another CLI inside Terminal. The top bar holds the Session dropdown, Window pills, and Settings. A resizable **Agents** sidebar appears when agent CLIs are running and focuses their session, window, and pane when selected.
+YAADE has no separate workspace, Git, search, or editor surfaces. The top bar holds the Session dropdown, Window pills, and Settings.
 
 ## Sessions
 
-- Sessions contain Windows; Windows contain tiled Terminal ToolUses.
+- Sessions contain Windows; Windows contain tiled terminals.
 - Empty Windows open a Terminal automatically; empty panes use the same Terminal fallback.
-- Layout, project, checkout, and ToolUse metadata persist across browser reloads while the host is running.
-- The host process owns PTYs directly. Browser reloads and disconnects leave agents running; restarting the host intentionally kills every PTY and starts with a fresh Session.
-- Closing a Terminal ToolUse is the explicit destructive action that stops its PTY during normal operation.
+- Layout and terminal metadata persist across browser reloads while the host is running.
+- The host process owns PTYs directly. Browser reloads and disconnects leave terminal processes running; restarting the host intentionally kills every PTY and starts with a fresh Session.
+- Closing a terminal is the explicit destructive action that stops its PTY during normal operation.
 - Reconnects to the same host process restore from an in-memory Ghostty snapshot and bounded raw replay. A slow viewer is resynchronized or disconnected and never pauses the PTY.
 - Multiple viewers can attach to one terminal. Writer leases are explicit for input and resize; observers continue receiving output. A slow client is bounded or disconnected and never pauses the PTY.
-- Add projects from any ToolUse context with folder-path autocomplete; terminals offer to remember a newly visited folder after `cd`.
 - Mobile uses a list-first Terminal shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal.
 - Settings → **Servers** lets you add multiple remote host URLs and optional access tokens. Sessions from every reachable host appear in the same session switcher; each session keeps its host context when you work in it.
@@ -90,7 +89,6 @@ vp run lint
 vp run test:server
 vp run test:web
 vp run test:web:e2e
-vp run test:e2e:critical
 vp run build
 ```
 
@@ -99,11 +97,11 @@ The internal material gallery is available at `/__yaade/glass-gallery`.
 ### Runtime lifetime
 
 The host is a single multiplexer process. It owns every PTY directly and is the
-lifetime boundary for Sessions and agents. Browser refreshes, temporary network
+lifetime boundary for Sessions and terminal processes. Browser refreshes, temporary network
 disconnects, and browser reloads reattach to that same process using bounded
 in-memory replay. A host restart kills all PTYs and discards Session,
-Window, and ToolUse state; the user is responsible for not restarting the host
-while a long-running agent matters.
+Window, and terminal state; the user is responsible for not restarting the host
+while a long-running command matters.
 
 There is no detached supervisor, runtime generation handoff, disk-backed terminal
 recovery, or session-format compatibility promise. Breaking state changes may

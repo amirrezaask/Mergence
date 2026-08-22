@@ -2,11 +2,11 @@
 
 ## Product
 
-YAADE is a browser terminal multiplexer. The TypeScript host owns PTYs and persistence. The browser renders Sessions → Windows → tiled Terminal ToolUses.
+YAADE is a browser terminal multiplexer. The TypeScript host owns PTYs and persistence. The browser renders Sessions → Windows → tiled terminals.
 
-The only supported ToolKind is `terminal` — host PTY, replay, flow control, and mobile controls.
+The only supported terminal type is `terminal` — host PTY, replay, flow control, and mobile controls.
 
-Git is isolated in `packages/yaade-git` for a future separate product and must not be exposed by YAADE. Do not add standalone Agent, Git, Search, Editor, or Neovim ToolUses. Agent CLIs run inside Terminal.
+Do not add standalone Git, search, editor, or file-browser surfaces. External command-line programs run inside terminals like any other command.
 
 ## Layout
 
@@ -14,13 +14,12 @@ Git is isolated in `packages/yaade-git` for a future separate product and must n
 - `apps/web` — thin Vite web executable that uses `@yaade/app`
 - `packages/yaade-app` — React Session shell
 - `packages/yaade-rpc` — Effect Schema contracts
-- `packages/yaade-host-server` — reusable HTTP/WS host and ToolUse lifecycle
+- `packages/yaade-host-server` — reusable HTTP/WS host and terminal lifecycle
 - `packages/yaade-host-client` — browser transport
 - `packages/yaade-node-host` — filesystem and PTY implementation
 - `packages/yaade-panels` — dock tree
 - `packages/yaade-ui` — design system and Terminal surfaces
-- `packages/yaade-workspace` — shared host API and keyboard helpers (legacy surface should continue shrinking)
-- `packages/yaade-git` — disconnected Git implementation for a future separate product
+- `packages/yaade-workspace` — shared terminal host ports and keyboard helpers
 
 Keep package imports acyclic. Lower layers must not import React.
 
@@ -35,8 +34,7 @@ vp run lint
 vp run build:server
 vp run build:web
 vp run test:web:e2e
-vp run test:platform:e2e
-vp run test:e2e:critical
+vp exec playwright test --project=platform-e2e
 ```
 
 Tests run through Vite+ (`vp test`) with Vitest. App tests must be listed in `packages/yaade-app/package.json`.
@@ -59,16 +57,15 @@ process; start `dev:server` separately when the web proxy needs one.
 
 ## Architecture invariants
 
-- `/?s=&t=&u=` identifies Session, Window, and ToolUse.
-- Project and checkout belong to each ToolUse.
+- `/?s=&t=&term=` identifies Session, Window, and terminal.
 - PTY output never enters React state.
 - Browser disconnect/reload unsubscribes but does not kill a PTY.
-- Explicit Terminal ToolUse close kills its PTY.
+- Explicit terminal close kills its PTY.
 - Terminal control uses the binary WebSocket path with replay and flow control.
 - Host work must stay behind typed RPC boundaries.
 - Paths are validated against `allowedRoots` on the host.
 - Default bind is loopback and may stay open without a token. Binding off loopback requires `--token` / `YAADE_HOST_TOKEN`.
-- The host process owns PTYs directly. Browser disconnects do not kill PTYs, but host restart/shutdown kills all PTYs and resets Session/Window/ToolUse state. There is no detached supervisor or restart durability; users are responsible for keeping the host alive during long-running agents.
+- The host process owns PTYs directly. Browser disconnects do not kill PTYs, but host restart/shutdown kills all PTYs and resets Session/Window/terminal state. There is no detached supervisor or restart durability; users are responsible for keeping the host alive during long-running commands.
 
 ## UI rules
 
@@ -94,5 +91,5 @@ For UI work, assert scoped DOM state and resulting behavior. For list UIs, verif
 
 Core E2E suites:
 
-- `tests/web/e2e/tool-sessions.web.spec.ts`
+- `tests/web/e2e/terminal-multiplexer.web.spec.ts`
 - `tests/web/e2e/terminal-compatibility.web.spec.ts`

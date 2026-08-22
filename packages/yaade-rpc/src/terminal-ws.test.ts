@@ -67,7 +67,7 @@ test("encodes and decodes terminal WS control commands", () => {
     { requestId: "request-2", op: "terminal:ready", args: ["id"] },
   );
   assert.equal(
-    tryDecodeTerminalWsCommand({ op: "fs:readFile", args: [] }),
+    tryDecodeTerminalWsCommand({ op: "mux:listSessions", args: [] }),
     null,
   );
 });

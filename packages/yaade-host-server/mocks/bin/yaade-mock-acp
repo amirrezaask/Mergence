@@ -1,8 +1,0 @@
-#!/usr/bin/env bash
-# Thin launcher for the TypeScript mock ACP peer.
-# Kept executable-shaped so YAADE_MOCK_ACP_BIN can point straight at it.
-set -euo pipefail
-BIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-# shellcheck source=./_run-ts.sh
-source "$BIN_DIR/_run-ts.sh"
-exec_run_ts "$BIN_DIR/../mock-acp.ts" "$@"

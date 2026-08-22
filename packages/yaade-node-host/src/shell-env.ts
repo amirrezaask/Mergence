@@ -55,7 +55,7 @@ export function resolveLoginShellPath(): string | undefined {
     const trimmed = stdout.trim()
     return trimmed || undefined
   } catch (err) {
-    console.warn("[jet] failed to resolve login shell PATH:", err)
+    console.warn("[yaade] failed to resolve login shell PATH:", err)
     return undefined
   }
 }
@@ -72,11 +72,11 @@ const SYSTEM_BIN_DIRS = [
 
 /**
  * Enrich PATH for GUI-spawned host processes so PTY shells and
- * agent CLIs resolve the same binaries as a login terminal.
+ * interactive commands resolve the same binaries as a login terminal.
  *
  * Fully stripped macOS GUI PATHs get a full login-shell rebuild. Partially
  * populated PATHs (e.g. system dirs + /usr/local/bin only) still get missing
- * user bins like ~/.local/bin prepended — required for cursor-agent / claude.
+ * user bins such as ~/.local/bin are prepended for locally installed commands.
  */
 export function enrichProcessPath(): { path: string; enriched: boolean } {
   const current = process.env.PATH ?? ""

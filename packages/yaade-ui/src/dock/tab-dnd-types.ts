@@ -13,7 +13,7 @@ export type TabDragData = {
   dirty?: boolean
 }
 
-/** Drag a session from the mission sidebar into the tiled workspace. */
+/** Drag a session from the sidebar into the tiled terminal workspace. */
 export type SessionDragData = {
   type: "session"
   tabId: string

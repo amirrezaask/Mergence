@@ -6,8 +6,8 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { yaadeOverlayContentClass, type YaadeOverlayMotion } from "@/motion/tokens"
 
-export type JetDialogSize = "default" | "prompt" | "picker" | "wide" | "stage"
-export type JetDialogPlacement = "center" | "quick-input"
+export type YaadeDialogSize = "default" | "prompt" | "picker" | "wide" | "stage"
+export type YaadeDialogPlacement = "center" | "quick-input"
 
 const dialogSizeClass = {
   default: "sm:max-w-lg",
@@ -16,7 +16,7 @@ const dialogSizeClass = {
   wide: "sm:max-w-[42rem]",
   stage:
     "h-dvh w-screen max-h-none max-w-none gap-0 overflow-hidden p-0 rounded-none sm:max-w-none sm:rounded-none",
-} satisfies Record<JetDialogSize, string>
+} satisfies Record<YaadeDialogSize, string>
 
 function Dialog({
   ...props
@@ -49,7 +49,7 @@ function DialogOverlay({
   ...props
 }: React.ComponentProps<typeof DialogPrimitive.Overlay> & {
   motion?: YaadeOverlayMotion
-  placement?: JetDialogPlacement
+  placement?: YaadeDialogPlacement
 }) {
   return (
     <DialogPrimitive.Overlay
@@ -79,8 +79,8 @@ function DialogContent({
 }: React.ComponentProps<typeof DialogPrimitive.Content> & {
   showCloseButton?: boolean
   motion?: YaadeOverlayMotion
-  size?: JetDialogSize
-  placement?: JetDialogPlacement
+  size?: YaadeDialogSize
+  placement?: YaadeDialogPlacement
 }) {
   return (
     <DialogPortal data-slot="dialog-portal">

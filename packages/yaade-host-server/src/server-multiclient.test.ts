@@ -117,9 +117,8 @@ test("two websocket clients receive the same live PTY and survive one disconnect
       root,
     ])
     started = await startHostServer(config)
-    // This test owns a raw PTY, not shell-agent discovery. Disable the
+    // This test owns a raw PTY, not foreground-process discovery. Disable the
     // background probe so teardown cannot race an in-flight SQLite read.
-    started.runtime.stopTerminalAgentScan()
 
     const terminal = await Promise.resolve(
       started.runtime.terminal.create(

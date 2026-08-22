@@ -848,7 +848,7 @@ export function TerminalPanel({
       data-yaade-terminal-status={displayStatus}
       onMouseDown={() => focusTerminalInput(tabId)}
     >
-      <div className="yaade-terminal-surface jet-terminal-surface relative min-h-0 flex-1 overflow-hidden">
+      <div className="yaade-terminal-surface yaade-terminal-surface relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={containerRef}
           className={
@@ -885,7 +885,7 @@ export function TerminalPanel({
           <Spinner className="size-4 text-muted-foreground" />
           <span>
             {startingMessage ??
-              (deferPty ? "Preparing chat…" : `Starting ${launchCommand ?? "terminal"}…`)}
+              (deferPty ? "Preparing terminal…" : `Starting ${launchCommand ?? "terminal"}…`)}
           </span>
         </div>
       ) : null}

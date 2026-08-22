@@ -53,15 +53,15 @@ export function readPaletteRowHeight(layout: PaletteRowLayout): number {
     : readCssLengthPx("--yaade-palette-row-height", 2.5)
 }
 
-export function readTreeRowHeights(): { project: number; child: number } {
+export function readTreeRowHeights(): { root: number; child: number } {
   return {
-    project: readCssLengthPx("--yaade-project-row-height", 1.75),
+    root: readCssLengthPx("--yaade-root-row-height", 1.75),
     child: readCssLengthPx("--yaade-row-height", 1.5),
   }
 }
 
-export function readLocationRowHeight(): number {
-  return readCssLengthPx("--yaade-location-row-height", 2.5)
+export function readFlatRowHeight(): number {
+  return readCssLengthPx("--yaade-flat-row-height", 2.5)
 }
 
 /** Root font size in CSS px (UI zoom / appearance scale). */

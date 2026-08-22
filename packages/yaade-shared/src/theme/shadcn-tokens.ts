@@ -1,10 +1,10 @@
 /**
- * Semantic palette contract for YAADE's workbench.
+ * Semantic palette contract for YAADE's terminal shell.
  *
  * The default pair is one Liquid Glass language: a milky silver-blue field
  * in light, a near-black silver-blue void in dark, white-frost materials,
- * and one system-blue interaction color. Status and Git colors stay
- * purpose-built so they remain readable through translucent chrome.
+ * and one system-blue interaction color. Status colors stay purpose-built so
+ * they remain readable through translucent chrome.
  */
 import { getDocumentElement } from "./dom-root.js"
 
@@ -32,14 +32,6 @@ export type YaadeSemanticTokens = {
   info: string
   infoForeground: string
   backdrop: string
-  gitAdded: string
-  gitAddedForeground: string
-  gitModified: string
-  gitModifiedForeground: string
-  gitDeleted: string
-  gitDeletedForeground: string
-  gitConflict: string
-  gitConflictForeground: string
   border: string
   input: string
   ring: string
@@ -54,7 +46,7 @@ export type YaadeSemanticTokens = {
 }
 
 /** @deprecated Use `YaadeSemanticTokens`. */
-export type JetShadcnTokens = YaadeSemanticTokens
+export type YaadeShadcnTokens = YaadeSemanticTokens
 
 export const shadcnDefaultLight: YaadeSemanticTokens = {
   // Silver-blue daylight canvas with milky materials and system-blue focus.
@@ -81,14 +73,6 @@ export const shadcnDefaultLight: YaadeSemanticTokens = {
   info: "oklch(0.52 0.2 255)",
   infoForeground: "oklch(0.99 0 255)",
   backdrop: "rgba(16, 24, 40, 0.38)",
-  gitAdded: "oklch(0.57 0.145 158)",
-  gitAddedForeground: "oklch(0.14 0.045 158)",
-  gitModified: "oklch(0.52 0.2 255)",
-  gitModifiedForeground: "oklch(0.99 0 255)",
-  gitDeleted: "oklch(0.55 0.205 26)",
-  gitDeletedForeground: "oklch(0.99 0 255)",
-  gitConflict: "oklch(0.75 0.145 72)",
-  gitConflictForeground: "oklch(0.27 0.065 55)",
   border: "oklch(0.8 0.024 250)",
   input: "oklch(0.57 0.03 250)",
   ring: "oklch(0.52 0.21 255)",
@@ -129,14 +113,6 @@ export const shadcnDefaultDark: YaadeSemanticTokens = {
   info: "oklch(0.72 0.16 255)",
   infoForeground: "oklch(0.16 0.04 255)",
   backdrop: "rgba(10, 16, 32, 0.48)",
-  gitAdded: "oklch(0.74 0.14 155)",
-  gitAddedForeground: "oklch(0.18 0.045 155)",
-  gitModified: "oklch(0.72 0.16 255)",
-  gitModifiedForeground: "oklch(0.16 0.04 255)",
-  gitDeleted: "oklch(0.55 0.205 26)",
-  gitDeletedForeground: "oklch(0.99 0 255)",
-  gitConflict: "oklch(0.8 0.14 72)",
-  gitConflictForeground: "oklch(0.22 0.055 55)",
   border: "oklch(0.32 0.02 250)",
   input: "oklch(0.52 0.028 250)",
   ring: "oklch(0.54 0.20 255)",
@@ -221,14 +197,6 @@ export function applySemanticTokens(tokens: YaadeSemanticTokens): void {
   root.style.setProperty("--info", tokens.info)
   root.style.setProperty("--info-foreground", tokens.infoForeground)
   root.style.setProperty("--backdrop", tokens.backdrop)
-  root.style.setProperty("--git-added", tokens.gitAdded)
-  root.style.setProperty("--git-added-foreground", tokens.gitAddedForeground)
-  root.style.setProperty("--git-modified", tokens.gitModified)
-  root.style.setProperty("--git-modified-foreground", tokens.gitModifiedForeground)
-  root.style.setProperty("--git-deleted", tokens.gitDeleted)
-  root.style.setProperty("--git-deleted-foreground", tokens.gitDeletedForeground)
-  root.style.setProperty("--git-conflict", tokens.gitConflict)
-  root.style.setProperty("--git-conflict-foreground", tokens.gitConflictForeground)
   root.style.setProperty("--border", tokens.border)
   root.style.setProperty("--input", tokens.input)
   root.style.setProperty("--ring", tokens.ring)
@@ -245,7 +213,7 @@ export function applySemanticTokens(tokens: YaadeSemanticTokens): void {
 /** @deprecated Use `applySemanticTokens`. */
 export const applyShadcnTokens = applySemanticTokens
 
-export function jetColorsFromTokens(tokens: YaadeSemanticTokens) {
+export function yaadeColorsFromTokens(tokens: YaadeSemanticTokens) {
   return {
     bg: toSrgbColor(tokens.background),
     panel: toSrgbColor(tokens.sidebar),
@@ -264,10 +232,10 @@ export function jetColorsFromTokens(tokens: YaadeSemanticTokens) {
   }
 }
 
-/** @deprecated Use `jetColorsFromTokens`. */
-export function jetColorsFromShadcn(
+/** @deprecated Use `yaadeColorsFromTokens`. */
+export function yaadeColorsFromShadcn(
   tokens: YaadeSemanticTokens,
   _scheme?: "dark" | "light",
 ) {
-  return jetColorsFromTokens(tokens)
+  return yaadeColorsFromTokens(tokens)
 }

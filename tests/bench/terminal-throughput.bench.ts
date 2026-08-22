@@ -11,7 +11,7 @@ import {
 import {
   focusTerminal,
   hasPtySpawn,
-  launchJet,
+  launchYaade,
   showTerminal,
 } from "../web/e2e/_launch.js"
 
@@ -59,7 +59,7 @@ async function resetTerminalForStreamSample(
         10_000,
       )
       const poll = () => {
-        const text = window.__yaadeAgent?.getTerminalText?.() ?? ""
+        const text = window.__yaadeTest?.getTerminalText?.() ?? ""
         if (text.includes(currentMarker)) {
           window.clearTimeout(timeout)
           resolve()
@@ -75,7 +75,7 @@ async function resetTerminalForStreamSample(
 test("bench terminal-stream-throughput", async () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
 
-  const { app, page } = await launchJet()
+  const { app, page } = await launchYaade()
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
@@ -143,24 +143,24 @@ test("bench terminal-stream-throughput", async () => {
 })
 
 /**
- * Agent/TUI-like flood: many small CSI + CR rewrite frames (not one fat blob).
+ * Terminal/TUI-like flood: many small CSI + CR rewrite frames (not one fat blob).
  * Exercises rAF coalesce + GPU renderer under Cursor-style paint storms.
  */
-test("bench terminal-agent-flood-throughput", async () => {
+test("bench terminal-output-flood-throughput", async () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
 
-  const { app, page } = await launchJet()
+  const { app, page } = await launchYaade()
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
 
     let round = 0
     const result = await runBench({
-      name: "terminal-agent-flood-throughput",
+      name: "terminal-output-flood-throughput",
       warmup: 2,
       rounds: 5,
       measure: async () => {
-        const marker = `YAADE-AGENT-FLOOD-${round++}`
+        const marker = `YAADE-OUTPUT-FLOOD-${round++}`
         return page.evaluate(async currentMarker => {
           const panel = document.querySelector<HTMLElement>(
             '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
@@ -169,7 +169,7 @@ test("bench terminal-agent-flood-throughput", async () => {
           const terminal = window.yaade?.terminal
           if (!ptyId || !terminal) throw new Error("running terminal unavailable")
 
-          // Generate the flood in the PTY so host batching matches real agent CLIs
+          // Generate the flood in the PTY so host batching matches real terminal CLIs
           // (many small onData chunks), not one giant RPC write.
           // Keep the marker split in the command; terminal text includes the shell echo.
           const markerSplit = Math.floor(currentMarker.length / 2)
@@ -184,11 +184,11 @@ test("bench terminal-agent-flood-throughput", async () => {
           await terminal.write(ptyId, script)
           await new Promise<void>((resolve, reject) => {
             const timeout = window.setTimeout(
-              () => reject(new Error(`agent flood marker did not paint: ${currentMarker}`)),
+              () => reject(new Error(`output flood marker did not paint: ${currentMarker}`)),
               30_000,
             )
             const poll = () => {
-              const text = window.__yaadeAgent?.getTerminalText?.() ?? ""
+              const text = window.__yaadeTest?.getTerminalText?.() ?? ""
               if (text.includes(currentMarker)) {
                 window.clearTimeout(timeout)
                 requestAnimationFrame(() => resolve())
@@ -215,7 +215,7 @@ test("bench terminal-agent-flood-throughput", async () => {
 test("bench terminal-typing-idle", async () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
 
-  const { app, page } = await launchJet()
+  const { app, page } = await launchYaade()
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
@@ -235,7 +235,7 @@ test("bench terminal-typing-idle", async () => {
         await page.keyboard.type(marker, { delay: 0 })
         await page.waitForFunction(
           needle =>
-            (window.__yaadeAgent?.getTerminalText?.() ?? "").includes(needle),
+            (window.__yaadeTest?.getTerminalText?.() ?? "").includes(needle),
           marker,
           { timeout: 10_000 },
         )
@@ -264,7 +264,7 @@ test("bench terminal-typing-idle", async () => {
 test("bench terminal-typing-under-flood", async () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
 
-  const { app, page } = await launchJet()
+  const { app, page } = await launchYaade()
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)

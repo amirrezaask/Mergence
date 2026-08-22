@@ -79,14 +79,14 @@ test("paired observe scope cannot mutate RPC or device administration", async ()
 
     const observe = await postJson(
       `${origin}/api/v1/rpc`,
-      { channel: "tools:listProjects", args: [], clientId: "browser" },
+      { channel: "mux:listSessions", args: [false], clientId: "browser" },
       token,
     )
     assert.equal(observe.status, 200)
 
     const mutate = await postJson(
       `${origin}/api/v1/rpc`,
-      { channel: "tools:createSession", args: ["forbidden"], clientId: "browser" },
+      { channel: "mux:createSession", args: ["forbidden"], clientId: "browser" },
       token,
     )
     assert.equal(mutate.status, 403)

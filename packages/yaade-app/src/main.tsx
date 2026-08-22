@@ -10,7 +10,6 @@ import {
   loadStoredServerDefinitions,
 } from "@yaade/host-client"
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
-import { SystemSignalsProvider } from "./system-signals/SystemSignalsProvider.js"
 import { registerPwa } from "./pwa.js"
 import { ServerConnectionsProvider } from "./server-connections.js"
 
@@ -40,9 +39,7 @@ createRoot(document.getElementById("root")!).render(
     <ServerConnectionsProvider manager={serverConnections}>
       <HostPortsProvider ports={serverConnections.ports}>
         <AppErrorBoundary>
-          <SystemSignalsProvider>
-            <AppRoot />
-          </SystemSignalsProvider>
+          <AppRoot />
         </AppErrorBoundary>
       </HostPortsProvider>
     </ServerConnectionsProvider>

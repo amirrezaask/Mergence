@@ -9,16 +9,16 @@ import {
 } from "./routes.js"
 
 test("route registry owns argument and result validation", () => {
-  assert.equal(isHostRouteName("git:status"), true)
-  assert.equal(isHostRouteName("git:not-a-route"), false)
-  assert.equal(getHostRoute("git:status")?.pathPolicy.kind, "allowed-root")
+  assert.equal(isHostRouteName("mux:listSessions"), true)
+  assert.equal(isHostRouteName("mux:not-a-route"), false)
+  assert.equal(getHostRoute("mux:listSessions")?.pathPolicy.kind, "none")
   assert.deepEqual(
-    decodeHostRouteArgs("git:status", ["file:///tmp/project"]),
-    ["file:///tmp/project"],
+    decodeHostRouteArgs("mux:listSessions", [false]),
+    [false],
   )
-  assert.throws(() => decodeHostRouteArgs("git:status", []))
-  assert.throws(() => decodeHostRouteArgs("git:status", [42]))
-  assert.deepEqual(decodeHostRouteResult("git:status", []), [])
+  assert.throws(() => decodeHostRouteArgs("mux:listSessions", []))
+  assert.throws(() => decodeHostRouteArgs("mux:listSessions", [42]))
+  assert.deepEqual(decodeHostRouteResult("mux:listSessions", []), [])
 })
 
 test("hot terminal routes are selected from the same registry", () => {

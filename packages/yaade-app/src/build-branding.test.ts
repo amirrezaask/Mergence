@@ -17,7 +17,7 @@ describe("build branding", () => {
   it("prefixes document titles only in dev", () => {
     assert.equal(formatAppDocumentTitle("yaade", false), "yaade")
     assert.equal(formatAppDocumentTitle("yaade", true), "DEV · yaade")
-    assert.equal(formatAppDocumentTitle("HQ · YAADE", true), "DEV · HQ · YAADE")
+    assert.equal(formatAppDocumentTitle("YAADE · YAADE", true), "DEV · YAADE · YAADE")
     assert.equal(formatAppDocumentTitle("DEV · yaade", true), "DEV · yaade")
     assert.equal(formatAppDocumentTitle("  ", true), "DEV · YAADE")
   })

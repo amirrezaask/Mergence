@@ -4,7 +4,7 @@ import { launchWeb } from "../../shell/launch-web.js"
 import type { LaunchShellResult, ShellDriver } from "../../shell/driver.js"
 
 export type { ShellDriver }
-export type LaunchJetOptions = {
+export type LaunchYaadeOptions = {
   workspaceRel?: string
   mobile?: boolean
   env?: Record<string, string>
@@ -12,9 +12,9 @@ export type LaunchJetOptions = {
   launchWithoutWorkspace?: boolean
   startPath?: string
   homeDir?: string
-  /** Return after rendering an intentional boot error instead of waiting for the agent bridge. */
+  /** Return after rendering an intentional boot error instead of waiting for the test bridge. */
   expectBootError?: boolean
-  /** Ensure a Terminal ToolUse after the Session shell mounts. Defaults to true. */
+  /** Ensure a Terminal MuxTerminal after the Session shell mounts. Defaults to true. */
   withTerminal?: boolean
   /** Narrow allowlist for a test that intentionally requests an HTTP error. */
   expectedHttpErrors?: Array<{
@@ -38,17 +38,17 @@ export function hasPtySpawn(): boolean {
 /**
  * Shared browser E2E entry.
  *
- * Each `launchJet()` call spins up its own `@yaade/server` + browser
+ * Each `launchYaade()` call spins up its own `@yaade/server` + browser
  * context and tears it down in the test's `finally` via `app.close()`.
  * The default suite is serial because PTY/LSP timing becomes flaky under host
  * contention; `PLAYWRIGHT_WORKERS=N` remains available for targeted runs.
  *
  * A shared host-per-worker fixture was intentionally not adopted because PTYs
- * and persisted ToolUses would leak between tests. Keep the per-test lifecycle
+ * and persisted MuxTerminals would leak between tests. Keep the per-test lifecycle
  * until the harness can reset both stores deterministically.
  */
-export async function launchJet(
-  opts: LaunchJetOptions = { workspaceRel: SAMPLE },
+export async function launchYaade(
+  opts: LaunchYaadeOptions = { workspaceRel: SAMPLE },
 ): Promise<LaunchShellResult> {
   const result = await launchWeb(opts)
   try {
@@ -67,15 +67,15 @@ export async function launchJet(
   }
 }
 
-/** Wait for the primary Tool Session shell and its test bridge. */
+/** Wait for the primary terminal shell and its test bridge. */
 export async function waitForMux(page: ShellDriver, timeoutMs = 30_000): Promise<void> {
-  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible({
+  await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible({
     timeout: timeoutMs,
   })
-  await page.evaluate(() => window.__yaadeAgent!.waitForReady())
+  await page.evaluate(() => window.__yaadeTest!.waitForReady())
 }
 
-/** Wait for the default Terminal ToolUse. */
+/** Wait for the default terminal. */
 async function openMuxTerminal(
   page: ShellDriver,
   timeoutMs = 15_000,
@@ -88,7 +88,7 @@ async function openMuxTerminal(
 export async function focusTerminal(page: ShellDriver): Promise<void> {
   await page.locator("[data-yaade-terminal-panel] .yaade-terminal-surface").click()
   await page.evaluate(() => {
-    window.__yaadeAgent?.focusTerminal?.()
+    window.__yaadeTest?.focusTerminal?.()
   })
   // Best-effort DOM focus — the registry focus path above is authoritative.
   await page

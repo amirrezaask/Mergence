@@ -1,21 +1,21 @@
 import {
   applySemanticTokens,
-  jetColorsFromTokens,
+  yaadeColorsFromTokens,
   shadcnDefaultDark,
   toSrgbColor,
-  type JetShadcnTokens,
+  type YaadeShadcnTokens,
   type YaadeSemanticTokens,
 } from "./shadcn-tokens.js"
 import { getDocumentElement } from "./dom-root.js"
 
-export type JetSemanticColors = {
+export type YaadeSemanticColors = {
   error: string
   warning: string
   success: string
   backdrop: string
 }
 
-export type JetColors = {
+export type YaadeColors = {
   bg: string
   panel: string
   panelRaised: string
@@ -32,7 +32,7 @@ export type JetColors = {
   backdrop: string
 }
 
-export type JetHighlightColors = {
+export type YaadeHighlightColors = {
   keyword: string
   controlKeyword: string
   function: string
@@ -50,14 +50,14 @@ export type JetHighlightColors = {
   label: string
 }
 
-export type JetTerminalColors = {
+export type YaadeTerminalColors = {
   background: string
   foreground: string
   cursor: string
   selectionBackground: string
 }
 
-export type JetTerminalAnsiColors = {
+export type YaadeTerminalAnsiColors = {
   black: string
   red: string
   green: string
@@ -76,12 +76,12 @@ export type JetTerminalAnsiColors = {
   brightWhite: string
 }
 
-export type { JetShadcnTokens, YaadeSemanticTokens }
+export type { YaadeShadcnTokens, YaadeSemanticTokens }
 export {
   shadcnDefaultDark,
   shadcnDefaultLight,
-  jetColorsFromShadcn,
-  jetColorsFromTokens,
+  yaadeColorsFromShadcn,
+  yaadeColorsFromTokens,
   toSrgbColor,
   applyShadcnTokens,
   applySemanticTokens,
@@ -96,11 +96,11 @@ export type YaadeTheme = {
   sourceUrl?: string
   license?: string
   previewSwatches?: string[]
-  terminalAnsi?: JetTerminalAnsiColors
-  terminal?: JetTerminalColors
-  colors: JetColors
-  highlights: JetHighlightColors
-  /** Canonical shell, interaction, status, and source-control tokens. */
+  terminalAnsi?: YaadeTerminalAnsiColors
+  terminal?: YaadeTerminalColors
+  colors: YaadeColors
+  highlights: YaadeHighlightColors
+  /** Canonical shell, interaction, and status tokens. */
   tokens: YaadeSemanticTokens
 }
 
@@ -112,7 +112,7 @@ export const defaultYaadeTheme: YaadeTheme = {
   name: "Default Dark",
   family: "Default",
   scheme: "dark",
-  colors: jetColorsFromTokens(shadcnDefaultDark),
+  colors: yaadeColorsFromTokens(shadcnDefaultDark),
   tokens: shadcnDefaultDark,
   highlights: {
     keyword: toSrgbColor("oklch(0.704 0.191 22.216)"),
@@ -160,37 +160,9 @@ export function applyYaadeThemeCss(theme: YaadeTheme): void {
   root.style.setProperty("--yaade-cursor-color", c.text)
 
   applySemanticTokens(theme.tokens)
-  applyJetHighlightCssVars(theme)
+  applyYaadeHighlightCssVars(theme)
   applyYaadeTerminalCssVars(theme)
   applyYaadeTerminalAnsiCssVars(theme)
-  applyAgentChatCssVars(theme)
-}
-
-export function applyAgentChatCssVars(theme: YaadeTheme): void {
-  const root = getDocumentElement()
-  if (!root) return
-  const c = theme.colors
-  const dark = isDarkTheme(theme)
-
-  root.style.setProperty("--agent-feed-bg", c.bg)
-  root.style.setProperty("--agent-feed-primary", c.text)
-  root.style.setProperty("--agent-feed-muted", c.textMuted)
-  root.style.setProperty(
-    "--agent-user-bubble",
-    dark
-      ? `color-mix(in srgb, ${c.hover} 75%, ${c.panel} 25%)`
-      : `color-mix(in srgb, ${c.hover} 88%, ${c.panel} 12%)`,
-  )
-  root.style.setProperty(
-    "--agent-composer-surface",
-    dark
-      ? `color-mix(in srgb, ${c.panelRaised} 72%, ${c.bg} 28%)`
-      : `color-mix(in srgb, ${c.panelRaised} 65%, ${c.bg} 35%)`,
-  )
-  root.style.setProperty(
-    "--agent-composer-border",
-    `color-mix(in srgb, ${c.border} 80%, transparent)`,
-  )
 }
 
 export function applyYaadeTerminalCssVars(theme: YaadeTheme): void {
@@ -219,7 +191,7 @@ export function applyYaadeTerminalAnsiCssVars(theme: YaadeTheme): void {
   const ansi = theme.terminalAnsi
   const root = getDocumentElement()
   if (!root || !ansi) return
-  const entries: [keyof JetTerminalAnsiColors, string][] = [
+  const entries: [keyof YaadeTerminalAnsiColors, string][] = [
     ["black", ansi.black],
     ["red", ansi.red],
     ["green", ansi.green],
@@ -243,7 +215,7 @@ export function applyYaadeTerminalAnsiCssVars(theme: YaadeTheme): void {
   }
 }
 
-export function applyJetHighlightCssVars(theme: YaadeTheme): void {
+export function applyYaadeHighlightCssVars(theme: YaadeTheme): void {
   const h = theme.highlights
   const root = getDocumentElement()
   if (!root) return

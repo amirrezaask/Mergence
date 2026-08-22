@@ -6,11 +6,10 @@
   "scripts": {
     "typecheck": "tsc --noEmit",
     "build": "vp build",
-    "test": "vp test src/hooks/useAppearanceSettings.test.ts src/hooks/useRunningAgents.test.ts src/build-branding.test.ts src/tools/tool-session-routing.test.ts src/tools/tool-store.test.ts src/tools/tool-client.test.ts src/tools/tool-tiling.test.ts"
+    "test": "vp test src/hooks/useAppearanceSettings.test.ts src/build-branding.test.ts src/mux/mux-routing.test.ts src/mux/mux-store.test.ts src/mux/mux-client.test.ts src/mux/terminal-tiling.test.ts"
   },
   "dependencies": {
     "@effect/platform": "0.97.1",
-    "@yaade/agent-telemetry": "workspace:*",
     "@yaade/host-client": "workspace:*",
     "@yaade/panels": "workspace:*",
     "@yaade/rpc": "workspace:*",

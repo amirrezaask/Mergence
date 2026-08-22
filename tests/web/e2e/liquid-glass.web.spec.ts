@@ -88,10 +88,8 @@ test("material gallery exposes named chrome and matte content surfaces", async (
 
 test("settings keep fixed material and typography while allowing font selection", async ({ launchApp }) => {
   const { page } = await launchApp()
-  await expect(page.locator('[data-yaade-shell="tool-session"]')).toBeVisible()
-  await page.keyboard.press(
-    `${process.platform === "darwin" ? "Meta" : "Control"}+Comma`,
-  )
+  await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible()
+  await page.getByRole("button", { name: "Settings" }).click()
   await expect(page.locator("[data-yaade-settings-overlay]")).toBeVisible()
 
   await expect(page.locator('[data-yaade-interface-material-option]')).toHaveCount(0)
@@ -133,7 +131,7 @@ test("top Window tabs use disconnected pills with a raised active surface", asyn
     .evaluate(element => element.getBoundingClientRect().height)
   expect(pillHeight).toBeGreaterThan(24)
   expect(pillHeight).toBeLessThan(tabBarHeight - 8)
-  await expect(topBar.getByRole("button", { name: "Switch tool" })).toHaveCount(0)
+  await expect(topBar.getByRole("button", { name: "Switch terminal" })).toHaveCount(0)
   await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible()
 
   const newTab = page.locator('[data-yaade-new-session-tab=""]')

@@ -1,7 +1,5 @@
 import fs from "node:fs/promises"
 import path from "node:path"
-import { stat } from "./fs.js"
-import { pathToUri } from "./paths.js"
 
 export type LaunchConfig = {
   workspacePath: string
@@ -19,11 +17,10 @@ export const WORKSPACE_MARKERS = [
 ] as const
 
 async function markerExists(dir: string, marker: string): Promise<boolean> {
-  const uri = pathToUri(path.join(dir, marker))
   try {
-    const info = await stat(uri)
-    if (marker === ".git") return info.isDirectory
-    return !info.isDirectory
+    const info = await fs.stat(path.join(dir, marker))
+    if (marker === ".git") return info.isDirectory()
+    return !info.isDirectory()
   } catch {
     return false
   }

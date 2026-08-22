@@ -48,7 +48,7 @@ export function renderUserService(options: UserServiceOptions): string {
     const environment = envEntries
       .map(([key, value]) => `Environment=${key}=${shellQuote(value)}`)
       .join("\n")
-    return `[Unit]\nDescription=YAADE durable agent daemon\nAfter=default.target\n\n[Service]\nExecStart=${command}\nRestart=on-failure\nRestartSec=2\n${environment ? `${environment}\n` : ""}\n[Install]\nWantedBy=default.target\n`
+    return `[Unit]\nDescription=YAADE host service\nAfter=default.target\n\n[Service]\nExecStart=${command}\nRestart=on-failure\nRestartSec=2\n${environment ? `${environment}\n` : ""}\n[Install]\nWantedBy=default.target\n`
   }
   if (process.platform === "darwin") {
     const programArguments = [options.executable, ...args]
@@ -62,7 +62,7 @@ export function renderUserService(options: UserServiceOptions): string {
     return `<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">\n<plist version="1.0"><dict>\n  <key>Label</key><string>${escapeXml(serviceName(options))}</string>\n  <key>ProgramArguments</key><array>\n${programArguments}\n  </array>\n  <key>RunAtLoad</key><true/>\n  <key>KeepAlive</key><true/>\n  <key>WorkingDirectory</key><string>${escapeXml(options.dataDir)}</string>\n${environment}</dict></plist>\n`
   }
   const command = [options.executable, ...args].map(value => escapeXml(value)).join(" ")
-  return `<Task version="1.4"><RegistrationInfo><Description>YAADE durable agent daemon</Description></RegistrationInfo><Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers><Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><RestartOnFailure><Interval>PT2M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context="Author"><Exec><Command>${escapeXml(options.executable)}</Command><Arguments>${command.slice(options.executable.length).trim()}</Arguments><WorkingDirectory>${escapeXml(options.dataDir)}</WorkingDirectory></Exec></Actions></Task>`
+  return `<Task version="1.4"><RegistrationInfo><Description>YAADE host service</Description></RegistrationInfo><Triggers><LogonTrigger><Enabled>true</Enabled></LogonTrigger></Triggers><Principals><Principal id="Author"><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals><Settings><RestartOnFailure><Interval>PT2M</Interval><Count>3</Count></RestartOnFailure></Settings><Actions Context="Author"><Exec><Command>${escapeXml(options.executable)}</Command><Arguments>${command.slice(options.executable.length).trim()}</Arguments><WorkingDirectory>${escapeXml(options.dataDir)}</WorkingDirectory></Exec></Actions></Task>`
 }
 
 function escapeXml(value: string): string {

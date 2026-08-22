@@ -1,24 +1,5 @@
 import { Effect, Schema } from "effect";
 import {
-  createDirectory,
-  createFile,
-  emptyTrash,
-  exists,
-  listTrash,
-  loadGlobalYaadercScanRoots,
-  openInApp,
-  revealInFolder,
-  readDir,
-  readFile,
-  readTextFile,
-  renamePath,
-  restoreTrash,
-  spawnTask,
-  stat,
-  trashPath,
-  writeFile,
-  writeTextFile,
-  writeTempDrop,
   assertAllowedUri,
   TerminalControlError,
   type TerminalInspectSnapshot,
@@ -27,9 +8,8 @@ import {
 } from "@yaade/node-host";
 import {
   ArchiveSession,
-  ArchiveToolUse,
-  AddProject,
-  CancelToolUse,
+  CloseTerminal,
+  StopTerminal,
   CreateSession,
   CreateSessionTab,
   RenameSessionTab,
@@ -37,28 +17,25 @@ import {
   ReorderSessionTabs,
   ArchiveSessionTab,
   SelectSessionTab,
-  CreateToolUse,
+  CreateTerminal,
   GetSession,
-  GetToolUse,
+  GetTerminal,
   ListSessions,
-  ListCheckoutTargets,
   ReorderSessions,
-  ReorderToolUses,
+  ReorderTerminals,
   RestoreSession,
   RenameSession,
-  RestartToolUse,
-  SelectSessionToolUse,
+  RestartTerminal,
+  SelectSessionTerminal,
   SessionNotFound,
   SessionTabConflict,
   SessionTabNotFound,
-  ToolUseNotFound,
-  InvalidToolInput,
-  InvalidToolCommand,
+  TerminalNotFound,
+  InvalidTerminalInput,
+  InvalidMuxCommand,
   InvalidRpcPayloadError,
-  ProjectTargetUnavailable,
-  CheckoutResolutionFailed,
-  ToolUseConflict,
-  ToolRuntimeFailure,
+  TerminalConflict,
+  TerminalRuntimeFailure,
   TerminalLeaseError,
   TerminalMutationFence as RpcTerminalMutationFence,
   ScopeDeniedError,
@@ -67,42 +44,23 @@ import {
   SessionUpdated,
   SessionTabCreated,
   SessionTabUpdated,
-  ToolUseUpdated,
-  UpdateToolUseContext,
+  MuxTerminalUpdated,
   ConflictError,
   decodeHostRouteArgs,
   decodeHostRouteResult,
   isHostRouteName,
   OperationFailedError,
-  FileChangedError,
   NotFoundError,
   PathOutsideRootsError,
-  PayloadTooLargeError,
-  TextFileWriteOptions,
   UnknownChannelError,
   unknownChannel,
   type HostRpcError,
 } from "@yaade/rpc";
-import type {
-  BindNotificationSessionRequest,
-  IngestNotificationRequest,
-  ListNotificationsRequest,
-  MarkAllNotificationsReadRequest,
-  NotificationPreferences,
-} from "@yaade/shared";
-import { fileUriToPath, isCliProvider, pathToFileUri } from "@yaade/shared";
-import { GitServiceLive, GitServiceTag } from "./effect/git.js";
+import { fileUriToPath } from "@yaade/shared";
 import { HostRuntimeTag } from "./effect/tags.js";
 import type { HostRuntime } from "./host-runtime.js";
-import type { ToolService } from "./tools/service.js";
-import { normalizeHookEventName } from "./notifications/index.js";
-import { installProjectHooksForProvider } from "./agents/index.js";
-import {
-  createTerminalInstance as createSharedTerminalInstance,
-  restartTerminalInstance,
-  resumeTerminalInstance,
-} from "./tools/process-driver.js";
-import { ToolDriverFailure } from "./tools/errors.js"
+import type { TerminalService } from "./terminal-runtime/service.js";
+import { TerminalRuntimeDriverFailure } from "./terminal-runtime/errors.js"
 import { principalMayInvoke } from "./route-policy.js"
 import {
   makeCompatibilityPrincipal,
@@ -113,18 +71,18 @@ import {
   controlErrorToHostError,
   currentOwnerWriter,
   mapControlError,
-  projectRuntimeLease,
+  toRuntimeLease,
   usesAuthoritativeLeases,
 } from "./terminal-authority.js";
 
 export type { HostRuntime } from "./host-runtime.js";
 export { createRuntime, shutdownRuntime } from "./host-runtime.js";
 
-function requiredToolService(runtime: HostRuntime): ToolService {
-  return runtime.toolService;
+function requiredTerminalService(runtime: HostRuntime): TerminalService {
+  return runtime.terminalService;
 }
 
-function decodeToolCommand<S extends Schema.Schema.AnyNoContext>(
+function decodeMuxCommand<S extends Schema.Schema.AnyNoContext>(
   schema: S,
   value: unknown,
   name: string,
@@ -132,7 +90,7 @@ function decodeToolCommand<S extends Schema.Schema.AnyNoContext>(
   try {
     return Schema.decodeUnknownSync(schema)(value);
   } catch {
-    throw new InvalidToolCommand({ message: `invalid ${name} command` });
+    throw new InvalidMuxCommand({ message: `invalid ${name} command` });
   }
 }
 
@@ -143,29 +101,25 @@ export function mapDispatchError(
   if (
     error instanceof ConflictError ||
     error instanceof InvalidRpcPayloadError ||
-    error instanceof FileChangedError ||
     error instanceof NotFoundError ||
     error instanceof PathOutsideRootsError ||
-    error instanceof PayloadTooLargeError ||
     error instanceof SessionNotFound ||
     error instanceof SessionTabConflict ||
     error instanceof SessionTabNotFound ||
-    error instanceof ToolUseNotFound ||
-    error instanceof InvalidToolInput ||
-    error instanceof InvalidToolCommand ||
-    error instanceof ProjectTargetUnavailable ||
-    error instanceof CheckoutResolutionFailed ||
-    error instanceof ToolUseConflict ||
-    error instanceof ToolRuntimeFailure ||
+    error instanceof TerminalNotFound ||
+    error instanceof InvalidTerminalInput ||
+    error instanceof InvalidMuxCommand ||
+    error instanceof TerminalConflict ||
+    error instanceof TerminalRuntimeFailure ||
     error instanceof TerminalLeaseError
   ) {
     return error;
   }
   const controlError = mapControlError(error);
   if (controlError) return controlError;
-  if (error instanceof ToolDriverFailure) {
-    return new ToolRuntimeFailure({
-      toolUseId: error.toolUseId,
+  if (error instanceof TerminalRuntimeDriverFailure) {
+    return new TerminalRuntimeFailure({
+      muxTerminalId: error.muxTerminalId,
       message: error.message,
       cause: error.cause,
     });
@@ -183,7 +137,7 @@ export function mapDispatchError(
   return new OperationFailedError({ message, cause: error });
 }
 
-export type DispatchEnv = HostRuntimeTag | GitServiceTag;
+export type DispatchEnv = HostRuntimeTag;
 
 export function dispatch(
   channel: string,
@@ -215,16 +169,11 @@ export function dispatch(
           cause,
         }),
     });
-    let value: unknown
-    if (channel.startsWith("git:")) {
-      value = yield* handleGitEffect(channel, decodedArgs)
-    } else {
-      const runtime = yield* HostRuntimeTag
-      value = yield* Effect.tryPromise({
-        try: () => dispatchImpl(runtime, channel, decodedArgs, principal),
-        catch: err => mapDispatchError(channel, err),
-      })
-    }
+    const runtime = yield* HostRuntimeTag
+    const value = yield* Effect.tryPromise({
+      try: () => dispatchImpl(runtime, channel, decodedArgs, principal),
+      catch: err => mapDispatchError(channel, err),
+    })
     return yield* Effect.try({
       try: () => decodeHostRouteResult(channel, value),
       catch: cause =>
@@ -246,7 +195,6 @@ export function dispatchPromise(
   return Effect.runPromise(
     dispatch(channel, args, principalOrClientId, signal).pipe(
       Effect.provideService(HostRuntimeTag, runtime),
-      Effect.provide(GitServiceLive),
     ),
   );
 }
@@ -258,43 +206,23 @@ async function dispatchImpl(
   principal: RequestPrincipal,
 ): Promise<unknown> {
   const clientId = principal.connectionId
-  if (
-    channel === "fs:showOpenFolderDialog" ||
-    channel === "fs:showSaveFileDialog"
-  )
-    return null;
-  if (channel === "yaade:getLaunchConfig") return runtime.config.launchConfig;
-  if (channel === "yaade:getHomeDir") return runtime.homeDir;
-  if (channel === "yaade:loadGlobalYaadercScanRoots") {
-    return loadGlobalYaadercScanRoots(runtime.homeDir);
-  }
 
-  if (channel.startsWith("agents:")) {
-    return handleAgents(runtime, channel, args, clientId);
-  }
-  if (channel.startsWith("notifications:")) {
-    return handleNotifications(runtime, channel, args);
-  }
-  if (channel.startsWith("tools:")) return handleTools(runtime, channel, args);
-  if (channel.startsWith("fs:")) return handleFs(runtime, channel, args);
+  if (channel.startsWith("mux:")) return handleMux(runtime, channel, args);
   if (channel.startsWith("terminal:"))
     return handleTerminal(runtime, channel, args, clientId, principal);
-  if (channel.startsWith("shell:")) return handleShell(channel, args);
-  if (channel.startsWith("tasks:")) return handleTasks(channel, args);
-  if (channel.startsWith("perf:")) return handlePerf(runtime, channel, args);
 
   throw new Error(`unknown host channel: ${channel}`);
 }
 
-async function handleTools(
+async function handleMux(
   runtime: HostRuntime,
   channel: string,
   args: unknown[],
 ): Promise<unknown> {
-  const store = runtime.toolSessions;
+  const store = runtime.muxSessions;
   switch (channel) {
-    case "tools:listSessions": {
-      const command = decodeToolCommand(
+    case "mux:listSessions": {
+      const command = decodeMuxCommand(
         ListSessions,
         {
           _tag: "ListSessions",
@@ -307,14 +235,14 @@ async function handleTools(
         .map((session) => ({
           session,
           tabs: store.listTabs(session.id, command.includeArchived === true),
-          toolUses: store.listToolUses(
+          muxTerminals: store.listMuxTerminals(
             session.id,
             command.includeArchived === true,
           ),
         }));
     }
-    case "tools:createSession": {
-      const command = decodeToolCommand(
+    case "mux:createSession": {
+      const command = decodeMuxCommand(
         CreateSession,
         {
           _tag: "CreateSession",
@@ -324,7 +252,7 @@ async function handleTools(
       );
       const session = store.createSession(command.title ?? "New session");
       const tabs = store.listTabs(session.id);
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionCreated.make({
           eventId: `evt-${Date.now()}`,
           revision: session.revision ?? 1,
@@ -342,15 +270,15 @@ async function handleTools(
       ]);
       return store.getSession(session.id) ?? session;
     }
-    case "tools:reorderSessions": {
-      const command = decodeToolCommand(
+    case "mux:reorderSessions": {
+      const command = decodeMuxCommand(
         ReorderSessions,
         args[0],
         "reorder sessions",
       );
       const sessions = store.reorderSessions(command.sessionIds);
       for (const session of sessions) {
-        runtime.events.emit("tools:event", [
+        runtime.events.emit("mux:event", [
           SessionUpdated.make({
             eventId: `evt-session-reorder-${Date.now()}-${session.id}`,
             revision: session.revision ?? 1,
@@ -361,8 +289,8 @@ async function handleTools(
       }
       return sessions;
     }
-    case "tools:createTab": {
-      const command = decodeToolCommand(
+    case "mux:createTab": {
+      const command = decodeMuxCommand(
         CreateSessionTab,
         args[0],
         "create tab",
@@ -372,7 +300,7 @@ async function handleTools(
         command.sessionId,
         command.title ?? "New tab",
       );
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionTabCreated.make({
           eventId: `evt-tab-${Date.now()}-${tab.id}`,
           revision: tab.revision ?? 1,
@@ -386,7 +314,7 @@ async function handleTools(
         previousSession &&
         nextSession.revision !== previousSession.revision
       ) {
-        runtime.events.emit("tools:event", [
+        runtime.events.emit("mux:event", [
           SessionUpdated.make({
             eventId: `evt-session-tab-created-${Date.now()}-${nextSession.id}`,
             revision: nextSession.revision ?? 1,
@@ -397,14 +325,14 @@ async function handleTools(
       }
       return tab;
     }
-    case "tools:renameTab": {
-      const command = decodeToolCommand(
+    case "mux:renameTab": {
+      const command = decodeMuxCommand(
         RenameSessionTab,
         args[0],
         "rename tab",
       );
       const tab = store.renameTab(command.tabId, command.title);
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionTabUpdated.make({
           eventId: `evt-tab-${Date.now()}-${tab.id}`,
           revision: tab.revision ?? 1,
@@ -414,8 +342,8 @@ async function handleTools(
       ]);
       return tab;
     }
-    case "tools:saveTabLayout": {
-      const command = decodeToolCommand(
+    case "mux:saveTabLayout": {
+      const command = decodeMuxCommand(
         SaveSessionTabLayout,
         args[0],
         "save tab layout",
@@ -425,7 +353,7 @@ async function handleTools(
         command.layoutJson,
         command.revision,
       );
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionTabUpdated.make({
           eventId: `evt-tab-layout-${Date.now()}-${tab.id}`,
           revision: tab.revision ?? 1,
@@ -435,15 +363,15 @@ async function handleTools(
       ]);
       return tab;
     }
-    case "tools:reorderTabs": {
-      const command = decodeToolCommand(
+    case "mux:reorderTabs": {
+      const command = decodeMuxCommand(
         ReorderSessionTabs,
         args[0],
         "reorder tabs",
       );
       const tabs = store.reorderTabs(command.sessionId, command.tabIds);
       for (const tab of tabs) {
-        runtime.events.emit("tools:event", [
+        runtime.events.emit("mux:event", [
           SessionTabUpdated.make({
             eventId: `evt-tab-reorder-${Date.now()}-${tab.id}`,
             revision: tab.revision ?? 1,
@@ -454,20 +382,20 @@ async function handleTools(
       }
       return tabs;
     }
-    case "tools:archiveTab": {
-      const command = decodeToolCommand(
+    case "mux:archiveTab": {
+      const command = decodeMuxCommand(
         ArchiveSessionTab,
         args[0],
         "archive tab",
       );
-      const tab = await requiredToolService(runtime).archiveTab(
+      const tab = await requiredTerminalService(runtime).archiveTab(
         command.tabId,
-        command.mode === "stop-tools",
+        command.mode === "stop-terminals",
       );
       return tab;
     }
-    case "tools:selectTab": {
-      const command = decodeToolCommand(
+    case "mux:selectTab": {
+      const command = decodeMuxCommand(
         SelectSessionTab,
         args[0],
         "select tab",
@@ -475,7 +403,7 @@ async function handleTools(
       const tabId =
         command.tabId ?? store.listTabs(command.sessionId)[0]?.id ?? null;
       const session = store.setActiveTab(command.sessionId, tabId);
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionUpdated.make({
           eventId: `evt-session-tab-${Date.now()}`,
           revision: session.revision ?? 1,
@@ -485,25 +413,25 @@ async function handleTools(
       ]);
       return session;
     }
-    case "tools:archiveSession": {
-      const command = decodeToolCommand(
+    case "mux:archiveSession": {
+      const command = decodeMuxCommand(
         ArchiveSession,
         args[0],
         "archive session",
       );
-      return requiredToolService(runtime).archiveSession(
+      return requiredTerminalService(runtime).archiveSession(
         command.sessionId,
-        command.mode === "stop-tools",
+        command.mode === "stop-terminals",
       );
     }
-    case "tools:restoreSession": {
-      const command = decodeToolCommand(
+    case "mux:restoreSession": {
+      const command = decodeMuxCommand(
         RestoreSession,
         args[0],
         "restore session",
       );
       const session = store.restoreSession(command.sessionId);
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionRestored.make({
           eventId: `evt-${Date.now()}`,
           revision: session.revision ?? 1,
@@ -513,8 +441,8 @@ async function handleTools(
       ]);
       return session;
     }
-    case "tools:renameSession": {
-      const command = decodeToolCommand(
+    case "mux:renameSession": {
+      const command = decodeMuxCommand(
         RenameSession,
         {
           _tag: "RenameSession",
@@ -524,7 +452,7 @@ async function handleTools(
         "rename session",
       );
       const session = store.renameSession(command.sessionId, command.title);
-      runtime.events.emit("tools:event", [
+      runtime.events.emit("mux:event", [
         SessionUpdated.make({
           eventId: `evt-${Date.now()}`,
           revision: session.revision ?? 1,
@@ -534,8 +462,8 @@ async function handleTools(
       ]);
       return session;
     }
-    case "tools:getSession": {
-      const command = decodeToolCommand(
+    case "mux:getSession": {
+      const command = decodeMuxCommand(
         GetSession,
         {
           _tag: "GetSession",
@@ -548,875 +476,116 @@ async function handleTools(
         ? {
             session,
             tabs: store.listTabs(session.id),
-            toolUses: store.listToolUses(session.id),
+            muxTerminals: store.listMuxTerminals(session.id),
           }
         : null;
     }
-    case "tools:getUse": {
-      const command = decodeToolCommand(
-        GetToolUse,
+    case "mux:getTerminal": {
+      const command = decodeMuxCommand(
+        GetTerminal,
         {
-          _tag: "GetToolUse",
-          toolUseId: args[0],
+          _tag: "GetTerminal",
+          muxTerminalId: args[0],
         },
-        "get tool use",
+        "get terminal",
       );
-      return store.getToolUse(command.toolUseId);
+      return store.getMuxTerminal(command.muxTerminalId);
     }
-    case "tools:updateUseContext": {
-      const command = decodeToolCommand(
-        UpdateToolUseContext,
+    case "mux:reorderTerminals": {
+      const command = decodeMuxCommand(
+        ReorderTerminals,
         args[0],
-        "update tool context",
+        "reorder terminals",
       );
-      const current = store.getToolUse(command.toolUseId);
-      if (!current)
-        throw new ToolUseNotFound({
-          toolUseId: command.toolUseId,
-          message: "tool use not found",
-        });
-      return requiredToolService(runtime).updateContext(
-        {
-          _tag: "CreateToolUse",
-          sessionId: current.sessionId,
-          tabId: current.tabId,
-          kind: current.kind,
-          project: command.project,
-          checkout: command.checkout,
-          input: current.input,
-        },
-        current.id,
-        command.revision,
-      );
-    }
-    case "tools:reorderUses": {
-      const command = decodeToolCommand(
-        ReorderToolUses,
-        args[0],
-        "reorder tool uses",
-      );
-      return requiredToolService(runtime).reorderToolUses(
+      return requiredTerminalService(runtime).reorderMuxTerminals(
         command.sessionId,
-        command.toolUseIds,
+        command.muxTerminalIds,
         command.tabId,
       );
     }
-    case "tools:selectUse": {
-      const command = decodeToolCommand(
-        SelectSessionToolUse,
+    case "mux:selectTerminal": {
+      const command = decodeMuxCommand(
+        SelectSessionTerminal,
         {
-          _tag: "SelectSessionToolUse",
+          _tag: "SelectSessionTerminal",
           sessionId: args[0],
-          ...(args[1] == null ? {} : { toolUseId: args[1] }),
+          ...(args[1] == null ? {} : { muxTerminalId: args[1] }),
         },
-        "select tool use",
+        "select terminal",
       );
-      return requiredToolService(runtime).selectToolUse(
+      return requiredTerminalService(runtime).selectMuxTerminal(
         command.sessionId,
-        command.toolUseId ?? null,
+        command.muxTerminalId ?? null,
       );
     }
-    case "tools:createUse": {
-      const command = decodeToolCommand(
-        CreateToolUse,
+    case "mux:createTerminal": {
+      const command = decodeMuxCommand(
+        CreateTerminal,
         args[0],
-        "create tool use",
+        "create terminal",
       );
-      return requiredToolService(runtime).create(command);
+      return requiredTerminalService(runtime).create(command);
     }
-    case "tools:cancelUse": {
-      const command = decodeToolCommand(
-        CancelToolUse,
+    case "mux:stopTerminal": {
+      const command = decodeMuxCommand(
+        StopTerminal,
         {
-          _tag: "CancelToolUse",
-          toolUseId: args[0],
+          _tag: "StopTerminal",
+          muxTerminalId: args[0],
           revision: args[1],
         },
-        "cancel tool use",
+        "cancel terminal",
       );
-      return requiredToolService(runtime).cancel(
-        command.toolUseId,
+      return requiredTerminalService(runtime).cancel(
+        command.muxTerminalId,
         command.revision,
       );
     }
-    case "tools:restartUse": {
-      const command = decodeToolCommand(
-        RestartToolUse,
+    case "mux:restartTerminal": {
+      const command = decodeMuxCommand(
+        RestartTerminal,
         {
-          _tag: "RestartToolUse",
-          toolUseId: args[0],
+          _tag: "RestartTerminal",
+          muxTerminalId: args[0],
           revision: args[1],
         },
-        "restart tool use",
+        "restart terminal",
       );
-      return requiredToolService(runtime).restart(
-        command.toolUseId,
+      return requiredTerminalService(runtime).restart(
+        command.muxTerminalId,
         command.revision,
       );
     }
-    case "tools:archiveUse": {
-      const command = decodeToolCommand(
-        ArchiveToolUse,
+    case "mux:closeTerminal": {
+      const command = decodeMuxCommand(
+        CloseTerminal,
         args[0],
-        "archive tool use",
+        "archive terminal",
       );
-      return requiredToolService(runtime).archiveUse(command.toolUseId);
+      return requiredTerminalService(runtime).closeTerminal(command.muxTerminalId);
     }
-    case "tools:renameUse": {
-      const toolUseId = args[0];
+    case "mux:renameTerminal": {
+      const muxTerminalId = args[0];
       const title = typeof args[1] === "string" ? args[1] : "";
-      if (typeof toolUseId !== "string" || !title.trim())
-        throw new InvalidToolCommand({
-          message: "invalid rename tool use command",
+      if (typeof muxTerminalId !== "string" || !title.trim())
+        throw new InvalidMuxCommand({
+          message: "invalid rename terminal command",
         });
-      const use = store.renameToolUse(toolUseId as never, title);
-      runtime.events.emit("tools:event", [
-        ToolUseUpdated.make({
+      const terminal = store.renameMuxTerminal(muxTerminalId as never, title);
+      runtime.events.emit("mux:event", [
+        MuxTerminalUpdated.make({
           eventId: `evt-${Date.now()}`,
-          toolUseId: use.id,
-          revision: use.revision,
-          occurredAt: use.updatedAt,
-          toolUse: use,
+          muxTerminalId: terminal.id,
+          revision: terminal.revision,
+          occurredAt: terminal.updatedAt,
+          muxTerminal: terminal,
         }),
       ]);
-      return use;
-    }
-    case "tools:listProjects":
-      return runtime.db.projects().map((project) => ({
-        projectId: project.id,
-        projectPath: project.rootPath,
-        projectName: project.name,
-      }));
-    case "tools:addProject": {
-      const command = decodeToolCommand(
-        AddProject,
-        {
-          _tag: "AddProject",
-          rootPath: args[0],
-        },
-        "add project",
-      );
-      const rootPath = command.rootPath.trim();
-      if (!rootPath) {
-        throw new InvalidToolCommand({
-          message: "project path is required",
-        });
-      }
-      const canonicalPath = await assertAllowedUri(
-        pathToFileUri(rootPath),
-        runtime.config.allowedRoots,
-        fileUriToPath,
-      );
-      const details = await stat(pathToFileUri(canonicalPath));
-      if (!details.isDirectory) {
-        throw new InvalidToolCommand({
-          message: "project path must be a directory",
-        });
-      }
-      const project = runtime.db.addProject(canonicalPath);
-      return {
-        projectId: project.id,
-        projectPath: project.rootPath,
-        projectName: project.name,
-      };
-    }
-    case "tools:listCheckoutTargets": {
-      const command = decodeToolCommand(
-        ListCheckoutTargets,
-        args[0],
-        "list checkout targets",
-      );
-      const project = runtime.db.project(command.projectId);
-      if (!project) throw new Error("project is unavailable");
-      let trees: readonly {
-        readonly path: string;
-        readonly branch?: string | null;
-      }[] = [];
-      try {
-        trees = await import("@yaade/node-host").then(({ gitWorktreeList }) =>
-          gitWorktreeList(pathToFileUri(project.rootPath)),
-        );
-      } catch (error) {
-        // A plain directory is still a valid Main checkout. Worktree discovery
-        // is best-effort for the nested menu and must not block tool creation.
-        const message = error instanceof Error ? error.message : String(error);
-        if (!message.includes("not a git repository")) throw error;
-      }
-      return [
-        { kind: "main", path: project.rootPath, branch: null },
-        ...trees.filter((tree) => tree.path !== project.rootPath),
-      ];
+      return terminal;
     }
     default:
-      throw new Error(`unknown tools channel: ${channel}`);
+      throw new Error(`unknown mux channel: ${channel}`);
   }
-}
-
-function handleNotifications(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-): unknown {
-  const n = runtime.notifications;
-  switch (channel) {
-    case "notifications:list":
-      return n.list((args[0] as ListNotificationsRequest | undefined) ?? {});
-    case "notifications:counts":
-      return n.counts();
-    case "notifications:get":
-      return n.get(str(args[0], "id"));
-    case "notifications:ingest": {
-      const body = args[0] as IngestNotificationRequest;
-      if (!body || typeof body !== "object")
-        throw new Error("missing ingest body");
-      if (typeof body.title !== "string" || !body.title.trim()) {
-        throw new Error("ingest requires title");
-      }
-      if (body.title.length > 240) throw new Error("ingest title is too long");
-      if (body.message != null && body.message.length > 8_000) {
-        throw new Error("ingest message is too long");
-      }
-      if (
-        ![
-          "turn-completed",
-          "input-required",
-          "permission-required",
-          "failed",
-          "process-exited",
-          "session-started",
-          "provider-notification",
-          "background-output",
-          "system",
-        ].includes(body.type)
-      ) {
-        throw new Error("ingest type is invalid");
-      }
-      if (
-        ![
-          "interactive-runtime",
-          "provider-hook",
-          "provider-plugin",
-          "osc",
-          "process",
-          "system",
-          "aggregated-pty",
-        ].includes(body.source)
-      ) {
-        throw new Error("ingest source is invalid");
-      }
-      const request = { ...body };
-      // Normalize hook event names when providerEvent is set without type refinement.
-      if (request.providerEvent && request.type === "provider-notification") {
-        const mapped = normalizeHookEventName(request.providerEvent);
-        if (mapped) request.type = mapped;
-      }
-      return n.ingest(request);
-    }
-    case "notifications:markRead":
-      return n.markRead(str(args[0], "id"));
-    case "notifications:markUnread":
-      return n.markUnread(str(args[0], "id"));
-    case "notifications:dismiss":
-      return n.dismiss(str(args[0], "id"));
-    case "notifications:restore":
-      return n.restore(str(args[0], "id"));
-    case "notifications:acknowledge":
-      return n.acknowledge(str(args[0], "id"));
-    case "notifications:markAllRead":
-      return n.markAllRead(
-        (args[0] as MarkAllNotificationsReadRequest | undefined) ?? {},
-      );
-    case "notifications:unreadBySession":
-      return n.unreadBySession();
-    case "notifications:markSessionUnread":
-      return n.markSessionUnread(str(args[0], "sessionId"));
-    case "notifications:getPreferences":
-      return n.getPreferences();
-    case "notifications:setPreferences":
-      return n.setPreferences(
-        (args[0] as Partial<NotificationPreferences> | undefined) ?? {},
-      );
-    case "notifications:bindSession": {
-      const body = args[0] as BindNotificationSessionRequest;
-      if (!body?.sessionId) throw new Error("bindSession requires sessionId");
-      n.bindSession({
-        sessionId: body.sessionId,
-        projectId: body.projectId ?? null,
-        projectName: body.projectName ?? null,
-        sessionTitle: body.sessionTitle ?? null,
-        provider: body.provider ?? null,
-        ptyId: body.ptyId ?? null,
-      });
-      const provider = parseAgentProvider(body.provider ?? "");
-      if (provider && body.ptyId) {
-        runtime.agents.onProcessStarted({
-          provider,
-          sessionId: body.sessionId,
-          processId: body.ptyId,
-          projectId: body.projectId ?? undefined,
-        });
-      }
-      return { ok: true };
-    }
-    case "notifications:runRetention":
-      return n.runRetention();
-    default:
-      throw new Error(`unknown notifications channel: ${channel}`);
-  }
-}
-
-async function handleAgents(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-  clientId: string,
-): Promise<unknown> {
-  const agents = runtime.agents;
-  switch (channel) {
-    case "agents:listProviders":
-      return runtime.agentRuns.listProviders(args[0] === true);
-    case "agents:listLive": {
-      const projectId =
-        typeof args[0] === "string" && args[0] ? args[0] : undefined;
-      return runtime.terminalInstances
-        .listLive(projectId)
-        .filter((instance) => instance.provider)
-        .map(instance =>
-          instanceToAgentRunInfo(
-            instance,
-            runtime.notifications.bindingForSession(instance.id)?.sessionTitle,
-          ),
-        );
-    }
-    case "agents:listProject":
-      return runtime.terminalInstances
-        .listProject(str(args[0], "projectId"))
-        .filter((instance) => instance.provider)
-        .map(instance =>
-          instanceToAgentRunInfo(
-            instance,
-            runtime.notifications.bindingForSession(instance.id)?.sessionTitle,
-          ),
-        );
-    case "agents:get": {
-      const instance = runtime.terminalInstances.get(str(args[0], "runId"));
-      return instance?.provider
-        ? instanceToAgentRunInfo(instance)
-        : runtime.agentRuns.get(str(args[0], "runId"));
-    }
-    case "agents:getTranscript": {
-      const fromInstance = runtime.terminalInstances.transcript(
-        str(args[0], "runId"),
-      );
-      return (
-        fromInstance ?? runtime.agentRuns.transcript(str(args[0], "runId"))
-      );
-    }
-    case "agents:listActivity": {
-      const body =
-        (args[0] as
-          | { limit?: number; cursor?: string; projectId?: string }
-          | undefined) ?? {};
-      return runtime.agentRuns.listActivity(body);
-    }
-    case "agents:launch": {
-      const body = args[0] as {
-        launchRequestId?: string;
-        provider?: string;
-        projectId?: string;
-        workspaceId?: string;
-        checkoutKey?: string;
-        checkoutPath?: string;
-        title?: string;
-        args?: string[];
-        restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
-      };
-      if (
-        !body?.launchRequestId ||
-        !body.provider ||
-        !body.projectId ||
-        !body.workspaceId
-      ) {
-        throw new Error(
-          "agents:launch requires launchRequestId, provider, projectId, and workspaceId",
-        );
-      }
-      const instance = await createTerminalInstance(
-        runtime,
-        {
-          projectId: body.projectId,
-          workspaceId: body.workspaceId,
-          checkoutKey: body.checkoutKey,
-          checkoutPath: body.checkoutPath,
-          title: body.title,
-          provider: body.provider,
-          launchRequestId: body.launchRequestId,
-          args: body.args,
-          restartPolicy: body.restartPolicy,
-        },
-        clientId,
-      );
-      return {
-        run: instanceToAgentRunInfo(instance),
-        pty: instance.ptyId
-          ? { id: instance.ptyId, title: instance.title }
-          : null,
-      };
-    }
-    case "agents:stop": {
-      const body = args[0] as { runId?: string; generation?: number };
-      if (!body?.runId) throw new Error("agents:stop requires runId");
-      const instance = runtime.terminalInstances.get(body.runId);
-      if (instance) {
-        if (
-          body.generation != null &&
-          body.generation !== instance.generation
-        ) {
-          return instanceToAgentRunInfo(instance);
-        }
-        if (instance.ptyId) {
-          await Promise.resolve(runtime.terminal.dispose(instance.ptyId));
-        }
-        const closed = runtime.terminalInstances.close(
-          instance.id,
-          instance.generation,
-          "",
-        );
-        return closed?.provider ? instanceToAgentRunInfo(closed) : null;
-      }
-      const run = runtime.agentRuns.get(body.runId);
-      if (!run) return null;
-      if (body.generation != null && body.generation !== run.generation)
-        return run;
-      if (run.ptyId) {
-        const replay = await Promise.resolve(
-          runtime.terminal.readOutput(run.ptyId),
-        );
-        runtime.agentRuns.storeTranscript(
-          run.ptyId,
-          replay?.output ?? "",
-          replay?.truncated ?? false,
-        );
-        await Promise.resolve(runtime.terminal.dispose(run.ptyId));
-      }
-      return runtime.agentRuns.stop(run.runId, run.generation);
-    }
-    case "agents:close": {
-      const body = args[0] as { runId?: string; generation?: number };
-      if (!body?.runId) throw new Error("agents:close requires runId");
-      const instance = runtime.terminalInstances.get(body.runId);
-      if (instance) {
-        if (
-          body.generation != null &&
-          body.generation !== instance.generation
-        ) {
-          return instanceToAgentRunInfo(instance);
-        }
-        if (instance.ptyId) {
-          await Promise.resolve(runtime.terminal.dispose(instance.ptyId));
-        }
-        const closed = runtime.terminalInstances.close(
-          instance.id,
-          instance.generation,
-          "",
-        );
-        return closed?.provider ? instanceToAgentRunInfo(closed) : null;
-      }
-      const run = runtime.agentRuns.get(body.runId);
-      if (!run) return null;
-      if (body.generation != null && body.generation !== run.generation)
-        return run;
-      if (run.ptyId) {
-        const replay = await Promise.resolve(
-          runtime.terminal.readOutput(run.ptyId),
-        );
-        runtime.agentRuns.storeTranscript(
-          run.ptyId,
-          replay?.output ?? "",
-          replay?.truncated ?? false,
-        );
-        await Promise.resolve(runtime.terminal.dispose(run.ptyId));
-      }
-      return runtime.agentRuns.close(run.runId, run.generation);
-    }
-    case "agents:getSnapshot":
-      return agents.getSnapshot(str(args[0], "sessionId"));
-    case "agents:listEvents": {
-      const sessionId = str(args[0], "sessionId");
-      const opts =
-        (args[1] as { limit?: number; before?: string } | undefined) ?? {};
-      return agents.listEvents(sessionId, opts);
-    }
-    case "agents:ingestNative": {
-      const body = args[0] as {
-        provider: string;
-        sessionId: string;
-        payload: unknown;
-        processId?: string;
-        projectId?: string;
-        focusedSessionId?: string | null;
-        appFocused?: boolean;
-      };
-      if (!body?.sessionId || !body.provider) {
-        throw new Error("agents:ingestNative requires provider + sessionId");
-      }
-      const provider = parseAgentProvider(body.provider);
-      if (!provider) throw new Error("invalid agent provider");
-      const result = agents.ingestNative(body.payload, {
-        provider,
-        sessionId: body.sessionId,
-        processId: body.processId,
-        projectId: body.projectId,
-        focusedSessionId: body.focusedSessionId,
-        appFocused: body.appFocused,
-      });
-      return {
-        eventCount: result.events.length,
-        snapshot: result.snapshot,
-        nativeSessionId: result.snapshot?.nativeSessionId ?? null,
-      };
-    }
-    case "agents:installProjectHooks": {
-      const body = args[0] as { provider: string; projectRoot: string };
-      if (!body?.projectRoot || !body.provider) {
-        throw new Error(
-          "agents:installProjectHooks requires provider + projectRoot",
-        );
-      }
-      const provider = parseAgentProvider(body.provider);
-      if (!provider) throw new Error("invalid agent provider");
-      const written = installProjectHooksForProvider(
-        provider,
-        body.projectRoot,
-        runtime.config.dataDir,
-      );
-      return { written };
-    }
-    default:
-      throw new Error(`unknown agents channel: ${channel}`);
-  }
-}
-
-function parseAgentProvider(
-  value: string,
-): "claude" | "codex" | "cursor" | "opencode" | "grok" | "pi" | null {
-  return isCliProvider(value) ? value : null;
-}
-
-function instanceToAgentRunInfo(
-  instance: import("./terminal-instances.js").TerminalInstance,
-  sessionTitle?: string | null,
-) {
-  if (!instance.provider) {
-    throw new Error("terminal instance is not an agent process");
-  }
-  return {
-    runId: instance.id,
-    launchRequestId: instance.launchRequestId ?? instance.id,
-    generation: instance.generation,
-    provider: instance.provider,
-    projectId: instance.projectId,
-    workspaceId: instance.workspaceId ?? "",
-    checkoutKey: instance.checkoutKey,
-    checkoutPath: instance.checkoutPath,
-    title: sessionTitle?.trim() || instance.title,
-    toolUseId: instance.toolUseId,
-    ptyId: instance.ptyId,
-    nativeSessionId: instance.nativeSessionId,
-    processIdentity: instance.processIdentity,
-    terminalEpoch: instance.terminalEpoch,
-    processState:
-      instance.processState === "failed"
-        ? ("exited" as const)
-        : instance.processState,
-    activityState: instance.activityState,
-    telemetryState: instance.telemetryState,
-    createdAt: instance.createdAt,
-    startedAt: instance.startedAt,
-    lastActivityAt: instance.lastActivityAt,
-    endedAt: instance.endedAt,
-    exitCode: instance.exitCode,
-    endReason: instance.endReason,
-    telemetryError: instance.telemetryError,
-    revision: instance.revision,
-  };
-}
-
-async function createTerminalInstance(
-  runtime: HostRuntime,
-  rawBody: unknown,
-  clientId: string,
-): Promise<import("./terminal-instances.js").TerminalInstance> {
-  const body = (rawBody ?? {}) as {
-    projectId?: string;
-    checkoutKey?: string;
-    checkoutPath?: string;
-    title?: string;
-    provider?: string;
-    workspaceId?: string;
-    launchRequestId?: string;
-    args?: string[];
-    executable?: string;
-    restartPolicy?: "never" | "manual" | "resume-on-daemon-start";
-    nativeSessionRef?: {
-      provider: string;
-      kind: string;
-      value: string;
-      capturedAt: string;
-      driverVersion: number;
-    };
-  };
-  if (!body.projectId)
-    throw new Error("terminal:createInstance requires projectId");
-  const provider = body.provider ? parseAgentProvider(body.provider) : null;
-  if (body.provider && !provider) throw new Error("invalid agent provider");
-  const project = runtime.db.project(body.projectId);
-  if (!project) throw new Error("project is unavailable");
-
-  let checkoutPath = body.checkoutPath?.trim() ?? "";
-  if (body.workspaceId) {
-    const workspace = runtime.db.getProjectSession(body.workspaceId);
-    if (
-      !workspace ||
-      workspace.archivedAt !== null ||
-      workspace.projectPath !== project.rootPath
-    ) {
-      throw new Error("project workspace is unavailable");
-    }
-    if (!checkoutPath) checkoutPath = workspace.cwdPath;
-  }
-  if (!checkoutPath)
-    throw new Error("terminal:createInstance requires checkoutPath");
-  const instance = await createSharedTerminalInstance(
-    runtime.terminalExecution,
-    {
-      projectId: project.id,
-      workspaceId: body.workspaceId,
-      checkoutKey: body.checkoutKey,
-      checkoutPath,
-      title: body.title,
-      ...(provider ? { provider } : {}),
-      launchRequestId: body.launchRequestId,
-      args: body.args,
-      ...(typeof body.executable === "string" && body.executable
-        ? { executable: body.executable }
-        : {}),
-      restartPolicy: body.restartPolicy,
-      ...(body.nativeSessionRef && provider
-        ? {
-            nativeSessionRef: {
-              provider,
-              kind: body.nativeSessionRef.kind || "session",
-              value: body.nativeSessionRef.value,
-              capturedAt: body.nativeSessionRef.capturedAt || new Date().toISOString(),
-              driverVersion: body.nativeSessionRef.driverVersion || 1,
-            },
-          }
-        : {}),
-    },
-    clientId,
-  );
-  if (instance.ptyId) {
-    if (instance.terminalEpoch) {
-      runtime.leases.bindTerminalEpoch(instance.ptyId, instance.terminalEpoch)
-    }
-    runtime.leases.acquire(instance.ptyId, clientId, "writer")
-  }
-  return instance;
-}
-
-async function handleFs(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-): Promise<unknown> {
-  const mutationOptions = {
-    dataDir: runtime.config.dataDir,
-    allowedRoots: runtime.config.allowedRoots,
-  };
-  switch (channel) {
-    case "fs:readFile":
-      return readFile(str(args[0], "uri"));
-    case "fs:writeFile":
-      await writeFile(str(args[0], "uri"), String(args[1] ?? ""));
-      return null;
-    case "fs:readTextFile":
-      return readTextFile(str(args[0], "uri"));
-    case "fs:writeTextFile": {
-      const options = await Schema.decodeUnknownPromise(TextFileWriteOptions)(
-        args[2],
-      );
-      return writeTextFile(str(args[0], "uri"), String(args[1] ?? ""), options);
-    }
-    case "fs:writeTempDrop":
-      return writeTempDrop(
-        String(args[0] ?? "drop.bin"),
-        str(args[1], "content"),
-      );
-    case "fs:readDir":
-      return readDir(str(args[0], "uri"));
-    case "fs:stat":
-      return stat(str(args[0], "uri"));
-    case "fs:exists":
-      return exists(str(args[0], "uri"));
-    case "fs:createFile":
-      return createFile(str(args[0], "uri"), mutationOptions);
-    case "fs:mkdir":
-      return createDirectory(str(args[0], "uri"), mutationOptions);
-    case "fs:rename":
-      return renamePath(
-        str(args[0], "sourceUri"),
-        str(args[1], "targetUri"),
-        mutationOptions,
-      );
-    case "fs:trash":
-      return trashPath(str(args[0], "uri"), mutationOptions);
-    case "fs:restoreTrash":
-      return restoreTrash(
-        str(args[0], "trashId"),
-        typeof args[1] === "string" ? args[1] : undefined,
-        mutationOptions,
-      );
-    case "fs:listTrash":
-      return listTrash(mutationOptions);
-    case "fs:emptyTrash":
-      return emptyTrash(mutationOptions);
-    default:
-      throw new Error(`unknown fs channel: ${channel}`);
-  }
-}
-
-function handleGitEffect(
-  channel: string,
-  args: unknown[],
-): Effect.Effect<unknown, HostRpcError, GitServiceTag> {
-  const rootUri = str(args[0], "rootUri");
-  return Effect.gen(function* () {
-    const git = yield* GitServiceTag;
-    switch (channel) {
-      case "git:isRepo":
-        return yield* git.isRepo(rootUri);
-      case "git:status":
-        return yield* git.status(rootUri);
-      case "git:diff": {
-        const opts =
-          (args[1] as { path?: string; staged?: boolean } | undefined) ??
-          undefined;
-        return yield* git.diff(rootUri, opts);
-      }
-      case "git:show": {
-        const opts = args[1] as { path?: string; ref?: string } | undefined;
-        const filePath = typeof opts?.path === "string" ? opts.path : "";
-        const ref =
-          typeof opts?.ref === "string" && opts.ref ? opts.ref : "HEAD";
-        return yield* git.show(rootUri, filePath, ref);
-      }
-      case "git:commitFileContents": {
-        const hash = str(args[1], "hash");
-        const file = args[2] as
-          | { path?: string; status?: string; originalPath?: string }
-          | undefined;
-        const path = typeof file?.path === "string" ? file.path : "";
-        const status =
-          typeof file?.status === "string" ? file.status : "modified";
-        const originalPath =
-          typeof file?.originalPath === "string"
-            ? file.originalPath
-            : undefined;
-        return yield* git.commitFileContents(rootUri, hash, {
-          path,
-          status,
-          originalPath,
-        });
-      }
-      case "git:branch":
-        return yield* git.branch(rootUri);
-      case "git:summary":
-        return yield* git.summary(rootUri);
-      case "git:branches":
-        return yield* git.branches(rootUri);
-      case "git:stage":
-        yield* git.stage(rootUri, stringArray(args[1]));
-        return null;
-      case "git:unstage":
-        yield* git.unstage(rootUri, stringArray(args[1]));
-        return null;
-      case "git:discard":
-        yield* git.discard(rootUri, stringArray(args[1]));
-        return null;
-      case "git:commit": {
-        const summary = String(args[1] ?? "");
-        const body = typeof args[2] === "string" ? args[2] : undefined;
-        yield* git.commit(rootUri, summary, body);
-        return null;
-      }
-      case "git:checkout":
-        yield* git.checkout(rootUri, str(args[1], "branch"));
-        return null;
-      case "git:fetch":
-        yield* git.fetch(rootUri);
-        return null;
-      case "git:pull":
-        yield* git.pull(rootUri);
-        return null;
-      case "git:push":
-        yield* git.push(rootUri);
-        return null;
-      case "git:history":
-        return yield* git.history(
-          rootUri,
-          typeof args[1] === "number" ? args[1] : 50,
-        );
-      case "git:historyPage":
-        return yield* git.historyPage(
-          rootUri,
-          typeof args[1] === "string" ? args[1] : undefined,
-          typeof args[2] === "number" ? args[2] : undefined,
-        );
-      case "git:numstat":
-        return yield* git.numstat(rootUri);
-      case "git:commitFiles":
-        return yield* git.commitFiles(rootUri, str(args[1], "hash"));
-      case "git:applyPatch": {
-        const patch = String(args[1] ?? "");
-        const opts =
-          (args[2] as { reverse?: boolean; cached?: boolean } | undefined) ??
-          undefined;
-        yield* git.applyPatch(rootUri, patch, opts);
-        return null;
-      }
-      case "git:worktreeList":
-        return yield* git.worktreeList(rootUri);
-      case "git:worktreeAdd": {
-        const worktreePath = str(args[1], "worktreePath");
-        const opts =
-          (args[2] as
-            | { branch?: string; baseRef?: string; createBranch?: boolean }
-            | undefined) ?? {};
-        const branch = typeof opts.branch === "string" ? opts.branch : "";
-        if (!branch.trim()) throw new Error("branch is required");
-        return yield* git.worktreeAdd(rootUri, worktreePath, {
-          branch: branch.trim(),
-          baseRef: typeof opts.baseRef === "string" ? opts.baseRef : undefined,
-          createBranch: opts.createBranch,
-        });
-      }
-      case "git:worktreeRemove": {
-        const worktreePath = str(args[1], "worktreePath");
-        const opts = (args[2] as { force?: boolean } | undefined) ?? undefined;
-        yield* git.worktreeRemove(rootUri, worktreePath, opts);
-        return null;
-      }
-      case "git:defaultBranch":
-        return yield* git.defaultBranch(rootUri);
-      default:
-        return yield* Effect.fail(unknownChannel(channel));
-    }
-  }).pipe(
-    Effect.catchTag("GitCommandFailed", (e) =>
-      Effect.fail(new OperationFailedError({ message: e.message, cause: e })),
-    ),
-  );
 }
 
 async function ownerMutationFence(
@@ -1461,48 +630,6 @@ async function handleTerminal(
   principal: RequestPrincipal,
 ): Promise<unknown> {
   switch (channel) {
-    case "terminal:listInstances":
-      return runtime.terminalInstances.listProject(str(args[0], "projectId"));
-    case "terminal:getInstanceTranscript":
-      return runtime.terminalInstances.transcript(str(args[0], "id"));
-    case "terminal:createInstance": {
-      return createTerminalInstance(runtime, args[0], clientId);
-    }
-    case "terminal:restartInstance": {
-      const body = args[0] as { id?: string; generation?: number };
-      if (!body?.id || body.generation == null) {
-        throw new Error("terminal:restartInstance requires id and generation");
-      }
-      const instance = runtime.terminalInstances.get(body.id);
-      if (!instance || instance.generation !== body.generation) return instance;
-      return restartTerminalInstance(runtime.terminalExecution, instance, [], clientId);
-    }
-    case "terminal:resumeInstance": {
-      const body = args[0] as { id?: string; generation?: number };
-      if (!body?.id || body.generation == null) {
-        throw new Error("terminal:resumeInstance requires id and generation");
-      }
-      const instance = runtime.terminalInstances.get(body.id);
-      if (!instance || instance.generation !== body.generation) return instance;
-      return resumeTerminalInstance(runtime.terminalExecution, instance, clientId);
-    }
-    case "terminal:closeInstance": {
-      const body = args[0] as { id?: string; generation?: number };
-      if (!body?.id || body.generation == null) {
-        throw new Error("terminal:closeInstance requires id and generation");
-      }
-      const instance = runtime.terminalInstances.get(body.id);
-      if (!instance || instance.generation !== body.generation) return instance;
-      const replay = instance.ptyId
-        ? await Promise.resolve(runtime.terminal.readOutput(instance.ptyId))
-        : null;
-      if (instance.ptyId) await Promise.resolve(runtime.terminal.dispose(instance.ptyId));
-      return runtime.terminalInstances.close(
-        instance.id,
-        instance.generation,
-        replay?.output ?? "",
-      );
-    }
     case "terminal:create": {
       const cwdUri = str(args[0], "cwdUri");
       await assertAllowedUri(
@@ -1515,9 +642,6 @@ async function handleTerminal(
         runtime.terminal.create(cwdUri, launch, clientId),
       );
       runtime.leases.bindTerminalEpoch(created.id, created.terminalEpoch)
-      runtime.db.recordSession(created.id, "terminal", "running", {
-        title: created.title,
-      });
       return created;
     }
     case "terminal:acquireLease": {
@@ -1534,7 +658,7 @@ async function handleTerminal(
             principal.connectionId,
             mode,
           ))
-          return projectRuntimeLease(lease, id)
+          return toRuntimeLease(lease, id)
         } catch (error) {
           controlErrorToHostError(error)
         }
@@ -1556,7 +680,7 @@ async function handleTerminal(
             principal.principalId,
             principal.connectionId,
           ))
-          return projectRuntimeLease(lease, id)
+          return toRuntimeLease(lease, id)
         } catch (error) {
           controlErrorToHostError(error)
         }
@@ -1597,7 +721,7 @@ async function handleTerminal(
             principal.principalId,
             principal.connectionId,
           ))
-          return projectRuntimeLease(lease, id)
+          return toRuntimeLease(lease, id)
         } catch (error) {
           controlErrorToHostError(error)
         }
@@ -1621,7 +745,7 @@ async function handleTerminal(
             principal.principalId,
             targetClientId,
           ))
-          return projectRuntimeLease(lease, id)
+          return toRuntimeLease(lease, id)
         } catch (error) {
           controlErrorToHostError(error)
         }
@@ -1660,14 +784,6 @@ async function handleTerminal(
         if (fence) runtime.leases.authorizeMutationFence(id, fence, principal)
         else runtime.leases.authorizeWrite(id, clientId);
         await Promise.resolve(runtime.terminal.write(id, data));
-      }
-      const commandBoundary =
-        data.includes("\r") ||
-        data.includes("\n") ||
-        data.includes("\u0003") ||
-        data.includes("\u0004");
-      if (commandBoundary) {
-        runtime.requestTerminalAgentScan(id, true);
       }
       return null;
     }
@@ -1814,49 +930,13 @@ async function handleTerminal(
         await Promise.resolve(runtime.terminal.dispose(id));
       }
       runtime.leases.invalidateTerminal(id, inspected?.terminalEpoch)
-      runtime.db.updateSessionStatus(id, "stopped");
-      // A terminal can be disposed while its agent history remains useful in
-      // HQ.  The terminal exit callback marks the durable run ended; never
-      // delete its snapshot/events here.
+      // A terminal can be disposed while its replay remains useful to a
+      // client. The terminal exit callback still owns lifecycle updates.
       return null;
     }
     default:
       throw new Error(`unknown terminal channel: ${channel}`);
   }
-}
-
-function handleShell(channel: string, args: unknown[]): unknown {
-  if (channel === "shell:openInApp") {
-    return openInApp(str(args[0], "appId"), str(args[1], "rootUri"));
-  }
-  if (channel === "shell:revealInFolder") {
-    return revealInFolder(str(args[0], "rootUri"));
-  }
-  throw new Error(`unknown shell channel: ${channel}`);
-}
-
-async function handleTasks(channel: string, args: unknown[]): Promise<unknown> {
-  if (channel !== "tasks:spawn")
-    throw new Error(`unknown tasks channel: ${channel}`);
-  const req = args[0] as { command?: string; args?: string[]; cwd?: string };
-  if (!req?.command || !req.cwd)
-    throw new Error("tasks:spawn requires command and cwd");
-  return spawnTask({ command: req.command, args: req.args, cwd: req.cwd });
-}
-
-function handlePerf(
-  runtime: HostRuntime,
-  channel: string,
-  args: unknown[],
-): unknown {
-  if (channel === "perf:recordStartup") {
-    return runtime.perf.recordStartup(
-      (args[0] as Record<string, unknown>) ?? {},
-    );
-  }
-  if (channel === "perf:getStartupLogPath")
-    return runtime.perf.getStartupLogPath();
-  throw new Error(`unknown perf channel: ${channel}`);
 }
 
 function decodeMutationFence(
@@ -1875,7 +955,3 @@ function str(value: unknown, label: string): string {
   return value;
 }
 
-function stringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((v): v is string => typeof v === "string");
-}

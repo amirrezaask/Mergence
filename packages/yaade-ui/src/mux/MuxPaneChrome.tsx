@@ -4,6 +4,7 @@ import {
   Maximize2,
   Minimize2,
   Rows2,
+  Terminal,
   X,
 } from "lucide-react"
 import { useDraggable } from "@dnd-kit/core"
@@ -20,7 +21,6 @@ import {
 } from "@/components/ui/context-menu.js"
 import { formatKeyBinding } from "@/lib/format-key.js"
 import { cn } from "@/lib/utils.js"
-import { AgentProviderIcon } from "../home/AgentProviderIcon.js"
 import { tabDndId, type TabDragData } from "../dock/tab-dnd-types.js"
 import { processIdentity } from "./process-identity.js"
 
@@ -39,7 +39,7 @@ export type MuxPaneChromeProps = {
     direction: "right" | "down",
     event: MouseEvent<HTMLButtonElement>,
   ) => void
-  /** Wrap a split control, for example with a tool picker popover. */
+  /** Wrap a split control, for example with a terminal picker popover. */
   wrapSplitButton?: (
     direction: "right" | "down",
     button: ReactNode,
@@ -48,16 +48,16 @@ export type MuxPaneChromeProps = {
   onSplitDown: () => void
   onZoom: () => void
   onClose: () => void
-  /** Open a pane-specific context editor from the title bar. */
+  /** Open a pane-specific title editor from the title bar. */
   onOpenContext?: () => void
-  /** Whether the pane context editor is currently open. */
+  /** Whether the pane title editor is currently open. */
   contextOpen?: boolean
   /**
    * Resolve a display shortcut for a command id (e.g. `mux.zoomPane` → `Mod-k z`).
    * App layer owns the binding table; UI must not import mux-keymap.
    */
   shortcutFor?: (commandId: string) => string | undefined
-  /** Portal target for pane-specific header chrome (e.g. Git view tabs). */
+  /** Portal target for pane-specific header chrome. */
   contextRef?: RefCallback<HTMLElement | null>
   className?: string
 }
@@ -160,7 +160,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
       type="button"
       variant="ghost"
       size="icon-xs"
-      aria-label="Set tool context"
+      aria-label="Set terminal context"
       aria-haspopup="dialog"
       aria-expanded={contextOpen}
       data-yaade-mux-context-trigger=""
@@ -172,7 +172,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
       }}
     >
       {terminalProvider ? (
-        <AgentProviderIcon agent={terminalProvider} className="size-3.5" />
+        <Terminal className="size-3.5" aria-hidden />
       ) : (
         <ChevronDown />
       )}
@@ -224,10 +224,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
                   data-yaade-mux-pane-process={processName ?? ""}
                   className="grid size-5 shrink-0 place-items-center"
                 >
-                  <AgentProviderIcon
-                    agent={terminalProvider}
-                    className="size-3.5"
-                  />
+                  <Terminal className="size-3.5" aria-hidden />
                 </span>
               )
             ) : (

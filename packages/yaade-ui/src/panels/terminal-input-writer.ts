@@ -21,7 +21,7 @@ export function createTerminalInputWriter(
   let pending: PendingInput[] = []
   let scheduled = false
   let disposed = false
-  // The Herdr client queues input because separate host requests can otherwise
+  // The YAADE terminal client client queues input because separate host requests can otherwise
   // complete out of order. Preserve same-turn batching while serializing the
   // Promise-backed browser transport.
   let writeTail = Promise.resolve()

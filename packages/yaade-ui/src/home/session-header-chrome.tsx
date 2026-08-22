@@ -26,7 +26,7 @@ export function SessionHeaderChromeProvider(props: {
   )
 }
 
-/** Portal mode-specific chrome (buffer/terminal/git controls) into the session header. */
+/** Portal mode-specific terminal chrome into the session header. */
 export function SessionHeaderChromePortal(props: {
   active: boolean
   children: ReactNode

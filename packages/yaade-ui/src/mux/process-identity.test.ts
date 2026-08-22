@@ -5,11 +5,11 @@ import {
   processIdentity,
 } from "./process-identity.js"
 
-test("processIdentity maps known tools", () => {
+test("processIdentity maps known terminals", () => {
   assert.equal(processIdentity("nvim").label, "Neovim")
   assert.equal(processIdentity("zsh").glyph, ">_")
   assert.equal(processIdentity("btop").hue, 230)
-  assert.ok(processIdentity("claude").glyph.length > 0)
+  assert.ok(processIdentity("python").glyph.length > 0)
 })
 
 test("formatMuxTitle abbreviates home paths", () => {

@@ -6,7 +6,7 @@ export default defineConfig({
     format: ["esm"],
     deps: {
       onlyBundle: false,
-      neverBundle: ["node-pty", "@ff-labs/fff-node", "@ff-labs/fff-node/*", "@vscode/ripgrep"],
+      neverBundle: ["node-pty"],
     },
   },
   // Existing sources are not Oxfmt-clean yet; keep formatting opt-in while
@@ -66,30 +66,12 @@ export default defineConfig({
   },
   run: {
     tasks: {
-      "test:web:durability": {
-        command: "vp exec playwright test --project=web-durability --pass-with-no-tests",
-        cache: false,
-      },
-      "test:multi-server:e2e": {
-        command: "vp exec playwright test --project=multi-server-e2e --pass-with-no-tests",
-        cache: false,
-      },
       "test:security:e2e": {
         command: "vp exec playwright test --project=security-e2e --pass-with-no-tests",
         cache: false,
       },
       "test:platform:e2e": {
         command: "vp exec playwright test --project=platform-e2e --pass-with-no-tests",
-        cache: false,
-      },
-      "test:e2e:critical": {
-        command:
-          "vp exec playwright test --pass-with-no-tests --grep @p0 --project=web-durability --project=multi-server-e2e --project=security-e2e",
-        cache: false,
-      },
-      "test:e2e:all": {
-        command:
-          'vp exec playwright test --pass-with-no-tests --grep "@p0|@p1" --project=web-durability --project=multi-server-e2e --project=security-e2e',
         cache: false,
       },
     },

@@ -21,7 +21,7 @@ export type LaunchWebOptions = {
   launchWithoutWorkspace?: boolean
   /** Allow AppRoot to stop at its actionable route error screen. */
   expectBootError?: boolean
-  /** Browser pathname to open (e.g. `/dev/consultation`). Defaults to the launch project's canonical route. */
+  /** Browser pathname to open. Defaults to the terminal multiplexer root. */
   startPath?: string
   /**
    * When set, host `HOME` is this directory so URL paths resolve under it.
@@ -167,7 +167,7 @@ async function killProc(proc: TestServerProcess): Promise<void> {
 export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchShellResult> {
   const port = await freePort()
   const ownsTemporaryRoot = options.userDataDir == null
-  const temporaryRoot = options.userDataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "jet-web-e2e-"))
+  const temporaryRoot = options.userDataDir ?? fs.mkdtempSync(path.join(os.tmpdir(), "yaade-web-e2e-"))
   const browserData = path.join(temporaryRoot, "browser")
   const serverData = path.join(temporaryRoot, "server")
   fs.mkdirSync(browserData, { recursive: true })
@@ -187,10 +187,10 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
 
   const sharedEnv: NodeJS.ProcessEnv = {
     ...process.env,
-    JET_ALLOWED_ROOTS: `${REPO_ROOT},${temporaryRoot},${path.dirname(sourceWorkspace)}`,
+    YAADE_ALLOWED_ROOTS: `${REPO_ROOT},${temporaryRoot},${path.dirname(sourceWorkspace)}`,
     YAADE_E2E: "1",
-    // Installed YAADE may export JET_STATIC_DIR; e2e must serve the repo build.
-    JET_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
+    // Installed YAADE may export YAADE_STATIC_DIR; e2e must serve the repo build.
+    YAADE_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
     ...options.env,
   }
 
@@ -202,7 +202,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   if (homeDir) {
     fs.mkdirSync(homeDir, { recursive: true })
     sharedEnv.HOME = homeDir
-    sharedEnv.JET_ALLOWED_ROOTS = `${sharedEnv.JET_ALLOWED_ROOTS},${homeDir}`
+    sharedEnv.YAADE_ALLOWED_ROOTS = `${sharedEnv.YAADE_ALLOWED_ROOTS},${homeDir}`
   }
 
   const server: TestServerProcess = spawn(
@@ -225,24 +225,9 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
       detached: process.platform !== "win32",
     },
   )
-  const jetLogs = attachLogs(server)
+  const yaadeLogs = attachLogs(server)
   const url = `http://127.0.0.1:${port}`
-  await waitForHttpOk(`${url}/health`, server, jetLogs)
-
-  let defaultStartPath = "/"
-  if (options.startPath == null && !options.launchWithoutWorkspace) {
-    const response = await fetch(`${url}/api/v1/projects`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "application/json" },
-      body: JSON.stringify({ rootPath: workspace }),
-    })
-    if (!response.ok) {
-      throw new Error(`could not register E2E launch project (${response.status})`)
-    }
-    // SAFETY: The host API returns a project object with a string id.
-    const project = (await response.json()) as { id: string }
-    defaultStartPath = `/_project/${encodeURIComponent(project.id)}`
-  }
+  await waitForHttpOk(`${url}/health`, server, yaadeLogs)
 
   const contextOptions: Parameters<typeof chromium.launchPersistentContext>[1] = {
     headless: process.env.YAADE_HEADED !== "1",
@@ -306,7 +291,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
     })
   })
 
-  const startPath = options.startPath ?? defaultStartPath
+  const startPath = options.startPath ?? "/"
   const startUrl = `${url}${startPath.startsWith("/") ? startPath : `/${startPath}`}`
   await browserPage.goto(startUrl, { waitUntil: "domcontentloaded" })
   if (options.expectBootError) {
@@ -315,15 +300,8 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
       timeout: 30_000,
     })
   } else {
-    await browserPage.waitForFunction(() => window.__yaadeAgent != null, null, { timeout: 30_000 })
-    await browserPage.evaluate(() => window.__yaadeAgent!.waitForReady())
-    if (!options.launchWithoutWorkspace) {
-      await browserPage.waitForFunction(
-        () => (window.__yaadeAgent?.listWorkspaces().length ?? 0) > 0,
-        null,
-        { timeout: 30_000 },
-      )
-    }
+    await browserPage.waitForFunction(() => window.__yaadeTest != null, null, { timeout: 30_000 })
+    await browserPage.evaluate(() => window.__yaadeTest!.waitForReady())
   }
 
   return {
@@ -343,7 +321,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
         )
         if (unexpected.length > 0) {
           throw new Error(
-            `Unexpected browser failures:\n${unexpected.map(formatBrowserFailure).join("\n")}\nServer logs:\n${jetLogs()}`,
+            `Unexpected browser failures:\n${unexpected.map(formatBrowserFailure).join("\n")}\nServer logs:\n${yaadeLogs()}`,
           )
         }
       },

@@ -12,7 +12,7 @@ export const NERD_FONT_FAMILY = "Symbols Nerd Font Mono"
 
 const NERD_FONT_STACK_ITEM = `"${NERD_FONT_FAMILY}"`
 
-/** A PUA glyph this face actually contains (nf-dev-git_branch). */
+/** A PUA glyph this face actually contains. */
 const NERD_FONT_PROBE = "\uE725"
 
 const GENERIC_MONO_TAIL =

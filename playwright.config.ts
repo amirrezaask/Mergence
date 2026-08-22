@@ -25,18 +25,6 @@ export default defineConfig({
       timeout: 180_000,
     },
     {
-      name: "web-durability",
-      testDir: "./tests/web/durability",
-      testMatch: "*.spec.ts",
-      timeout: 180_000,
-    },
-    {
-      name: "multi-server-e2e",
-      testDir: "./tests/multi-server",
-      testMatch: "*.multi-server.spec.ts",
-      timeout: 180_000,
-    },
-    {
       name: "security-e2e",
       testDir: "./tests/security",
       testMatch: "*.security.spec.ts",
