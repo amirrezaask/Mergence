@@ -2,9 +2,10 @@
   "name": "yaade",
   "private": true,
   "scripts": {
-    "build": "vp run build:server && vp run build:web",
+    "build": "vp run build:server && vp run build:web && vp run build:release -- --skip-web",
     "build:server": "vp run --filter @yaade/server build",
     "build:web": "vp run --filter @yaade/web build",
+    "build:release": "node scripts/build-release.mjs",
     "dev": "vp run --parallel --filter @yaade/server --filter @yaade/web dev",
     "dev:server": "vp run @yaade/server#dev",
     "dev:web": "vp run --filter @yaade/web dev",

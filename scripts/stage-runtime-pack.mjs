@@ -16,6 +16,7 @@ import { fileURLToPath } from "node:url"
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
 const webSrc = path.join(repoRoot, "apps/web/dist")
+const ghosttyVendorSrc = path.join(repoRoot, "packages/ghostty-core/src/vendor")
 
 function resolvePackDir() {
   const fromEnv = process.env.YAADE_PACK_DIR
@@ -179,6 +180,17 @@ function copyWebDist(source, destination) {
   console.log(`Copied SPA → ${destination}`)
 }
 
+function copyGhosttyVendor(destination) {
+  for (const file of ["ghostty-vt.wasm", "ghostty-write-pty.wasm"]) {
+    if (!fs.existsSync(path.join(ghosttyVendorSrc, file))) {
+      throw new Error(`Ghostty WASM asset missing at ${ghosttyVendorSrc}; run the Ghostty WASM build first`)
+    }
+  }
+  fs.rmSync(destination, { recursive: true, force: true })
+  fs.cpSync(ghosttyVendorSrc, destination, { recursive: true })
+  console.log(`Copied Ghostty WASM assets → ${destination}`)
+}
+
 function writeLauncherScripts(packDir, { launcherName, includeWeb }) {
   const nodeRel = nodeBinRelative()
   const staticArg = includeWeb ? `  --static-dir "$ROOT/web" \\\n` : ""
@@ -203,8 +215,10 @@ async function stageBackendPack(packDir, options) {
   const backendDir = path.join(resolved, "backend")
   const nodeDest = path.join(resolved, "node")
   const webDest = path.join(resolved, "web")
+  const ghosttyVendorDest = path.join(resolved, "vendor")
 
   fs.mkdirSync(resolved, { recursive: true })
+  copyGhosttyVendor(ghosttyVendorDest)
   if (options.webSource) copyWebDist(options.webSource, webDest)
   else fs.rmSync(webDest, { recursive: true, force: true })
   await bundleBackends(backendDir, options.entryPoint)

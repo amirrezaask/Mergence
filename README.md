@@ -67,13 +67,22 @@ yaade-server uninstall
 
 Use the packaged artifact's actual command name when running these commands.
 
-Build each isolated release artifact independently:
+Build the release artifacts:
 
 ```bash
 vp run build:server   # dist/yaade-server, standalone server runtime
 vp run build:web      # apps/web/dist, standalone static web artifact
-vp run build          # both artifacts, in order
+vp run build:release  # dist/yaade, one self-contained API + web executable
+vp run build          # all artifacts, including dist/yaade
 ```
+
+Run the combined release directly:
+
+```bash
+./dist/yaade --port 4747
+```
+
+It serves the browser application at `/` and the host APIs/WebSocket at `/api` and `/ws`.
 
 ## Development
 
