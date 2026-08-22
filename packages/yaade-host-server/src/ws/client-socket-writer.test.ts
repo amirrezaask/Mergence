@@ -1,4 +1,5 @@
 import assert from "node:assert/strict"
+import { MAX_TERMINAL_STREAM_V3_BYTES } from "@yaade/rpc"
 import { test } from "vite-plus/test"
 import {
   ClientSocketWriter,
@@ -117,6 +118,16 @@ test("reliable overflow closes the socket", () => {
   assert.equal(writer.enqueueReliable("c"), false)
   assert.equal(writer.enqueueReliable("d"), false)
   assert.equal(sink.closed?.reason, "reliable mailbox overflow")
+})
+
+test("a maximum-size v3 semantic frame does not overflow the mailbox", () => {
+  const sink = new FakeSink()
+  sink.hold = true
+  const writer = new ClientSocketWriter(sink)
+  const frame = new Uint8Array(MAX_TERMINAL_STREAM_V3_BYTES + 6)
+  assert.equal(writer.enqueueSemanticRender("term-a", frame), true)
+  assert.equal(writer.isClosed, false)
+  assert.equal(sink.closed, null)
 })
 
 test("semantic replacement marks resync and does not close", () => {

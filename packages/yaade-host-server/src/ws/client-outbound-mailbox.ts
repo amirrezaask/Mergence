@@ -1,3 +1,5 @@
+import { MAX_TERMINAL_STREAM_V3_BYTES } from "@yaade/rpc"
+
 export type OutboundFrame = {
   readonly data: string | Uint8Array
   readonly bytes: number
@@ -34,7 +36,9 @@ const DEFAULT_LIMITS: MailboxLimits = {
   legacyMaxFrames: 4_096,
   legacyMaxBytes: 8 * 1024 * 1024,
   semanticMaxTerminals: 64,
-  semanticMaxBytes: 2 * 1024 * 1024,
+  // Keep this in sync with the largest frame the v3 encoder can produce.
+  // The codec limit excludes its six-byte header.
+  semanticMaxBytes: MAX_TERMINAL_STREAM_V3_BYTES + 6,
 }
 
 /**
