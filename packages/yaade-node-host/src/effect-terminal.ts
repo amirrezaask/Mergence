@@ -19,11 +19,23 @@ import { TerminalHost } from "./terminal.js"
  * )
  * ```
  */
-export const makeTerminalHostScoped: Effect.Effect<TerminalHost, never, Scope.Scope> =
-  Effect.acquireRelease(
-    Effect.sync(() => new TerminalHost({ semanticState: true })),
+export function makeTerminalHostScopedWithOptions(
+  options: { readonly historyDir?: string } = {},
+): Effect.Effect<TerminalHost, never, Scope.Scope> {
+  return Effect.acquireRelease(
+    Effect.sync(() => {
+      const hostOptions: import("./terminal.js").TerminalHostOptions = {
+        semanticState: true,
+      }
+      if (options.historyDir) hostOptions.historyDir = options.historyDir
+      return new TerminalHost(hostOptions)
+    }),
     host =>
-      Effect.sync(() => {
+      Effect.promise(async () => {
         host.stopAll()
+        await host.flushHistory()
       }),
   )
+}
+
+export const makeTerminalHostScoped = makeTerminalHostScopedWithOptions()

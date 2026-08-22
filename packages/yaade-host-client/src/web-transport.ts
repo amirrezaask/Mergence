@@ -3,9 +3,11 @@ import {
   HostDisconnectedError,
   decodeTerminalDataFrame,
   decodeTerminalStreamV3,
+  encodeTerminalWsAck,
   encodeTerminalWsCommand,
   isTerminalWsHotOp,
   tryDecodeRealtimeHostEvent,
+  tryDecodeTerminalReplayRequired,
   tryDecodeTerminalWsResult,
   type HostEvent,
   type HostRpcError,
@@ -595,6 +597,15 @@ export class WebHostTransport implements YaadeHostTransport {
   }
 
   private handleProtocolControl(raw: unknown): boolean {
+    const replayRequired = tryDecodeTerminalReplayRequired(raw);
+    if (replayRequired) {
+      this.dispatch(
+        "terminal:replay-required",
+        replayRequired.terminalId,
+        replayRequired.sequence,
+      );
+      return true;
+    }
     if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return false;
     const record = raw as Record<string, unknown>;
     if (record.type === "protocol:auth-required") {
@@ -699,7 +710,14 @@ export class WebHostTransport implements YaadeHostTransport {
         : undefined;
     if (!acceptHostEvent(this.lastSequence, message, identity)) return;
     this.lastSequence = message.sequence;
-    this.dispatch(message.channel, ...message.args);
+    try {
+      this.dispatch(message.channel, ...message.args);
+    } finally {
+      const socket = this.socket;
+      if (socket?.readyState === WebSocket.OPEN) {
+        socket.send(encodeTerminalWsAck(decoded.id, decoded.terminalSequence));
+      }
+    }
   }
 
   private rejectPending(error: HostDisconnectedError): void {

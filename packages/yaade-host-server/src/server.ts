@@ -21,6 +21,7 @@ import {
   hostErrorHttpStatus,
   getHostRoute,
   hostErrorWire,
+  tryDecodeTerminalWsAck,
   tryDecodeTerminalWsCommand,
   ScopeDeniedError,
   type HostRpcError,
@@ -55,6 +56,7 @@ import { principalMayInvoke, principalMayUseCapability } from "./route-policy.js
 import { httpRouteCapability } from "./http-route-policy.js";
 import { diagnosticBundle } from "./diagnostics.js";
 import { ClientSocketWriter } from "./ws/client-socket-writer.js";
+import { TerminalFlowControl } from "./ws/terminal-flow-control.js";
 import {
   removeDaemonRuntimeManifest,
   writeDaemonRuntimeManifest,
@@ -1182,8 +1184,32 @@ function startModernEventSocket(
   let synchronizing = true;
   const pendingEvents: HostEvent[] = [];
   const attachedTerminals = new Set<string>();
-  const send = (event: HostEvent) =>
+  const terminalFlow = new TerminalFlowControl();
+  const send = (event: HostEvent) => {
+    if (event.channel === "terminal:data") {
+      const terminalId = String(event.args[0] ?? "");
+      const output = String(event.args[1] ?? "");
+      const sequence =
+        typeof event.args[2] === "number" && Number.isSafeInteger(event.args[2])
+          ? event.args[2]
+          : 0;
+      const decision = terminalFlow.reserve(
+        terminalId,
+        sequence,
+        Buffer.byteLength(output, "utf8"),
+      );
+      if (!decision.accepted) {
+        attachedTerminals.delete(terminalId);
+        sendReliableSocketJson(ws, {
+          type: "terminal:replay-required",
+          terminalId,
+          sequence: decision.acknowledgedSequence,
+        });
+        return;
+      }
+    }
     sendEventSocketMessage(ws, event, runtime, attachedTerminals);
+  };
   const unsubscribe = runtime.events.subscribe(event => {
     if (event.channel === "terminal:data") {
       const id = String(event.args[0] ?? "");
@@ -1231,6 +1257,12 @@ function startModernEventSocket(
     } catch {
       return;
     }
+    const ack = tryDecodeTerminalWsAck(raw);
+    if (ack) {
+      terminalFlow.acknowledge(ack.terminalId, ack.sequence);
+      runtime.terminal.acknowledgeOutput(ack.terminalId, clientId, ack.sequence);
+      return;
+    }
     const cmd = tryDecodeTerminalWsCommand(raw);
     if (!cmd) return;
     const checksClosedWriter =
@@ -1251,7 +1283,16 @@ function startModernEventSocket(
     commandQueue += 1;
     if (cmd.op === "terminal:attach") {
       const id = cmd.args[0];
-      if (typeof id === "string" && id) attachedTerminals.add(id);
+      if (typeof id === "string" && id) {
+        attachedTerminals.add(id);
+        const sequence = cmd.args[1];
+        terminalFlow.reset(
+          id,
+          typeof sequence === "number" && Number.isSafeInteger(sequence)
+            ? Math.max(0, sequence)
+            : 0,
+        );
+      }
     }
     const command = commandTail.then(async () => {
       if (checksClosedWriter && typeof cmd.args[0] === "string") {

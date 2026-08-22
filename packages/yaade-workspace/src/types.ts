@@ -82,6 +82,7 @@ export type HostTerminal = {
     output: string
     replayTruncated?: boolean
     replayNeedsQueryResponses?: boolean
+    archiveAvailable?: boolean
     lastSequence: number
     status: "running" | "exited"
     exitCode?: number

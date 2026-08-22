@@ -1,7 +1,7 @@
 import path from "node:path"
 import { randomUUID } from "node:crypto"
 import { Effect, Layer } from "effect"
-import { makeTerminalHostScoped } from "@yaade/node-host"
+import { makeTerminalHostScopedWithOptions } from "@yaade/node-host"
 import type { ServerIdentity } from "@yaade/rpc"
 import type { HostConfig } from "../config.js"
 import { EventHub } from "../events.js"
@@ -42,7 +42,9 @@ export function makeHostLayers(
         16 * 1024 * 1024,
         identity,
       )
-      const terminal = yield* makeTerminalHostScoped
+      const terminal = yield* makeTerminalHostScopedWithOptions({
+        historyDir: path.join(config.dataDir, "terminal-history"),
+      })
       const runtime = createRuntime(config, events, db, terminal, { identity })
       discardPersistedSessions(runtime)
       return runtime

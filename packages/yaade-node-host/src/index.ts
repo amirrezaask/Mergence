@@ -6,7 +6,14 @@ export {
   type TerminalCreateResult,
   type TerminalHostOptions,
 } from "./terminal.js";
-export { makeTerminalHostScoped } from "./effect-terminal.js";
+export {
+  makeTerminalHostScoped,
+  makeTerminalHostScopedWithOptions,
+} from "./effect-terminal.js";
+export {
+  TerminalHistoryArchive,
+  type TerminalHistoryPage,
+} from "./terminal-history-archive.js";
 export { PtyWriteQueue, PtyWriteQueueOverflow } from "./pty-write-queue.js"
 export { TerminalSemanticRuntime } from "./terminal-semantic-runtime.js"
 export {

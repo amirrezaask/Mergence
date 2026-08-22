@@ -827,6 +827,12 @@ async function handleTerminal(
         ),
       );
     }
+    case "terminal:readReplayPage":
+      return runtime.terminal.readReplayPage(
+        str(args[0], "id"),
+        typeof args[1] === "number" ? args[1] : 0,
+        typeof args[2] === "number" ? args[2] : undefined,
+      );
     case "terminal:getCwd":
       return Promise.resolve(runtime.terminal.getCwd(str(args[0], "id")));
     case "terminal:getForegroundProcess":

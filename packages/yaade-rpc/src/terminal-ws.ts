@@ -108,6 +108,60 @@ export function decodeTerminalDataFrame(
   return { eventSequence, terminalSequence, id, data };
 }
 
+export type TerminalWsAck = {
+  type: "terminal:ack";
+  terminalId: string;
+  sequence: number;
+};
+
+export type TerminalReplayRequired = {
+  type: "terminal:replay-required";
+  terminalId: string;
+  sequence: number;
+};
+
+export function encodeTerminalWsAck(terminalId: string, sequence: number): string {
+  return JSON.stringify({ type: "terminal:ack", terminalId, sequence });
+}
+
+export function tryDecodeTerminalWsAck(raw: unknown): TerminalWsAck | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (
+    record.type !== "terminal:ack" ||
+    typeof record.terminalId !== "string" ||
+    record.terminalId.length === 0 ||
+    typeof record.sequence !== "number" ||
+    !Number.isSafeInteger(record.sequence) ||
+    record.sequence < 0
+  ) return null;
+  return {
+    type: "terminal:ack",
+    terminalId: record.terminalId,
+    sequence: record.sequence,
+  };
+}
+
+export function tryDecodeTerminalReplayRequired(
+  raw: unknown,
+): TerminalReplayRequired | null {
+  if (raw === null || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const record = raw as Record<string, unknown>;
+  if (
+    record.type !== "terminal:replay-required" ||
+    typeof record.terminalId !== "string" ||
+    record.terminalId.length === 0 ||
+    typeof record.sequence !== "number" ||
+    !Number.isSafeInteger(record.sequence) ||
+    record.sequence < 0
+  ) return null;
+  return {
+    type: "terminal:replay-required",
+    terminalId: record.terminalId,
+    sequence: record.sequence,
+  };
+}
+
 /** Client → host control ops over the event WebSocket (JSON text frames). */
 export type TerminalWsHotOp = Extract<
   HostRouteName,

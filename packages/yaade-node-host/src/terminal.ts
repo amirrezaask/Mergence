@@ -36,6 +36,7 @@ import {
   type TerminalLeaseMode,
   type TerminalMutationFence,
 } from "./terminal-control.js"
+import { TerminalHistoryArchive, type TerminalHistoryPage } from "./terminal-history-archive.js"
 import {
   TerminalSemanticRuntime,
   type SemanticHistoryPage,
@@ -119,6 +120,7 @@ export type TerminalAttachSnapshot = {
   replayTruncated: boolean
   /** True when a live renderer may need to answer queries while applying replay. */
   replayNeedsQueryResponses: boolean
+  archiveAvailable?: boolean
   lastSequence: number
   cols: number
   rows: number
@@ -151,6 +153,7 @@ type EmitFn = (channel: string, args: unknown[]) => void
 
 type TerminalViewer = {
   hasAttached: boolean
+  acknowledgedSequence: number
 }
 
 type TerminalEntry = {
@@ -205,7 +208,7 @@ type TerminalEntry = {
 function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
   let viewer = entry.viewers.get(clientId)
   if (!viewer) {
-    viewer = { hasAttached: false }
+    viewer = { hasAttached: false, acknowledgedSequence: 0 }
     entry.viewers.set(clientId, viewer)
   }
   return viewer
@@ -325,6 +328,21 @@ function trimReplay(
   if (truncated) entry.replayTruncated = true
 }
 
+function boundedReplayTail(chunks: string[], maxBytes: number): string[] {
+  const selected: string[] = []
+  let bytes = 0
+  for (let index = chunks.length - 1; index >= 0; index -= 1) {
+    const chunk = chunks[index]
+    if (!chunk) continue
+    const size = Buffer.byteLength(chunk, "utf8")
+    if (selected.length > 0 && bytes + size > maxBytes) break
+    selected.push(chunk)
+    bytes += size
+  }
+  selected.reverse()
+  return selected
+}
+
 function usableCheckpoint(value: TerminalCheckpoint | null | undefined): TerminalCheckpoint | undefined {
   if (!value || value.checkpointVersion !== 1) return undefined
   if (typeof value.sequence !== "number" || !Number.isFinite(value.sequence)) return undefined
@@ -355,6 +373,8 @@ export function normalizeTerminalSize(
 
 export type TerminalHostOptions = {
   maxEntries?: number
+  /** Directory for block-compressed, sequence-indexed terminal history. */
+  historyDir?: string
   /** Delay between SIGHUP → SIGTERM → SIGKILL. Tests use a short value. */
   killGraceMs?: number
   /** Parse terminal output with Ghostty for semantic snapshots and input encoding. */
@@ -373,6 +393,7 @@ export class TerminalHost {
   private readonly maxEntries: number
   private readonly killGraceMs: number
   private readonly semanticState: boolean
+  private readonly history: TerminalHistoryArchive | null
 
   constructor(
     maxEntries: number | TerminalHostOptions = MAX_TERMINAL_ENTRIES,
@@ -381,6 +402,7 @@ export class TerminalHost {
       this.maxEntries = Math.max(1, Math.trunc(maxEntries))
       this.killGraceMs = 2_000
       this.semanticState = false
+      this.history = null
     } else {
       this.maxEntries = Math.max(
         1,
@@ -388,6 +410,18 @@ export class TerminalHost {
       )
       this.killGraceMs = Math.max(20, Math.trunc(maxEntries.killGraceMs ?? 2_000))
       this.semanticState = maxEntries.semanticState === true
+      this.history = maxEntries.historyDir
+        ? new TerminalHistoryArchive({
+            rootDir: maxEntries.historyDir,
+            onCommit: terminalId => this.trimAcknowledgedReplay(terminalId),
+            onPressureChange: (terminalId, active) => {
+              const proc = this.entries.get(terminalId)?.proc
+              if (!proc) return
+              if (active) proc.pause()
+              else proc.resume()
+            },
+          })
+        : null
     }
   }
 
@@ -611,6 +645,7 @@ export class TerminalHost {
         })
       }
       entry.sequence += 1
+      this.history?.append(entry.id, entry.sequence, data)
       const dataBytes = Buffer.byteLength(data, "utf8")
       entry.recorder?.write(data)
       entry.bytesSinceCheckpoint += dataBytes
@@ -635,6 +670,7 @@ export class TerminalHost {
       // Preserve wire ordering: consumers must see the final output before exit.
       flushPendingOutput(entry, this.emit)
       entry.status = "exited"
+      this.history?.closeTerminal(entry.id)
       entry.exitCode = exitCode
       this.storeCheckpoint(entry)
       entry.signal = signal ?? null
@@ -1054,6 +1090,7 @@ export class TerminalHost {
       outputChunks.length,
       Math.max(0, rawRequestedSequence + 1 - replayFloor),
     )
+    const archivedReplay = this.history !== null && rawRequestedSequence < entry.sequence
     return {
       id: entry.id,
       title: entry.title,
@@ -1061,10 +1098,13 @@ export class TerminalHost {
       ...(this.semanticState ? { protocolVersion: 2 } : {}),
       ...(checkpoint ? { checkpoint } : {}),
       replayQuality: checkpoint ? "checkpoint" : replayTruncated ? "degraded" : "exact",
-      outputChunks: outputChunks.slice(replayOffset),
+      outputChunks: archivedReplay
+        ? boundedReplayTail(outputChunks.slice(replayOffset), 256 * 1024)
+        : outputChunks.slice(replayOffset),
       output: "",
       replayTruncated,
       replayNeedsQueryResponses,
+      ...(this.history ? { archiveAvailable: true } : {}),
       lastSequence: entry.sequence,
       cols: entry.cols,
       rows: entry.rows,
@@ -1072,6 +1112,42 @@ export class TerminalHost {
       exitCode: entry.exitCode,
       signal: entry.signal,
       ...(entry.semantic ? { semanticSnapshot: entry.semantic.snapshot() } : {}),
+    }
+  }
+
+  async readReplayPage(
+    id: string,
+    afterSequence: number,
+    maxBytes?: number,
+  ): Promise<TerminalHistoryPage | null> {
+    if (!this.entries.has(id) || !this.history) return null
+    return this.history.readPage(id, afterSequence, maxBytes)
+  }
+
+  acknowledgeOutput(id: string, clientId: string, sequence: number): void {
+    const entry = this.entries.get(id)
+    const viewer = entry?.viewers.get(clientId)
+    if (!entry || !viewer || !Number.isSafeInteger(sequence)) return
+    viewer.acknowledgedSequence = Math.max(viewer.acknowledgedSequence, sequence)
+    this.trimAcknowledgedReplay(id)
+  }
+
+  private trimAcknowledgedReplay(id: string): void {
+    const entry = this.entries.get(id)
+    const committed = this.history?.committedThrough(id) ?? 0
+    if (!entry || committed === 0 || entry.viewers.size === 0) return
+    let acknowledged = committed
+    for (const candidate of entry.viewers.values()) {
+      acknowledged = Math.min(acknowledged, candidate.acknowledgedSequence)
+    }
+    while (
+      entry.output.length - entry.outputHead > 1 &&
+      replayFloor(entry) <= acknowledged
+    ) {
+      const dropped = entry.output[entry.outputHead]!
+      entry.output[entry.outputHead] = ""
+      entry.outputHead += 1
+      entry.outputBytes -= Buffer.byteLength(dropped, "utf8")
     }
   }
 
@@ -1143,6 +1219,7 @@ export class TerminalHost {
     const entry = this.entries.get(id)
     if (!entry) return null
     this.entries.delete(id)
+    this.history?.closeTerminal(id)
     entry.disposed = true
     this.control.unregisterTerminal(id, entry.terminalEpoch)
     entry.semantic?.dispose()
@@ -1167,5 +1244,9 @@ export class TerminalHost {
 
   stopAll(): void {
     for (const id of [...this.entries.keys()]) this.dispose(id)
+  }
+
+  flushHistory(): Promise<void> {
+    return this.history?.close() ?? Promise.resolve()
   }
 }

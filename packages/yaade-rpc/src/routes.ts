@@ -120,6 +120,7 @@ const TerminalAttachResult = Schema.NullOr(
     output: Schema.String,
     replayTruncated: Schema.Boolean,
     replayNeedsQueryResponses: Schema.Boolean,
+    archiveAvailable: Schema.optional(Schema.Boolean),
     lastSequence: Schema.Number,
     cols: Schema.optional(Schema.Number),
     rows: Schema.optional(Schema.Number),
@@ -127,6 +128,18 @@ const TerminalAttachResult = Schema.NullOr(
     exitCode: Schema.NullOr(Schema.Number),
     signal: Schema.NullOr(Schema.Number),
   }),
+)
+const TerminalReplayPage = Schema.Struct({
+  chunks: Schema.Array(Schema.String),
+  firstSequence: Schema.Number,
+  lastSequence: Schema.Number,
+  nextSequence: Schema.Number,
+  complete: Schema.Boolean,
+})
+const TerminalReplayPageArgs = Schema.Tuple(
+  Schema.String,
+  Schema.Number,
+  Schema.optionalElement(Schema.Number),
 )
 const TerminalWriteArgs = Schema.Tuple(
   Schema.String,
@@ -158,6 +171,7 @@ export type HostTerminalAttachResult = {
   replayTruncated?: boolean
   replayNeedsQueryResponses?: boolean
   lastSequence: number
+  archiveAvailable?: boolean
   cols?: number
   rows?: number
   status: "running" | "exited"
@@ -192,6 +206,7 @@ type HostRouteResultOverrides = {
   "terminal:ready": void
   "terminal:dispose": void
   "terminal:attach": HostTerminalAttachResult | null
+  "terminal:readReplayPage": Schema.Schema.Type<typeof TerminalReplayPage> | null
   "terminal:getCwd": string | null
   "terminal:getForegroundProcess": string | null
 }
@@ -263,6 +278,11 @@ export const HOST_ROUTES = {
   ),
   "terminal:ready": route(StringArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:attach": route(TerminalAttachArgs, TerminalAttachResult, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
+  "terminal:readReplayPage": route(
+    TerminalReplayPageArgs,
+    Schema.NullOr(TerminalReplayPage),
+    { pathPolicy: { kind: "terminal-id-or-path" } },
+  ),
   "terminal:getCwd": route(StringArgs, Schema.NullOr(Schema.String), { pathPolicy: { kind: "terminal-id-or-path" } }),
   "terminal:getForegroundProcess": route(StringArgs, Schema.NullOr(Schema.String), { pathPolicy: { kind: "terminal-id-or-path" } }),
   "terminal:dispose": route(StringArgs, Schema.Null, { pathPolicy: { kind: "terminal-id-or-path" } }),

@@ -11,7 +11,7 @@ http://localhost:5174/?s=ses-…&t=tab-…&term=term-… Deep link
 
 ## Terminals
 
-The only terminal type is **Terminal**: an in-process PTY with bounded replay, isolated client queues, mobile accessory keys, and support for running shells and commands directly.
+The only terminal type is **Terminal**: an in-process PTY with disk-backed, incrementally paged replay, isolated client queues, mobile accessory keys, and support for running shells and commands directly.
 
 YAADE has no separate workspace, Git, search, or editor surfaces. The top bar holds the Session dropdown, Window pills, and Settings.
 
@@ -22,8 +22,8 @@ YAADE has no separate workspace, Git, search, or editor surfaces. The top bar ho
 - Layout and terminal metadata persist across browser reloads while the host is running.
 - The host process owns PTYs directly. Browser reloads and disconnects leave terminal processes running; restarting the host intentionally kills every PTY and starts with a fresh Session.
 - Closing a terminal is the explicit destructive action that stops its PTY during normal operation.
-- Reconnects to the same host process restore from an in-memory Ghostty snapshot and bounded raw replay. A slow viewer is resynchronized or disconnected and never pauses the PTY.
-- Multiple viewers can attach to one terminal. Every authenticated client with control scope can write input and resize; explicitly observe-only clients remain viewers. A slow client is bounded or disconnected and never pauses the PTY.
+- Reconnects to the same host process restore from a Ghostty snapshot plus sequence-indexed, block-compressed history under the host data directory. History is delivered in bounded pages instead of one large payload.
+- Multiple viewers can attach to one terminal. Every authenticated client with control scope can write input and resize; explicitly observe-only clients remain viewers. Each viewer acknowledges consumed output independently; a lagging viewer is resynchronized from durable history without disconnecting other terminals. Disk-writer backpressure may briefly pause only the producing PTY to keep host memory bounded.
 - Mobile uses a list-first Terminal shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal.
 - Settings → **Servers** lets you add multiple remote host URLs and optional access tokens. Sessions from every reachable host appear in the same session switcher; each session keeps its host context when you work in it.

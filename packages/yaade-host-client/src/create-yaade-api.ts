@@ -34,6 +34,7 @@ type TerminalAttachResult = {
   output: string;
   replayTruncated?: boolean;
   replayNeedsQueryResponses?: boolean;
+  archiveAvailable?: boolean;
   lastSequence: number;
   status: "running" | "exited";
   exitCode?: number;
@@ -126,6 +127,47 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       : transport.invoke("terminal:attach", id, afterSequence);
   };
 
+  const streamArchivedReplay = async (
+    id: string,
+    result: TerminalAttachResult,
+    afterSequence: number,
+    generation?: number,
+  ): Promise<boolean> => {
+    if (
+      result.archiveAvailable !== true ||
+      afterSequence >= result.lastSequence
+    ) return false;
+    let cursor = afterSequence;
+    let complete = false;
+    while (
+      !complete &&
+      (generation === undefined || generation === reconnectGeneration)
+    ) {
+      const page = await transport.invoke(
+        "terminal:readReplayPage",
+        id,
+        cursor,
+        256 * 1024,
+      );
+      if (!page || page.chunks.length === 0) break;
+      for (const chunk of page.chunks) {
+        deliverTerminalData(
+          id,
+          chunk,
+          true,
+          result.replayNeedsQueryResponses === true,
+          false,
+        );
+      }
+      cursor = page.nextSequence;
+      complete = page.complete || cursor >= result.lastSequence;
+      terminalReplayFloors.set(id, cursor);
+      // Yield between pages so large archives never monopolize the browser.
+      await new Promise<void>(resolve => setTimeout(resolve, 0));
+    }
+    return cursor > afterSequence;
+  };
+
   const resyncTerminal = async (id: string, generation: number) => {
     const afterSequence = terminalReplayFloors.get(id) ?? 0;
     try {
@@ -143,12 +185,15 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         terminalResyncing.delete(id);
         return;
       }
-      const chunks =
+      let chunks =
         result.outputChunks && result.outputChunks.length > 0
           ? result.outputChunks
           : result.output
             ? [result.output]
             : [];
+      if (await streamArchivedReplay(id, result, afterSequence, generation)) {
+        chunks = [];
+      }
       const pending = terminalDataBuffers.get(id);
       terminalDataBuffers.delete(id);
       terminalDataBufferSizes.delete(id);
@@ -288,6 +333,14 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       bufferTerminalData(id, data, sequence);
     }
   });
+  transport.on("terminal:replay-required", (...args: unknown[]) => {
+    const id = args[0] as string;
+    const acknowledgedSequence = (args[1] as number | undefined) ?? 0;
+    const current = terminalReplayFloors.get(id) ?? 0;
+    terminalReplayFloors.set(id, Math.max(current, acknowledgedSequence));
+    terminalResyncing.add(id);
+    void resyncTerminal(id, reconnectGeneration);
+  });
   transport.on("terminal:exit", (...args: unknown[]) => {
     const id = args[0] as string;
     const exitCode = args[1] as number;
@@ -405,8 +458,10 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         return { id: result.id }
       },
       attach: async (id) => {
-        const result = await attachTerminal(id);
+        const afterSequence = terminalReplayFloors.get(id) ?? 0;
+        const result = await attachTerminal(id, afterSequence);
         if (result) {
+          await streamArchivedReplay(id, result, afterSequence);
           terminalReplayFloors.set(id, result.lastSequence);
           if (result.semanticSnapshot) {
             semanticStoreFor(id).applySnapshot({

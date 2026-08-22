@@ -10,6 +10,7 @@ type AttachResult = {
   lastSequence: number
   replayNeedsQueryResponses?: boolean
   replayTruncated?: boolean
+  archiveAvailable?: boolean
   status: "running"
 }
 
@@ -17,9 +18,26 @@ class FakeTransport implements YaadeHostTransport {
   readonly calls: Array<{ channel: string; args: unknown[]; via: "http" | "realtime" }> = []
   private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   private readonly attachResults: AttachResult[] = []
+  private readonly replayPages: Array<{
+    chunks: string[]
+    firstSequence: number
+    lastSequence: number
+    nextSequence: number
+    complete: boolean
+  }> = []
 
   queueAttach(result: AttachResult): void {
     this.attachResults.push(result)
+  }
+
+  queueReplayPage(page: {
+    chunks: string[]
+    firstSequence: number
+    lastSequence: number
+    nextSequence: number
+    complete: boolean
+  }): void {
+    this.replayPages.push(page)
   }
 
   emit(channel: string, ...args: unknown[]): void {
@@ -34,6 +52,11 @@ class FakeTransport implements YaadeHostTransport {
 
   async invoke<T>(channel: string, ...args: unknown[]): Promise<T> {
     this.calls.push({ channel, args, via: "http" })
+    if (channel === "terminal:readReplayPage") {
+      const page = this.replayPages.shift()
+      if (!page) throw new Error("missing replay page")
+      return page as T
+    }
     if (channel !== "terminal:attach") throw new Error(`unexpected ${channel}`)
     return this.shiftAttach()
   }
@@ -105,4 +128,51 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
     args: ["pty-1", 3],
     via: "realtime",
   })
+})
+
+test("archived reconnect history is delivered page by page", async () => {
+  const transport = new FakeTransport()
+  transport.queueAttach({
+    id: "pty-archive",
+    outputChunks: [],
+    output: "",
+    lastSequence: 1,
+    status: "running",
+  })
+  const terminal = createYaadeApi(transport).terminal
+  transport.emit("connection:status", "connected")
+  await terminal.attach("pty-archive")
+  const output: string[] = []
+  terminal.onData("pty-archive", data => output.push(data))
+  transport.emit("connection:status", "disconnected")
+  transport.queueAttach({
+    id: "pty-archive",
+    outputChunks: ["bounded-ring-copy"],
+    output: "",
+    lastSequence: 4,
+    replayTruncated: true,
+    archiveAvailable: true,
+    status: "running",
+  })
+  transport.queueReplayPage({
+    chunks: ["archive-2"],
+    firstSequence: 2,
+    lastSequence: 2,
+    nextSequence: 2,
+    complete: false,
+  })
+  transport.queueReplayPage({
+    chunks: ["archive-3", "archive-4"],
+    firstSequence: 3,
+    lastSequence: 4,
+    nextSequence: 4,
+    complete: true,
+  })
+  transport.emit("connection:status", "connected")
+  await new Promise(resolve => setTimeout(resolve, 20))
+  assert.deepEqual(output, ["archive-2", "archive-3", "archive-4"])
+  assert.equal(
+    transport.calls.filter(call => call.channel === "terminal:readReplayPage").length,
+    2,
+  )
 })

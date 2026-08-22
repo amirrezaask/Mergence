@@ -6,6 +6,11 @@ import {
   MAX_TERMINAL_STREAM_V3_BYTES,
 } from "./terminal-stream-v3-codec.js"
 import type { TerminalSnapshotMessage } from "./terminal-stream-v3.js"
+import {
+  encodeTerminalWsAck,
+  tryDecodeTerminalReplayRequired,
+  tryDecodeTerminalWsAck,
+} from "./terminal-ws.js"
 
 test("v3 terminal frames carry an explicit version, kind, and payload length", () => {
   const message: TerminalSnapshotMessage = {
@@ -42,6 +47,25 @@ test("v3 terminal frames carry an explicit version, kind, and payload length", (
   assert.equal(frame[0], 3)
   assert.equal(new DataView(frame.buffer, frame.byteOffset, frame.byteLength).getUint32(2), frame.byteLength - 6)
   assert.deepEqual(decodeTerminalStreamV3(frame), message)
+})
+
+test("terminal flow-control frames validate acknowledgement sequences", () => {
+  assert.deepEqual(
+    tryDecodeTerminalWsAck(JSON.parse(encodeTerminalWsAck("term-1", 42))),
+    { type: "terminal:ack", terminalId: "term-1", sequence: 42 },
+  )
+  assert.equal(
+    tryDecodeTerminalWsAck({ type: "terminal:ack", terminalId: "term-1", sequence: -1 }),
+    null,
+  )
+  assert.deepEqual(
+    tryDecodeTerminalReplayRequired({
+      type: "terminal:replay-required",
+      terminalId: "term-1",
+      sequence: 40,
+    }),
+    { type: "terminal:replay-required", terminalId: "term-1", sequence: 40 },
+  )
 })
 
 test("malformed and oversized v3 frames are rejected", () => {
