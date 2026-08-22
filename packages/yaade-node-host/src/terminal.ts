@@ -76,15 +76,6 @@ const TERMINAL_EMIT_BATCH_DELAY_MS = 4
  */
 const TERMINAL_EMIT_INTERACTIVE_BYTES = 32
 
-/**
- * Legacy acknowledgement thresholds retained for protocol compatibility.
- * They are diagnostic limits only: client debt must never pause a PTY.
- */
-export const TERMINAL_FLOW_HIGH_WATERMARK_CHARS = 100_000
-export const TERMINAL_FLOW_LOW_WATERMARK_CHARS = 5_000
-/** Legacy acknowledgement cadence; no acknowledgement resumes a PTY. */
-export const TERMINAL_FLOW_ACK_CHARS = 5_000
-
 export type TerminalLaunch = {
   command?: string
   args?: string[]
@@ -98,8 +89,6 @@ export type TerminalCreateResult = {
   id: string
   title: string | null
   osPid: number | null
-  /** Legacy diagnostic timestamp; cleanup uses processIdentity instead. */
-  osStartedAtMs: number
   processIdentity: ProcessIdentity | null
   terminalEpoch: string
   ownerId?: string
@@ -162,20 +151,15 @@ type EmitFn = (channel: string, args: unknown[]) => void
 
 type TerminalViewer = {
   hasAttached: boolean
-  /** True only while this client's event socket is armed for live frames. */
-  live: boolean
 }
 
 type TerminalEntry = {
   id: string
   title: string | null
   titleKey: string | null
-  /** Last client that attached; used for query-replay ownership, not write locks. */
-  clientId: string
   viewers: Map<string, TerminalViewer>
   lastAttachAt: number
   osPid: number | null
-  osStartedAtMs: number
   processIdentity: ProcessIdentity | null
   /** Absolute spawn-time cwd (fallback when live process cwd is unavailable). */
   spawnCwd: string
@@ -221,7 +205,7 @@ type TerminalEntry = {
 function viewerOf(entry: TerminalEntry, clientId: string): TerminalViewer {
   let viewer = entry.viewers.get(clientId)
   if (!viewer) {
-    viewer = { hasAttached: false, live: false }
+    viewer = { hasAttached: false }
     entry.viewers.set(clientId, viewer)
   }
   return viewer
@@ -373,11 +357,6 @@ export type TerminalHostOptions = {
   maxEntries?: number
   /** Delay between SIGHUP → SIGTERM → SIGKILL. Tests use a short value. */
   killGraceMs?: number
-  /**
-   * @deprecated Retained for callers compiled against the old API. Client
-   * backpressure never pauses a PTY in any mode.
-   */
-  flowControl?: boolean
   /** Parse terminal output with Ghostty for semantic snapshots and input encoding. */
   semanticState?: boolean
 }
@@ -440,7 +419,7 @@ export class TerminalHost {
   create(
     cwdUri: string,
     launch: TerminalLaunch | null | undefined,
-    clientId: string,
+    _clientId: string,
     requestId?: string,
   ): TerminalCreateResult {
     if (requestId) {
@@ -534,17 +513,14 @@ export class TerminalHost {
     // On Bun/macOS, the subprocess used by `ps` can close node-pty's master
     // descriptor and make an otherwise healthy shell exit with code 0.
     const processIdentity: ProcessIdentity | null = null
-    const osStartedAtMs = Date.now()
     const terminalEpoch = randomUUID()
     const entry: TerminalEntry = {
       id,
       title,
       titleKey,
-      clientId,
       viewers: new Map(),
       lastAttachAt: 0,
       osPid,
-      osStartedAtMs,
       processIdentity,
       spawnCwd: cwd,
       spawnCommand: custom?.command ?? null,
@@ -683,7 +659,6 @@ export class TerminalHost {
       id,
       title,
       osPid,
-      osStartedAtMs,
       processIdentity: entry.processIdentity,
       terminalEpoch,
       ...(this.semanticState ? { protocolVersion: 2 } : {}),
@@ -895,6 +870,14 @@ export class TerminalHost {
     return this.control.list(terminalId)
   }
 
+  listAllLeases(): RuntimeTerminalLease[] {
+    const leases: RuntimeTerminalLease[] = []
+    for (const entry of this.entries.values()) {
+      if (!entry.disposed) leases.push(...this.control.list(entry.id))
+    }
+    return leases
+  }
+
   currentWriterLease(id: string): RuntimeTerminalLease | null {
     try {
       return this.control.writer(id)
@@ -1016,56 +999,10 @@ export class TerminalHost {
     return null
   }
 
-  /**
-   * Compatibility acknowledgement. Queue bounds are enforced by the transport
-   * mailbox, never by pausing the child process.
-   */
-  acknowledgeData(id: string, _charCount: number, _clientId?: string): null {
-    if (id.length > 256) return null
-    const entry = this.entries.get(id)
-    if (!entry || entry.disposed) return null
-    return null
-  }
-
-  /** Compatibility no-op retained for older host clients. */
-  clearUnacknowledgedChars(_id: string): null {
-    return null
-  }
-
-  /**
-   * Deprecated compatibility operation. A slow socket must be isolated or
-   * disconnected at the transport boundary; it must never pause a PTY.
-   */
-  pauseForBackpressure(_ids?: readonly string[]): void {}
-
-
-  /**
-   * Mark a viewer as receiving live `terminal:data` on an event socket.
-   * HTTP attach must not call this — those clients never see live frames.
-   */
-  armLiveViewer(id: string, clientId: string): void {
-    if (id.length > 256 || clientId.length > 256) return
-    const entry = this.entries.get(id)
-    if (!entry || entry.disposed) return
-    viewerOf(entry, clientId).live = true
-  }
-
   /** Remove a disconnected viewer without affecting PTY output. */
-  resumeForClient(clientId: string): void {
+  disconnectClient(clientId: string): void {
     if (clientId.length > 256) return
     for (const entry of this.entries.values()) entry.viewers.delete(clientId)
-  }
-
-  /**
-   * Compatibility operation used when no API remains connected. Output keeps
-   * draining into the bounded replay/semantic runtime regardless of viewers.
-   */
-  resumeAllLiveViewers(): void {
-    for (const entry of this.entries.values()) {
-      if (entry.disposed) continue
-      for (const viewer of entry.viewers.values()) viewer.live = false
-      flushPendingOutput(entry, this.emit)
-    }
   }
 
   private storeCheckpoint(entry: TerminalEntry): void {
@@ -1074,29 +1011,6 @@ export class TerminalHost {
     entry.checkpointSequence = entry.sequence
     entry.bytesSinceCheckpoint = 0
     entry.lastCheckpointAt = Date.now()
-  }
-
-  forceCheckpoint(id: string): boolean {
-    const entry = this.entries.get(id)
-    if (!entry || entry.disposed) return false
-    this.storeCheckpoint(entry)
-    return true
-  }
-
-  injectCheckpoint(id: string, checkpoint: unknown): boolean {
-    const entry = this.entries.get(id)
-    if (!entry || entry.disposed) return false
-    entry.checkpoint = checkpoint as TerminalCheckpoint
-    const sequence =
-      checkpoint &&
-      typeof checkpoint === "object" &&
-      "sequence" in checkpoint &&
-      typeof checkpoint.sequence === "number"
-        ? checkpoint.sequence
-        : entry.sequence
-    entry.checkpointSequence = sequence
-    entry.replayTruncated = true
-    return true
   }
 
   attach(
@@ -1110,7 +1024,6 @@ export class TerminalHost {
     const viewer = viewerOf(entry, clientId)
     const replayNeedsQueryResponses = !viewer.hasAttached
     flushPendingOutput(entry, this.emit)
-    entry.clientId = clientId
     entry.lastAttachAt = Date.now()
     if (entry.status === "exited") {
       this.scheduleDisposeAfterExit(entry)
@@ -1170,21 +1083,6 @@ export class TerminalHost {
     if (!viewer) return null
     viewer.hasAttached = true
     return null
-  }
-
-  hasViewer(id: string, clientId: string): boolean {
-    const entry = this.entries.get(id)
-    return Boolean(entry && !entry.disposed && entry.viewers.has(clientId))
-  }
-
-  /** Bounded replay snapshot for a terminal PTY; does not attach or change ownership. */
-  readOutput(id: string, maxBytes = EXITED_TERMINAL_REPLAY): { output: string; truncated: boolean } | null {
-    const entry = this.entries.get(id)
-    if (!entry || entry.disposed) return null
-    const joined = entry.output.slice(entry.outputHead).join("")
-    const encoded = Buffer.from(joined, "utf8")
-    if (encoded.byteLength <= maxBytes) return { output: joined, truncated: false }
-    return { output: encoded.subarray(encoded.byteLength - maxBytes).toString("utf8"), truncated: true }
   }
 
   waitForExit(id: string): Promise<{ exitCode: number | null; signal?: string }> {

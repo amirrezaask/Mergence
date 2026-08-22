@@ -15,12 +15,7 @@ export {
   normalizeHostBaseUrl,
   type WebHostTransportOptions,
 } from "./web-transport.js";
-export {
-  HostClient,
-  HostClientLive,
-  invokeHostRpc,
-  runHostInvoke,
-} from "./effect-host-client.js";
+export { invokeHostRpc } from "./effect-host-client.js";
 export type { YaadeHostTransport } from "./transport.js";
 export {
   TerminalV3Store,

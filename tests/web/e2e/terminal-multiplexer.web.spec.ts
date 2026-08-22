@@ -48,6 +48,68 @@ test("session switcher creates and archives a session", async ({ launchApp }) =>
   ).toBeVisible({ timeout: 30_000 })
 })
 
+test("two browser clients can both write to the same terminal", async ({
+  launchApp,
+  browser,
+}) => {
+  const launched = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  })
+  if (!launched.baseUrl) throw new Error("host URL is unavailable")
+  await expect(
+    launched.page.locator("[data-yaade-terminal-panel] [data-ghostty-terminal-canvas]"),
+  ).toBeVisible({ timeout: 30_000 })
+
+  const secondContext = await browser.newContext()
+  const secondPage = await secondContext.newPage()
+  const secondErrors: string[] = []
+  secondPage.on("pageerror", error => secondErrors.push(error.message))
+  secondPage.on("console", message => {
+    if (message.type() === "error") secondErrors.push(message.text())
+  })
+
+  try {
+    await secondPage.goto(launched.baseUrl, { waitUntil: "domcontentloaded" })
+    await secondPage.waitForFunction(() => window.__yaadeTest != null)
+    await secondPage.evaluate(() => window.__yaadeTest!.waitForReady())
+    await expect(
+      secondPage.locator("[data-yaade-terminal-panel] [data-ghostty-terminal-canvas]"),
+    ).toBeVisible({ timeout: 30_000 })
+
+    const terminalIds = async () => Promise.all([
+      launched.page.evaluate(() => window.__yaadeTest?.getState().activeMuxTerminalId ?? null),
+      secondPage.evaluate(() => window.__yaadeTest?.getState().activeMuxTerminalId ?? null),
+    ])
+    await expect.poll(terminalIds, { timeout: 15_000 }).toEqual([
+      expect.any(String),
+      expect.any(String),
+    ])
+    const [firstTerminalId, secondTerminalId] = await terminalIds()
+    expect(secondTerminalId).toBe(firstTerminalId)
+    if (!firstTerminalId) throw new Error("shared terminal is unavailable")
+
+    const terminalText = (page: typeof launched.page) =>
+      page.evaluate(id => window.__yaadeTest?.getTerminalText?.(id) ?? "", firstTerminalId)
+    const firstMarker = "YAADE_FIRST_CLIENT_WROTE"
+    const secondMarker = "YAADE_SECOND_CLIENT_WROTE"
+
+    await focusTerminal(launched.page)
+    await launched.page.keyboard.type(`printf '${firstMarker}\\n'`)
+    await launched.page.keyboard.press("Enter")
+    await expect.poll(() => terminalText(launched.page), { timeout: 15_000 }).toContain(firstMarker)
+    await expect.poll(() => terminalText(secondPage), { timeout: 15_000 }).toContain(firstMarker)
+
+    await focusTerminal(secondPage)
+    await secondPage.keyboard.type(`printf '${secondMarker}\\n'`)
+    await secondPage.keyboard.press("Enter")
+    await expect.poll(() => terminalText(launched.page), { timeout: 15_000 }).toContain(secondMarker)
+    await expect.poll(() => terminalText(secondPage), { timeout: 15_000 }).toContain(secondMarker)
+    expect(secondErrors).toEqual([])
+  } finally {
+    await secondContext.close()
+  }
+})
+
 test("terminal output is replayed after a browser reload", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",

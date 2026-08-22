@@ -151,9 +151,6 @@ export const HostEventChannels = [
 ] as const;
 export type HostEventChannel = (typeof HostEventChannels)[number];
 
-export const TerminalCreateArgs = Schema.Array(Schema.Unknown);
-export const TerminalIdArgs = Schema.Tuple(Schema.String);
-
 /** Optional fence carried by current terminal mutation clients. */
 export const TerminalMutationFence = Schema.Struct({
   terminalId: Schema.String,
@@ -165,18 +162,6 @@ export const TerminalMutationFence = Schema.Struct({
   commandId: Schema.String,
 });
 export type TerminalMutationFence = Schema.Schema.Type<typeof TerminalMutationFence>;
-
-export const TerminalWriteArgs = Schema.Tuple(
-  Schema.String,
-  Schema.String,
-  Schema.optionalElement(TerminalMutationFence),
-);
-export const TerminalResizeArgs = Schema.Tuple(
-  Schema.String,
-  Schema.Number,
-  Schema.Number,
-  Schema.optionalElement(TerminalMutationFence),
-);
 
 export const TerminalCheckpoint = Schema.Struct({
   checkpointVersion: Schema.Literal(1),
@@ -205,8 +190,6 @@ export const TerminalLease = Schema.Struct({
 export type TerminalLease = Schema.Schema.Type<typeof TerminalLease>;
 
 export const decodeHostRpcRequest = Schema.decodeUnknown(HostRpcRequest);
-export const encodeHostRpcSuccess = Schema.encode(HostRpcSuccess);
-export const encodeHostEvent = Schema.encode(HostEvent);
 export const decodeHostEvent = Schema.decodeUnknown(HostEvent);
 
 /** Hot PTY channels — structural gate only (no Schema) for terminal throughput. */

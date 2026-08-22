@@ -55,7 +55,10 @@ export class TerminalControlError extends Error {
 type TerminalControlState = {
   terminalEpoch: string
   leaseGeneration: number
+  /** Primary writer kept for compatibility with the single-writer API. */
   writer: TerminalLease | null
+  /** Writer leases for all connected clients, keyed by lease ID. */
+  writers: Map<string, TerminalLease>
   observers: Map<string, TerminalLease>
   commandIds: Map<string, number>
 }
@@ -77,11 +80,14 @@ function expired(lease: TerminalLease, now: number): boolean {
 }
 
 /**
- * Authoritative, single-writer control state for one terminal runtime.
+ * Authoritative control state for one terminal runtime.
  *
- * The registry owns only control metadata. PTY bytes and terminal semantic
- * state remain in the terminal entry. Every mutation path must validate a
- * fence here before touching that entry.
+ * A terminal may have one writer lease per connected client. Observer leases
+ * are still available for explicitly read-only clients, but writer leases do
+ * not serialize otherwise-authorized clients behind the first connection. The
+ * registry owns only control metadata. PTY bytes and terminal semantic state
+ * remain in the terminal entry. Every mutation path must validate a fence here
+ * before touching that entry.
  */
 export class TerminalControlRegistry {
   private readonly terminals = new Map<string, TerminalControlState>()
@@ -116,6 +122,7 @@ export class TerminalControlRegistry {
         terminalEpoch,
         leaseGeneration: 0,
         writer: null,
+        writers: new Map(),
         observers: new Map(),
         commandIds: new Map(),
       })
@@ -132,32 +139,34 @@ export class TerminalControlRegistry {
   leaseFor(terminalId: string, leaseId: string): TerminalLease | null {
     const state = this.state(terminalId)
     this.purge(state)
-    if (state.writer?.leaseId === leaseId) return state.writer
-    return state.observers.get(leaseId) ?? null
+    return this.leaseForState(state, leaseId)
   }
 
   acquire(request: TerminalLeaseRequest): TerminalLease {
     const state = this.stateForEpoch(request.terminalId, request.terminalEpoch)
     this.purge(state)
     if (request.mode === "writer") {
-      const writer = state.writer
-      if (writer) {
-        if (
-          writer.principalId !== request.principalId ||
-          writer.connectionId !== request.connectionId
-        ) {
-          throw new TerminalControlError(
-            "WRITER_LEASE_REQUIRED",
-            request.terminalId,
-            "terminal is controlled by another connection",
-            writer.leaseId,
-          )
-        }
-        return this.renewLease(state, writer, request.principalId, request.connectionId)
-      }
-      state.leaseGeneration += 1
+      const existing = [...state.writers.values()].find(
+        lease =>
+          lease.principalId === request.principalId &&
+          lease.connectionId === request.connectionId,
+      )
+      if (existing) return this.renewLease(state, existing, request.principalId, request.connectionId)
+
+      const previous = [...state.observers.values()].find(
+        lease =>
+          lease.principalId === request.principalId &&
+          lease.connectionId === request.connectionId,
+      )
+      if (previous) state.observers.delete(previous.leaseId)
+
+      // A generation identifies the current shared writer cohort. New
+      // connections join that cohort; forceTakeover is the explicit operation
+      // that invalidates every existing writer fence.
+      if (!state.writer) state.leaseGeneration += 1
       const lease = this.newLease(state, request, state.leaseGeneration)
-      state.writer = lease
+      state.writers.set(lease.leaseId, lease)
+      if (!state.writer) state.writer = lease
       return lease
     }
     const previous = [...state.observers.values()].find(
@@ -218,24 +227,32 @@ export class TerminalControlRegistry {
         leaseId,
       )
     }
-    if (state.writer?.leaseId === leaseId) state.writer = null
+    if (state.writers.delete(leaseId) && state.writer?.leaseId === leaseId) {
+      state.writer = state.writers.values().next().value ?? null
+    }
     state.observers.delete(leaseId)
   }
 
   releaseConnection(connectionId: string): void {
     for (const state of this.terminals.values()) {
       this.purge(state)
-      const writerDisconnected = state.writer?.connectionId === connectionId
-      if (writerDisconnected) state.writer = null
+      let writerDisconnected = false
+      for (const [leaseId, lease] of state.writers) {
+        if (lease.connectionId !== connectionId) continue
+        writerDisconnected = true
+        state.writers.delete(leaseId)
+        if (state.writer?.leaseId === leaseId) state.writer = null
+      }
       for (const [leaseId, lease] of state.observers) {
         if (lease.connectionId === connectionId) state.observers.delete(leaseId)
       }
-      if (writerDisconnected && !state.writer) {
+      if (!state.writer) state.writer = state.writers.values().next().value ?? null
+      if (writerDisconnected && state.writers.size === 0) {
         const nextObserver = state.observers.values().next().value
         if (nextObserver) {
           state.observers.delete(nextObserver.leaseId)
           state.leaseGeneration += 1
-          state.writer = this.newLease(
+          const promoted = this.newLease(
             state,
             {
               terminalId: nextObserver.terminalId,
@@ -246,6 +263,8 @@ export class TerminalControlRegistry {
             },
             state.leaseGeneration,
           )
+          state.writer = promoted
+          state.writers.set(promoted.leaseId, promoted)
         }
       }
     }
@@ -259,6 +278,12 @@ export class TerminalControlRegistry {
   ): TerminalLease {
     const state = this.stateForEpoch(terminalId, terminalEpoch)
     state.writer = null
+    state.writers.clear()
+    for (const [leaseId, lease] of state.observers) {
+      if (lease.principalId === principalId && lease.connectionId === connectionId) {
+        state.observers.delete(leaseId)
+      }
+    }
     state.leaseGeneration += 1
     const request: TerminalLeaseRequest = {
       terminalId,
@@ -269,6 +294,7 @@ export class TerminalControlRegistry {
     }
     const lease = this.newLease(state, request, state.leaseGeneration)
     state.writer = lease
+    state.writers.set(lease.leaseId, lease)
     return lease
   }
 
@@ -283,8 +309,8 @@ export class TerminalControlRegistry {
   ): TerminalLease {
     const state = this.stateForEpoch(terminalId, terminalEpoch)
     this.purge(state)
-    const writer = state.writer
-    if (!writer || writer.leaseId !== leaseId) {
+    const writer = state.writers.get(leaseId)
+    if (!writer) {
       throw new TerminalControlError(
         "WRITER_LEASE_STALE",
         terminalId,
@@ -311,12 +337,16 @@ export class TerminalControlRegistry {
   authorizeMutation(fence: TerminalMutationFence): TerminalLease {
     const state = this.stateForEpoch(fence.terminalId, fence.terminalEpoch)
     this.purge(state)
-    const writer = state.writer
+    const writer = state.writers.get(fence.leaseId)
     if (!writer) {
+      const activeWriter = state.writer ?? state.writers.values().next().value
       throw new TerminalControlError(
-        "WRITER_LEASE_REQUIRED",
+        activeWriter ? "WRITER_LEASE_STALE" : "WRITER_LEASE_REQUIRED",
         fence.terminalId,
-        "an active writer lease is required",
+        activeWriter
+          ? "terminal mutation fence is stale"
+          : "an active writer lease is required",
+        fence.leaseId,
       )
     }
     if (
@@ -347,7 +377,9 @@ export class TerminalControlRegistry {
       if (oldest.done) break
       state.commandIds.delete(oldest.value)
     }
-    return writer
+    // Refresh the fence that accepted this mutation so each active client can
+    // keep its own writer lease alive independently.
+    return this.renewLease(state, writer, writer.principalId, writer.connectionId)
   }
 
   writer(terminalId: string): TerminalLease | null {
@@ -360,7 +392,7 @@ export class TerminalControlRegistry {
     const state = this.state(terminalId)
     this.purge(state)
     return [
-      ...(state.writer ? [state.writer] : []),
+      ...state.writers.values(),
       ...state.observers.values(),
     ]
   }
@@ -391,7 +423,12 @@ export class TerminalControlRegistry {
 
   private purge(state: TerminalControlState): void {
     const current = this.clock.now()
-    if (state.writer && expired(state.writer, current)) state.writer = null
+    for (const [leaseId, lease] of state.writers) {
+      if (expired(lease, current)) state.writers.delete(leaseId)
+    }
+    if (!state.writer || !state.writers.has(state.writer.leaseId)) {
+      state.writer = state.writers.values().next().value ?? null
+    }
     for (const [leaseId, lease] of state.observers) {
       if (expired(lease, current)) state.observers.delete(leaseId)
     }
@@ -401,8 +438,7 @@ export class TerminalControlRegistry {
     state: TerminalControlState,
     leaseId: string,
   ): TerminalLease | null {
-    if (state.writer?.leaseId === leaseId) return state.writer
-    return state.observers.get(leaseId) ?? null
+    return state.writers.get(leaseId) ?? state.observers.get(leaseId) ?? null
   }
 
   private renewLease(
@@ -417,8 +453,12 @@ export class TerminalControlRegistry {
       connectionId,
       expiresAt: iso(this.clock.now() + this.leaseTtlMs),
     }
-    if (state.writer?.leaseId === lease.leaseId) state.writer = refreshed
-    else state.observers.set(lease.leaseId, refreshed)
+    if (state.writers.has(lease.leaseId)) {
+      state.writers.set(lease.leaseId, refreshed)
+      if (state.writer?.leaseId === lease.leaseId) state.writer = refreshed
+    } else {
+      state.observers.set(lease.leaseId, refreshed)
+    }
     return refreshed
   }
 

@@ -6,7 +6,7 @@
  * - rAF-batch WS chunks so we call the terminal parser ~once/frame under flood.
  * - Hand all pending bytes to the parser by default. Renderers that parse
  *   synchronously (Ghostty) may opt into a bounded per-frame slice.
- * - Use the write callback only for flow-control ack, never to block the next
+ * - Use the write callback only for post-paint work, never to block the next
  *   flush.
  */
 
@@ -28,11 +28,6 @@ export type TerminalOutputWriterOptions = {
   writeReplay?: (data: readonly string[], onPainted?: () => void) => void
   /** Called after a coalesced write paints (once per flush). */
   onPainted?: () => void
-  /**
-   * Called with the char count once the terminal has parsed the flushed chunk.
-   * Hosts use this for VS Code-style PTY flow-control acks.
-   */
-  onParsed?: (charCount: number) => void
   /**
    * When true, after paint run a single viewport refresh. Callers should only
    * request this for cursor-visibility toggles, and at most once per frame.
@@ -223,7 +218,6 @@ export function createTerminalOutputWriter(
     // callback. The parser owns its throughput scheduling.
     options.write(data, () => {
       if (disposed) return
-      options.onParsed?.(data.length)
       if (doRefresh) options.refreshAfterPaint?.()
       options.onPainted?.()
     })
@@ -315,7 +309,7 @@ export function createTerminalOutputWriter(
       }
       microScheduled = false
       // Replay must land fully before connect. It bypasses the live queue cap,
-      // the per-frame slice, and flow-control acknowledgements.
+      // the per-frame slice.
       flushReplayNow()
       // Drain any normal bytes that arrived around the attach handshake too.
       while (pendingChars > 0 || needsRefresh) flushNow(true)

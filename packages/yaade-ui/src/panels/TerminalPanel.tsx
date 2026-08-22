@@ -334,8 +334,6 @@ export function TerminalPanel({
     let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
     const pendingTerminalInput: string[] = []
     let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
-    let ackPendingChars = 0
-    let ackRetryTimer: ReturnType<typeof setTimeout> | null = null
 
     const enqueueTerminalInput = (data: string) => {
       // Host already answered DA1 on the PTY. Drop Ghostty's copy so fish
@@ -345,8 +343,6 @@ export function TerminalPanel({
       if (inputWriter) inputWriter.enqueue(payload)
       else pendingTerminalInput.push(payload)
     }
-    let ackInFlight = false
-
     const container = containerRef.current
     const launchCommandAtStart = launchCommandRef.current
     const launchArgsAtStart = launchArgsRef.current
@@ -381,37 +377,6 @@ export function TerminalPanel({
       if (!precreatedPty || precreatedPtyConsumed) return
       precreatedPtyConsumed = true
       void precreatedPty.then(({ id }) => terminalApi.dispose(id)).catch(() => {})
-    }
-
-    const flushAck = (ptyId: string | null) => {
-      if (!ptyId || ackPendingChars <= 0 || ackInFlight) return
-      const acknowledge = terminalApi.acknowledgeData
-      if (!acknowledge) {
-        ackPendingChars = 0
-        return
-      }
-      const chars = ackPendingChars
-      ackPendingChars = 0
-      ackInFlight = true
-      void Promise.resolve()
-        .then(() => acknowledge.call(terminalApi, ptyId, chars))
-        .then(
-          () => {
-            ackInFlight = false
-            if (ackPendingChars > 0) flushAck(session?.ptyId ?? ptyId)
-          },
-          () => {
-            // Do not lose the debt when a fire-and-forget WS/HTTP ack fails.
-            // A later retry or reconnect can then release the host watermark.
-            ackPendingChars += chars
-            ackInFlight = false
-            if (cancelled || ackRetryTimer !== null) return
-            ackRetryTimer = setTimeout(() => {
-              ackRetryTimer = null
-              flushAck(session?.ptyId ?? ptyId)
-            }, 250)
-          },
-        )
     }
 
     const resizePty = (next: TerminalSession | null) => {
@@ -730,10 +695,6 @@ export function TerminalPanel({
             surface?.writeReplay(chunks)
             onPainted?.()
           },
-          onParsed: charCount => {
-            ackPendingChars += charCount
-            if (ackPendingChars >= 5_000) flushAck(session?.ptyId ?? null)
-          },
         })
 
         startPty(precreatedPty)
@@ -774,11 +735,6 @@ export function TerminalPanel({
       inputWriter = null
       pendingTerminalInput.length = 0
       outputWriter?.dispose()
-      if (ackRetryTimer !== null) {
-        clearTimeout(ackRetryTimer)
-        ackRetryTimer = null
-      }
-      flushAck(session?.ptyId ?? null)
       unsub?.()
       semanticUnsub?.()
       if (surface) {

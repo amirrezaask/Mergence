@@ -23,7 +23,7 @@ YAADE has no separate workspace, Git, search, or editor surfaces. The top bar ho
 - The host process owns PTYs directly. Browser reloads and disconnects leave terminal processes running; restarting the host intentionally kills every PTY and starts with a fresh Session.
 - Closing a terminal is the explicit destructive action that stops its PTY during normal operation.
 - Reconnects to the same host process restore from an in-memory Ghostty snapshot and bounded raw replay. A slow viewer is resynchronized or disconnected and never pauses the PTY.
-- Multiple viewers can attach to one terminal. Writer leases are explicit for input and resize; observers continue receiving output. A slow client is bounded or disconnected and never pauses the PTY.
+- Multiple viewers can attach to one terminal. Every authenticated client with control scope can write input and resize; explicitly observe-only clients remain viewers. A slow client is bounded or disconnected and never pauses the PTY.
 - Mobile uses a list-first Terminal shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal.
 - Settings → **Servers** lets you add multiple remote host URLs and optional access tokens. Sessions from every reachable host appear in the same session switcher; each session keeps its host context when you work in it.

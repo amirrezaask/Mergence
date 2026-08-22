@@ -140,13 +140,11 @@ test("parses terminal queries immediately while the frame clock is inactive", as
 test("default flush feeds the full coalesced chunk (no 16KiB starve)", () => {
   const writes: string[] = []
   const scheduled: Array<() => void> = []
-  const parsed: number[] = []
   const writer = createTerminalOutputWriter({
     write: (data, onPainted) => {
       writes.push(data)
       onPainted?.()
     },
-    onParsed: n => parsed.push(n),
     schedule: cb => {
       scheduled.push(cb)
       return scheduled.length
@@ -160,7 +158,6 @@ test("default flush feeds the full coalesced chunk (no 16KiB starve)", () => {
   scheduled[0]!()
   assert.equal(writes.length, 1)
   assert.equal(writes[0]!.length, 64 * 1024)
-  assert.deepEqual(parsed, [64 * 1024])
 })
 
 test("does not gate the next flush on write callback (xterm queues itself)", () => {
@@ -191,7 +188,7 @@ test("does not gate the next flush on write callback (xterm queues itself)", () 
   scheduled[1]!()
   assert.deepEqual(writes, ["one", "two"])
 
-  // Callbacks fire later — still only for ack/paint, not gating.
+  // Callbacks fire later — still only for paint, not gating.
   pendingCallbacks[0]!()
   pendingCallbacks[1]!()
 })
@@ -229,16 +226,14 @@ test("flush drains pending bytes without waiting for schedule", () => {
   assert.deepEqual(writes, ["attach-replay"])
 })
 
-test("replay bypasses the live cap and is not acknowledged", () => {
+test("replay bypasses the live cap", () => {
   const replayWrites: string[][] = []
-  const parsed: number[] = []
   const writer = createTerminalOutputWriter({
     write: () => assert.fail("replay must use the replay writer"),
     writeReplay: (chunks, onPainted) => {
       replayWrites.push([...chunks])
       onPainted?.()
     },
-    onParsed: chars => parsed.push(chars),
     maxPendingChars: 8,
   })
 
@@ -247,7 +242,6 @@ test("replay bypasses the live cap and is not acknowledged", () => {
   writer.flush()
 
   assert.deepEqual(replayWrites, [["A".repeat(512 * 1024), "B".repeat(512 * 1024)]])
-  assert.deepEqual(parsed, [])
 })
 
 test("sheds oldest pending when over maxPendingChars", () => {

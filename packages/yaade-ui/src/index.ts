@@ -6,18 +6,7 @@ export {
   type PanelSlotMeta,
 } from "./dock/PanelDock.js"
 export { TabDndRoot, type TabDndHandlers, useDropHot } from "./dock/TabDndRoot.js"
-export {
-  DockTabBarDropTarget,
-  DockTabHandle,
-  type DockTabBarDropTargetProps,
-  type DockTabHandleProps,
-} from "./dock/DockTabHandle.js"
 export { DockSourceHandle, type DockSourceHandleProps } from "./dock/DockSourceHandle.js"
-export {
-  PanelFloatingPopover,
-  type PanelFloatingPopoverProps,
-  type PanelFloatCorner,
-} from "./dock/PanelFloatingPopover.js"
 export { SidebarShell, type SidebarShellProps } from "./shell/SidebarShell.js"
 export { useIsMobile } from "./hooks/use-mobile.js"
 export {

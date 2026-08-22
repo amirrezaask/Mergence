@@ -23,7 +23,6 @@ test("route registry owns argument and result validation", () => {
 
 test("hot terminal routes are selected from the same registry", () => {
   assert.deepEqual([...HOST_HOT_ROUTES].sort(), [
-    "terminal:ack",
     "terminal:attach",
     "terminal:ready",
     "terminal:resize",

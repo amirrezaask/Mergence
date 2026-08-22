@@ -5,9 +5,6 @@ export {
   type TerminalInspectSnapshot,
   type TerminalCreateResult,
   type TerminalHostOptions,
-  TERMINAL_FLOW_ACK_CHARS,
-  TERMINAL_FLOW_HIGH_WATERMARK_CHARS,
-  TERMINAL_FLOW_LOW_WATERMARK_CHARS,
 } from "./terminal.js";
 export { makeTerminalHostScoped } from "./effect-terminal.js";
 export { PtyWriteQueue, PtyWriteQueueOverflow } from "./pty-write-queue.js"
@@ -41,7 +38,6 @@ export {
 export {
   applyLoginShellEnv,
   enrichProcessPath,
-  resolveLoginShellPath,
 } from "./shell-env.js";
 export {
   findWorkspaceRoot,

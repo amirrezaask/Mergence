@@ -5,15 +5,8 @@ import {
   type TerminalMutationFence,
 } from "@yaade/node-host"
 import { NotFoundError, TerminalLeaseError, type TerminalLease } from "@yaade/rpc"
-import type { RuntimeTerminal } from "./host-runtime.js"
+import type { TerminalHost } from "@yaade/node-host"
 import type { RequestPrincipal } from "./principal.js"
-
-export function usesAuthoritativeLeases(
-  _terminal: RuntimeTerminal,
-  _id: string,
-): boolean {
-  return true
-}
 
 export function toRuntimeLease(
   lease: RuntimeTerminalLease,
@@ -71,6 +64,8 @@ export function bindOwnerFence(
       terminalEpoch: decoded.terminalEpoch,
       leaseId: decoded.leaseId,
       leaseGeneration: decoded.leaseGeneration,
+      // The server owns principal and connection identity. Do not trust the
+      // identity fields supplied by a client fence.
       principalId: principal.principalId,
       connectionId: principal.connectionId,
       commandId: decoded.commandId,
@@ -92,16 +87,28 @@ export function bindOwnerFence(
     terminalEpoch: writer.terminalEpoch,
     leaseId: writer.leaseId,
     leaseGeneration: writer.leaseGeneration,
-    principalId: principal.principalId,
-    connectionId: principal.connectionId,
+    principalId: writer.principalId,
+    connectionId: writer.connectionId,
     commandId: randomUUID(),
   }
 }
 
 export async function currentOwnerWriter(
-  terminal: RuntimeTerminal,
+  terminal: TerminalHost,
   id: string,
+  principal?: Pick<RequestPrincipal, "principalId" | "connectionId">,
 ): Promise<RuntimeTerminalLease | null> {
+  if (principal && typeof terminal.listLeases === "function") {
+    const leases = await Promise.resolve(terminal.listLeases(id))
+    return (
+      leases.find(
+        lease =>
+          lease.mode === "writer" &&
+          lease.principalId === principal.principalId &&
+          lease.connectionId === principal.connectionId,
+      ) ?? null
+    )
+  }
   if (typeof terminal.currentWriterLease !== "function") return null
   return Promise.resolve(terminal.currentWriterLease(id))
 }

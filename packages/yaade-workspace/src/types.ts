@@ -91,7 +91,6 @@ export type HostTerminal = {
   write(id: string, data: string): Promise<void>
   writeBinary(id: string, dataBase64: string): Promise<void>
   resize(id: string, cols: number, rows: number): Promise<void>
-  acknowledgeData(id: string, charCount: number): Promise<void>
   markReplayReady(id: string): Promise<void>
   getCwd(id: string): Promise<string | null>
   getForegroundProcess(id: string): Promise<string | null>

@@ -685,10 +685,6 @@ export class MultiServerHostClient {
         const owner = self.ownerForPty(id)
         return self.connectionForOwner(owner).api.terminal.resize(owner.localId, cols, rows)
       },
-      acknowledgeData: (id, count) => {
-        const owner = self.ownerForPty(id)
-        return self.connectionForOwner(owner).api.terminal.acknowledgeData(owner.localId, count)
-      },
       markReplayReady: (id) => {
         const owner = self.ownerForPty(id)
         return self.connectionForOwner(owner).api.terminal.markReplayReady(owner.localId)

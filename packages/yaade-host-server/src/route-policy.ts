@@ -18,7 +18,6 @@ const OBSERVE_ROUTES = new Set<string>([
   "mux:getTerminal",
   "terminal:listViewers",
   "terminal:attach",
-  "terminal:ack",
   "terminal:ready",
   "terminal:getCwd",
   "terminal:getForegroundProcess",

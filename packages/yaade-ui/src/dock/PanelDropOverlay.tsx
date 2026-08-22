@@ -8,13 +8,13 @@ import {
   SquareIcon,
 } from "lucide-react"
 import type { PanelId } from "@yaade/shared"
+import { prefersReducedMotion } from "@yaade/shared"
 import {
   YAADE_LAYOUT_EPSILON,
   YAADE_RATE_MENU,
-  prefersReducedMotion,
   radAnimationRate,
   radLerp,
-} from "@yaade/shared"
+} from "../motion/rad.js"
 import { cn } from "@/lib/utils.js"
 import { usePanelDragSource } from "./PanelDragContext.js"
 import { useDropHot } from "./TabDndRoot.js"
@@ -214,13 +214,7 @@ function AnimatedDropPreview({
   )
 }
 
-export function PanelDropOverlay({
-  panelId,
-}: {
-  panelId: PanelId
-  /** @deprecated drops handled by TabDndRoot */
-  onTabDrop?: unknown
-}) {
+export function PanelDropOverlay({ panelId }: { panelId: PanelId }) {
   const tabDrag = usePanelDragSource()
   const dropHot = useDropHot()
   const containerRef = useRef<HTMLDivElement>(null)

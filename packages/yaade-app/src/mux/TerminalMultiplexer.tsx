@@ -59,7 +59,7 @@ import {
 import { focusRegisteredTerminal } from "@yaade/ui/terminal-registry";
 import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
-import type { TerminalRendererProps } from "./terminal-renderer.js";
+import type { ProcessTerminalViewProps } from "./renderers/TerminalView.js";
 import {
   MAX_SIDEBAR_WIDTH,
   MIN_SIDEBAR_WIDTH,
@@ -240,7 +240,6 @@ export function TerminalMultiplexer() {
   const {
     activeTheme,
     appearanceSettings,
-    fontSize,
     resetAppearanceSettings,
     setAppearanceSettings,
   } = useAppearanceSettings();
@@ -1711,17 +1710,13 @@ export function TerminalMultiplexer() {
         key={terminal.id}
         terminal={terminal}
         theme={activeTheme}
-        fontSize={fontSize}
         visible={visible}
         focused={focused}
-        onAction={(action) => void runTerminalAction(action, terminal)}
         onTitleChange={(title) => updateRuntimeTitle(terminal, title, "terminal")}
       />
     ),
     [
       activeTheme,
-      fontSize,
-      runTerminalAction,
       updateRuntimeTitle,
     ],
   );
@@ -2168,25 +2163,7 @@ function SidebarHoverToggle(props: {
   );
 }
 
-function SelectedMuxTerminal(props: {
-  terminal: MuxTerminal;
-  theme: YaadeTheme;
-  fontSize: number;
-  visible?: boolean;
-  focused?: boolean;
-  onAction: (action: "cancel" | "restart" | "archive") => void;  onTitleChange: (title: string) => void;
-}) {
-  const { terminal } = props;
-  const rendererProps = {
-    terminal,
-    theme: props.theme,
-    fontSize: props.fontSize,
-    onTitleChange: props.onTitleChange,
-    onAction: props.onAction,
-    visible: props.visible,
-    focused: props.focused,
-  } satisfies TerminalRendererProps;
-
+function SelectedMuxTerminal(props: ProcessTerminalViewProps) {
   return (
     <Suspense
       fallback={
@@ -2196,7 +2173,7 @@ function SelectedMuxTerminal(props: {
         </div>
       }
     >
-      <TerminalRenderer {...rendererProps} />
+      <TerminalRenderer {...props} />
     </Suspense>
   );
 }

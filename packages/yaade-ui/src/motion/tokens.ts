@@ -1,21 +1,3 @@
-import {
-  YAADE_RATE_HOT,
-  YAADE_RATE_MENU,
-  YAADE_RATE_SLOW_MENU,
-  YAADE_RATE_SCROLL,
-  YAADE_RATE_ENTITY,
-  YAADE_RATE_THEME,
-} from "@yaade/shared"
-
-export {
-  YAADE_RATE_HOT,
-  YAADE_RATE_MENU,
-  YAADE_RATE_SLOW_MENU,
-  YAADE_RATE_SCROLL,
-  YAADE_RATE_ENTITY,
-  YAADE_RATE_THEME,
-}
-
 export const yaadeMotion = {
   duration: {
     hot: 0.12,

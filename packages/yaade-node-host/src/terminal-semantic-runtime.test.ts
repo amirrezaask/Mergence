@@ -5,7 +5,7 @@ import { TerminalHost } from "./terminal.js"
 import { fixtureLaunch } from "./test-support/runtime-harness.js"
 
 test("Ghostty answers DA1 once and exposes alternate-screen snapshots", async () => {
-  const terminal = new TerminalHost({ semanticState: true, flowControl: false })
+  const terminal = new TerminalHost({ semanticState: true })
   try {
     const created = terminal.create(
       pathToFileURL(process.cwd()).href,
@@ -33,7 +33,7 @@ test("Ghostty answers DA1 once and exposes alternate-screen snapshots", async ()
 })
 
 test("current semantic owners continue parsing output beyond the legacy replay cap", async () => {
-  const terminal = new TerminalHost({ semanticState: true, flowControl: false })
+  const terminal = new TerminalHost({ semanticState: true })
   try {
     const created = terminal.create(
       pathToFileURL(process.cwd()).href,
@@ -58,7 +58,7 @@ test("current semantic owners continue parsing output beyond the legacy replay c
 })
 
 test("semantic terminals restore alternate-screen content without parsing in the host RPC layer", async () => {
-  const terminal = new TerminalHost({ semanticState: true, flowControl: false })
+  const terminal = new TerminalHost({ semanticState: true })
   try {
     const created = terminal.create(
       pathToFileURL(process.cwd()).href,

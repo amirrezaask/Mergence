@@ -1,4 +1,4 @@
-import { Context, Effect, Layer, Schema } from "effect"
+import { Effect, Schema } from "effect"
 import {
   ConflictError,
   decodeHostRpcRequest,
@@ -25,22 +25,7 @@ import {
   TerminalNotFound,
   type HostRpcError,
 } from "@yaade/rpc"
-import type { YaadeHostTransport } from "./transport.js"
 import { readHostAuthToken } from "./web-transport.js"
-
-export class HostClient extends Context.Tag("yaade/HostClient")<
-  HostClient,
-  {
-    readonly invoke: (
-      channel: string,
-      ...args: unknown[]
-    ) => Effect.Effect<unknown, HostRpcError>
-    readonly on: (
-      channel: string,
-      listener: (...args: unknown[]) => void,
-    ) => Effect.Effect<() => void>
-  }
->() {}
 
 function mapFetchError(
   message: string,
@@ -102,7 +87,7 @@ export function invokeHostRpc<Name extends HostRouteName>(
   )
 }
 
-/** Internal adapter for legacy callers whose channel is not narrowed yet. */
+/** Dynamic route adapter used by the transport's hot and cold paths. */
 export function invokeHostRpcUnchecked(
   clientId: string,
   channel: string,
@@ -205,40 +190,4 @@ export function invokeHostRpcUnchecked(
         }),
     })
   })
-}
-
-export function HostClientLive(transport: YaadeHostTransport): Layer.Layer<HostClient> {
-  const clientId =
-    typeof crypto !== "undefined" && "randomUUID" in crypto
-      ? crypto.randomUUID()
-      : `client-${Date.now()}`
-  return Layer.succeed(HostClient, {
-    invoke: (channel, ...args) =>
-      // Prefer Schema path; fall back to transport for non-browser tests.
-      typeof fetch === "function"
-        ? invokeHostRpcUnchecked(clientId, channel, args)
-        : Effect.tryPromise({
-            try: () => transport.invoke(channel, ...args),
-            catch: err =>
-              new OperationFailedError({
-                message: err instanceof Error ? err.message : String(err),
-                cause: err,
-              }),
-          }),
-    on: (channel, listener) => Effect.sync(() => transport.on(channel, listener)),
-  })
-}
-
-/** Promise shim used by createYaadeApi during migration. */
-export async function runHostInvoke<T>(
-  layer: Layer.Layer<HostClient>,
-  channel: string,
-  ...args: unknown[]
-): Promise<T> {
-  return Effect.runPromise(
-    Effect.gen(function* () {
-      const client = yield* HostClient
-      return (yield* client.invoke(channel, ...args)) as T
-    }).pipe(Effect.provide(layer)),
-  )
 }

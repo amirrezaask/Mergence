@@ -1,10 +1,10 @@
+import { prefersReducedMotion } from "@yaade/shared"
 import {
   YAADE_RATE_MENU,
   YAADE_LAYOUT_EPSILON,
-  prefersReducedMotion,
   radAnimationRate,
   radLerp,
-} from "@yaade/shared"
+} from "./rad.js"
 
 export type PanelRect = { x: number; y: number; w: number; h: number }
 

@@ -64,6 +64,45 @@ test("writer acquisition is explicit and observer leases do not mutate", () => {
   assert.equal(registry.authorizeMutation(fenceFor(writer, "write-1")).leaseId, writer.leaseId)
 })
 
+test("all authorized browser connections share writer access", () => {
+  const clock = new TestClock()
+  const registry = makeRegistry(clock)
+  registry.registerTerminal("terminal-shared", "epoch-shared")
+  const first = registry.acquire({
+    terminalId: "terminal-shared",
+    terminalEpoch: "epoch-shared",
+    principalId: "local-development",
+    connectionId: "browser-a",
+    mode: "writer",
+  })
+  const second = registry.acquire({
+    terminalId: "terminal-shared",
+    terminalEpoch: "epoch-shared",
+    principalId: "local-development",
+    connectionId: "browser-b",
+    mode: "writer",
+  })
+
+  assert.equal(second.mode, "writer")
+  assert.equal(second.connectionId, "browser-b")
+  assert.equal(second.leaseGeneration, first.leaseGeneration)
+  assert.equal(registry.list("terminal-shared").filter(lease => lease.mode === "writer").length, 2)
+  assert.equal(registry.authorizeMutation(fenceFor(first, "write-a")).connectionId, "browser-a")
+  assert.equal(registry.authorizeMutation(fenceFor(second, "write-b")).connectionId, "browser-b")
+  const third = registry.acquire({
+    terminalId: "terminal-shared",
+    terminalEpoch: "epoch-shared",
+    principalId: "other-device",
+    connectionId: "browser-c",
+    mode: "writer",
+  })
+  assert.equal(third.leaseGeneration, first.leaseGeneration)
+  assert.equal(registry.authorizeMutation(fenceFor(third, "write-c")).connectionId, "browser-c")
+
+  registry.releaseConnection("browser-a")
+  assert.equal(registry.writer("terminal-shared")?.connectionId, "browser-b")
+})
+
 test("takeover fences stale lease generations and connections", () => {
   const clock = new TestClock()
   const registry = makeRegistry(clock)

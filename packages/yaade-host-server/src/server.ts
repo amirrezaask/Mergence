@@ -162,25 +162,6 @@ async function releaseClosedWriter(
   if (socket && socket.readyState !== WebSocket.OPEN) {
     await Promise.resolve(runtime.terminal.releaseConnection(writer.connectionId))
   }
-  const projected = runtime.leases.currentWriter(terminalId)
-  if (projected && projected.clientId !== clientId) {
-    const projectedSocket = CLIENT_SOCKETS.get(projected.clientId)
-    if (projectedSocket && projectedSocket.readyState !== WebSocket.OPEN) {
-      runtime.leases.releaseClient(projected.clientId, { preserveWriter: false })
-    }
-  }
-}
-
-/** Arming live output is a best-effort side effect of a realtime attach. */
-function armLiveViewerBestEffort(
-  runtime: HostRuntime,
-  terminalId: string,
-  clientId: string,
-): void {
-  // Keep a failed best-effort attach from tearing down the event socket.
-  void Promise.resolve()
-    .then(() => runtime.terminal.armLiveViewer(terminalId, clientId))
-    .catch(() => undefined)
 }
 
 function closeDeviceEventSockets(deviceId: string): void {
@@ -1055,10 +1036,7 @@ function handleLegacyEventSocket(
     commandQueue += 1;
     if (cmd.op === "terminal:attach") {
       const id = cmd.args[0];
-      if (typeof id === "string" && id) {
-        attachedTerminals.add(id);
-        armLiveViewerBestEffort(runtime, id, clientId)
-      }
+      if (typeof id === "string" && id) attachedTerminals.add(id);
     }
     const command = commandTail.then(async () => {
       if (checksClosedWriter && typeof cmd.args[0] === "string") {
@@ -1105,8 +1083,7 @@ function handleLegacyEventSocket(
     // their writer on disconnect and promote an existing observer; this is a
     // compatibility policy, not an authorization bypass.
     void Promise.resolve(runtime.terminal.releaseConnection(clientId)).catch(() => undefined)
-    runtime.leases.releaseClient(clientId, { preserveWriter: false });
-    void Promise.resolve(runtime.terminal.resumeForClient(clientId));
+    void Promise.resolve(runtime.terminal.disconnectClient(clientId));
   });
 }
 
@@ -1259,10 +1236,7 @@ function startModernEventSocket(
     commandQueue += 1;
     if (cmd.op === "terminal:attach") {
       const id = cmd.args[0];
-      if (typeof id === "string" && id) {
-        attachedTerminals.add(id);
-        armLiveViewerBestEffort(runtime, id, clientId)
-      }
+      if (typeof id === "string" && id) attachedTerminals.add(id);
     }
     const command = commandTail.then(async () => {
       if (checksClosedWriter && typeof cmd.args[0] === "string") {
@@ -1301,8 +1275,7 @@ function startModernEventSocket(
     DEVICE_EVENT_SOCKETS.delete(ws);
     if (CLIENT_SOCKETS.get(clientId) === ws) CLIENT_SOCKETS.delete(clientId)
     void Promise.resolve(runtime.terminal.releaseConnection(clientId)).catch(() => undefined)
-    runtime.leases.releaseClient(clientId);
-    void Promise.resolve(runtime.terminal.resumeForClient(clientId));
+    void Promise.resolve(runtime.terminal.disconnectClient(clientId));
   });
 }
 

@@ -8,7 +8,6 @@ const OBSERVE_CHANNELS = new Set([
   "mux:getTerminal",
   "terminal:listViewers",
   "terminal:attach",
-  "terminal:ack",
   "terminal:ready",
   "terminal:getCwd",
   "terminal:getForegroundProcess",

@@ -3,17 +3,9 @@ import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 import { describe, it } from "vite-plus/test"
-import { enrichProcessPath, resolveLoginShellPath } from "./shell-env.js"
+import { enrichProcessPath } from "./shell-env.js"
 
 describe("shell-env", () => {
-  it("resolveLoginShellPath returns non-empty PATH on Unix", () => {
-    if (process.platform === "win32") return
-    const pathEnv = resolveLoginShellPath()
-    assert.ok(pathEnv)
-    assert.ok(pathEnv!.length > 0)
-    assert.ok(pathEnv!.includes("/"))
-  })
-
   it("enrichProcessPath prepends missing user bins on partial GUI PATH", () => {
     if (process.platform === "win32") return
     const localBin = path.join(os.homedir(), ".local/bin")

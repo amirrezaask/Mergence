@@ -102,7 +102,6 @@ const TerminalCreateResult = Schema.Struct({
   id: Schema.String,
   title: Schema.NullOr(Schema.String),
   osPid: Schema.optional(Schema.NullOr(Schema.Number)),
-  osStartedAtMs: Schema.optional(Schema.Number),
   processIdentity: Schema.optional(Schema.NullOr(ProcessIdentity)),
   terminalEpoch: Schema.optional(Schema.String),
 })
@@ -140,7 +139,6 @@ const TerminalResizeArgs = Schema.Tuple(
   Schema.Number,
   Schema.optionalElement(RpcTerminalMutationFence),
 )
-const TerminalAckArgs = Schema.Tuple(Schema.String, Schema.Number)
 const SessionSnapshot = Schema.Struct({
   session: AppSession,
   tabs: Schema.Array(SessionTab),
@@ -191,7 +189,6 @@ type HostRouteResultOverrides = {
   "terminal:write": void
   "terminal:writeBinary": void
   "terminal:resize": void
-  "terminal:ack": void
   "terminal:ready": void
   "terminal:dispose": void
   "terminal:attach": HostTerminalAttachResult | null
@@ -234,7 +231,6 @@ export const HOST_ROUTES = {
   "terminal:write": route(TerminalWriteArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:writeBinary": route(TerminalWriteArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:resize": route(TerminalResizeArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
-  "terminal:ack": route(TerminalAckArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:acquireLease": route(
     Schema.Tuple(Schema.String, Schema.optionalElement(Schema.Literal("writer", "observer"))),
     Schema.NullOr(TerminalLease),

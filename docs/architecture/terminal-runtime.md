@@ -28,9 +28,11 @@ semantic state. Output is batched to reduce framing overhead, while small
 interactive chunks flush immediately. Each browser has an isolated bounded
 socket queue; a slow viewer cannot pause the PTY or another viewer.
 
-Input, resize, paste, focus, mouse, and close operations use the in-process
-`TerminalControlRegistry` writer lease. No IPC or serialization occurs between
-the host and PTY owner.
+Input, resize, paste, focus, mouse, and close operations use per-connection
+writer leases in the in-process `TerminalControlRegistry`. Every authenticated
+connection with control scope may mutate the same terminal concurrently;
+explicit observe-only connections remain read-only. No IPC or serialization
+occurs between the host and PTY owner.
 
 ## Design rules
 

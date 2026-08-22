@@ -22,19 +22,15 @@ import {
 } from "@yaade/rpc";
 import type { HostConfig } from "../config.js";
 import type { EventHub } from "../events.js";
-import type { RuntimeDatabase } from "../runtime-database.js";
 import type { MuxSessionStore } from "../mux-store.js";
-import {
-  TerminalProcessDriver,
-  type ProcessDriverDependencies,
-} from "./process-driver.js";
-import { TerminalRegistry } from "./registry.js";
+import type { TerminalHost } from "@yaade/node-host"
+import { TerminalProcessDriver } from "./process-driver.js"
 
 function eventId(prefix: string, id: string): string {
   return `${prefix}:${id}:${randomUUID()}`;
 }
 
-function pendingOutput(_kind: "terminal"): TerminalOutput {
+function pendingOutput(): TerminalOutput {
   return TerminalOutput.make({
     kind: "process",
     terminalInstanceId: "pending",
@@ -52,20 +48,21 @@ function isLiveStatus(status: TerminalStatus): boolean {
 
 export type TerminalServiceDependencies = {
   readonly config: HostConfig
-  readonly db: RuntimeDatabase
-  readonly homeDir: string
   readonly events: EventHub
   readonly muxSessions: MuxSessionStore
-  readonly process: ProcessDriverDependencies
+  readonly terminal: TerminalHost
 }
 
 /** Single host-side mutator for MuxTerminal lifecycle and driver ownership. */
 export class TerminalService {
-  private readonly registry: TerminalRegistry;
-  private readonly operationTails = new Map<MuxTerminalId, Promise<void>>();
+  private readonly process: TerminalProcessDriver
+  private readonly operationTails = new Map<MuxTerminalId, Promise<void>>()
 
   constructor(private readonly deps: TerminalServiceDependencies) {
-    this.registry = new TerminalRegistry([new TerminalProcessDriver(deps.process)]);
+    this.process = new TerminalProcessDriver({
+      config: deps.config,
+      terminal: deps.terminal,
+    })
   }
 
   async create(command: CreateTerminal): Promise<MuxTerminal> {
@@ -81,7 +78,7 @@ export class TerminalService {
       title: command.title?.trim() || defaultTitle(),
       position: existingTerminals.length,
       input: command.input,
-      output: pendingOutput(command.kind),
+      output: pendingOutput(),
     });
     this.emitCreated(terminal);
     this.selectMuxTerminal(terminal.sessionId, terminal.id);
@@ -92,10 +89,9 @@ export class TerminalService {
       });
       this.emitUpdated(starting);
       try {
-        const output = await this.registry
-          .get(starting.kind)
+        const output = await this.process
           .create(starting, starting.input)
-          .pipe(Effect.runPromise);
+          .pipe(Effect.runPromise)
         const current = this.require(terminal.id);
         const failed =
           output.kind === "process" && output.processState === "failed";
@@ -131,10 +127,7 @@ export class TerminalService {
   ): Promise<MuxTerminal> {
     const current = this.require(terminalId);
     this.assertRevision(current, expectedRevision);
-    const output = await this.registry
-      .get(current.kind)
-      .cancel(current)
-      .pipe(Effect.runPromise);
+    const output = await this.process.cancel(current).pipe(Effect.runPromise)
     const cancelled = this.deps.muxSessions.compareAndSetMuxTerminal(
       terminalId,
       expectedRevision,
@@ -170,10 +163,7 @@ export class TerminalService {
       isLiveStatus(current.status) &&
       current.output.kind === "process"
     ) {
-      const output = await this.registry
-        .get(current.kind)
-        .cancel(current)
-        .pipe(Effect.runPromise);
+      const output = await this.process.cancel(current).pipe(Effect.runPromise)
       current = this.deps.muxSessions.compareAndSetMuxTerminal(
         terminalId,
         current.revision,
@@ -237,10 +227,7 @@ export class TerminalService {
     );
     this.emitUpdated(starting);
     try {
-      const output = await this.registry
-        .get(starting.kind)
-        .restart(starting)
-        .pipe(Effect.runPromise);
+      const output = await this.process.restart(starting).pipe(Effect.runPromise)
       const failed =
         output.kind === "process" && output.processState === "failed";
       const result = this.deps.muxSessions.compareAndSetMuxTerminal(
@@ -462,10 +449,6 @@ export class TerminalService {
     }
   }
 
-  reconcile(): void {
-    // PTY exit events are authoritative; browser reconnect performs snapshot reconciliation.
-  }
-
   async close(): Promise<void> {
     await Promise.all(
       [...this.operationTails.values()].map(operation =>
@@ -506,18 +489,6 @@ export class TerminalService {
         actualRevision: current.revision,
         message: `terminal revision conflict: ${current.id}`,
       });
-    }
-  }
-
-  private async stopLiveProcess(current: MuxTerminal): Promise<void> {
-    if (current.output.kind !== "process" || !isLiveStatus(current.status)) return;
-    try {
-      await this.registry
-        .get(current.kind)
-        .cancel(current)
-        .pipe(Effect.runPromise);
-    } catch {
-      /* instance may already be gone */
     }
   }
 

@@ -3,7 +3,6 @@ import {
   yaadeColorsFromTokens,
   shadcnDefaultDark,
   toSrgbColor,
-  type YaadeShadcnTokens,
   type YaadeSemanticTokens,
 } from "./shadcn-tokens.js"
 import { getDocumentElement } from "./dom-root.js"
@@ -76,14 +75,12 @@ export type YaadeTerminalAnsiColors = {
   brightWhite: string
 }
 
-export type { YaadeShadcnTokens, YaadeSemanticTokens }
+export type { YaadeSemanticTokens }
 export {
   shadcnDefaultDark,
   shadcnDefaultLight,
-  yaadeColorsFromShadcn,
   yaadeColorsFromTokens,
   toSrgbColor,
-  applyShadcnTokens,
   applySemanticTokens,
 } from "./shadcn-tokens.js"
 

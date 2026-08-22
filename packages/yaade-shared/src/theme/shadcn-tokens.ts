@@ -45,9 +45,6 @@ export type YaadeSemanticTokens = {
   sidebarRing: string
 }
 
-/** @deprecated Use `YaadeSemanticTokens`. */
-export type YaadeShadcnTokens = YaadeSemanticTokens
-
 export const shadcnDefaultLight: YaadeSemanticTokens = {
   // Silver-blue daylight canvas with milky materials and system-blue focus.
   background: "oklch(0.955 0.012 248)",
@@ -210,9 +207,6 @@ export function applySemanticTokens(tokens: YaadeSemanticTokens): void {
   root.style.setProperty("--sidebar-ring", tokens.sidebarRing)
 }
 
-/** @deprecated Use `applySemanticTokens`. */
-export const applyShadcnTokens = applySemanticTokens
-
 export function yaadeColorsFromTokens(tokens: YaadeSemanticTokens) {
   return {
     bg: toSrgbColor(tokens.background),
@@ -230,12 +224,4 @@ export function yaadeColorsFromTokens(tokens: YaadeSemanticTokens) {
     success: toSrgbColor(tokens.success),
     backdrop: toSrgbColor(tokens.backdrop),
   }
-}
-
-/** @deprecated Use `yaadeColorsFromTokens`. */
-export function yaadeColorsFromShadcn(
-  tokens: YaadeSemanticTokens,
-  _scheme?: "dark" | "light",
-) {
-  return yaadeColorsFromTokens(tokens)
 }

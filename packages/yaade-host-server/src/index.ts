@@ -2,7 +2,6 @@ export { runHostServer } from "./bin.js"
 export { loadConfig } from "./config.js"
 export { startHostServer } from "./server.js"
 export { DeviceAuthService } from "./device-auth.js"
-export { TerminalLeaseService } from "./terminal-leases.js"
 export {
   controlUserService,
   installUserService,

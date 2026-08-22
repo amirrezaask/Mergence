@@ -2,8 +2,8 @@
  * Hot-path terminal WebSocket framing.
  *
  * Outbound `terminal:data` uses a compact binary frame so flood paths avoid
- * JSON.stringify of multi-KiB PTY payloads. Client→host control (write/ack/
- * resize/ready) stays JSON — payloads are tiny.
+ * JSON.stringify of multi-KiB PTY payloads. Client→host control (write/resize/
+ * ready) stays JSON — payloads are tiny.
  */
 
 import { getHostRoute, HOST_ROUTE_CHANNELS, type HostRouteName } from "./routes.js"
@@ -113,7 +113,6 @@ export type TerminalWsHotOp = Extract<
   HostRouteName,
   | "terminal:write"
   | "terminal:writeBinary"
-  | "terminal:ack"
   | "terminal:resize"
   | "terminal:ready"
   | "terminal:attach"

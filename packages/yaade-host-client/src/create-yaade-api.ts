@@ -455,8 +455,6 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         }
         return invokeTerminalHot(transport, "terminal:resize", id, cols, rows);
       },
-      acknowledgeData: (id, charCount) =>
-        invokeTerminalHot(transport, "terminal:ack", id, charCount),
       markReplayReady: (id) =>
         invokeTerminalHot(transport, "terminal:ready", id),
       getCwd: (id) => transport.invoke("terminal:getCwd", id),

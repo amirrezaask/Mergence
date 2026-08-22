@@ -4,9 +4,10 @@ import { pathToFileURL } from "node:url"
 import {
   normalizeTerminalSize,
   TerminalHost,
-  TERMINAL_FLOW_HIGH_WATERMARK_CHARS,
 } from "./terminal.js"
 import { isProcessAlive } from "./process-identity.js"
+
+const LARGE_OUTPUT_BYTES = 100_000
 
 test("normalizes valid PTY sizes to finite integer bounds", () => {
   assert.deepEqual(normalizeTerminalSize(undefined, undefined), { cols: 80, rows: 24 })
@@ -110,11 +111,8 @@ test("coalesces PTY output bursts and flushes all bytes before exit", async () =
     terminal.setEmit((channel, args) => {
       channels.push(channel)
       if (channel === "terminal:data") {
-        const id = String(args[0] ?? "")
         const data = String(args[1] ?? "")
         chunks.push(data)
-        // Ack immediately so flow control does not pause mid-burst in this test.
-        terminal.acknowledgeData(id, data.length)
       }
       if (channel === "terminal:exit") resolve()
     })
@@ -154,10 +152,8 @@ test("flushes small interactive PTY output without waiting on the 4ms batch time
 
   terminal.setEmit((channel, args) => {
     if (channel !== "terminal:data") return
-    const id = String(args[0] ?? "")
     const data = String(args[1] ?? "")
     chunks.push(data)
-    terminal.acknowledgeData(id, data.length)
     if (echoResolve && data.includes("K")) {
       echoResolve()
       echoResolve = null
@@ -196,57 +192,6 @@ test("flushes small interactive PTY output without waiting on the 4ms batch time
   }
 })
 
-test("resumes a paused PTY when its websocket client reconnects", async () => {
-  const terminal = new TerminalHost()
-  let timeout: ReturnType<typeof setTimeout> | undefined
-  let emittedChars = 0
-  let resumed = false
-  const resumedOutput = new Promise<void>((resolve, reject) => {
-    timeout = setTimeout(() => reject(new Error("flow-controlled PTY did not resume")), 10_000)
-    terminal.setEmit((channel, args) => {
-      if (channel !== "terminal:data") return
-      const data = String(args[1] ?? "")
-      emittedChars += data.length
-      if (!resumed && emittedChars > TERMINAL_FLOW_HIGH_WATERMARK_CHARS) {
-        resumed = true
-        // flushPendingOutput pauses after emitting this batch, so resume in the
-        // following microtask just as a lost websocket acknowledgement would.
-        queueMicrotask(() => terminal.resumeForClient("terminal-flow-control-test"))
-      }
-      if (data.includes("flow-control-resumed")) {
-        if (timeout) clearTimeout(timeout)
-        resolve()
-      }
-    })
-  })
-
-  try {
-    const created = terminal.create(
-      pathToFileURL(process.cwd()).href,
-      {
-        command: process.execPath,
-        args: [
-          "-e",
-          // The marker is held behind the high-watermark pause unless the
-          // reconnect path resumes this client's PTY.
-          `process.stdout.write('y'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 10_000})); setTimeout(() => process.stdout.write('flow-control-resumed'), 150)`,
-        ],
-      },
-      "terminal-flow-control-test",
-    )
-    terminal.attach(created.id, "terminal-flow-control-test")
-    terminal.armLiveViewer(created.id, "terminal-flow-control-test")
-    await resumedOutput
-
-    const attached = terminal.attach(created.id, "terminal-flow-control-test")
-    assert.ok(attached)
-    assert.equal(attached.status, "running")
-  } finally {
-    if (timeout) clearTimeout(timeout)
-    terminal.stopAll()
-  }
-})
-
 test("HTTP attach without a live socket does not pause the PTY", async () => {
   const terminal = new TerminalHost()
   let timeout: ReturnType<typeof setTimeout> | undefined
@@ -270,7 +215,7 @@ test("HTTP attach without a live socket does not pause the PTY", async () => {
         command: process.execPath,
         args: [
           "-e",
-          `process.stdout.write('y'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 10_000})); setTimeout(() => process.stdout.write('http-attach-not-paused'), 80)`,
+          `process.stdout.write('y'.repeat(${LARGE_OUTPUT_BYTES + 10_000})); setTimeout(() => process.stdout.write('http-attach-not-paused'), 80)`,
         ],
       },
       "http-attach-flow-test",
@@ -286,11 +231,7 @@ test("HTTP attach without a live socket does not pause the PTY", async () => {
 test("marks capped attach transcripts as best-effort replay", async () => {
   const terminal = new TerminalHost()
   let exited = false
-  terminal.setEmit((channel, args) => {
-    if (channel === "terminal:data") {
-      const id = String(args[0] ?? "")
-      terminal.acknowledgeData(id, String(args[1] ?? "").length)
-    }
+  terminal.setEmit((channel, _args) => {
     if (channel === "terminal:exit") exited = true
   })
 
@@ -363,7 +304,7 @@ test("reattach returns only terminal output newer than the client sequence", asy
     assert.doesNotMatch(resumed.outputChunks.join(""), /first/)
     assert.match(resumed.outputChunks.join(""), /second/)
 
-    terminal.resumeForClient("terminal-delta-replay-test")
+    terminal.disconnectClient("terminal-delta-replay-test")
     const reconnect = terminal.attach(created.id, "terminal-delta-replay-test")
     assert.ok(reconnect)
     assert.equal(reconnect.replayNeedsQueryResponses, true)
@@ -539,7 +480,6 @@ test("answers a Primary Device Attributes query before any renderer attaches", a
       if (channel !== "terminal:data") return
       const data = String(args[1] ?? "")
       chunks.push(data)
-      terminal.acknowledgeData(String(args[0] ?? ""), data.length)
       if (chunks.join("").includes("DA1-HOST-OK")) resolve()
     })
   })
@@ -694,17 +634,15 @@ test("a slow viewer never pauses the PTY", async () => {
         command: process.execPath,
         args: [
           "-e",
-          `process.stdin.once('data',()=>{process.stdout.write('x'.repeat(${TERMINAL_FLOW_HIGH_WATERMARK_CHARS + 8_000})); setTimeout(()=>process.stdout.write('client-b-must-not-pause'),80)})`,
+          `process.stdin.once('data',()=>{process.stdout.write('x'.repeat(${LARGE_OUTPUT_BYTES + 8_000})); setTimeout(()=>process.stdout.write('client-b-must-not-pause'),80)})`,
         ],
       },
       "creator",
     )
     terminal.attach(created.id, "client-a")
-    terminal.armLiveViewer(created.id, "client-a")
     terminal.write(created.id, "go\n")
     await new Promise(resolve => setTimeout(resolve, 150))
     terminal.attach(created.id, "client-b")
-    terminal.armLiveViewer(created.id, "client-b")
     await waitUntil(() => sawMarker, 5_000, "slow viewer paused the PTY")
   } finally {
     terminal.stopAll()

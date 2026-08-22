@@ -158,6 +158,14 @@ test("two websocket clients receive the same live PTY and survive one disconnect
       inboxB.terminalData(terminal.id, "MULTI_CLIENT_ONE"),
     ])
 
+    // The second attached client is writable while the first is still live.
+    sendCommand(clientB, "write-two-live", "terminal:write", [terminal.id, "two\n"])
+    await Promise.all([
+      inboxB.result("write-two-live"),
+      inboxA.terminalData(terminal.id, "MULTI_CLIENT_TWO"),
+      inboxB.terminalData(terminal.id, "MULTI_CLIENT_TWO"),
+    ])
+
     await new Promise<void>((resolve, reject) => {
       clientA?.once("close", () => resolve())
       clientA?.once("error", reject)

@@ -1,13 +1,9 @@
-import { execFileSync, execSync } from "node:child_process"
+import { execFileSync } from "node:child_process"
 import fs from "node:fs"
 import os from "node:os"
 import path from "node:path"
 
 const SYSTEM_DIRS = new Set(["/usr/bin", "/bin", "/usr/sbin", "/sbin"])
-
-function shellBasename(shell: string): string {
-  return path.basename(shell)
-}
 
 function loginShellPath(): string | null {
   if (process.platform === "win32") return null
@@ -34,30 +30,6 @@ function isGuiStrippedPath(value: string): boolean {
   const dirs = value.split(":").filter(Boolean)
   if (dirs.length === 0) return true
   return dirs.every(d => SYSTEM_DIRS.has(d))
-}
-
-/** @deprecated Prefer {@link enrichProcessPath} — kept for callers that only need PATH. */
-export function resolveLoginShellPath(): string | undefined {
-  if (process.platform === "win32") return undefined
-  const shell = process.env.SHELL || "/bin/bash"
-  const base = shellBasename(shell)
-  try {
-    const cmd =
-      base === "fish"
-        ? `${shell} -l -c 'printf "%s" $PATH'`
-        : `${shell} -l -ilc 'printf "%s" "$PATH"'`
-    const stdout = execSync(cmd, {
-      encoding: "utf8",
-      timeout: 5000,
-      env: process.env,
-      stdio: ["ignore", "pipe", "pipe"],
-    })
-    const trimmed = stdout.trim()
-    return trimmed || undefined
-  } catch (err) {
-    console.warn("[yaade] failed to resolve login shell PATH:", err)
-    return undefined
-  }
 }
 
 const USER_BIN_RELS = [".local/bin", ".cargo/bin", "bin", ".opencode/bin"] as const
