@@ -1,8 +1,54 @@
 import assert from "node:assert/strict"
 import { pathToFileURL } from "node:url"
 import { test } from "vite-plus/test"
+import { applyTerminalSemanticPatch, type TerminalSemanticPatch, type TerminalSemanticSnapshot } from "@yaade/rpc"
 import { TerminalHost } from "./terminal.js"
+import { TerminalSemanticRuntime } from "./terminal-semantic-runtime.js"
 import { fixtureLaunch } from "./test-support/runtime-harness.js"
+
+test("semantic realtime updates send an initial snapshot followed by row patches", async () => {
+  const updates: Array<TerminalSemanticSnapshot | TerminalSemanticPatch> = []
+  let runtime: TerminalSemanticRuntime | undefined
+  runtime = TerminalSemanticRuntime.start({
+    cols: 40,
+    rows: 8,
+    terminalEpoch: "epoch-1",
+    writeToPty: () => undefined,
+    onRevision: () => {
+      const update = runtime?.takeUpdate()
+      if (update) updates.push(update)
+    },
+  })
+  try {
+    await runtime.ready()
+    await new Promise(resolve => setTimeout(resolve, 30))
+    runtime.feedOutput("first line")
+    await new Promise(resolve => setTimeout(resolve, 30))
+    runtime.feedOutput(" second")
+    await new Promise(resolve => setTimeout(resolve, 30))
+
+    const initial = updates[0]
+    assert.ok(initial && !("baseRevision" in initial))
+    let applied: TerminalSemanticSnapshot = initial
+    const patches = updates.slice(1)
+    assert.ok(patches.length >= 2)
+    for (const update of patches) {
+      assert.ok("baseRevision" in update)
+      assert.equal(update.terminalEpoch, "epoch-1")
+      assert.equal(update.baseRevision, applied.revision)
+      assert.ok(update.changedRows.length < initial.screenRows.length)
+      const next = applyTerminalSemanticPatch(applied, "epoch-1", update)
+      assert.ok(next)
+      applied = next
+    }
+    assert.match(
+      applied.screenRows.map(row => row.cells.map(value => value.text).join("")).join("\n"),
+      /first line second/,
+    )
+  } finally {
+    runtime.dispose()
+  }
+})
 
 test("Ghostty answers DA1 once and exposes alternate-screen snapshots", async () => {
   const terminal = new TerminalHost({ semanticState: true })

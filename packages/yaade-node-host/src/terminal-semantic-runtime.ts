@@ -12,6 +12,7 @@ import type {
   TerminalColor,
   TerminalHyperlink,
   TerminalModes,
+  TerminalSemanticPatch,
   TerminalSemanticSnapshot,
 } from "@yaade/rpc"
 import { PtyWriteQueue } from "./pty-write-queue.js"
@@ -60,6 +61,7 @@ export type SemanticHistoryPage = {
 export type TerminalSemanticRuntimeOptions = {
   readonly cols: number
   readonly rows: number
+  readonly terminalEpoch: string
   readonly writeToPty: (data: string) => void
   readonly onRevision: (revision: number) => void
 }
@@ -81,6 +83,7 @@ export class TerminalSemanticRuntime {
   private notifyTimer: ReturnType<typeof setTimeout> | null = null
   private notifiedRevision = 0
   private disposed = false
+  private lastUpdateSnapshot: TerminalSemanticSnapshot | null = null
   private cols: number
   private rows: number
 
@@ -139,7 +142,50 @@ export class TerminalSemanticRuntime {
 
   snapshot(): TerminalSemanticSnapshot | null {
     if (!this.core) return null
-    return this.fromGhostty(this.core.snapshot(true))
+    // Attaches and RPC reads must not consume the dirty-row set used by the
+    // realtime patch stream.
+    return this.fromGhostty(this.core.snapshot(false))
+  }
+
+  takeUpdate(): TerminalSemanticSnapshot | TerminalSemanticPatch | null {
+    if (!this.core) return null
+    const ghostty = this.core.snapshot(true)
+    const next = this.fromGhostty(ghostty)
+    const previous = this.lastUpdateSnapshot
+    this.lastUpdateSnapshot = next
+    if (!previous) return next
+
+    const fullReset =
+      previous.cols !== next.cols ||
+      previous.rows !== next.rows ||
+      previous.activeScreen !== next.activeScreen
+    const changedRows = fullReset
+      ? next.screenRows
+      : [...ghostty.dirtyRows].flatMap(index => {
+          const row = next.screenRows[index]
+          return row ? [row] : []
+        })
+    const deletedRowIds = previous.screenRows
+      .slice(next.screenRows.length)
+      .map(row => row.rowId)
+    return {
+      schemaVersion: 1,
+      terminalEpoch: this.options.terminalEpoch,
+      baseRevision: previous.revision,
+      revision: next.revision,
+      changedRows,
+      deletedRowIds,
+      cursor: next.cursor,
+      cols: next.cols,
+      rows: next.rows,
+      activeScreen: next.activeScreen,
+      scrollback: next.scrollback,
+      modes: next.modes,
+      title: next.title,
+      palette: next.palette,
+      hyperlinks: next.hyperlinks,
+      ...(fullReset ? { fullReset: true } : {}),
+    }
   }
 
   historyPage(offset: number, limit: number): SemanticHistoryPage {
@@ -154,7 +200,7 @@ export class TerminalSemanticRuntime {
     const previous = bar?.offset ?? 0
     const delta = pageOffset - previous
     if (delta !== 0) core.scroll(delta)
-    const snap = core.snapshot(true)
+    const snap = core.snapshot(false)
     if (delta !== 0) core.scroll(-delta)
     const rows = snap.rowData.slice(0, pageLimit).map((row, index) => ({
       rowId: `history-${pageOffset + index}`,

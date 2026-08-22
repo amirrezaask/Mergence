@@ -34,6 +34,18 @@ test("legacy raw chunks stay ordered and are never replaced", () => {
   assert.equal(mailbox.consumeResyncRequired().length, 0)
 })
 
+test("default legacy budget tolerates output bursts above the old 8 MiB ceiling", () => {
+  const mailbox = new ClientOutboundMailbox()
+  assert.equal(
+    mailbox.enqueueLegacyOutput("a", frame(9 * 1024 * 1024, "a")).accepted,
+    true,
+  )
+  assert.equal(
+    mailbox.enqueueLegacyOutput("a", frame(24 * 1024 * 1024, "a")).accepted,
+    false,
+  )
+})
+
 test("legacy overflow rejects instead of replacing earlier chunks", () => {
   const mailbox = new ClientOutboundMailbox({
     legacyMaxFrames: 2,

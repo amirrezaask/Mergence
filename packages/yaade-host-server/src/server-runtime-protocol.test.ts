@@ -29,6 +29,7 @@ test("modern realtime connections receive identity, snapshot, and post-snapshot 
       socket?.once("open", () => resolve())
       socket?.once("error", reject)
     })
+    assert.match(socket.extensions, /permessage-deflate/)
     const firstFrames = await new Promise<unknown[]>((resolve, reject) => {
       const deadline = setTimeout(() => reject(new Error("snapshot timeout")), 5_000)
       const poll = () => {

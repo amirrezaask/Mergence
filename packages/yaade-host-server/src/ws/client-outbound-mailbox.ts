@@ -33,8 +33,11 @@ type QueuedFrame = {
 const DEFAULT_LIMITS: MailboxLimits = {
   reliableMaxFrames: 256,
   reliableMaxBytes: 2 * 1024 * 1024,
-  legacyMaxFrames: 4_096,
-  legacyMaxBytes: 8 * 1024 * 1024,
+  legacyMaxFrames: 8_192,
+  // PTY producers can briefly outrun a browser during large command output.
+  // This is a per-client transit buffer, not terminal history; keep it bounded
+  // while allowing enough headroom for ordinary scheduling/GC stalls.
+  legacyMaxBytes: 32 * 1024 * 1024,
   semanticMaxTerminals: 64,
   // Keep this in sync with the largest frame the v3 encoder can produce.
   // The codec limit excludes its six-byte header.

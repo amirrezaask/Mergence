@@ -16,6 +16,7 @@ import {
   PathOutsideRootsError,
   encodeTerminalDataFrame,
   encodeTerminalStreamV3,
+  TerminalSemanticPatch,
   TerminalSemanticSnapshot,
   hostErrorHttpStatus,
   getHostRoute,
@@ -82,7 +83,14 @@ function socketWriter(ws: WebSocket): ClientSocketWriter {
       return ws.bufferedAmount;
     },
     send(data, cb) {
-      ws.send(typeof data === "string" ? data : Buffer.from(data), cb);
+      // Compress low-rate JSON control frames, but never binary terminal
+      // traffic. Deflating rapid semantic/output frames serializes them behind
+      // zlib and can make a healthy browser look like a slow consumer.
+      ws.send(
+        typeof data === "string" ? data : Buffer.from(data),
+        { compress: typeof data === "string" },
+        cb,
+      );
     },
     close(code, reason) {
       ws.close(code, reason);
@@ -256,6 +264,13 @@ export async function startHostServer(
   const wss = new WebSocketServer({
     noServer: true,
     maxPayload: MAX_WS_PAYLOAD_BYTES,
+    // Compression is negotiated for JSON control traffic only. Binary terminal
+    // frames opt out per send so zlib cannot block the socket writer hot path.
+    perMessageDeflate: {
+      threshold: 1024,
+      serverNoContextTakeover: true,
+      clientNoContextTakeover: true,
+    },
   });
 
   server.on("upgrade", (req, socket, head) => {
@@ -1324,28 +1339,36 @@ function sendEventSocketMessage(
     const semanticId = String(wireEvent.args[0] ?? "")
     const revision = typeof wireEvent.args[1] === "number" ? wireEvent.args[1] : 0
     const terminalEpoch = String(wireEvent.args[2] ?? "")
-    const snapshot = wireEvent.args[3]
-    if (
-      semanticId &&
-      snapshot &&
-      typeof snapshot === "object" &&
-      !Array.isArray(snapshot) &&
-      "schemaVersion" in snapshot
-    ) {
+    const update = wireEvent.args[3]
+    if (semanticId && update && typeof update === "object" && !Array.isArray(update)) {
       try {
-        const decodedSnapshot = Schema.decodeUnknownSync(TerminalSemanticSnapshot)(snapshot)
         const eventOwnerEpoch = wireEvent.args[4]
         const ownerEpoch =
           typeof eventOwnerEpoch === "string" && eventOwnerEpoch.length > 0
             ? eventOwnerEpoch
             : _runtime?.identity.serverEpoch ?? "local"
+        if ("baseRevision" in update) {
+          const patch = Schema.decodeUnknownSync(TerminalSemanticPatch)(update)
+          const frame = encodeTerminalStreamV3({
+            type: "terminal.patch",
+            terminalId: semanticId,
+            ownerEpoch,
+            terminalEpoch,
+            baseRevision: patch.baseRevision,
+            revision,
+            patch,
+          })
+          writer.enqueueSemanticRender(semanticId, frame)
+          return
+        }
+        const snapshot = Schema.decodeUnknownSync(TerminalSemanticSnapshot)(update)
         const frame = encodeTerminalStreamV3({
           type: "terminal.snapshot",
           terminalId: semanticId,
           ownerEpoch,
           terminalEpoch,
           revision,
-          snapshot: decodedSnapshot,
+          snapshot,
         })
         writer.enqueueSemanticRender(semanticId, frame)
         return

@@ -567,18 +567,19 @@ export class TerminalHost {
       entry.semantic = TerminalSemanticRuntime.start({
         cols: initialSize.cols,
         rows: initialSize.rows,
+        terminalEpoch,
         writeToPty: data => {
           if (entry.disposed || !entry.proc) return
           entry.proc.write(data)
         },
         onRevision: revision => {
           entry.stateRevision = revision
-          const snapshot = entry.semantic?.snapshot() ?? null
+          const update = entry.semantic?.takeUpdate() ?? null
           this.emit("terminal:semantic", [
             entry.id,
             revision,
             entry.terminalEpoch,
-            snapshot,
+            update,
           ])
         },
       })
