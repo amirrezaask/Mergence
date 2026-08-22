@@ -61,6 +61,21 @@ test("runs an interactive shell and accepts a command", async () => {
   }
 })
 
+test("does not exit a semantic shell during PTY initialization", async () => {
+  const terminal = new TerminalHost({ semanticState: true })
+  try {
+    const created = terminal.create(
+      pathToFileURL(process.cwd()).href,
+      null,
+      "semantic-shell-startup-test",
+    )
+    await new Promise(resolve => setTimeout(resolve, 250))
+    assert.equal(terminal.inspect(created.id)?.status, "running")
+  } finally {
+    terminal.stopAll()
+  }
+})
+
 test("runs a command directly inside a terminal", async () => {
   const terminal = new TerminalHost()
   const chunks: string[] = []

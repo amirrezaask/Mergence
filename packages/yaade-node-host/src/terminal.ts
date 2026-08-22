@@ -530,8 +530,10 @@ export class TerminalHost {
     }
 
     const osPid = typeof proc.pid === "number" && proc.pid > 0 ? proc.pid : null
-    const processIdentity =
-      osPid === null || bunDarwin ? null : captureProcessIdentity(osPid)
+    // Do not inspect the child process before its PTY callbacks are installed.
+    // On Bun/macOS, the subprocess used by `ps` can close node-pty's master
+    // descriptor and make an otherwise healthy shell exit with code 0.
+    const processIdentity: ProcessIdentity | null = null
     const osStartedAtMs = Date.now()
     const terminalEpoch = randomUUID()
     const entry: TerminalEntry = {
@@ -670,12 +672,19 @@ export class TerminalHost {
       this.scheduleDisposeAfterExit(entry)
     })
 
+    // Capture the identity only after the PTY is fully wired. This preserves
+    // safe process-group cleanup on Node without putting a `ps` subprocess in
+    // the fragile spawn window. Bun/macOS remains intentionally identity-free.
+    if (osPid !== null && !bunDarwin && !entry.disposed && entry.status === "running") {
+      entry.processIdentity = captureProcessIdentity(osPid)
+    }
+
     const result = {
       id,
       title,
       osPid,
       osStartedAtMs,
-      processIdentity,
+      processIdentity: entry.processIdentity,
       terminalEpoch,
       ...(this.semanticState ? { protocolVersion: 2 } : {}),
     }

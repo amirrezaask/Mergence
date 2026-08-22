@@ -4,8 +4,8 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "bun --hot src/index.ts --port 4747",
-    "start": "bun src/index.ts",
+    "dev": "node ../../scripts/run-ts.mjs src/index.ts --port 4747",
+    "start": "node ../../scripts/run-ts.mjs src/index.ts",
     "build": "node ../../scripts/build-server.mjs",
     "typecheck": "tsc --noEmit",
     "test": "vp -C ../../packages/yaade-host-server test"

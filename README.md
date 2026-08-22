@@ -38,7 +38,7 @@ wiring and packaging.
 - **Server** — `apps/server`, the HTTP/WebSocket host and PTY runtime.
 - **Web** — `apps/web`, the Vite+ browser application.
 
-Start the web and server development processes together with hot reload:
+Start the web and server development processes together; the web process has hot reload:
 
 ```bash
 vp run dev             # web + server
@@ -78,8 +78,8 @@ vp run build          # both artifacts, in order
 ## Development
 
 Vite+ (`vp`) is the frontend/tooling runner. Use Node.js 22.18+ and install the CLI
-once with `curl -fsSL https://vite.plus | bash`. Install Bun for the server
-runtime. Vite+ provides dependency installation, Vite/Rolldown builds, Vitest
+once with `curl -fsSL https://vite.plus | bash`. The server development runtime
+also runs on Node.js. Vite+ provides dependency installation, Vite/Rolldown builds, Vitest
 tests, Oxlint checks, and workspace task execution.
 
 ```bash
@@ -126,6 +126,6 @@ challenge; devices can be listed and revoked through `/api/v1/security/devices`.
 
 ## Deployment warning
 
-The host API is unauthenticated on loopback by default and requires a bearer token for non-loopback binds. Do not expose an unauthenticated host to an untrusted network. To expose the web development server on a trusted LAN, run `vp run dev:web -- --host 0.0.0.0` and configure the separately running server with its own host/token options. The web uses Vite+; the server development task runs directly on Bun with hot reload.
+The host API is unauthenticated on loopback by default and requires a bearer token for non-loopback binds. Do not expose an unauthenticated host to an untrusted network. To expose the web development server on a trusted LAN, run `vp run dev:web -- --host 0.0.0.0` and configure the separately running server with its own host/token options. Both applications use Node-compatible runtimes; the server development task uses `scripts/run-ts.mjs`.
 
 See [AGENTS.md](AGENTS.md) for architecture and contribution rules.
