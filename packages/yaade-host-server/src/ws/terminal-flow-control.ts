@@ -16,6 +16,7 @@ type TerminalFlowState = {
 }
 
 const DEFAULT_MAX_UNACKNOWLEDGED_BYTES = 8 * 1024 * 1024
+const DEFAULT_MAX_SOCKET_UNACKNOWLEDGED_BYTES = 24 * 1024 * 1024
 
 /**
  * Per-socket credit accounting for raw PTY output. A lagging terminal is
@@ -24,16 +25,21 @@ const DEFAULT_MAX_UNACKNOWLEDGED_BYTES = 8 * 1024 * 1024
  */
 export class TerminalFlowControl {
   private readonly states = new Map<string, TerminalFlowState>()
+  private totalOutstandingBytes = 0
 
   constructor(
     private readonly maxUnacknowledgedBytes = DEFAULT_MAX_UNACKNOWLEDGED_BYTES,
+    private readonly maxSocketUnacknowledgedBytes =
+      DEFAULT_MAX_SOCKET_UNACKNOWLEDGED_BYTES,
   ) {}
 
   reserve(terminalId: string, sequence: number, bytes: number): TerminalFlowDecision {
     const state = this.stateFor(terminalId)
     if (
       state.resyncRequired ||
-      state.outstandingBytes + bytes > this.maxUnacknowledgedBytes
+      state.outstandingBytes + bytes > this.maxUnacknowledgedBytes ||
+      this.totalOutstandingBytes + bytes >
+        this.maxSocketUnacknowledgedBytes
     ) {
       state.resyncRequired = true
       return {
@@ -43,6 +49,7 @@ export class TerminalFlowControl {
     }
     state.sent.push({ sequence, bytes })
     state.outstandingBytes += bytes
+    this.totalOutstandingBytes += bytes
     return { accepted: true }
   }
 
@@ -54,6 +61,10 @@ export class TerminalFlowControl {
       const frame = state.sent[state.sentHead]
       if (!frame || frame.sequence > sequence) break
       state.outstandingBytes = Math.max(0, state.outstandingBytes - frame.bytes)
+      this.totalOutstandingBytes = Math.max(
+        0,
+        this.totalOutstandingBytes - frame.bytes,
+      )
       state.sentHead += 1
     }
     if (state.sentHead > 256 && state.sentHead * 2 > state.sent.length) {
@@ -63,6 +74,13 @@ export class TerminalFlowControl {
   }
 
   reset(terminalId: string, acknowledgedSequence = 0): void {
+    const previous = this.states.get(terminalId)
+    if (previous) {
+      this.totalOutstandingBytes = Math.max(
+        0,
+        this.totalOutstandingBytes - previous.outstandingBytes,
+      )
+    }
     this.states.set(terminalId, {
       acknowledgedSequence,
       outstandingBytes: 0,
@@ -73,13 +91,18 @@ export class TerminalFlowControl {
   }
 
   delete(terminalId: string): void {
+    const previous = this.states.get(terminalId)
+    if (previous) {
+      this.totalOutstandingBytes = Math.max(
+        0,
+        this.totalOutstandingBytes - previous.outstandingBytes,
+      )
+    }
     this.states.delete(terminalId)
   }
 
   get outstandingBytes(): number {
-    let total = 0
-    for (const state of this.states.values()) total += state.outstandingBytes
-    return total
+    return this.totalOutstandingBytes
   }
 
   private stateFor(terminalId: string): TerminalFlowState {

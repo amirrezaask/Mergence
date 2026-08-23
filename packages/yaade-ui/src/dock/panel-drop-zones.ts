@@ -10,22 +10,22 @@ export type DropSite = {
   preview: SiteRect // future-split highlight rect
 }
 
-function clamp(v: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, v))
-}
-
 /**
- * Compute 5 RadDebugger-style drop-site targets centered on the panel.
- * Returns [] for very small panels (min dim < 6 * fontSize).
+ * Compute five compact dock targets centered on the panel. The whole compass
+ * must fit before it is shown; cramped panes keep their terminal usable.
  */
 export function computeDropSites(w: number, h: number, fontSize: number): DropSite[] {
   if (w <= 0 || h <= 0 || fontSize <= 0) return []
   const minDim = Math.min(w, h)
-  if (minDim < 6 * fontSize) return []
+  const minSize = 3 * fontSize
+  const gapRatio = 0.2
+  const compassUnits = 3 + gapRatio * 2
+  const maxSize = (minDim - fontSize * 2) / compassUnits
+  if (maxSize < minSize) return []
 
-  const size = clamp(Math.ceil(7 * fontSize), Math.ceil(3 * fontSize), minDim / 4)
+  const size = Math.min(Math.ceil(3.4 * fontSize), maxSize)
   const half = size / 2
-  const gap = Math.ceil(size * 0.25)
+  const gap = Math.ceil(size * gapRatio)
   const cx = w / 2
   const cy = h / 2
 

@@ -15,6 +15,7 @@ import {
   ArrowUp,
   ChevronRight,
   Clipboard,
+  MoreHorizontal,
   Plus,
   Terminal as TerminalIcon,
   X,
@@ -288,25 +289,24 @@ export function MobileTerminalView(props: MobileTerminalViewProps) {
         aria-hidden={selectedVisibleTerminal ? undefined : true}
         data-yaade-mobile-terminal-surfaces=""
       >
-        {mountedTerminalIds.map(id => {
-          const terminal = visibleTerminals.get(id)
-          if (!terminal || terminal.kind !== "terminal") return null
-          const active = terminal.id === selectedVisibleTerminal?.id
-          return (
-            <div
-              key={terminal.id}
-              className={cn(
-                "absolute inset-0 min-h-0 overflow-hidden",
-                active ? "visible" : "pointer-events-none invisible",
-              )}
-              aria-hidden={active ? undefined : true}
-              data-yaade-mobile-retained-terminal={terminal.id}
-              data-active={active ? "true" : undefined}
-            >
-              {props.renderTerminal(terminal, active, active)}
-            </div>
-          )
-        })}
+        {mountedTerminalIds
+          .filter(id => id !== selectedVisibleTerminal?.id)
+          .map(id => {
+            const terminal = visibleTerminals.get(id)
+            if (!terminal || terminal.kind !== "terminal") return null
+            return (
+              <div
+                key={terminal.id}
+                className="pointer-events-none invisible absolute inset-0 min-h-0 overflow-hidden"
+                aria-hidden
+                inert
+                data-yaade-mobile-retained-terminal={terminal.id}
+                data-active="false"
+              >
+                {props.renderTerminal(terminal, false, false)}
+              </div>
+            )
+          })}
       </div>
 
       {selectedVisibleTerminal ? <MobileTerminalAccessory terminal={selectedVisibleTerminal} /> : null}
@@ -464,11 +464,24 @@ function MobileSessionGroup(props: {
             {terminalCountLabel(props.group.terminals.length)}
           </p>
         </div>
-        <MobileNewTerminalMenu
-          sessionId={props.group.session.id}
-          creating={props.creating}
-          onCreateTerminal={props.onCreateTerminal}
-        />
+        <div className="flex shrink-0 items-center gap-1">
+          <MobileNewTerminalMenu
+            sessionId={props.group.session.id}
+            creating={props.creating}
+            onCreateTerminal={props.onCreateTerminal}
+          />
+          <Button
+            type="button"
+            size="icon-lg"
+            variant="ghost"
+            aria-label={`Session actions for ${props.group.session.title}`}
+            title={`Session actions for ${props.group.session.title}`}
+            data-yaade-mobile-session-actions={props.group.session.id}
+            onClick={props.onOpenActions}
+          >
+            <MoreHorizontal />
+          </Button>
+        </div>
       </div>
       <div className="flex flex-col gap-1.5" role="group">
         {props.group.terminals.length > 0 ? (
@@ -487,7 +500,7 @@ function MobileSessionGroup(props: {
             className="flex min-h-12 items-center justify-between gap-2 rounded-[var(--yaade-control-radius)] border border-dashed border-border/70 px-3"
             data-yaade-mobile-session-empty=""
           >
-            <span className="text-xs text-muted-foreground">No mobile terminals</span>
+            <span className="text-xs text-muted-foreground">No terminals yet</span>
             <MobileNewTerminalMenu
               sessionId={props.group.session.id}
               creating={props.creating}
@@ -563,16 +576,17 @@ function MobileTerminalRow(props: {
       exit={{ opacity: 0, transform: "translateY(-5px)" }}
       transition={yaadeMotion.layoutTransition}
     >
-      <button
-        type="button"
-        className="group flex min-h-14 w-full items-center gap-2.5 rounded-[var(--yaade-control-radius)] border border-border/70 bg-card/55 px-2.5 py-2 text-left outline-none transition-[background-color,border-color,box-shadow,transform] duration-[var(--yaade-motion-hot)] active:scale-[var(--yaade-press-scale)] focus-visible:ring-2 focus-visible:ring-ring/60"
-        aria-label={`Open ${label}: ${title}`}
-        data-yaade-mobile-terminal={props.terminal.id}
-        data-terminal-kind={props.terminal.kind}
-        onClick={props.onSelect}
-      >
+      <GlassSurface material="chrome" interactive asChild>
+        <button
+          type="button"
+          className="group flex min-h-14 w-full items-center gap-2.5 px-2.5 py-2 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+          aria-label={`Open ${label}: ${title}. Status: ${status}`}
+          data-yaade-mobile-terminal={props.terminal.id}
+          data-terminal-kind={props.terminal.kind}
+          onClick={props.onSelect}
+        >
         <span
-          className="grid size-9 shrink-0 place-items-center rounded-[var(--yaade-control-radius)] border border-border/70 bg-secondary/80 text-muted-foreground"
+          className="grid size-9 shrink-0 place-items-center rounded-[var(--yaade-control-radius)] border border-border bg-secondary text-muted-foreground"
           aria-hidden
         >
           <Icon className="size-4" />
@@ -581,15 +595,18 @@ function MobileTerminalRow(props: {
           <span className="block truncate text-sm font-medium">{title}</span>
           <span className="mt-0.5 flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground">
             <span className="shrink-0">{label}</span>
+            <span aria-hidden>·</span>
+            <span className="truncate">{status}</span>
           </span>
         </span>
         <span
           className={cn("size-2 shrink-0 rounded-full", statusClass(props.terminal))}
-          aria-label={status}
+          aria-hidden
           title={status}
         />
         <ChevronRight className="size-4 shrink-0 text-muted-foreground/60" />
-      </button>
+        </button>
+      </GlassSurface>
     </MotionDiv>
   )
 }
@@ -626,9 +643,12 @@ function MobileTerminalDetail(props: {
             <ArrowLeft />
           </Button>
           <p className="min-w-0 flex-1 truncate text-sm font-medium">{title}</p>
+          <span className="sr-only" role="status">
+            {status}
+          </span>
           <span
             className={cn("size-2 shrink-0 rounded-full", statusClass(props.terminal))}
-            aria-label={status}
+            aria-hidden
             title={status}
           />
           <Button

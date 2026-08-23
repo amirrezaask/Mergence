@@ -66,6 +66,40 @@ test("device credential rotation keeps metadata and invalidates the old token", 
   }
 })
 
+test("unauthenticated challenge and failure state stays bounded", () => {
+  const owner = new DatabaseOwner(":memory:")
+  try {
+    const auth = new DeviceAuthService(owner.session)
+    const { publicKey } = generateKeyPairSync("ed25519")
+    const pairing = auth.createPairingCode()
+    const device = auth.pair({
+      code: pairing.code,
+      name: "Load test",
+      publicKey: publicKey.export({ format: "jwk" }),
+      algorithm: "Ed25519",
+    })
+    for (let index = 0; index < 1_100; index += 1) {
+      auth.challenge(device.id)
+    }
+    for (let index = 0; index < 5_000; index += 1) {
+      assert.throws(() =>
+        auth.authenticate({
+          deviceId: `invalid-${index}`,
+          nonce: "nonce",
+          signature: "signature",
+        }),
+      )
+    }
+    assert.deepEqual(auth.ephemeralCounts(), {
+      challenges: 1_024,
+      sessions: 0,
+      failureKeys: 4_096,
+    })
+  } finally {
+    owner.close()
+  }
+})
+
 test("repeated failed authentications are rate limited", () => {
   const owner = new DatabaseOwner(":memory:")
   try {

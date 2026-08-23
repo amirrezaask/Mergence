@@ -23,10 +23,15 @@ recovery.
 
 ## Data path
 
-PTY output is consumed continuously into bounded in-memory replay and Ghostty
-semantic state. Output is batched to reduce framing overhead, while small
-interactive chunks flush immediately. Each browser has an isolated bounded
-socket queue; a slow viewer cannot pause the PTY or another viewer.
+PTY output is consumed continuously into bounded in-memory replay, paged
+block-compressed history, and Ghostty semantic state. Output is batched to
+reduce framing overhead, while small interactive chunks flush immediately. A
+fresh browser renderer attaches behind a replay barrier: history pages are
+parsed in order, concurrent live bytes remain bounded, and only bytes newer
+than the replay cursor are released afterward. Each browser has an isolated
+bounded socket queue; a slow viewer cannot pause the PTY or another viewer.
+Semantic snapshots use a replaceable binary lane rather than the reliable
+control mailbox.
 
 Input, resize, paste, focus, mouse, and close operations use per-connection
 writer leases in the in-process `TerminalControlRegistry`. Every authenticated
@@ -38,9 +43,10 @@ occurs between the host and PTY owner.
 
 1. Keep PTY ownership in `TerminalHost` and lifecycle in the host Effect scope.
 2. Never block PTY output on a browser or WebSocket.
-3. Keep replay and queues bounded.
-4. Prefer direct calls over process boundaries, adapters, and recovery state.
-5. Test a real interactive shell and a directly launched command through
+3. Keep replay and queues bounded; a detected gap must trigger resynchronization.
+4. Keep reliable control, ordered raw output, and replaceable semantic state in separate lanes.
+5. Prefer direct calls over process boundaries, adapters, and recovery state.
+6. Test a real interactive shell and a directly launched command through
    `node-pty`.
-6. Treat host restart as destructive. Breaking persisted-state upgrades may
+7. Treat host restart as destructive. Breaking persisted-state upgrades may
    reset the database instead of adding compatibility code.

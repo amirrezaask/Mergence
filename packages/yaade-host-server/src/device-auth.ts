@@ -41,6 +41,12 @@ const CHALLENGE_TTL_MS = 60 * 1000
 const SESSION_TTL_MS = 15 * 60 * 1000
 const AUTH_FAILURE_LIMIT = 8
 const AUTH_FAILURE_WINDOW_MS = 60 * 1000
+const MAX_PENDING_CHALLENGES = 1_024
+const MAX_SESSIONS = 4_096
+const MAX_FAILURE_KEYS = 4_096
+const DEVICE_ID_PATTERN = /^[A-Za-z0-9_-]{8,96}$/
+const MAX_PUBLIC_KEY_BYTES = 4 * 1024
+const MAX_SIGNATURE_CHARS = 2 * 1024
 
 function nowIso(): string {
   return new Date().toISOString()
@@ -52,6 +58,14 @@ function hash(value: string): string {
 
 function code(): string {
   return randomBytes(5).toString("hex").toUpperCase()
+}
+
+function evictOldest<K, V>(map: Map<K, V>, limit: number): void {
+  while (map.size > limit) {
+    const oldest = map.keys().next().value
+    if (oldest === undefined) return
+    map.delete(oldest)
+  }
 }
 
 function parseScopes(value: string): DeviceScope[] {
@@ -145,7 +159,11 @@ export class DeviceAuthService {
       this.recordFailure("pair")
       throw new Error("invalid pairing code")
     }
-    if (!isPublicKey(input.publicKey)) throw new Error("invalid device public key")
+    if (
+      !isPublicKey(input.publicKey) ||
+      Buffer.byteLength(JSON.stringify(input.publicKey), "utf8") >
+        MAX_PUBLIC_KEY_BYTES
+    ) throw new Error("invalid device public key")
     const row = this.db
       .prepare(
         "SELECT id,code_hash,expires_at,used_at FROM pairing_codes WHERE code_hash=? AND used_at IS NULL ORDER BY expires_at DESC LIMIT 1",
@@ -172,11 +190,11 @@ export class DeviceAuthService {
       throw new Error("pairing code already used")
     }
     const device: PairedDevice = {
-      id: input.deviceId && /^[A-Za-z0-9_-]{8,96}$/.test(input.deviceId)
+      id: input.deviceId && DEVICE_ID_PATTERN.test(input.deviceId)
         ? input.deviceId
         : `dev-${randomUUID()}`,
       name: input.name.trim().slice(0, 120) || "YAADE device",
-      algorithm: input.algorithm.trim() || "Ed25519",
+      algorithm: input.algorithm.trim().slice(0, 64) || "Ed25519",
       scopes: scopes.length > 0 ? scopes : ["control"],
       createdAt: nowIso(),
       lastUsedAt: null,
@@ -217,11 +235,14 @@ export class DeviceAuthService {
   }
 
   challenge(deviceId: string): { nonce: string; expiresAt: string } {
+    this.cleanupEphemeral()
+    if (!DEVICE_ID_PATTERN.test(deviceId)) throw new Error("invalid device id")
     const device = this.device(deviceId)
     if (!device || device.revokedAt) throw new Error("device is revoked or unknown")
     const nonce = randomBytes(32).toString("base64url")
     const expiresAt = Date.now() + CHALLENGE_TTL_MS
     this.challenges.set(nonce, { deviceId, nonce, expiresAt })
+    evictOldest(this.challenges, MAX_PENDING_CHALLENGES)
     return { nonce, expiresAt: new Date(expiresAt).toISOString() }
   }
 
@@ -230,6 +251,15 @@ export class DeviceAuthService {
     nonce: string
     signature: string
   }): { token: string; expiresAt: string; device: PairedDevice } {
+    this.cleanupEphemeral()
+    if (
+      !DEVICE_ID_PATTERN.test(input.deviceId) ||
+      input.nonce.length > 128 ||
+      input.signature.length > MAX_SIGNATURE_CHARS
+    ) {
+      this.recordFailure("invalid-device")
+      throw new Error("invalid authentication payload")
+    }
     this.assertNotRateLimited(input.deviceId)
     const challenge = this.challenges.get(input.nonce)
     this.challenges.delete(input.nonce)
@@ -269,6 +299,7 @@ export class DeviceAuthService {
       scopes: parseScopes(device.scopes_json),
       expiresAt,
     })
+    evictOldest(this.sessions, MAX_SESSIONS)
     this.db
       .prepare("UPDATE devices SET last_used_at=? WHERE id=?")
       .run(nowIso(), input.deviceId)
@@ -280,6 +311,7 @@ export class DeviceAuthService {
   }
 
   rotate(token: string): { token: string; expiresAt: string; device: PairedDevice } {
+    this.cleanupEphemeral()
     const current = this.sessions.get(token)
     if (!current || current.expiresAt <= Date.now()) {
       this.sessions.delete(token)
@@ -298,6 +330,7 @@ export class DeviceAuthService {
       scopes: current.scopes,
       expiresAt,
     })
+    evictOldest(this.sessions, MAX_SESSIONS)
     this.db
       .prepare("UPDATE devices SET last_used_at=? WHERE id=?")
       .run(nowIso(), current.deviceId)
@@ -306,6 +339,19 @@ export class DeviceAuthService {
       token: next,
       expiresAt: new Date(expiresAt).toISOString(),
       device: toDevice(device),
+    }
+  }
+
+  ephemeralCounts(): {
+    challenges: number
+    sessions: number
+    failureKeys: number
+  } {
+    this.cleanupEphemeral()
+    return {
+      challenges: this.challenges.size,
+      sessions: this.sessions.size,
+      failureKeys: this.failures.size,
     }
   }
 
@@ -346,6 +392,7 @@ export class DeviceAuthService {
   }
 
   session(token: string): { deviceId: string; scopes: DeviceScope[] } | null {
+    this.cleanupEphemeral()
     const current = this.sessions.get(token)
     if (!current || current.expiresAt <= Date.now()) {
       this.sessions.delete(token)
@@ -374,7 +421,8 @@ export class DeviceAuthService {
   private assertNotRateLimited(key: string): void {
     const now = Date.now()
     const recent = (this.failures.get(key) ?? []).filter(at => now - at < AUTH_FAILURE_WINDOW_MS)
-    this.failures.set(key, recent)
+    if (recent.length > 0) this.failures.set(key, recent)
+    else this.failures.delete(key)
     if (recent.length >= AUTH_FAILURE_LIMIT) throw new Error("too many authentication attempts")
   }
 
@@ -383,6 +431,24 @@ export class DeviceAuthService {
     const recent = (this.failures.get(key) ?? []).filter(at => now - at < AUTH_FAILURE_WINDOW_MS)
     recent.push(now)
     this.failures.set(key, recent)
+    evictOldest(this.failures, MAX_FAILURE_KEYS)
+  }
+
+  private cleanupEphemeral(now = Date.now()): void {
+    for (const [nonce, challenge] of this.challenges) {
+      if (challenge.expiresAt <= now) this.challenges.delete(nonce)
+    }
+    for (const [token, session] of this.sessions) {
+      if (session.expiresAt <= now) this.sessions.delete(token)
+    }
+    for (const [key, failures] of this.failures) {
+      const recent = failures.filter(at => now - at < AUTH_FAILURE_WINDOW_MS)
+      if (recent.length > 0) this.failures.set(key, recent)
+      else this.failures.delete(key)
+    }
+    evictOldest(this.challenges, MAX_PENDING_CHALLENGES)
+    evictOldest(this.sessions, MAX_SESSIONS)
+    evictOldest(this.failures, MAX_FAILURE_KEYS)
   }
 
   private audit(

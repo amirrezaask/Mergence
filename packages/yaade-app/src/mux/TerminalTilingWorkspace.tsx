@@ -181,6 +181,7 @@ export default function TerminalTilingWorkspace({
           panelId={panelId}
           zoomed={zoomedPanelId?.id === panelId.id}
           canZoom={canZoom}
+          draggable={activeTerminal != null}
           processName={activeTerminal?.kind}
           contextRef={headerContextRef(panelId.id)}
           onSplitButton={(direction, event) => {

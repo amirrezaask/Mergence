@@ -65,7 +65,7 @@ function useFontSize(ref: React.RefObject<HTMLDivElement | null>): number {
 }
 
 function siteIcon(kind: DropSiteKind) {
-  const cls = "size-3.5"
+  const cls = "size-4"
   switch (kind) {
     case "center":
       return <SquareIcon className={cls} />
@@ -104,12 +104,14 @@ function DropSiteTarget({
     <div
       ref={setNodeRef}
       data-drop-site={site.id}
+      data-yaade-drop-hot={hot ? "" : undefined}
+      aria-hidden="true"
       className={cn(
-        "pointer-events-auto absolute flex items-center justify-center rounded-md border shadow-sm transition-[opacity,transform] duration-[var(--yaade-motion-dnd-site)] ease-out",
+        "pointer-events-auto absolute flex items-center justify-center rounded-md border shadow-md transition-[opacity,transform,background-color,border-color,color,box-shadow] duration-[var(--yaade-motion-dnd-site)] ease-[var(--yaade-ease-out)]",
         entered ? "opacity-100" : "opacity-0",
         hot
-          ? "border-primary bg-primary/20 text-primary"
-          : "border-border bg-muted text-muted-foreground",
+          ? "border-primary bg-primary text-primary-foreground shadow-lg"
+          : "border-border bg-popover text-muted-foreground",
       )}
       style={{
         left: site.rect.x,
@@ -118,9 +120,9 @@ function DropSiteTarget({
         height: site.rect.h,
         transform: entered
           ? hot
-            ? "scale(1.05)"
+            ? "scale(1.06)"
             : "scale(1)"
-          : "scale(var(--yaade-motion-squish-scale))",
+          : "scale(0.96)",
       }}
     >
       {siteIcon(site.id)}
@@ -137,7 +139,7 @@ function AnimatedDropPreview({
   const currentRef = useRef<SiteRect | null>(null)
   const { x, y, w, h } = target
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const element = elementRef.current
     if (!element || w <= 0 || h <= 0) return
     let frame: number | null = null
@@ -200,7 +202,8 @@ function AnimatedDropPreview({
   return (
     <div
       ref={elementRef}
-      className="pointer-events-none rounded-sm border border-primary/60 bg-primary/15 opacity-0 transition-opacity duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]"
+      data-yaade-dock-preview=""
+      className="pointer-events-none rounded-md border border-primary/60 bg-primary/10 opacity-0 shadow-sm ring-1 ring-primary/15 transition-opacity duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)] before:absolute before:inset-x-2 before:top-2 before:h-px before:rounded-full before:bg-primary/40"
       style={{
         position: "absolute",
         left: 0,
@@ -219,6 +222,7 @@ export function PanelDropOverlay({ panelId }: { panelId: PanelId }) {
   const dropHot = useDropHot()
   const containerRef = useRef<HTMLDivElement>(null)
   const active = tabDrag != null
+  const [entered, setEntered] = useState(false)
   // ResizeObserver only while a tab drag is active — idle N-pane docks pay zero measure cost.
   const size = useElementSize(containerRef, active)
   const fontSize = useFontSize(containerRef)
@@ -229,6 +233,19 @@ export function PanelDropOverlay({ panelId }: { panelId: PanelId }) {
     () => (active ? computeDropSites(size.w, size.h, fontSize) : []),
     [active, size.w, size.h, fontSize],
   )
+
+  useEffect(() => {
+    if (!active) {
+      setEntered(false)
+      return
+    }
+    if (prefersReducedMotion()) {
+      setEntered(true)
+      return
+    }
+    const frame = requestAnimationFrame(() => setEntered(true))
+    return () => cancelAnimationFrame(frame)
+  }, [active])
   const effectiveSites = samePanel ? sites.filter(s => s.id !== "center") : sites
 
   const hotSite: DropSite | null =
@@ -264,7 +281,7 @@ export function PanelDropOverlay({ panelId }: { panelId: PanelId }) {
               key={site.id}
               panelId={panelId}
               site={site}
-              entered={active}
+              entered={entered}
               hot={hotSite?.id === site.id}
             />
           ))}

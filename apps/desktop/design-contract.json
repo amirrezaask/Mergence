@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "source": {
+    "files": [
+      "packages/yaade-shared/src/theme/shadcn-tokens.ts",
+      "packages/yaade-ui/src/styles/globals.css",
+      "packages/yaade-ui/src/styles/materials.css",
+      "packages/yaade-ui/src/motion/tokens.ts"
+    ],
+    "sha256": "470702eab37f6e7c9d539f2bc3789383af80bc35bb05e457da0509518cc2b8ca"
+  },
+  "fonts": {
+    "uiFamily": "Geist",
+    "monoFamily": "Geist Mono"
+  },
+  "metrics": {
+    "rootFontSizePx": 13,
+    "islandRadiusPx": 11.375,
+    "paneRadiusPx": 9.75,
+    "controlRadiusPx": 8.125,
+    "menuRadiusPx": 11.375,
+    "tabBarHeightPx": 42.25,
+    "tabPillHeightPx": 32.5,
+    "terminalWorkspacePaddingPx": 8.125,
+    "paneChromeHeightPx": 26
+  },
+  "motion": {
+    "hotMs": 100,
+    "menuMs": 160,
+    "overlayMs": 160,
+    "panelMs": 200,
+    "easeOut": "cubic-bezier(0.23, 1, 0.32, 1)",
+    "easeInOut": "cubic-bezier(0.77, 0, 0.175, 1)",
+    "easeDrawer": "cubic-bezier(0.32, 0.72, 0, 1)",
+    "pressScale": 0.98
+  },
+  "materials": {
+    "light": {
+      "shell": {
+        "color": "#ffffff",
+        "alpha": 0.42
+      },
+      "chrome": {
+        "color": "#ffffff",
+        "alpha": 0.52
+      },
+      "contentColorToken": "background",
+      "contentAlpha": 0.92,
+      "floating": {
+        "color": "#ffffff",
+        "alpha": 0.58
+      },
+      "lightEdge": {
+        "color": "#ffffff",
+        "alpha": 0.38
+      },
+      "darkEdgeColorToken": "foreground",
+      "darkEdgeAlpha": 0.08,
+      "specular": {
+        "color": "#ffffff",
+        "alpha": 0.55
+      }
+    },
+    "dark": {
+      "shellColorToken": "card",
+      "shellAlpha": 0.72,
+      "chromeColorToken": "card",
+      "chromeAlpha": 0.8,
+      "contentColorToken": "background",
+      "contentAlpha": 0.92,
+      "floatingColorToken": "popover",
+      "floatingAlpha": 0.38,
+      "lightEdge": {
+        "color": "#ffffff",
+        "alpha": 0.12
+      },
+      "darkEdgeColorToken": "foreground",
+      "darkEdgeAlpha": 0.08,
+      "specular": {
+        "color": "#ffffff",
+        "alpha": 0.22
+      }
+    }
+  },
+  "themes": {
+    "light": {
+      "semantic": {
+        "background": "#eaf1f8",
+        "foreground": "#151b23",
+        "card": "#f9fdff",
+        "cardForeground": "#151b23",
+        "popover": "#f6fbff",
+        "popoverForeground": "#151b23",
+        "primary": "#0062dd",
+        "primaryForeground": "#fcfcfc",
+        "secondary": "#d8e5f1",
+        "secondaryForeground": "#151b23",
+        "muted": "#dfe7ef",
+        "mutedForeground": "#4c5664",
+        "accent": "#c0deff",
+        "accentForeground": "#021f42",
+        "destructive": "#ce2228",
+        "destructiveForeground": "#fcfcfc",
+        "success": "#009055",
+        "successForeground": "#000e03",
+        "warning": "#e69d30",
+        "warningForeground": "#3e1c01",
+        "info": "#0063d7",
+        "infoForeground": "#fcfcfc",
+        "backdrop": "rgba(16, 24, 40, 0.38)",
+        "border": "#b3bfcd",
+        "input": "#6a7989",
+        "ring": "#0062dd",
+        "sidebar": "#e2edf7",
+        "sidebarForeground": "#151b23",
+        "sidebarPrimary": "#0062dd",
+        "sidebarPrimaryForeground": "#fcfcfc",
+        "sidebarAccent": "#badbfe",
+        "sidebarAccentForeground": "#021f42",
+        "sidebarBorder": "#b3bfcd",
+        "sidebarRing": "#0062dd"
+      }
+    },
+    "dark": {
+      "semantic": {
+        "background": "#0e151b",
+        "foreground": "#eef2f7",
+        "card": "#171d24",
+        "cardForeground": "#eef2f7",
+        "popover": "#1a2229",
+        "popoverForeground": "#eef2f7",
+        "primary": "#006ade",
+        "primaryForeground": "#fcfcfc",
+        "secondary": "#1b242c",
+        "secondaryForeground": "#eef2f7",
+        "muted": "#181f25",
+        "mutedForeground": "#a8b2be",
+        "accent": "#172a3e",
+        "accentForeground": "#edf2f8",
+        "destructive": "#ce2228",
+        "destructiveForeground": "#fcfcfc",
+        "success": "#55c483",
+        "successForeground": "#001708",
+        "warning": "#f5ae4b",
+        "warningForeground": "#2d1200",
+        "info": "#59a6ff",
+        "infoForeground": "#030d1e",
+        "backdrop": "rgba(10, 16, 32, 0.48)",
+        "border": "#2b343d",
+        "input": "#5d6b79",
+        "ring": "#006ade",
+        "sidebar": "#11181e",
+        "sidebarForeground": "#eef2f7",
+        "sidebarPrimary": "#006ade",
+        "sidebarPrimaryForeground": "#fcfcfc",
+        "sidebarAccent": "#14293e",
+        "sidebarAccentForeground": "#edf2f8",
+        "sidebarBorder": "#262f38",
+        "sidebarRing": "#006ade"
+      }
+    }
+  }
+}

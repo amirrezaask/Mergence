@@ -1,5 +1,6 @@
 import {
   useCallback,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -24,6 +25,7 @@ import { arrayMove } from "@dnd-kit/sortable"
 import type { DropAction, PanelId } from "@yaade/shared"
 import { yaadeMotion } from "@/motion/tokens.js"
 import { YaadeTabDragGhost } from "@/motion/YaadeOverlayMotion.js"
+import { useReducedMotion } from "@/motion/useReducedMotion.js"
 import type { DropSiteKind } from "./panel-drop-zones.js"
 import {
   dropSitesRegistry,
@@ -33,6 +35,7 @@ import {
 } from "./panel-drop-zones.js"
 import {
   parseDropDndId,
+  parseSessionTabDropDndId,
   parseTabBarDndId,
   parseTabDndId,
   isSessionDragData,
@@ -58,6 +61,8 @@ export type TabDndHandlers = {
     target: PanelId,
     action: DropAction,
   ) => void
+  /** Reorder an external source when it is dropped back onto its source strip. */
+  onSessionReorder?: (sourceId: string, targetId: string) => void
   /** Tab ids per panel for reorder index math. */
   tabIdsForPanel: (panelId: PanelId) => string[]
 }
@@ -81,8 +86,21 @@ function subscribeDropHot(cb: () => void): () => void {
   return () => dropHotListeners.delete(cb)
 }
 
+function sameDropHot(left: DropHotState, right: DropHotState): boolean {
+  if (left === right) return true
+  if (!left || !right) return false
+  return (
+    left.panelId.id === right.panelId.id &&
+    left.zone === right.zone &&
+    left.preview.x === right.preview.x &&
+    left.preview.y === right.preview.y &&
+    left.preview.w === right.preview.w &&
+    left.preview.h === right.preview.h
+  )
+}
+
 function setDropHotState(next: DropHotState): void {
-  if (dropHotState === next) return
+  if (sameDropHot(dropHotState, next)) return
   dropHotState = next
   for (const cb of dropHotListeners) cb()
 }
@@ -118,8 +136,8 @@ function createTabDropAnimation(
   dropAnimTargetRef: RefObject<DropAnimTarget | null>,
 ): DropAnimation {
   return {
-    duration: Math.round(yaadeMotion.layoutTransition.duration * 1000),
-    easing: "ease-out",
+    duration: Math.round(yaadeMotion.dockDropTransition.duration * 1000),
+    easing: yaadeMotion.dockDropTransition.ease,
     keyframes({ transform, dragOverlay }) {
       const target = dropAnimTargetRef.current
       if (target && dragOverlay?.rect) {
@@ -134,15 +152,15 @@ function createTabDropAnimation(
               ...transform.initial,
               x: transform.initial.x + dx,
               y: transform.initial.y + dy,
-              scaleX: 0.9,
-              scaleY: 0.9,
+              scaleX: 0.96,
+              scaleY: 0.96,
             }),
           },
         ]
       }
       return [
         { opacity: 1, transform: CSS.Transform.toString(transform.initial) },
-        { opacity: 0, transform: CSS.Transform.toString(transform.initial) },
+        { opacity: 0.7, transform: CSS.Transform.toString(transform.final) },
       ]
     },
     sideEffects() {
@@ -162,6 +180,7 @@ type OverlaySnapshot = {
 
 function TabDndInner({ children, handlers }: TabDndInnerProps) {
   const drag = usePanelDragActions()
+  const reducedMotion = useReducedMotion()
   const [activeDrag, setActiveDrag] = useState<DockDragData | null>(null)
   const dropHotRef = useRef<DropHotState>(null)
   const dropAnimTargetRef = useRef<DropAnimTarget | null>(null)
@@ -169,9 +188,10 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
   const overlaysRef = useRef<OverlaySnapshot[]>([])
   const pendingMoveRef = useRef<{ cx: number; cy: number } | null>(null)
   const rafRef = useRef<number | null>(null)
+  const snapshotFrameRef = useRef<number | null>(null)
 
   const sensors = useSensors(
-    useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
   )
 
   const clearOverlaySnapshots = useCallback(() => {
@@ -227,7 +247,7 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
 
   const onDragStart = useCallback(
     (event: DragStartEvent) => {
-      const data = event.active.data.current as DockDragData | undefined
+      const data = event.active.data.current
       if (isTabDragData(data)) {
         setActiveDrag(data)
         drag.startTab({ panelId: data.panelId, tabId: data.tabId })
@@ -238,7 +258,8 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
         return
       }
       // Re-snapshot after overlays flip to active and register drop sites.
-      requestAnimationFrame(() => {
+      snapshotFrameRef.current = requestAnimationFrame(() => {
+        snapshotFrameRef.current = null
         snapshotOverlays()
         if (pendingMoveRef.current) runMove()
       })
@@ -248,14 +269,14 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
 
   const onDragMove = useCallback((event: DragMoveEvent) => {
     const activator = event.activatorEvent
-    if (!activator || !("clientX" in activator)) {
+    if (!(activator instanceof MouseEvent)) {
       dropHotRef.current = null
       setDropHotState(null)
       return
     }
     pendingMoveRef.current = {
-      cx: (activator as PointerEvent).clientX + event.delta.x,
-      cy: (activator as PointerEvent).clientY + event.delta.y,
+      cx: activator.clientX + event.delta.x,
+      cy: activator.clientY + event.delta.y,
     }
     if (rafRef.current === null) {
       rafRef.current = requestAnimationFrame(runMove)
@@ -333,10 +354,10 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
 
       const targetIds = handlers.tabIdsForPanel(tabTarget.panelId)
       const insertIndex = targetIds.indexOf(tabTarget.tabId)
-      const action = {
-        kind: "moveToPane" as const,
-        insertIndex: insertIndex >= 0 ? insertIndex : undefined,
-      }
+      const action: DropAction =
+        insertIndex >= 0
+          ? { kind: "moveToPane", insertIndex }
+          : { kind: "moveToPane" }
       if (sourcePanel) {
         handlers.onTabDrop(sourcePanel, tabId, tabTarget.panelId, action)
       } else {
@@ -349,7 +370,7 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
 
   const onDragEnd = useCallback(
     (event: DragEndEvent) => {
-      const data = event.active.data.current as DockDragData | undefined
+      const data = event.active.data.current
       const hot = dropHotRef.current
       dropAnimTargetRef.current = hot ? resolveDropAnimTarget(hot) : null
       setActiveDrag(null)
@@ -359,6 +380,10 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
       if (rafRef.current !== null) {
         cancelAnimationFrame(rafRef.current)
         rafRef.current = null
+      }
+      if (snapshotFrameRef.current !== null) {
+        cancelAnimationFrame(snapshotFrameRef.current)
+        snapshotFrameRef.current = null
       }
       pendingMoveRef.current = null
       clearOverlaySnapshots()
@@ -380,6 +405,11 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
       }
 
       if (isSessionDragData(data)) {
+        const reorderTarget = overId ? parseSessionTabDropDndId(overId) : null
+        if (!hot && data.sourceId && reorderTarget) {
+          handlers.onSessionReorder?.(data.sourceId, reorderTarget)
+          return
+        }
         applyHotOrOverDrop(data.tabId, null, hot, overId)
       }
     },
@@ -395,9 +425,25 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
       cancelAnimationFrame(rafRef.current)
       rafRef.current = null
     }
+    if (snapshotFrameRef.current !== null) {
+      cancelAnimationFrame(snapshotFrameRef.current)
+      snapshotFrameRef.current = null
+    }
     pendingMoveRef.current = null
     clearOverlaySnapshots()
   }, [drag, clearOverlaySnapshots])
+
+  useEffect(
+    () => () => {
+      if (rafRef.current !== null) cancelAnimationFrame(rafRef.current)
+      if (snapshotFrameRef.current !== null) {
+        cancelAnimationFrame(snapshotFrameRef.current)
+      }
+      clearOverlaySnapshots()
+      setDropHotState(null)
+    },
+    [clearOverlaySnapshots],
+  )
 
   const ghostLabel =
     activeDrag && isTabDragData(activeDrag)
@@ -418,7 +464,7 @@ function TabDndInner({ children, handlers }: TabDndInnerProps) {
       onDragCancel={onDragCancel}
     >
       {children}
-      <DragOverlay dropAnimation={dropAnimation}>
+      <DragOverlay dropAnimation={reducedMotion ? null : dropAnimation}>
         {ghostLabel != null ? (
           <YaadeTabDragGhost label={ghostLabel} dirty={ghostDirty} />
         ) : null}

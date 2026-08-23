@@ -1,4 +1,8 @@
-import type { YaadeHostAPI } from "@yaade/workspace"
+import type {
+  TerminalAttachOptions,
+  TerminalReplayChunk,
+  YaadeHostAPI,
+} from "@yaade/workspace"
 import { Schema } from "effect";
 import {
   MuxEvent,
@@ -9,9 +13,9 @@ import {
 import type { YaadeHostTransport } from "./transport.js";
 import { TerminalV3Store } from "./terminal-v3-store.js";
 
-// Host owns the authoritative terminal replay. This buffer only bridges the
-// attach handshake, so keeping a second multi-megabyte copy is wasteful.
-const MAX_BUFFERED_TERMINAL_CHARS = 64 * 1024;
+// Host owns the authoritative terminal replay. This buffer only bridges an
+// in-flight attach/resync; off-screen terminals are replayed from the host.
+const MAX_BUFFERED_TERMINAL_CHARS = 2 * 1024 * 1024;
 
 type TerminalAttachResult = {
   id: string;
@@ -59,19 +63,37 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     replay?: boolean,
     replayNeedsQueryResponses?: boolean,
     replayTruncated?: boolean,
+    acknowledgeConsumed?: () => void,
   ) => void;
-  const terminalDataListeners = new Map<string, Set<TerminalDataListener>>();
+  type TerminalDataRegistration = {
+    callback: TerminalDataListener;
+    acknowledgement: "delivery" | "consumption";
+  };
+  const terminalDataListeners = new Map<
+    string,
+    Set<TerminalDataRegistration>
+  >();
   type BufferedTerminalData = {
     data: string;
     sequence: number;
     replay?: boolean;
     replayNeedsQueryResponses?: boolean;
     replayTruncated?: boolean;
+    acknowledge?: () => void;
   };
   const terminalDataBuffers = new Map<string, BufferedTerminalData[]>();
   const terminalDataBufferSizes = new Map<string, number>();
+  const terminalBufferGaps = new Set<string>();
   const terminalReplayFloors = new Map<string, number>();
   const terminalResyncing = new Set<string>();
+  const terminalResyncInFlight = new Map<string, Promise<boolean>>();
+  const terminalResyncAgain = new Set<string>();
+  const terminalResyncAttempts = new Map<string, number>();
+  const terminalResyncRetryTimers = new Map<
+    string,
+    ReturnType<typeof setTimeout>
+  >();
+  const terminalReplayStreaming = new Set<string>();
   let realtimeConnected = false;
   let reconnectGeneration = 0;
   let hadRealtimeDisconnect = false;
@@ -83,17 +105,21 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     replay = false,
     replayNeedsQueryResponses = false,
     replayTruncated = false,
+    acknowledge?: () => void,
   ) => {
     const pending = terminalDataBuffers.get(id) ?? [];
     const buffered: BufferedTerminalData = { data, sequence }
     if (replay) buffered.replay = true
     if (replayNeedsQueryResponses) buffered.replayNeedsQueryResponses = true
     if (replayTruncated) buffered.replayTruncated = true
+    if (acknowledge) buffered.acknowledge = acknowledge
     pending.push(buffered)
     let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length;
     while (size > MAX_BUFFERED_TERMINAL_CHARS && pending.length > 1) {
       size -= pending.shift()!.data.length;
+      terminalBufferGaps.add(id);
     }
+    if (size > MAX_BUFFERED_TERMINAL_CHARS) terminalBufferGaps.add(id);
     terminalDataBuffers.set(id, pending);
     terminalDataBufferSizes.set(id, size);
   };
@@ -104,27 +130,66 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     replay = false,
     replayNeedsQueryResponses = false,
     replayTruncated = false,
+    acknowledge?: () => void,
   ) => {
     const listeners = terminalDataListeners.get(id);
     if (!listeners || listeners.size === 0) return false;
-    listeners.forEach((cb) =>
-      cb(data, replay, replayNeedsQueryResponses, replayTruncated),
-    );
+    const registrations = [...listeners];
+    let awaitingConsumption = acknowledge
+      ? registrations.filter(
+          registration => registration.acknowledgement === "consumption",
+        ).length
+      : 0;
+    let acknowledged = false;
+    const acknowledgeOnce = () => {
+      if (acknowledged) return;
+      acknowledged = true;
+      acknowledge?.();
+    };
+    for (const registration of registrations) {
+      if (
+        acknowledge &&
+        registration.acknowledgement === "consumption"
+      ) {
+        let consumed = false;
+        registration.callback(
+          data,
+          replay,
+          replayNeedsQueryResponses,
+          replayTruncated,
+          () => {
+            if (consumed) return;
+            consumed = true;
+            awaitingConsumption -= 1;
+            if (awaitingConsumption === 0) acknowledgeOnce();
+          },
+        );
+      } else {
+        registration.callback(
+          data,
+          replay,
+          replayNeedsQueryResponses,
+          replayTruncated,
+        );
+      }
+    }
+    if (awaitingConsumption === 0) acknowledgeOnce();
     return true;
   };
 
   const attachTerminal = (
     id: string,
-    afterSequence?: number,
+    afterSequence = 0,
+    mode: "raw" | "semantic" | "both" = "raw",
   ): Promise<TerminalAttachResult | null> => {
-    const realtime =
-      afterSequence === undefined
-        ? transport.invokeRealtime?.("terminal:attach", id)
-        : transport.invokeRealtime?.("terminal:attach", id, afterSequence);
+    const realtime = transport.invokeRealtime?.(
+      "terminal:attach",
+      id,
+      afterSequence,
+      mode,
+    );
     if (realtime) return realtime;
-    return afterSequence === undefined
-      ? transport.invoke("terminal:attach", id)
-      : transport.invoke("terminal:attach", id, afterSequence);
+    return transport.invoke("terminal:attach", id, afterSequence, mode);
   };
 
   const streamArchivedReplay = async (
@@ -132,13 +197,26 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     result: TerminalAttachResult,
     afterSequence: number,
     generation?: number,
-  ): Promise<boolean> => {
+    onReplay?: TerminalAttachOptions["onReplay"],
+  ): Promise<{
+    delivered: boolean;
+    complete: boolean;
+    lastSequence: number;
+  }> => {
     if (
       result.archiveAvailable !== true ||
       afterSequence >= result.lastSequence
-    ) return false;
+    ) {
+      return {
+        delivered: false,
+        complete: afterSequence >= result.lastSequence,
+        lastSequence: afterSequence,
+      };
+    }
     let cursor = afterSequence;
     let complete = false;
+    let delivered = false;
+    let firstChunk = true;
     while (
       !complete &&
       (generation === undefined || generation === reconnectGeneration)
@@ -149,27 +227,55 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         cursor,
         256 * 1024,
       );
-      if (!page || page.chunks.length === 0) break;
-      for (const chunk of page.chunks) {
-        deliverTerminalData(
-          id,
-          chunk,
-          true,
+      if (!page || page.chunks.length === 0 || page.nextSequence <= cursor) break;
+      const pageHasGap = page.firstSequence > cursor + 1;
+      const replay: TerminalReplayChunk = {
+        data:
+          page.chunks.length === 1
+            ? page.chunks[0]!
+            : page.chunks.join(""),
+        replayNeedsQueryResponses:
           result.replayNeedsQueryResponses === true,
-          false,
+        replayTruncated:
+          firstChunk && (result.replayTruncated === true || pageHasGap),
+      };
+      if (onReplay) {
+        await onReplay(replay);
+      } else if (
+        !deliverTerminalData(
+          id,
+          replay.data,
+          true,
+          replay.replayNeedsQueryResponses,
+          replay.replayTruncated,
+        )
+      ) {
+        bufferTerminalData(
+          id,
+          replay.data,
+          0,
+          true,
+          replay.replayNeedsQueryResponses,
+          replay.replayTruncated,
         );
       }
+      firstChunk = false;
+      delivered = true;
       cursor = page.nextSequence;
       complete = page.complete || cursor >= result.lastSequence;
       terminalReplayFloors.set(id, cursor);
       // Yield between pages so large archives never monopolize the browser.
       await new Promise<void>(resolve => setTimeout(resolve, 0));
     }
-    return cursor > afterSequence;
+    return { delivered, complete, lastSequence: cursor };
   };
 
   const resyncTerminal = async (id: string, generation: number) => {
     const afterSequence = terminalReplayFloors.get(id) ?? 0;
+    if (terminalBufferGaps.delete(id)) {
+      terminalDataBuffers.delete(id);
+      terminalDataBufferSizes.delete(id);
+    }
     try {
       // Must go over the live socket so the host arms `attachedTerminals`.
       // HTTP attach replays the ring but leaves live `terminal:data` dropped.
@@ -179,11 +285,11 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         !realtimeConnected ||
         !terminalResyncing.has(id)
       ) {
-        return;
+        return true;
       }
       if (!result) {
         terminalResyncing.delete(id);
-        return;
+        return true;
       }
       let chunks =
         result.outputChunks && result.outputChunks.length > 0
@@ -191,13 +297,27 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
           : result.output
             ? [result.output]
             : [];
-      if (await streamArchivedReplay(id, result, afterSequence, generation)) {
-        chunks = [];
-      }
+      const archived = await streamArchivedReplay(
+        id,
+        result,
+        afterSequence,
+        generation,
+      );
+      if (archived.complete) chunks = [];
+      const replayedThrough = Math.max(
+        result.lastSequence,
+        archived.lastSequence,
+      );
       const pending = terminalDataBuffers.get(id);
       terminalDataBuffers.delete(id);
       terminalDataBufferSizes.delete(id);
-      terminalReplayFloors.set(id, result.lastSequence);
+      terminalReplayFloors.set(id, replayedThrough);
+      if (terminalBufferGaps.delete(id)) {
+        // Live output outran the bounded attach bridge. Retry from the
+        // authoritative result cursor instead of exposing a partial stream.
+        terminalResyncAgain.add(id);
+        return true;
+      }
       terminalResyncing.delete(id);
       let firstReplayChunk = true;
       if (result.checkpoint?.syntheticAnsi) {
@@ -247,9 +367,10 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         }
       }
       for (const chunk of pending ?? []) {
-        if (chunk.sequence > 0 && chunk.sequence <= result.lastSequence)
+        if (chunk.sequence > 0 && chunk.sequence <= replayedThrough) {
+          chunk.acknowledge?.();
           continue;
-        if (chunk.sequence > 0) terminalReplayFloors.set(id, chunk.sequence);
+        }
         if (
           !deliverTerminalData(
             id,
@@ -257,6 +378,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
             chunk.replay === true,
             chunk.replayNeedsQueryResponses === true,
             chunk.replayTruncated === true,
+            chunk.acknowledge,
           )
         ) {
           bufferTerminalData(
@@ -266,13 +388,67 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
             chunk.replay === true,
             chunk.replayNeedsQueryResponses === true,
             chunk.replayTruncated === true,
+            chunk.acknowledge,
           );
         }
       }
+      return true;
     } catch {
-      // Keep the terminal marked for resync. A later socket recovery will retry;
-      // normal HTTP errors remain owned by the connection lifecycle.
+      // Keep the terminal marked for a bounded connected-socket retry.
+      return false;
     }
+  };
+
+  const requestTerminalResync = (id: string, generation: number): void => {
+    terminalResyncing.add(id);
+    if (terminalResyncInFlight.has(id)) {
+      terminalResyncAgain.add(id);
+      return;
+    }
+    let succeeded = false;
+    let request: Promise<boolean>;
+    request = resyncTerminal(id, generation)
+      .then(result => {
+        succeeded = result;
+        if (result) terminalResyncAttempts.delete(id);
+        return result;
+      })
+      .finally(() => {
+        if (terminalResyncInFlight.get(id) === request) {
+          terminalResyncInFlight.delete(id);
+        }
+        if (
+          terminalResyncAgain.delete(id) &&
+          generation === reconnectGeneration &&
+          realtimeConnected
+        ) {
+          terminalResyncing.add(id);
+          requestTerminalResync(id, generation);
+          return;
+        }
+        if (
+          !succeeded &&
+          generation === reconnectGeneration &&
+          realtimeConnected &&
+          !terminalResyncRetryTimers.has(id)
+        ) {
+          const attempt = terminalResyncAttempts.get(id) ?? 0;
+          terminalResyncAttempts.set(id, attempt + 1);
+          const delay = Math.min(10_000, 250 * 2 ** attempt);
+          const timer = setTimeout(() => {
+            terminalResyncRetryTimers.delete(id);
+            if (
+              generation === reconnectGeneration &&
+              realtimeConnected &&
+              terminalResyncing.has(id)
+            ) {
+              requestTerminalResync(id, generation);
+            }
+          }, delay);
+          terminalResyncRetryTimers.set(id, timer);
+        }
+      });
+    terminalResyncInFlight.set(id, request);
   };
 
   transport.on("connection:status", (...args: unknown[]) => {
@@ -281,6 +457,11 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       realtimeConnected = false;
       hadRealtimeDisconnect = true;
       reconnectGeneration += 1;
+      for (const timer of terminalResyncRetryTimers.values()) {
+        clearTimeout(timer);
+      }
+      terminalResyncRetryTimers.clear();
+      terminalResyncAttempts.clear();
       for (const id of terminalDataListeners.keys()) terminalResyncing.add(id);
       return;
     }
@@ -288,7 +469,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     realtimeConnected = true;
     const generation = reconnectGeneration;
     for (const id of terminalResyncing) {
-      void resyncTerminal(id, generation);
+      requestTerminalResync(id, generation);
     }
     if (hadRealtimeDisconnect && typeof window !== "undefined") {
       hadRealtimeDisconnect = false;
@@ -316,30 +497,73 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     const id = args[0] as string;
     const data = args[1] as string;
     const sequence = (args[2] as number | undefined) ?? 0;
+    const rawAcknowledge = args[3];
+    const transportAcknowledge =
+      typeof rawAcknowledge === "function"
+        ? () => rawAcknowledge()
+        : undefined;
+    let consumed = false;
+    const acknowledgeConsumed = () => {
+      if (consumed) return;
+      consumed = true;
+      if (sequence > 0) {
+        terminalReplayFloors.set(
+          id,
+          Math.max(terminalReplayFloors.get(id) ?? 0, sequence),
+        );
+      }
+      transportAcknowledge?.();
+    };
     const floor = terminalReplayFloors.get(id) ?? 0;
-    if (sequence > 0 && sequence <= floor) return;
-    if (terminalResyncing.has(id)) {
-      bufferTerminalData(id, data, sequence);
+    if (sequence > 0 && sequence <= floor) {
+      acknowledgeConsumed();
       return;
     }
-    const listeners = terminalDataListeners.get(id);
-    if (listeners && listeners.size > 0) {
-      if (sequence > 0) terminalReplayFloors.set(id, sequence);
-      listeners.forEach((cb) => cb(data, false, false, false));
+    if (terminalResyncing.has(id) || terminalReplayStreaming.has(id)) {
+      bufferTerminalData(
+        id,
+        data,
+        sequence,
+        false,
+        false,
+        false,
+        acknowledgeConsumed,
+      );
+      // The bounded attach bridge now owns these bytes. Release socket credit
+      // so a producer cannot trigger nested resyncs while history is replayed;
+      // the parser cursor advances only when the buffered callback is consumed.
+      transportAcknowledge?.();
       return;
     }
-    if (terminalReplayFloors.has(id)) {
-      if (sequence > 0) terminalReplayFloors.set(id, sequence);
-      bufferTerminalData(id, data, sequence);
-    }
+    if (
+      deliverTerminalData(
+        id,
+        data,
+        false,
+        false,
+        false,
+        acknowledgeConsumed,
+      )
+    ) return;
+    // No renderer is consuming this terminal. Do not build a second output
+    // history in browser memory; the next surface performs an ordered replay
+    // from the host's durable archive.
+    acknowledgeConsumed();
+    return;
   });
   transport.on("terminal:replay-required", (...args: unknown[]) => {
     const id = args[0] as string;
     const acknowledgedSequence = (args[1] as number | undefined) ?? 0;
     const current = terminalReplayFloors.get(id) ?? 0;
     terminalReplayFloors.set(id, Math.max(current, acknowledgedSequence));
-    terminalResyncing.add(id);
-    void resyncTerminal(id, reconnectGeneration);
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(
+        new CustomEvent("yaade:terminal-replay-required", {
+          detail: { terminalId: id, acknowledgedSequence },
+        }),
+      );
+    }
+    requestTerminalResync(id, reconnectGeneration);
   });
   transport.on("terminal:exit", (...args: unknown[]) => {
     const id = args[0] as string;
@@ -348,6 +572,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     for (const cb of terminalExitListeners) cb(id, exitCode, signal);
   });
   const semanticStores = new Map<string, TerminalV3Store>();
+  const semanticResyncs = new Map<string, Promise<void>>();
   const semanticStoreFor = (terminalId: string): TerminalV3Store => {
     const existing = semanticStores.get(terminalId)
     if (existing) return existing
@@ -356,20 +581,21 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     return created
   }
   const requestSemanticResync = (terminalId: string): void => {
-    void attachTerminal(terminalId)
-      .then(result => {
-        if (!result?.semanticSnapshot) return
-        const ownerEpoch = result.ownerEpoch ?? "attach"
-        semanticStoreFor(terminalId).applySnapshot({
-          type: "terminal.snapshot",
-          terminalId,
-          ownerEpoch,
-          terminalEpoch: result.terminalEpoch ?? "",
-          revision: result.semanticSnapshot.revision,
-          snapshot: result.semanticSnapshot,
-        })
-      })
+    if (semanticResyncs.has(terminalId)) return
+    let request: Promise<void>
+    request = attachTerminal(terminalId, 0, "semantic")
+      // Modern hosts publish the recovery snapshot as a replaceable binary
+      // frame after the small reliable attach result. Keeping the full cell
+      // grid out of control traffic prevents large terminals from overflowing
+      // the reliable socket mailbox.
+      .then(() => undefined)
       .catch(() => undefined)
+      .finally(() => {
+        if (semanticResyncs.get(terminalId) === request) {
+          semanticResyncs.delete(terminalId)
+        }
+      })
+    semanticResyncs.set(terminalId, request)
   }
   transport.on("terminal.snapshot", (...args: unknown[]) => {
     try {
@@ -437,6 +663,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       createTerminal: (command) => transport.invoke("mux:createTerminal", command),
       getTerminal: (muxTerminalId) => transport.invoke("mux:getTerminal", muxTerminalId),
       reorderTerminals: (command) => transport.invoke("mux:reorderTerminals", command),
+      moveTerminal: (command) => transport.invoke("mux:moveTerminal", command),
       selectTerminal: (sessionId, muxTerminalId) =>
         transport.invoke("mux:selectTerminal", sessionId, muxTerminalId),
       stopTerminal: (muxTerminalId, revision) =>
@@ -457,35 +684,131 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         if (result.title) return { id: result.id, title: result.title }
         return { id: result.id }
       },
-      attach: async (id) => {
-        const afterSequence = terminalReplayFloors.get(id) ?? 0;
-        const result = await attachTerminal(id, afterSequence);
-        if (result) {
-          await streamArchivedReplay(id, result, afterSequence);
-          terminalReplayFloors.set(id, result.lastSequence);
-          if (result.semanticSnapshot) {
-            semanticStoreFor(id).applySnapshot({
-              type: "terminal.snapshot",
-              terminalId: id,
-              ownerEpoch: result.ownerEpoch ?? "attach",
-              terminalEpoch: result.terminalEpoch ?? "",
-              revision: result.semanticSnapshot.revision,
-              snapshot: result.semanticSnapshot,
-            })
+      attach: async (id, options) => {
+        const fullReplay = options?.replay === "full";
+        const afterSequence = fullReplay
+          ? 0
+          : terminalReplayFloors.get(id);
+        const replayAfterSequence = afterSequence ?? 0;
+        if (fullReplay) {
+          terminalReplayStreaming.add(id);
+          terminalDataBuffers.delete(id);
+          terminalDataBufferSizes.delete(id);
+        }
+        try {
+          const result = await attachTerminal(id, afterSequence);
+          if (!result) return result;
+
+          let replayDelivered = false;
+          let replayedThrough = result.lastSequence;
+          if (options?.onReplay) {
+            let archiveCursor = replayAfterSequence;
+            if (result.checkpoint?.syntheticAnsi) {
+              await options.onReplay({
+                data: result.checkpoint.syntheticAnsi,
+                replayNeedsQueryResponses: false,
+                replayTruncated: false,
+              });
+              replayDelivered = true;
+              archiveCursor = Math.max(
+                archiveCursor,
+                result.checkpoint.sequence,
+              );
+            }
+            const archived = await streamArchivedReplay(
+              id,
+              result,
+              archiveCursor,
+              undefined,
+              options.onReplay,
+            );
+            replayDelivered = replayDelivered || archived.delivered;
+            replayedThrough = Math.max(
+              replayedThrough,
+              archived.lastSequence,
+            );
+            if (!archived.complete) {
+              const chunks =
+                result.outputChunks && result.outputChunks.length > 0
+                  ? result.outputChunks
+                  : result.output
+                    ? [result.output]
+                    : [];
+              let firstChunk = true;
+              for (const data of chunks) {
+                if (!data) continue;
+                await options.onReplay({
+                  data,
+                  replayNeedsQueryResponses:
+                    result.replayNeedsQueryResponses === true,
+                  replayTruncated:
+                    firstChunk &&
+                    (result.replayTruncated === true || archived.delivered),
+                });
+                firstChunk = false;
+                replayDelivered = true;
+              }
+            }
+          } else if ((terminalDataListeners.get(id)?.size ?? 0) > 0) {
+            const archived = await streamArchivedReplay(
+              id,
+              result,
+              replayAfterSequence,
+            );
+            replayedThrough = Math.max(
+              replayedThrough,
+              archived.lastSequence,
+            );
           }
+
+          terminalReplayFloors.set(id, replayedThrough);
           const pending = terminalDataBuffers.get(id);
           if (pending) {
-            const kept = pending.filter(
-              (chunk) =>
-                chunk.sequence === 0 || chunk.sequence > result.lastSequence,
-            );
-            let size = 0;
-            for (const chunk of kept) size += chunk.data.length;
-            terminalDataBuffers.set(id, kept);
-            terminalDataBufferSizes.set(id, size);
+            const kept: BufferedTerminalData[] = [];
+            for (const chunk of pending) {
+              if (
+                chunk.sequence === 0 ||
+                chunk.sequence > replayedThrough
+              ) {
+                kept.push(chunk);
+              } else {
+                chunk.acknowledge?.();
+              }
+            }
+            terminalDataBuffers.delete(id);
+            terminalDataBufferSizes.delete(id);
+            if (
+              kept.length > 0 &&
+              (terminalDataListeners.get(id)?.size ?? 0) > 0
+            ) {
+              for (const chunk of kept) {
+                deliverTerminalData(
+                  id,
+                  chunk.data,
+                  chunk.replay === true,
+                  chunk.replayNeedsQueryResponses === true,
+                  chunk.replayTruncated === true,
+                  chunk.acknowledge,
+                );
+              }
+            } else if (kept.length > 0) {
+              let size = 0;
+              for (const chunk of kept) size += chunk.data.length;
+              terminalDataBuffers.set(id, kept);
+              terminalDataBufferSizes.set(id, size);
+            }
           }
+          if (!replayDelivered) return result;
+          const replayedResult = {
+            ...result,
+            outputChunks: [],
+            output: "",
+          };
+          delete replayedResult.checkpoint;
+          return replayedResult;
+        } finally {
+          if (fullReplay) terminalReplayStreaming.delete(id);
         }
-        return result;
       },
       write: (id, data) => {
         if (transport.sendRealtime?.("terminal:write", id, data)) {
@@ -515,30 +838,58 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       getCwd: (id) => transport.invoke("terminal:getCwd", id),
       getForegroundProcess: (id) =>
         transport.invoke("terminal:getForegroundProcess", id),
-      onData: (id, callback) => {
+      onData: (id, callback, options) => {
         let set = terminalDataListeners.get(id);
         if (!set) {
           set = new Set();
           terminalDataListeners.set(id, set);
         }
-        set.add(callback);
+        const registration: TerminalDataRegistration = {
+          callback,
+          acknowledgement: options?.acknowledgement ?? "delivery",
+        };
+        set.add(registration);
         if (!realtimeConnected) terminalResyncing.add(id);
-        const pending = terminalDataBuffers.get(id);
-        if (pending) {
-          for (const chunk of pending) {
-            callback(
-              chunk.data,
-              chunk.replay === true,
-              chunk.replayNeedsQueryResponses === true,
-              chunk.replayTruncated === true,
-            );
-          }
+        if (terminalBufferGaps.delete(id)) {
           terminalDataBuffers.delete(id);
           terminalDataBufferSizes.delete(id);
+          terminalResyncing.add(id);
+          if (realtimeConnected) {
+            requestTerminalResync(id, reconnectGeneration);
+          }
+        } else {
+          const pending = terminalDataBuffers.get(id);
+          if (pending) {
+            for (const chunk of pending) {
+              deliverTerminalData(
+                id,
+                chunk.data,
+                chunk.replay === true,
+                chunk.replayNeedsQueryResponses === true,
+                chunk.replayTruncated === true,
+                chunk.acknowledge,
+              );
+            }
+            terminalDataBuffers.delete(id);
+            terminalDataBufferSizes.delete(id);
+          }
         }
         return () => {
-          set!.delete(callback);
-          if (set!.size === 0) terminalDataListeners.delete(id);
+          set!.delete(registration);
+          if (set!.size !== 0) return;
+          terminalDataListeners.delete(id);
+          terminalDataBuffers.delete(id);
+          terminalDataBufferSizes.delete(id);
+          terminalBufferGaps.delete(id);
+          terminalResyncing.delete(id);
+          terminalResyncAgain.delete(id);
+          const retryTimer = terminalResyncRetryTimers.get(id);
+          if (retryTimer) clearTimeout(retryTimer);
+          terminalResyncRetryTimers.delete(id);
+          terminalResyncAttempts.delete(id);
+          void invokeTerminalHot(transport, "terminal:detach", id).catch(
+            () => undefined,
+          );
         };
       },
       onSemanticSnapshot: (id, callback) => {
@@ -558,6 +909,18 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         terminalDataBufferSizes.delete(id);
         terminalDataListeners.delete(id);
         terminalReplayFloors.delete(id);
+        terminalBufferGaps.delete(id);
+        terminalResyncing.delete(id);
+        terminalResyncAgain.delete(id);
+        terminalResyncInFlight.delete(id);
+        const retryTimer = terminalResyncRetryTimers.get(id);
+        if (retryTimer) clearTimeout(retryTimer);
+        terminalResyncRetryTimers.delete(id);
+        terminalResyncAttempts.delete(id);
+        terminalReplayStreaming.delete(id);
+        semanticStores.get(id)?.reset();
+        semanticStores.delete(id);
+        semanticResyncs.delete(id);
         return transport.invoke("terminal:dispose", id);
       },
       acquireLease: (id, mode) =>

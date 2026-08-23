@@ -7,6 +7,7 @@ import {
 } from "./links.js";
 import {
   GhosttyTerminalCore,
+  type GhosttyResponsePolicy,
   type GhosttyScrollbar,
   type GhosttySnapshot,
   type GhosttyTheme,
@@ -21,6 +22,7 @@ import {
 } from "./renderer.js";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { browserGhosttyWasmSource } from "@yaade/ghostty-core/loaders/browser";
+import { isBrowserZoomShortcut, isBrowserZoomWheel } from "./browser-zoom.js";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -531,6 +533,8 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly linkMatcher?: GhosttyTerminalLinkMatcher;
   /** Keep parsing live output, but skip canvas work while the pane is hidden. */
   readonly visible?: boolean;
+  /** Whether this parser or the server-side owner answers terminal queries. */
+  readonly responsePolicy?: GhosttyResponsePolicy;
   readonly onTitleChange?: (title: string) => void;
 }
 
@@ -727,6 +731,7 @@ export class GhosttyTerminalSurface {
       options.theme,
       options.onData ?? (() => undefined),
       browserGhosttyWasmSource(),
+      options.responsePolicy,
     );
     const surface = new GhosttyTerminalSurface(
       mount,
@@ -1164,6 +1169,13 @@ export class GhosttyTerminalSurface {
 
   private readonly onKeyDown = (event: KeyboardEvent) => {
     this.updateLinkModifier(event);
+    // Browser page zoom must remain available while the hidden terminal input
+    // has focus. Do not prevent the default, but suppress a Kitty key release
+    // because the corresponding press never reached the PTY.
+    if (isBrowserZoomShortcut(event, navigator.platform)) {
+      this.suppressedKeyCodes.add(event.code);
+      return;
+    }
     // Presses handled outside the terminal must also swallow their release:
     // beforeKey runs side effects (keybindings, navigation sends), so it cannot
     // be consulted again on keyup, and Kitty report-event-types sessions would
@@ -1725,7 +1737,7 @@ export class GhosttyTerminalSurface {
     this.options.onSelectionChange?.();
   };
   private readonly onWheel = (event: WheelEvent) => {
-    if (event.deltaY === 0) return;
+    if (event.deltaY === 0 || isBrowserZoomWheel(event)) return;
     event.preventDefault();
     const delta = terminalWheelDeltaRows(
       event,

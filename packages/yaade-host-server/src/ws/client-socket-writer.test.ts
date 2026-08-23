@@ -130,6 +130,19 @@ test("a maximum-size v3 semantic frame does not overflow the mailbox", () => {
   assert.equal(sink.closed, null)
 })
 
+test("semantic overflow drops render state without closing reliable control", () => {
+  const sink = new FakeSink()
+  const writer = new ClientSocketWriter(sink, {
+    limits: { semanticMaxBytes: 4 },
+  })
+  assert.equal(writer.enqueueSemanticRender("term-a", "oversized"), false)
+  assert.equal(writer.isClosed, false)
+  assert.equal(sink.closed, null)
+  assert.deepEqual(writer.consumeResyncRequired(), ["term-a"])
+  assert.equal(writer.enqueueReliable("control"), true)
+  assert.deepEqual(sink.sent, ["control"])
+})
+
 test("semantic replacement marks resync and does not close", () => {
   const sink = new FakeSink()
   sink.hold = true

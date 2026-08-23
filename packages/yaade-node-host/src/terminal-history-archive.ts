@@ -270,6 +270,7 @@ export class TerminalHistoryArchive {
       })
       await this.writeManifest(state)
       this.enforceTerminalQuota(state)
+      this.enforceQuotas()
       this.options.onCommit?.(state.terminalId, lastSequence)
     }).catch(error => {
       console.warn(`[terminal-history] failed to persist ${state.terminalId}: ${String(error)}`)
@@ -304,22 +305,65 @@ export class TerminalHistoryArchive {
   }
 
   private enforceQuotas(): void {
-    const archives: Array<{ dir: string; updatedAt: number; bytes: number }> = []
+    const stateByDir = new Map(
+      [...this.states.values()].map(state => [state.dir, state]),
+    )
+    const archives: Array<{
+      dir: string
+      updatedAt: number
+      bytes: number
+      manifest: ArchiveManifest
+      state?: ArchiveState
+    }> = []
     let total = 0
     for (const name of fs.readdirSync(this.options.rootDir, { withFileTypes: true })) {
       if (!name.isDirectory()) continue
       const dir = path.join(this.options.rootDir, name.name)
-      const manifest = this.readManifest(dir)
-      if (!manifest || manifest.closedAt === undefined) continue
-      const bytes = manifest.blocks.reduce((sum, block) => sum + block.storedBytes, 0)
+      const state = stateByDir.get(dir)
+      const manifest = state?.manifest ?? this.readManifest(dir)
+      if (!manifest) continue
+      const bytes = manifest.blocks.reduce(
+        (sum, block) => sum + block.storedBytes,
+        0,
+      )
       total += bytes
-      archives.push({ dir, updatedAt: manifest.updatedAt, bytes })
+      const archive: {
+        dir: string
+        updatedAt: number
+        bytes: number
+        manifest: ArchiveManifest
+        state?: ArchiveState
+      } = {
+        dir,
+        updatedAt: manifest.updatedAt,
+        bytes,
+        manifest,
+      }
+      if (state) archive.state = state
+      archives.push(archive)
     }
     archives.sort((left, right) => left.updatedAt - right.updatedAt)
     for (const archive of archives) {
       if (total <= this.maxTotalBytes) break
-      fs.rmSync(archive.dir, { recursive: true, force: true })
-      total -= archive.bytes
+      if (!archive.state) {
+        fs.rmSync(archive.dir, { recursive: true, force: true })
+        total -= archive.bytes
+        continue
+      }
+      while (
+        total > this.maxTotalBytes &&
+        archive.manifest.blocks.length > 1
+      ) {
+        const removed = archive.manifest.blocks.shift()
+        if (!removed) break
+        total -= removed.storedBytes
+        fs.rmSync(path.join(archive.dir, removed.file), { force: true })
+      }
+      fs.writeFileSync(
+        path.join(archive.dir, MANIFEST_FILE),
+        JSON.stringify(archive.manifest),
+        "utf8",
+      )
     }
   }
 

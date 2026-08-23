@@ -62,6 +62,7 @@ function makeApi(initial: MuxSessionSnapshot, latest: () => MuxTerminal): HostMu
     createTerminal: async () => latest(),
     getTerminal: async () => latest(),
     reorderTerminals: async () => [latest()],
+    moveTerminal: async () => latest(),
     selectTerminal: async () => initial.session,
     stopTerminal: async () => latest(),
     restartTerminal: async () => latest(),

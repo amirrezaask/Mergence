@@ -79,6 +79,44 @@ test("optional maxCharsPerFlush still slices across frames for tests", () => {
   assert.deepEqual(writes, ["abcd", "efgh"])
 })
 
+test("acknowledges a frame only after its final parser slice", () => {
+  const scheduled: Array<() => void> = []
+  let acknowledgements = 0
+  const writer = createTerminalOutputWriter({
+    write: (_data, onPainted) => onPainted?.(),
+    schedule: cb => {
+      scheduled.push(cb)
+      return scheduled.length
+    },
+    cancel: () => {},
+    maxCharsPerFlush: 4,
+    interactiveMaxChars: 0,
+  })
+
+  writer.enqueue("abcdefgh", () => {
+    acknowledgements += 1
+  })
+  scheduled[0]!()
+  assert.equal(acknowledgements, 0)
+  scheduled[1]!()
+  assert.equal(acknowledgements, 1)
+})
+
+test("discarding pending output never acknowledges unparsed bytes", () => {
+  let acknowledgements = 0
+  const writer = createTerminalOutputWriter({
+    write: () => assert.fail("discarded output must not parse"),
+    schedule: () => 1,
+    cancel: () => {},
+  })
+  writer.enqueue("pending", () => {
+    acknowledgements += 1
+  })
+  writer.discardPending()
+  writer.flush()
+  assert.equal(acknowledgements, 0)
+})
+
 test("parses flood output when animation frames are suspended", () => {
   const writes: string[] = []
   const frames: Array<() => void> = []
@@ -265,6 +303,31 @@ test("sheds oldest pending when over maxPendingChars", () => {
   writer.enqueue("BBBB") // shed AAAAAAAA → BBBB
   scheduled[0]!()
   assert.deepEqual(writes, ["BBBB"])
+})
+
+test("a shed frame suppresses every later cumulative acknowledgement until replay", () => {
+  const scheduled: Array<() => void> = []
+  const acknowledgements: string[] = []
+  const writer = createTerminalOutputWriter({
+    write: (_data, onPainted) => onPainted?.(),
+    schedule: cb => {
+      scheduled.push(cb)
+      return scheduled.length
+    },
+    cancel: () => {},
+    maxPendingChars: 8,
+    interactiveMaxChars: 0,
+  })
+
+  writer.enqueue("AAAAAAAA", () => acknowledgements.push("a"))
+  writer.enqueue("BBBB", () => acknowledgements.push("b"))
+  scheduled[0]!()
+  assert.deepEqual(acknowledgements, [])
+
+  writer.discardPending()
+  writer.enqueue("C", () => acknowledgements.push("c"))
+  scheduled.at(-1)!()
+  assert.deepEqual(acknowledgements, ["c"])
 })
 
 test("joins parts without repeated string +=", () => {

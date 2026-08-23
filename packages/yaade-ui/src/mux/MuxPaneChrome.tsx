@@ -31,6 +31,8 @@ export type MuxPaneChromeProps = {
   panelId: PanelId
   zoomed: boolean
   canZoom: boolean
+  /** Empty placeholders and other non-resident panes cannot be docked. */
+  draggable?: boolean
   /** Foreground process basename for the identity glyph. */
   processName?: string | null
   /** Provider running in a terminal (`terminal` for a shell). */
@@ -115,6 +117,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     panelId,
     zoomed,
     canZoom,
+    draggable: draggableProp = true,
     processName,
     terminalProvider,
     onSplitButton,
@@ -130,7 +133,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     className,
   } = props
 
-  const draggable = !zoomed
+  const draggable = draggableProp && !zoomed
   const {
     attributes,
     listeners,
@@ -185,14 +188,15 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
         <div
           ref={setNodeRef}
           data-yaade-mux-pane-chrome={paneId}
+          data-yaade-pane-tab=""
           data-panel-id={panelId.id}
           data-focused={focused ? "" : undefined}
           data-zoomed={zoomed ? "" : undefined}
           data-dragging={isDragging ? "" : undefined}
           className={cn(
-            "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 px-1.5",
+            "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 px-1.5 transition-opacity duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]",
             draggable && "cursor-grab touch-none active:cursor-grabbing",
-            isDragging && "opacity-45",
+            isDragging && "opacity-30",
             className,
           )}
           {...(draggable ? listeners : {})}
@@ -210,6 +214,8 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
         >
           <div
             aria-label={title || "Pane"}
+            aria-roledescription={draggable ? "draggable pane tab" : undefined}
+            title={draggable ? `${title || "Pane"} — drag to dock pane` : title || "Pane"}
             data-yaade-mux-pane-drag=""
             className={cn(
               "flex min-w-0 flex-1 items-center gap-2 self-stretch px-1.5",

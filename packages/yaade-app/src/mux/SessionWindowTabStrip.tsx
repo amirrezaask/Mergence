@@ -1,77 +1,83 @@
-import { useRef, useState, type KeyboardEvent } from "react"
-import { AnimatePresence, LayoutGroup } from "motion/react"
-import { div as MotionDiv } from "motion/react-m"
-import { Plus, Terminal, X } from "lucide-react"
-import type { SessionTab, SessionTabId } from "@yaade/rpc"
-import { Button, Input } from "@yaade/ui/primitives"
-import {
-  cn,
-  yaadeMotion,
-} from "@yaade/ui/session"
-import { ShortcutTooltip } from "./ShortcutTooltip.js"
-import { muxSessionShortcutFor } from "./mux-keymap.js"
+import { useState, type KeyboardEvent, type ReactNode } from "react";
+import { AnimatePresence, LayoutGroup } from "motion/react";
+import { div as MotionDiv } from "motion/react-m";
+import { AppWindow, Plus, X } from "lucide-react";
+import type { MuxTerminalId, SessionTab, SessionTabId } from "@yaade/rpc";
+import { Button, Input } from "@yaade/ui/primitives";
+import { cn, useDockReorderTarget, useDockSource, yaadeMotion } from "@yaade/ui/session";
+import { ShortcutTooltip } from "./ShortcutTooltip.js";
+import { muxSessionShortcutFor } from "./mux-keymap.js";
 
 function handleWindowTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
-  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return
-  const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')]
-  if (tabs.length === 0) return
-  const activeElement = document.activeElement
+  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+  const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
+  if (tabs.length === 0) return;
+  const activeElement = document.activeElement;
   const current = Math.max(
     0,
     activeElement instanceof HTMLElement ? tabs.indexOf(activeElement) : -1,
-  )
-  const next = event.key === "Home"
-    ? 0
-    : event.key === "End"
-      ? tabs.length - 1
-      : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length
-  event.preventDefault()
-  tabs[next]?.focus()
-  tabs[next]?.click()
+  );
+  const next =
+    event.key === "Home"
+      ? 0
+      : event.key === "End"
+        ? tabs.length - 1
+        : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+  event.preventDefault();
+  tabs[next]?.focus();
+  tabs[next]?.click();
 }
 
 function WindowTabProcessTile() {
-  return <Terminal className="size-4 shrink-0" aria-hidden />
+  return <AppWindow className="size-3.5 shrink-0" aria-hidden />;
 }
 
 export type SessionWindowTabStripProps = {
-  readonly tabs: readonly SessionTab[]
-  readonly activeTabId?: SessionTabId
-  readonly onSelect: (tab: SessionTab) => void
-  readonly onCreate: () => void
-  readonly onClose: (tab: SessionTab) => void
-  readonly onRename: (id: SessionTabId, title: string) => void
-  readonly onReorder: (ids: readonly SessionTabId[]) => void
+  readonly tabs: readonly SessionTab[];
+  readonly activeTabId?: SessionTabId;
+  readonly onSelect: (tab: SessionTab) => void;
+  readonly onCreate: () => void;
+  readonly onClose: (tab: SessionTab) => void;
+  readonly onRename: (id: SessionTabId, title: string) => void;
+  readonly dockTerminalIdsByTab: ReadonlyMap<SessionTabId, MuxTerminalId>;
+};
+
+type DockableWindowTabProps = {
+  readonly tab: SessionTab;
+  readonly dockTerminalId?: MuxTerminalId;
+  readonly disabled: boolean;
+  readonly children: (
+    source: ReturnType<typeof useDockSource>,
+    target: ReturnType<typeof useDockReorderTarget>,
+  ) => ReactNode;
+};
+
+function DockableWindowTab(props: DockableWindowTabProps) {
+  const source = useDockSource({
+    tabId: props.dockTerminalId ?? props.tab.id,
+    sourceId: props.tab.id,
+    label: props.tab.title,
+    disabled: props.disabled || !props.dockTerminalId,
+  });
+  const target = useDockReorderTarget(props.tab.id);
+  return props.children(source, target);
 }
 
 export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
-  const dragId = useRef<SessionTabId | null>(null)
-  const [editingId, setEditingId] = useState<SessionTabId | null>(null)
-  const [draftTitle, setDraftTitle] = useState("")
-  const newTabShortcut = muxSessionShortcutFor("tab.new")
+  const [editingId, setEditingId] = useState<SessionTabId | null>(null);
+  const [draftTitle, setDraftTitle] = useState("");
+  const newTabShortcut = muxSessionShortcutFor("tab.new");
 
   const finishRename = (tab: SessionTab) => {
-    const title = draftTitle.trim()
-    setEditingId(null)
-    if (title && title !== tab.title) props.onRename(tab.id, title)
-  }
+    const title = draftTitle.trim();
+    setEditingId(null);
+    if (title && title !== tab.title) props.onRename(tab.id, title);
+  };
 
   const startRename = (tab: SessionTab) => {
-    setDraftTitle(tab.title)
-    setEditingId(tab.id)
-  }
-
-  const moveTab = (tabId: SessionTabId, index: number) => {
-    const from = dragId.current
-    dragId.current = null
-    if (!from || from === tabId) return
-    const ids = props.tabs.map(tab => tab.id)
-    const fromIndex = ids.indexOf(from)
-    if (fromIndex < 0) return
-    ids.splice(fromIndex, 1)
-    ids.splice(index, 0, from)
-    props.onReorder(ids)
-  }
+    setDraftTitle(tab.title);
+    setEditingId(tab.id);
+  };
 
   return (
     <div
@@ -80,101 +86,134 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
     >
       <LayoutGroup id="yaade-window-tabs">
         <nav
-          className="flex h-full min-w-0 items-center gap-1.5 overflow-x-auto"
-          aria-label="Session tabs"
+          className="flex h-full min-w-0 items-center overflow-x-auto"
+          aria-label="Windows"
           role="tablist"
           onKeyDown={handleWindowTabKeyDown}
         >
-        <AnimatePresence initial={false} mode="popLayout">
-          {props.tabs.map((tab, index) => {
-            const active = tab.id === props.activeTabId
-            const editing = editingId === tab.id
-            return (
-              <MotionDiv
-                key={tab.id}
-                layout
-                initial={{ opacity: 0, scale: 0.97, y: 3 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.97, y: -3 }}
-                transition={{ layout: yaadeMotion.layoutTransition, default: yaadeMotion.layoutTransition }}
-                className="flex h-full min-w-0 shrink-0 items-center"
-              >
-                <div
-                  role="tab"
-                  tabIndex={active ? 0 : -1}
-                  aria-selected={active}
-                  aria-label={tab.title}
-                  data-yaade-session-tab={tab.id}
-                  data-active={active ? "true" : undefined}
-                  draggable={!editing}
-                  onDragStart={() => { dragId.current = tab.id }}
-                  onDragOver={event => event.preventDefault()}
-                  onDrop={() => moveTab(tab.id, index)}
-                  onClick={() => { if (!editing) props.onSelect(tab) }}
-                  onDoubleClick={() => {
-                    if (editing) return
-                    startRename(tab)
-                  }}
-                  onKeyDown={event => {
-                    if (editing) return
-                    if (event.key === "Enter" || event.key === " ") {
-                      event.preventDefault()
-                      props.onSelect(tab)
-                    }
-                  }}
-                  className={cn(
-                    "group relative isolate flex h-[var(--yaade-tab-pill-height)] min-w-20 max-w-56 cursor-pointer items-center gap-1.5 px-2 outline-none transition-[color,background-color] duration-[var(--yaade-motion-hot)] focus-visible:ring-2 focus-visible:ring-ring/50",
-                    active ? "text-foreground" : "text-muted-foreground",
-                  )}
+          <AnimatePresence initial={false} mode="popLayout">
+            {props.tabs.map((tab) => {
+              const active = tab.id === props.activeTabId;
+              const editing = editingId === tab.id;
+              const dockTerminalId = props.dockTerminalIdsByTab.get(tab.id);
+              return (
+                <DockableWindowTab
+                  key={tab.id}
+                  tab={tab}
+                  dockTerminalId={dockTerminalId}
+                  disabled={editing}
                 >
-                  {active ? (
+                  {(dockSource, dropTarget) => (
                     <MotionDiv
-                      layoutId="yaade-window-tab-pill"
-                      className="pointer-events-none absolute inset-0 -z-10"
-                      data-yaade-window-tab-pill=""
-                      transition={yaadeMotion.layoutTransition}
-                    />
-                  ) : null}
-                  <WindowTabProcessTile />
-                  {editing ? (
-                    <Input
-                      aria-label={`Rename ${tab.title}`}
-                      autoFocus
-                      value={draftTitle}
-                      className="h-5 min-w-0 flex-1 bg-background px-1"
-                      onClick={event => event.stopPropagation()}
-                      onChange={event => setDraftTitle(event.target.value)}
-                      onBlur={() => finishRename(tab)}
-                      onKeyDown={event => {
-                        event.stopPropagation()
-                        if (event.key === "Enter") finishRename(tab)
-                        if (event.key === "Escape") setEditingId(null)
+                      layout
+                      initial={{ opacity: 0, scale: 0.97, y: 3 }}
+                      animate={{ opacity: 1, scale: 1, y: 0 }}
+                      exit={{ opacity: 0, scale: 0.97, y: -3 }}
+                      transition={{
+                        layout: yaadeMotion.layoutTransition,
+                        default: yaadeMotion.layoutTransition,
                       }}
-                    />
-                  ) : (
-                    <span className="min-w-0 flex-1 truncate text-xs font-medium">
-                      {tab.title}
-                    </span>
+                      className="flex h-full min-w-0 shrink-0 items-center transition-opacity duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)] data-[dragging]:opacity-35"
+                      data-dragging={dockSource.isDragging ? "" : undefined}
+                    >
+                      <div
+                        ref={dropTarget.setNodeRef}
+                        className={cn(
+                          "group relative isolate flex min-w-0 shrink-0 items-center rounded-[var(--yaade-pill-radius)] transition-[background-color,box-shadow] duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]",
+                          dropTarget.isOver &&
+                            !dockSource.isDragging &&
+                            "bg-accent/60 ring-1 ring-ring/30",
+                        )}
+                        data-yaade-session-tab={tab.id}
+                        data-active={active ? "true" : undefined}
+                        data-yaade-window-tab-drop-target={dropTarget.isOver ? "" : undefined}
+                      >
+                        {active ? (
+                          <MotionDiv
+                            layoutId="yaade-window-tab-pill"
+                            className="pointer-events-none absolute inset-0 -z-10"
+                            data-yaade-window-tab-pill=""
+                            transition={yaadeMotion.layoutTransition}
+                          />
+                        ) : null}
+                        {editing ? (
+                          <Input
+                            aria-label={`Rename ${tab.title}`}
+                            autoFocus
+                            value={draftTitle}
+                            className="h-7 min-w-24 bg-background px-2"
+                            onChange={(event) => setDraftTitle(event.target.value)}
+                            onBlur={() => finishRename(tab)}
+                            onKeyDown={(event) => {
+                              event.stopPropagation();
+                              if (event.key === "Enter") finishRename(tab);
+                              if (event.key === "Escape") setEditingId(null);
+                            }}
+                          />
+                        ) : (
+                          <button
+                            ref={dockSource.setNodeRef}
+                            {...dockSource.attributes}
+                            {...dockSource.listeners}
+                            type="button"
+                            role="tab"
+                            tabIndex={active ? 0 : -1}
+                            aria-selected={active}
+                            aria-label={tab.title}
+                            aria-roledescription={
+                              dockTerminalId ? "draggable Window tab" : undefined
+                            }
+                            title={
+                              dockTerminalId
+                                ? `${tab.title} — drag into the workspace to dock its focused terminal`
+                                : tab.title
+                            }
+                            data-yaade-window-tab-dockable={dockTerminalId ? "" : undefined}
+                            onClick={() => props.onSelect(tab)}
+                            onDoubleClick={() => startRename(tab)}
+                            onKeyDown={(event) => {
+                              if (event.key === "Enter" || event.key === " ") {
+                                event.preventDefault();
+                                props.onSelect(tab);
+                              }
+                            }}
+                            className={cn(
+                              "flex h-full min-w-0 flex-1 cursor-grab touch-none items-center gap-1.5 py-1 pl-2 pr-7 outline-none transition-colors duration-[var(--yaade-motion-hot)] active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring/50",
+                              active ? "text-foreground" : "text-muted-foreground",
+                            )}
+                          >
+                            <WindowTabProcessTile />
+                            <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                              {tab.title}
+                            </span>
+                          </button>
+                        )}
+                        {!editing ? (
+                          <Button
+                            type="button"
+                            size="icon-xs"
+                            variant="ghost"
+                            aria-label={`Close ${tab.title}`}
+                            title={`Close ${tab.title}`}
+                            tabIndex={active ? 0 : -1}
+                            className="absolute right-0.5 top-1/2 size-[var(--yaade-pointer-target)] -translate-y-1/2 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.onClose(tab);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <X />
+                          </Button>
+                        ) : null}
+                      </div>
+                    </MotionDiv>
                   )}
-                  <Button
-                    type="button"
-                    size="icon-xs"
-                    variant="ghost"
-                    aria-label={`Close ${tab.title}`}
-                    className="size-5 shrink-0 text-muted-foreground"
-                    onClick={event => {
-                      event.stopPropagation()
-                      props.onClose(tab)
-                    }}
-                    onPointerDown={event => event.stopPropagation()}
-                  >
-                    <X />
-                  </Button>
-                </div>
-              </MotionDiv>
-            )
-          })}
-        </AnimatePresence>
+                </DockableWindowTab>
+              );
+            })}
+          </AnimatePresence>
         </nav>
       </LayoutGroup>
       <ShortcutTooltip label="New tab" shortcut={newTabShortcut} side="bottom">
@@ -191,5 +230,5 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
         </Button>
       </ShortcutTooltip>
     </div>
-  )
+  );
 }

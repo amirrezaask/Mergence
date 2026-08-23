@@ -119,12 +119,14 @@ export class ClientSocketWriter {
   private commit(result: EnqueueResult): boolean {
     if (this.closed || this.sink.readyState !== WEBSOCKET_OPEN) return false
     if (!result.accepted) {
+      // Semantic render state is replaceable. Dropping it and asking the
+      // browser for a fresh snapshot must never disconnect reliable control
+      // traffic or unrelated terminals on the same socket.
+      if (result.overflow === "semantic") return false
       const reason =
         result.overflow === "reliable"
           ? "reliable mailbox overflow"
-          : result.overflow === "legacy"
-            ? "legacy mailbox overflow"
-            : "semantic mailbox overflow"
+          : "legacy mailbox overflow"
       this.close(1013, reason)
       return false
     }

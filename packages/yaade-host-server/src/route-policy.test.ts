@@ -9,9 +9,11 @@ test("route policy keeps terminal observation separate from control and admin", 
   const admin = makePairedDevicePrincipal("device-c", ["admin"], "connection-c")
 
   assert.equal(routeCapability("terminal:attach"), "observe")
+  assert.equal(routeCapability("terminal:detach"), "observe")
   assert.equal(routeCapability("terminal:write"), "control")
   assert.equal(routeCapability("terminal:dispose"), "admin")
   assert.equal(principalMayInvoke(observe, "terminal:attach"), true)
+  assert.equal(principalMayInvoke(observe, "terminal:detach"), true)
   assert.equal(principalMayInvoke(observe, "terminal:write"), false)
   assert.equal(principalMayInvoke(observe, "terminal:dispose"), false)
   assert.equal(principalMayInvoke(control, "terminal:attach"), true)

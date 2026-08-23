@@ -20,6 +20,7 @@ import {
   GetSession,
   GetTerminal,
   ListSessions,
+  MoveTerminalToTab,
   ReorderSessions,
   ReorderTerminals,
   RestoreSession,
@@ -496,6 +497,17 @@ async function handleMux(
         command.tabId,
       );
     }
+    case "mux:moveTerminal": {
+      const command = decodeMuxCommand(
+        MoveTerminalToTab,
+        args[0],
+        "move terminal",
+      );
+      return runtime.terminalService.moveMuxTerminal(
+        command.muxTerminalId,
+        command.targetTabId,
+      );
+    }
     case "mux:selectTerminal": {
       const command = decodeMuxCommand(
         SelectSessionTerminal,
@@ -803,6 +815,10 @@ async function handleTerminal(
       return Promise.resolve(
         runtime.terminal.markReplayReady(str(args[0], "id"), clientId),
       );
+    case "terminal:detach":
+      return Promise.resolve(
+        runtime.terminal.detach(str(args[0], "id"), clientId),
+      );
     case "terminal:attach": {
       const id = str(args[0], "id");
       const inspected = await Promise.resolve(runtime.terminal.inspect(id))
@@ -819,13 +835,20 @@ async function handleTerminal(
       } catch (error) {
         controlErrorToHostError(error)
       }
-      return Promise.resolve(
+      const attached = await Promise.resolve(
         runtime.terminal.attach(
           id,
           clientId,
           typeof args[1] === "number" ? args[1] : undefined,
         ),
-      );
+      )
+      return attached
+        ? {
+            ...attached,
+            ownerId: runtime.identity.serverId,
+            ownerEpoch: runtime.identity.serverEpoch,
+          }
+        : null;
     }
     case "terminal:readReplayPage":
       return runtime.terminal.readReplayPage(

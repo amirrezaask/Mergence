@@ -1,4 +1,4 @@
-export { useIsMobile } from "./hooks/use-mobile.js"
+export { MOBILE_MEDIA_QUERY, useIsMobile } from "./hooks/use-mobile.js"
 export {
   PanelDock,
   PanelDockInDnd,
@@ -11,7 +11,13 @@ export {
   type TabDndHandlers,
   useDropHot,
 } from "./dock/TabDndRoot.js"
-export { DockSourceHandle, type DockSourceHandleProps } from "./dock/DockSourceHandle.js"
+export {
+  DockSourceHandle,
+  useDockReorderTarget,
+  useDockSource,
+  type DockSourceHandleProps,
+  type DockSourceOptions,
+} from "./dock/DockSourceHandle.js"
 export {
   SidebarShell,
   type SidebarShellProps,

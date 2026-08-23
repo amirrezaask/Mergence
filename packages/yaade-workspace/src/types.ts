@@ -6,6 +6,7 @@ import type {
   CreateSessionTab,
   CreateTerminal,
   MuxEvent,
+  MoveTerminalToTab,
   MuxTerminal,
   MuxTerminalId,
   ReorderSessions,
@@ -42,12 +43,28 @@ export type HostMux = {
   createTerminal(command: CreateTerminal): Promise<MuxTerminal>
   getTerminal(muxTerminalId: MuxTerminalId): Promise<MuxTerminal | null>
   reorderTerminals(command: ReorderTerminals): Promise<MuxTerminal[]>
+  moveTerminal(command: MoveTerminalToTab): Promise<MuxTerminal>
   selectTerminal(sessionId: SessionId, muxTerminalId?: MuxTerminalId): Promise<AppSession>
   stopTerminal(muxTerminalId: MuxTerminalId, revision: number): Promise<MuxTerminal>
   restartTerminal(muxTerminalId: MuxTerminalId, revision: number): Promise<MuxTerminal>
   closeTerminal(command: CloseTerminal): Promise<MuxTerminal>
   renameTerminal(muxTerminalId: MuxTerminalId, title: string): Promise<MuxTerminal>
   onEvent(callback: (event: MuxEvent) => void): () => void
+}
+
+export type TerminalReplayChunk = {
+  readonly data: string
+  readonly replayNeedsQueryResponses: boolean
+  readonly replayTruncated: boolean
+}
+
+export type TerminalAttachOptions = {
+  /** A new parser has no continuity with the previous renderer. */
+  readonly replay: "resume" | "full"
+  /** Receives bounded, ordered replay pages before live output is released. */
+  readonly onReplay?: (
+    chunk: TerminalReplayChunk,
+  ) => void | Promise<void>
 }
 
 export type HostTerminal = {
@@ -61,7 +78,7 @@ export type HostTerminal = {
       rows?: number
     },
   ): Promise<{ id: string; title?: string }>
-  attach(id: string): Promise<{
+  attach(id: string, options?: TerminalAttachOptions): Promise<{
     id: string
     title?: string
     terminalEpoch?: string
@@ -102,7 +119,11 @@ export type HostTerminal = {
       replay?: boolean,
       replayNeedsQueryResponses?: boolean,
       replayTruncated?: boolean,
+      acknowledgeConsumed?: () => void,
     ) => void,
+    options?: {
+      readonly acknowledgement: "delivery" | "consumption"
+    },
   ): () => void
   onSemanticSnapshot?(
     id: string,

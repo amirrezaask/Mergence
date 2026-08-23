@@ -156,7 +156,7 @@ test("keeps scoped terminal ownership pointed at the PTY id", async () => {
     await client.ports.terminal.attach(output.ptyId)
     assert.deepEqual(
       calls.find(call => call.channel === "terminal:attach")?.args,
-      ["term-test"],
+      ["term-test", 0, "raw"],
     )
   } finally {
     globalThis.fetch = previousFetch

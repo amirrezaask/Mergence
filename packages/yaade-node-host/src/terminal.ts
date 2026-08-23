@@ -1036,6 +1036,13 @@ export class TerminalHost {
     return null
   }
 
+  /** Stop streaming one hidden renderer without affecting its PTY. */
+  detach(id: string, clientId: string): null {
+    if (id.length > 256 || clientId.length > 256) return null
+    this.entries.get(id)?.viewers.delete(clientId)
+    return null
+  }
+
   /** Remove a disconnected viewer without affecting PTY output. */
   disconnectClient(clientId: string): void {
     if (clientId.length > 256) return
@@ -1059,7 +1066,11 @@ export class TerminalHost {
     if (!entry) return null
     this.clearDisposeTimer(entry)
     const viewer = viewerOf(entry, clientId)
-    const replayNeedsQueryResponses = !viewer.hasAttached
+    // Current-generation terminals answer device/status queries in the
+    // owner-side Ghostty parser. A browser replay is render-only and must not
+    // write a second set of historical query responses into the live shell.
+    const replayNeedsQueryResponses =
+      entry.semantic === null && !viewer.hasAttached
     flushPendingOutput(entry, this.emit)
     entry.lastAttachAt = Date.now()
     if (entry.status === "exited") {

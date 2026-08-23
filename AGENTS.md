@@ -33,6 +33,9 @@ vp run test:web
 vp run lint
 vp run build:server
 vp run build:web
+vp run build:desktop
+vp run test:desktop
+vp run check:desktop-design
 vp run test:web:e2e
 vp exec playwright test --project=platform-e2e
 ```
@@ -44,18 +47,21 @@ The web dev server runs through Vite+; start the Bun-backed host with
 
 ## Application isolation
 
-The repository has exactly two executable applications:
+The repository has exactly three executable applications:
 
 - `apps/server` owns the server process entrypoint and the server-side execution boundary.
 - `apps/web` owns only Vite configuration and browser packaging.
+- `apps/desktop` is the Rust + GPUI native client. It consumes the same typed host RPC/WebSocket boundaries as the browser and never owns PTYs or agent processes.
 
-Reusable implementation belongs in `packages/`. Applications may depend on
-packages, but they must not import another application's source. The root
-build and development commands are intentionally independent: `build:server`,
-`build:web`, `dev:server`, and `dev:web`. Web development does not start a host
-process; start `dev:server` separately when the web proxy needs one. Never add a
-separate agent server or provider-specific process boundary: launch agent CLIs
-through the existing server terminal runtime.
+Reusable TypeScript implementation belongs in `packages/`; reusable native
+implementation should be split from `apps/desktop` only when a second Rust
+consumer exists. Applications may depend on packages or wire contracts, but
+they must not import another application's source. The root build and
+development commands are intentionally independent: `build:server`,
+`build:web`, `build:desktop`, `dev:server`, `dev:web`, and `dev:desktop`. Web and
+desktop development do not start a host process; start `dev:server` separately.
+Never add a separate agent server or provider-specific process boundary: launch
+agent CLIs through the existing server terminal runtime.
 
 ## Architecture invariants
 

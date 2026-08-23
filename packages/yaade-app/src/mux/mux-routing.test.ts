@@ -7,6 +7,7 @@ import {
   chooseTab,
   chooseMuxTerminal,
   isLiveSessionTab,
+  localResourceKey,
   parseMuxSessionRoute,
   persistMuxSessionRoute,
   resolveMuxSessionRoute,
@@ -56,6 +57,20 @@ describe("terminal session routing", () => {
     assert.equal(
       shouldHoldRequestedRoute(route, { sessionsById: new Map(), tabsById: new Map(), terminalsById: new Map() }, "connecting"),
       true,
+    )
+  })
+
+  it("normalizes local and server-scoped resource ids consistently", () => {
+    assert.deepEqual(
+      [
+        "ses-local",
+        "ses-server-a--local",
+        "tab-local",
+        "tab-server-a--local",
+        "term-local",
+        "term-server-a--local",
+      ].map(localResourceKey),
+      ["local", "local", "local", "local", "local", "local"],
     )
   })
 

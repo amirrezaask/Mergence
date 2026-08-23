@@ -51,7 +51,7 @@ test("event replay preserves sequence order after repeated queue compaction", ()
   )
 })
 
-test("terminal:data is live-only — never retained in replay history", () => {
+test("terminal paint channels are live-only — never retained in replay history", () => {
   const events = new EventHub(64, 1024 * 1024)
   const seen: string[] = []
   events.subscribe(event => {
@@ -61,13 +61,18 @@ test("terminal:data is live-only — never retained in replay history", () => {
   events.emit("mux:event", [{ type: "keep-me" }])
   for (let index = 0; index < 500; index += 1) {
     events.emit("terminal:data", ["pty", `chunk-${index}`, index])
+    events.emit("terminal:semantic", ["pty", index, "epoch", {}])
   }
   events.emit("mux:event", ["file://after-flood"])
 
   assert.equal(seen.length, 500)
   const replay = events.replayAfter(0)
   assert.equal(
-    replay.some(event => event.channel === "terminal:data"),
+    replay.some(
+      event =>
+        event.channel === "terminal:data" ||
+        event.channel === "terminal:semantic",
+    ),
     false,
   )
   assert.deepEqual(
@@ -75,7 +80,7 @@ test("terminal:data is live-only — never retained in replay history", () => {
     ["mux:event", "mux:event"],
   )
   // Sequences still advance for ephemeral frames.
-  assert.equal(events.lastSequence, 502)
+  assert.equal(events.lastSequence, 1_002)
   assert.equal(replay[0]?.sequence, 1)
-  assert.equal(replay[1]?.sequence, 502)
+  assert.equal(replay[1]?.sequence, 1_002)
 })

@@ -24,20 +24,21 @@ Agent CLIs are ordinary processes inside server-side terminals, not a separate c
 - The host process owns PTYs directly. Browser reloads and disconnects leave terminal and agent processes running; restarting the host intentionally kills every PTY and starts with a fresh Session.
 - Closing a terminal is the explicit destructive action that stops its PTY and any agent running inside it during normal operation.
 - Reconnects to the same host process restore from a Ghostty snapshot plus sequence-indexed, block-compressed history under the host data directory. History is delivered in bounded pages instead of one large payload.
-- Multiple viewers can attach to one terminal. Every authenticated client with control scope can write input and resize; explicitly observe-only clients remain viewers. Each viewer acknowledges consumed output independently; a lagging viewer is resynchronized from durable history without disconnecting other terminals. Disk-writer backpressure may briefly pause only the producing PTY to keep host memory bounded.
+- Multiple viewers can attach to one terminal. Every authenticated client with control scope can write input and resize; explicitly observe-only clients remain viewers. Each viewer acknowledges parsed output independently; a lagging viewer is resynchronized from durable history without disconnecting other terminals. The per-terminal credit window defaults to 8 MiB and can be tuned with `YAADE_TERMINAL_UNACKNOWLEDGED_BYTES`. Disk-writer backpressure may briefly pause only the producing PTY to keep host memory bounded.
 - Mobile uses a list-first Terminal shell with retained terminal surfaces.
 - Clicking a pane split control opens a Terminal.
+- Drag a Window tab or pane title onto the center or directional dock targets to move, swap, or retile terminals. Docking a Window moves its focused terminal without interrupting the process.
 - Settings → **Servers** lets you add multiple remote host URLs and optional access tokens. Sessions from every reachable host appear in the same session switcher; each session keeps its host context when you work in it.
 - The client host is shown automatically, while remote servers are optional. A new client can therefore start with no remote servers configured.
 
 ## Applications
 
-YAADE has two isolated applications. Shared implementation lives in
-`packages/`; the application directories contain only their executable
-wiring and packaging.
+YAADE has three isolated applications. Shared TypeScript implementation lives
+in `packages/`; application directories own executable wiring and packaging.
 
 - **Server** — `apps/server`, the HTTP/WebSocket host and execution boundary for server-side PTYs, commands, and agent processes.
 - **Web** — `apps/web`, the Vite+ browser control and observation application; it never owns agent processes.
+- **Desktop** — `apps/desktop`, the native Rust + GPUI client. It connects to the same host and preserves the web shell's Sessions → Windows → terminal experience without a WebView or a second PTY runtime.
 
 Start the web and server development processes together; the web process has hot reload:
 
@@ -50,6 +51,14 @@ Run an application individually when needed:
 ```bash
 vp run @yaade/server#dev # server only; defaults to port 4747
 vp run dev:web           # web/Vite+ only
+vp run dev:desktop       # native GPUI client; connects to port 4747 by default
+```
+
+The desktop client follows `YAADE_HOST_URL` and `YAADE_HOST_TOKEN`. Its visual
+contract is generated from the web theme, material, metric, and motion sources:
+
+```bash
+vp run check:desktop-design
 ```
 
 The standalone server can be installed as a user-level service (systemd user
@@ -73,8 +82,9 @@ Build the release artifacts:
 ```bash
 vp run build:server   # dist/yaade-server, standalone server runtime
 vp run build:web      # apps/web/dist, standalone static web artifact
+vp run build:desktop  # apps/desktop/target/release/yaade-desktop
 vp run build:release  # dist/yaade, one self-contained API + web executable
-vp run build          # all artifacts, including dist/yaade
+vp run build          # server + web release artifacts
 ```
 
 Run the combined release directly:
@@ -98,6 +108,8 @@ vp run typecheck
 vp run lint
 vp run test:server
 vp run test:web
+vp run test:desktop
+vp run check:desktop-design
 vp run test:web:e2e
 vp run build
 ```

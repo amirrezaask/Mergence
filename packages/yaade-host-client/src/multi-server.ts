@@ -5,6 +5,7 @@ import {
   CloseTerminal,
   CreateSessionTab,
   CreateTerminal,
+  MoveTerminalToTab,
   RenameSessionTab,
   ReorderSessionTabs,
   ReorderTerminals,
@@ -669,9 +670,12 @@ export class MultiServerHostClient {
         self.ptyOwners.set(id, { serverId: connection.definition.id, localId: local.id })
         return { ...local, id }
       },
-      attach: (id) => {
+      attach: (id, options) => {
         const owner = self.ownerForPty(id)
-        return self.connectionForOwner(owner).api.terminal.attach(owner.localId)
+        return self.connectionForOwner(owner).api.terminal.attach(
+          owner.localId,
+          options,
+        )
       },
       write: (id, data) => {
         const owner = self.ownerForPty(id)
@@ -697,9 +701,18 @@ export class MultiServerHostClient {
         const owner = self.ownerForPty(id)
         return self.connectionForOwner(owner).api.terminal.getForegroundProcess(owner.localId)
       },
-      onData: (id, callback) => {
+      onData: (id, callback, options) => {
         const owner = self.ownerForPty(id)
-        return self.connectionForOwner(owner).api.terminal.onData(owner.localId, callback)
+        return self.connectionForOwner(owner).api.terminal.onData(
+          owner.localId,
+          callback,
+          options,
+        )
+      },
+      onSemanticSnapshot: (id, callback) => {
+        const owner = self.ownerForPty(id)
+        const subscribe = self.connectionForOwner(owner).api.terminal.onSemanticSnapshot
+        return subscribe?.(owner.localId, callback) ?? (() => undefined)
       },
       onExit: (callback) => {
         self.terminalExitListeners.add(callback)
@@ -793,6 +806,18 @@ export class MultiServerHostClient {
           muxTerminalIds: Array.isArray(command.muxTerminalIds)
             ? command.muxTerminalIds.map(value => publicMuxTerminalId(this.ownerForMuxTerminal(String(value)).localId))
             : command.muxTerminalIds,
+        }
+      }
+      case "MoveTerminalToTab": {
+        const terminalOwner = this.ownerForMuxTerminal(String(command.muxTerminalId))
+        const tabOwner = this.ownerForTab(String(command.targetTabId))
+        if (terminalOwner.serverId !== tabOwner.serverId) {
+          throw new Error("A terminal cannot move between YAADE servers")
+        }
+        return {
+          ...command,
+          muxTerminalId: publicMuxTerminalId(terminalOwner.localId),
+          targetTabId: publicTabId(tabOwner.localId),
         }
       }
       case "CancelMuxTerminal":
@@ -965,6 +990,14 @@ export class MultiServerHostClient {
           Schema.decodeUnknownSync(ReorderTerminals)(self.toLocalCommand(command)),
         )
         return local.map(terminal => self.scopeMuxTerminal(connection, terminal))
+      },
+      moveTerminal: async command => {
+        const owner = self.ownerForMuxTerminal(command.muxTerminalId)
+        const connection = self.connectionForOwner(owner)
+        const local = await connection.api.mux.moveTerminal(
+          Schema.decodeUnknownSync(MoveTerminalToTab)(self.toLocalCommand(command)),
+        )
+        return self.scopeMuxTerminal(connection, local)
       },
       selectTerminal: async (sessionId, muxTerminalId) => {
         const owner = self.ownerForSession(sessionId)

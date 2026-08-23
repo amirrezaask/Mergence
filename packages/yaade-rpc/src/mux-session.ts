@@ -226,6 +226,13 @@ export class ReorderTerminals extends Schema.TaggedClass<ReorderTerminals>()(
     muxTerminalIds: Schema.Array(MuxTerminalId),
   },
 ) {}
+export class MoveTerminalToTab extends Schema.TaggedClass<MoveTerminalToTab>()(
+  "MoveTerminalToTab",
+  {
+    muxTerminalId: MuxTerminalId,
+    targetTabId: SessionTabId,
+  },
+) {}
 export class StopTerminal extends Schema.TaggedClass<StopTerminal>()(
   "StopTerminal",
   {
@@ -276,6 +283,7 @@ export const MuxCommand = Schema.Union(
   RestoreSession,
   CreateTerminal,
   ReorderTerminals,
+  MoveTerminalToTab,
   StopTerminal,
   RestartTerminal,
   CloseTerminal,

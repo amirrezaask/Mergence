@@ -63,6 +63,8 @@ test("remote terminal store rejects revision gaps and accepts matching patches",
     patch: { ...gap.patch, baseRevision: 1 },
   }
   assert.equal(store.applyPatch(patch), "applied")
+  assert.equal(store.applyPatch(patch), "ignored")
+  assert.equal(store.applySnapshot(initial), "ignored")
   assert.equal(store.currentRevision, 2)
 })
 

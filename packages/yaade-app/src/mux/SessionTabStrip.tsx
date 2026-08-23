@@ -25,7 +25,7 @@ function handleSessionTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
   if (tabs.length === 0) return;
   const current = Math.max(
     0,
-    tabs.indexOf(document.activeElement as HTMLElement),
+    tabs.findIndex(tab => tab === document.activeElement),
   );
   const next =
     event.key === "Home"
@@ -58,6 +58,7 @@ export type SessionTabStripProps = {
   readonly onRename: (id: SessionId, title: string) => void;
   readonly onReorder: (ids: readonly SessionId[]) => void;
   readonly serverNamesBySessionId?: ReadonlyMap<SessionId, string>;
+  readonly terminalCounts?: ReadonlyMap<SessionId, number>;
   readonly layout?: SessionNavigationLayout;
   readonly collapsed?: boolean;
   readonly sidebarOrientation?: "horizontal" | "vertical";
@@ -128,6 +129,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
     const active = session.id === props.activeSessionId;
     const editing = editingId === session.id;
     const serverName = props.serverNamesBySessionId?.get(session.id);
+    const terminalCount = props.terminalCounts?.get(session.id) ?? 0;
     return (
       <MotionDiv
         key={session.id}
@@ -139,34 +141,15 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           layout: yaadeMotion.layoutTransition,
           default: yaadeMotion.layoutTransition,
         }}
-        role="tab"
-        tabIndex={active ? 0 : -1}
-        aria-selected={active}
-        aria-label={session.title}
-        data-yaade-session={session.id}
+        role="presentation"
         data-active={active ? "true" : undefined}
         draggable={!editing}
         onDragStart={() => {
           dragId.current = session.id;
         }}
-        onDragOver={(event) => event.preventDefault()}
+        onDragOver={event => event.preventDefault()}
         onDrop={() => moveSession(session.id, index)}
-        onClick={() => {
-          if (!editing) props.onSelect(session.id);
-        }}
-        onDoubleClick={() => {
-          if (editing) return;
-          setDraftTitle(session.title);
-          setEditingId(session.id);
-        }}
-        onKeyDown={(event) => {
-          if (editing) return;
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            props.onSelect(session.id);
-          }
-        }}
-        className="group relative flex min-h-11 w-full shrink-0 cursor-pointer items-center rounded-md border border-transparent px-1 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-sidebar-accent/70 focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-36"
+        className="group relative flex min-h-11 w-full shrink-0 items-center rounded-md border border-transparent px-1 outline-none transition-[color,background-color,border-color] duration-[var(--yaade-motion-hot)] hover:bg-sidebar-accent/70 data-[active=true]:border-sidebar-border data-[active=true]:bg-sidebar-accent max-md:h-full max-md:min-h-0 max-md:w-36"
       >
         <span
           className="absolute inset-y-2 left-0 w-0.5 origin-center scale-y-0 rounded-full bg-sidebar-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-y-100"
@@ -178,17 +161,37 @@ export function SessionTabStrip(props: SessionTabStripProps) {
             className="h-7 min-w-0 flex-1 border-sidebar-primary/50 bg-sidebar px-1.5"
             autoFocus
             value={draftTitle}
-            onClick={(event) => event.stopPropagation()}
-            onChange={(event) => setDraftTitle(event.target.value)}
+            onClick={event => event.stopPropagation()}
+            onChange={event => setDraftTitle(event.target.value)}
             onBlur={() => finishRename(session)}
-            onKeyDown={(event) => {
+            onKeyDown={event => {
               event.stopPropagation();
               if (event.key === "Enter") finishRename(session);
               if (event.key === "Escape") setEditingId(null);
             }}
           />
         ) : (
-          <span className="flex min-h-8 min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 transition-colors group-data-[active=true]:text-sidebar-accent-foreground">
+          <button
+            type="button"
+            role="tab"
+            tabIndex={active ? 0 : -1}
+            aria-selected={active}
+            aria-label={session.title}
+            data-yaade-session={session.id}
+            data-active={active ? "true" : undefined}
+            onClick={() => props.onSelect(session.id)}
+            onDoubleClick={() => {
+              setDraftTitle(session.title);
+              setEditingId(session.id);
+            }}
+            onKeyDown={event => {
+              if (event.key === "Enter" || event.key === " ") {
+                event.preventDefault();
+                props.onSelect(session.id);
+              }
+            }}
+            className="flex min-h-10 min-w-0 flex-1 items-center gap-2 overflow-hidden px-1.5 text-left text-xs font-medium text-sidebar-foreground/70 outline-none transition-colors focus-visible:ring-2 focus-visible:ring-sidebar-ring/50 group-data-[active=true]:text-sidebar-accent-foreground"
+          >
             <span className="flex min-w-0 flex-1 flex-col justify-center">
               <span className="truncate">{session.title}</span>
               {serverName ? (
@@ -197,17 +200,27 @@ export function SessionTabStrip(props: SessionTabStripProps) {
                 </span>
               ) : null}
             </span>
-          </span>
+            {terminalCount > 0 ? (
+              <span
+                className="shrink-0 rounded-full bg-sidebar-accent/80 px-1.5 py-0.5 font-mono text-3xs tabular-nums text-sidebar-foreground/65"
+                aria-label={`${terminalCount} terminal${terminalCount === 1 ? "" : "s"}`}
+              >
+                {terminalCount}
+              </span>
+            ) : null}
+          </button>
         )}
         <Button
           size="icon-xs"
           variant="ghost"
           aria-label={`Close ${session.title}`}
+          title={`Close ${session.title}`}
           className="ml-0.5 shrink-0 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
-          onClick={(event) => {
+          onClick={event => {
             event.stopPropagation();
             props.onClose(session.id);
           }}
+          onKeyDown={event => event.stopPropagation()}
         >
           <X />
         </Button>
@@ -245,6 +258,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         }}
         contentClassName="flex flex-col gap-1 p-2 max-md:flex-row max-md:gap-1 max-md:overflow-x-auto max-md:overflow-y-hidden max-md:p-1"
         footerClassName="border-sidebar-border p-2 max-md:h-full max-md:w-auto max-md:border-t-0 max-md:border-l max-md:p-1"
+        headerClassName="border-sidebar-border/70 px-3 py-2"
         className={cn(
           "w-full border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
           !props.collapsed &&
@@ -259,6 +273,16 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           "data-yaade-session-tabs": "",
         }}
         footer={sidebarActions}
+        header={
+          <div className="flex min-w-0 items-center justify-between gap-3">
+            <span className="text-2xs font-semibold tracking-wide text-sidebar-foreground">
+              Sessions
+            </span>
+            <span className="font-mono text-3xs tabular-nums text-sidebar-foreground/50">
+              {props.sessions.length}
+            </span>
+          </div>
+        }
       >
         {animatedSessionItems}
       </SidebarShell>
@@ -282,6 +306,9 @@ export function SessionTabStrip(props: SessionTabStripProps) {
         <div className="flex h-9 shrink-0 items-center gap-2 border-b border-sidebar-border px-3 max-md:h-full max-md:w-auto max-md:border-r max-md:border-b-0 max-md:px-2">
           <span className="text-3xs font-bold uppercase tracking-[0.1em] text-sidebar-foreground/60">
             Sessions
+          </span>
+          <span className="font-mono text-3xs tabular-nums text-sidebar-foreground/45">
+            {props.sessions.length}
           </span>
           <div className="ml-auto">{sidebarActions}</div>
         </div>
@@ -333,34 +360,16 @@ export function SessionTabStrip(props: SessionTabStripProps) {
           return (
             <div
               key={session.id}
-              role="tab"
-              tabIndex={active ? 0 : -1}
-              aria-selected={active}
-              aria-label={session.title}
+              role="presentation"
               data-yaade-session={session.id}
               data-active={active ? "true" : undefined}
               draggable={!editing}
               onDragStart={() => {
                 dragId.current = session.id;
               }}
-              onDragOver={(event) => event.preventDefault()}
+              onDragOver={event => event.preventDefault()}
               onDrop={() => moveSession(session.id, index)}
-              onClick={() => {
-                if (!editing) props.onSelect(session.id);
-              }}
-              onDoubleClick={() => {
-                if (editing) return;
-                setDraftTitle(session.title);
-                setEditingId(session.id);
-              }}
-              onKeyDown={(event) => {
-                if (editing) return;
-                if (event.key === "Enter" || event.key === " ") {
-                  event.preventDefault();
-                  props.onSelect(session.id);
-                }
-              }}
-              className="group relative flex h-full min-w-24 shrink-0 cursor-pointer items-center px-0.5 outline-none transition-[color,background-color] duration-[var(--yaade-motion-hot)] focus-visible:bg-accent data-[active=true]:bg-background"
+              className="group relative flex h-full min-w-24 shrink-0 items-center px-0.5 transition-[color,background-color] duration-[var(--yaade-motion-hot)] data-[active=true]:bg-background"
             >
               <span
                 className="absolute inset-x-2 bottom-0 h-0.5 origin-center scale-x-0 rounded-full bg-primary transition-transform duration-[var(--yaade-motion-menu)] ease-[var(--yaade-ease-out)] group-data-[active=true]:scale-x-100"
@@ -372,17 +381,34 @@ export function SessionTabStrip(props: SessionTabStripProps) {
                   className="h-6 min-w-24 border-primary/50 bg-background px-1.5"
                   autoFocus
                   value={draftTitle}
-                  onClick={(event) => event.stopPropagation()}
-                  onChange={(event) => setDraftTitle(event.target.value)}
+                  onChange={event => setDraftTitle(event.target.value)}
                   onBlur={() => finishRename(session)}
-                  onKeyDown={(event) => {
+                  onKeyDown={event => {
                     event.stopPropagation();
                     if (event.key === "Enter") finishRename(session);
                     if (event.key === "Escape") setEditingId(null);
                   }}
                 />
               ) : (
-                <span className="flex min-h-full min-w-0 flex-1 items-center overflow-hidden px-1.5 text-left text-xs font-medium text-muted-foreground transition-colors group-data-[active=true]:text-foreground">
+                <button
+                  type="button"
+                  role="tab"
+                  tabIndex={active ? 0 : -1}
+                  aria-selected={active}
+                  aria-label={session.title}
+                  onClick={() => props.onSelect(session.id)}
+                  onDoubleClick={() => {
+                    setDraftTitle(session.title);
+                    setEditingId(session.id);
+                  }}
+                  onKeyDown={event => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      props.onSelect(session.id);
+                    }
+                  }}
+                  className="flex h-full min-w-0 flex-1 cursor-pointer items-center overflow-hidden px-1.5 text-left text-xs font-medium text-muted-foreground outline-none transition-colors focus-visible:bg-accent group-data-[active=true]:text-foreground"
+                >
                   <span className="flex min-w-0 flex-col">
                     <span className="truncate">{session.title}</span>
                     {serverName ? (
@@ -391,17 +417,19 @@ export function SessionTabStrip(props: SessionTabStripProps) {
                       </span>
                     ) : null}
                   </span>
-                </span>
+                </button>
               )}
               <Button
                 size="icon-xs"
                 variant="ghost"
                 aria-label={`Close ${session.title}`}
+                title={`Close ${session.title}`}
                 className="opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 group-data-[active=true]:opacity-70"
-                onClick={(event) => {
+                onClick={event => {
                   event.stopPropagation();
                   props.onClose(session.id);
                 }}
+                onKeyDown={event => event.stopPropagation()}
               >
                 <X />
               </Button>

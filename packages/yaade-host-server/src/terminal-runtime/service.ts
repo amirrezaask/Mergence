@@ -420,8 +420,40 @@ export class TerminalService {
     return terminals;
   }
 
+  async moveMuxTerminal(
+    terminalId: MuxTerminalId,
+    targetTabId: import("@yaade/rpc").SessionTabId,
+  ): Promise<MuxTerminal> {
+    return this.withTerminalLock(terminalId, async () => {
+      const current = this.require(terminalId);
+      const previousSession = this.deps.muxSessions.getSession(current.sessionId);
+      const previousSourceTab = current.tabId
+        ? this.deps.muxSessions.getTab(current.tabId)
+        : undefined;
+      const previousTargetTab = this.deps.muxSessions.getTab(targetTabId);
+      const moved = this.deps.muxSessions.moveMuxTerminal(terminalId, targetTabId);
+
+      if (moved.revision !== current.revision) this.emitUpdated(moved);
+      if (previousSourceTab) {
+        const sourceTab = this.deps.muxSessions.getTab(previousSourceTab.id);
+        if (sourceTab && sourceTab.revision !== previousSourceTab.revision) {
+          this.emitTabUpdated(sourceTab);
+        }
+      }
+      const targetTab = this.deps.muxSessions.getTab(targetTabId);
+      if (targetTab && targetTab.revision !== previousTargetTab?.revision) {
+        this.emitTabUpdated(targetTab);
+      }
+      const session = this.deps.muxSessions.getSession(current.sessionId);
+      if (session && session.revision !== previousSession?.revision) {
+        this.emitSessionUpdated(session);
+      }
+      return moved;
+    });
+  }
+
   onProcessExit(ptyId: string, exitCode: number): void {
-    for (const session of this.deps.muxSessions.listSessions(false)) {
+    for (const session of this.deps.muxSessions.listSessions(true)) {
       const terminal = this.deps.muxSessions.listMuxTerminals(session.id).find(
         candidate => candidate.output.ptyId === ptyId,
       )

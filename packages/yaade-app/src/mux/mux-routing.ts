@@ -119,7 +119,7 @@ export function resolveMuxSessionRoute(
 
 /** Strip `ses-`/`tab-`/`term-` and an optional `serverId--` multi-server prefix. */
 export function localResourceKey(id: string): string {
-  const rest = id.replace(/^(ses|tab|terminal)-/, "")
+  const rest = id.replace(/^(ses|tab|term)-/, "")
   const split = rest.indexOf("--")
   return split === -1 ? rest : rest.slice(split + 2)
 }

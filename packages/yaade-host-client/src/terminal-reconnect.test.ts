@@ -63,6 +63,7 @@ class FakeTransport implements YaadeHostTransport {
 
   invokeRealtime<T>(channel: string, ...args: unknown[]): Promise<T> | null {
     this.calls.push({ channel, args, via: "realtime" })
+    if (channel === "terminal:detach") return Promise.resolve(null as T)
     if (channel !== "terminal:attach") throw new Error(`unexpected ${channel}`)
     return Promise.resolve(this.shiftAttach())
   }
@@ -125,7 +126,147 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
   assert.deepEqual(replayTruncatedFlags, [false, true, false])
   assert.deepEqual(transport.calls.at(-1), {
     channel: "terminal:attach",
-    args: ["pty-1", 3],
+    args: ["pty-1", 3, "raw"],
+    via: "realtime",
+  })
+})
+
+test("a new renderer receives full paged replay before buffered live output", async () => {
+  const transport = new FakeTransport()
+  transport.queueAttach({
+    id: "pty-remount",
+    outputChunks: ["old-tail"],
+    output: "",
+    lastSequence: 2,
+    archiveAvailable: true,
+    status: "running",
+  })
+  const terminal = createYaadeApi(transport).terminal
+  transport.emit("connection:status", "connected")
+  await terminal.attach("pty-remount")
+
+  transport.queueAttach({
+    id: "pty-remount",
+    outputChunks: ["bounded-tail"],
+    output: "",
+    lastSequence: 4,
+    archiveAvailable: true,
+    status: "running",
+  })
+  transport.queueReplayPage({
+    chunks: ["history-1", "history-2", "history-3", "history-4", "history-5"],
+    firstSequence: 1,
+    lastSequence: 5,
+    nextSequence: 5,
+    complete: true,
+  })
+
+  const replay: string[] = []
+  const attached = await terminal.attach("pty-remount", {
+    replay: "full",
+    onReplay: chunk => {
+      replay.push(chunk.data)
+      transport.emit("terminal:data", "pty-remount", "duplicate-live-5", 5)
+      transport.emit("terminal:data", "pty-remount", "live-6", 6)
+    },
+  })
+  const live: string[] = []
+  terminal.onData("pty-remount", data => live.push(data))
+
+  assert.deepEqual(replay, [
+    "history-1history-2history-3history-4history-5",
+  ])
+  assert.deepEqual(live, ["live-6"])
+  assert.deepEqual(attached?.outputChunks, [])
+  assert.equal(attached?.output, "")
+  assert.deepEqual(
+    transport.calls.filter(call => call.channel === "terminal:attach").at(-1),
+    {
+      channel: "terminal:attach",
+      args: ["pty-remount", 0, "raw"],
+      via: "realtime",
+    },
+  )
+})
+
+test("flow credit is acknowledged only after a consuming renderer parses data", () => {
+  const transport = new FakeTransport()
+  const terminal = createYaadeApi(transport).terminal
+  transport.emit("connection:status", "connected")
+  let acknowledgeConsumed: (() => void) | undefined
+  let transportAcknowledgements = 0
+  terminal.onData(
+    "pty-consumed",
+    (_data, _replay, _queries, _truncated, acknowledge) => {
+      acknowledgeConsumed = acknowledge
+    },
+    { acknowledgement: "consumption" },
+  )
+  transport.emit(
+    "terminal:data",
+    "pty-consumed",
+    "payload",
+    1,
+    () => {
+      transportAcknowledgements += 1
+    },
+  )
+  assert.equal(transportAcknowledgements, 0)
+  acknowledgeConsumed?.()
+  assert.equal(transportAcknowledgements, 1)
+  acknowledgeConsumed?.()
+  assert.equal(transportAcknowledgements, 1)
+})
+
+test("an incomplete archive resets to the bounded tail instead of exposing a gap", async () => {
+  const transport = new FakeTransport()
+  transport.queueAttach({
+    id: "pty-gap",
+    outputChunks: ["bounded-tail"],
+    output: "",
+    lastSequence: 4,
+    archiveAvailable: true,
+    status: "running",
+  })
+  transport.queueReplayPage({
+    chunks: ["archive-prefix"],
+    firstSequence: 1,
+    lastSequence: 2,
+    nextSequence: 2,
+    complete: false,
+  })
+  transport.queueReplayPage({
+    chunks: [],
+    firstSequence: 0,
+    lastSequence: 2,
+    nextSequence: 2,
+    complete: false,
+  })
+  const replay: Array<{ data: string; truncated: boolean }> = []
+  await createYaadeApi(transport).terminal.attach("pty-gap", {
+    replay: "full",
+    onReplay: chunk => {
+      replay.push({
+        data: chunk.data,
+        truncated: chunk.replayTruncated,
+      })
+    },
+  })
+  assert.deepEqual(replay, [
+    { data: "archive-prefix", truncated: false },
+    { data: "bounded-tail", truncated: true },
+  ])
+})
+
+test("removing the last renderer detaches its server stream", async () => {
+  const transport = new FakeTransport()
+  const terminal = createYaadeApi(transport).terminal
+  const unsubscribe = terminal.onData("pty-hidden", () => undefined)
+  unsubscribe()
+  await new Promise<void>(resolve => setImmediate(resolve))
+  assert.deepEqual(transport.calls.at(-1), {
+    channel: "terminal:detach",
+    args: ["pty-hidden"],
     via: "realtime",
   })
 })
@@ -170,7 +311,7 @@ test("archived reconnect history is delivered page by page", async () => {
   })
   transport.emit("connection:status", "connected")
   await new Promise(resolve => setTimeout(resolve, 20))
-  assert.deepEqual(output, ["archive-2", "archive-3", "archive-4"])
+  assert.deepEqual(output, ["archive-2", "archive-3archive-4"])
   assert.equal(
     transport.calls.filter(call => call.channel === "terminal:readReplayPage").length,
     2,

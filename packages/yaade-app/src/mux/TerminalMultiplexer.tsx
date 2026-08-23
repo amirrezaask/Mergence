@@ -8,11 +8,7 @@ import {
   useSyncExternalStore,
   lazy,
 } from "react";
-import {
-  LayoutGroup,
-  LazyMotion,
-  MotionConfig,
-} from "motion/react";
+import { LayoutGroup, LazyMotion, MotionConfig } from "motion/react";
 import { aside as MotionAside } from "motion/react-m";
 import type {
   CreateTerminal,
@@ -25,7 +21,7 @@ import type {
   TerminalInput,
 } from "@yaade/rpc";
 import { SessionTabConflict } from "@yaade/rpc";
-import type { PanelId, YaadeTheme } from "@yaade/shared";
+import type { DropAction, PanelId } from "@yaade/shared";
 import type { PanelEvent } from "@yaade/panels";
 import {
   Alert,
@@ -47,6 +43,7 @@ import {
   PanelRightClose,
   PanelRightOpen,
   Settings,
+  Terminal as TerminalIcon,
 } from "lucide-react";
 import {
   AmbientCanvas,
@@ -108,9 +105,7 @@ import {
   terminalPaneCount,
   type TerminalWorkspace,
 } from "./terminal-tiling.js";
-import {
-  muxSessionDirectShortcutFor,
-} from "./mux-keymap.js";
+import { muxSessionDirectShortcutFor } from "./mux-keymap.js";
 import {
   MUX_SESSION_PREFIX,
   MUX_SESSION_PREFIX_GROUPS,
@@ -145,16 +140,16 @@ const TerminalRenderer = lazy(() =>
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax);
 const EMPTY_TERMINAL_IDS: readonly MuxTerminalId[] = [];
 
-type MuxSessionHistoryState = { readonly yaadeMobileTerminal?: string } | null
+type MuxSessionHistoryState = { readonly yaadeMobileTerminal?: string } | null;
 
 function writeMuxSessionLocation(
   url: string,
   mode: "push" | "replace",
   state: MuxSessionHistoryState = null,
 ): void {
-  persistMuxSessionRoute(url, localStorage)
-  if (mode === "push") history.pushState(state, "", url)
-  else history.replaceState(state, "", url)
+  persistMuxSessionRoute(url, localStorage);
+  if (mode === "push") history.pushState(state, "", url);
+  else history.replaceState(state, "", url);
 }
 const EMPTY_TAB_IDS: readonly SessionTabId[] = [];
 
@@ -197,7 +192,7 @@ function isLive(terminal: MuxTerminal): boolean {
 
 function firstEmptyTerminalPanel(workspace: TerminalWorkspace): PanelId | undefined {
   let emptyPanel: PanelId | undefined;
-  workspace.tree.visitLeaves(leaf => {
+  workspace.tree.visitLeaves((leaf) => {
     if (!emptyPanel && leaf.view.kind === "empty") {
       emptyPanel = leaf.panelId;
     }
@@ -206,9 +201,14 @@ function firstEmptyTerminalPanel(workspace: TerminalWorkspace): PanelId | undefi
 }
 
 function errorMessage<T>(error: T): string {
-  return error instanceof Error
-    ? error.message
-    : "The host could not complete that action.";
+  return error instanceof Error ? error.message : "The host could not complete that action.";
+}
+
+function nextWindowTitle(tabs: readonly SessionTab[]): string {
+  const usedTitles = new Set(tabs.map((tab) => tab.title));
+  let index = 1;
+  while (usedTitles.has(`Window ${index}`)) index += 1;
+  return `Window ${index}`;
 }
 
 function markPerformance(name: string): void {
@@ -237,15 +237,9 @@ function markPerformance(name: string): void {
 export function TerminalMultiplexer() {
   const hostPorts = useHostPorts();
   const serverConnections = useServerConnections();
-  const {
-    activeTheme,
-    appearanceSettings,
-    resetAppearanceSettings,
-    setAppearanceSettings,
-  } = useAppearanceSettings();
-  const [client] = useState<MuxClient>(() =>
-    createTerminalClient({ api: hostPorts.mux }),
-  );
+  const { activeTheme, appearanceSettings, resetAppearanceSettings, setAppearanceSettings } =
+    useAppearanceSettings();
+  const [client] = useState<MuxClient>(() => createTerminalClient({ api: hostPorts.mux }));
   const snapshot = useSyncExternalStore(
     client.store.subscribe,
     client.store.getSnapshot,
@@ -273,6 +267,7 @@ export function TerminalMultiplexer() {
   const prefixTimerRef = useRef<number | undefined>(undefined);
   const pendingTerminalPanelRequestsRef = useRef(new Set<string>());
   const closingTabIdsRef = useRef(new Set<SessionTabId>());
+  const navigationIntentRef = useRef(0);
   const muxTerminalsRef = useRef(snapshot.terminalsById);
   const focusedMuxTerminalRef = useRef<MuxTerminal | undefined>(undefined);
   const overlayWasOpenRef = useRef(false);
@@ -301,13 +296,13 @@ export function TerminalMultiplexer() {
           if (snap.connection !== "connected") return false;
           const route = parseMuxSessionRoute(location.href);
           if (route.sessionId) {
-            const present = [...snap.sessionsById.keys()].some(id =>
+            const present = [...snap.sessionsById.keys()].some((id) =>
               sameLocalResource(id, route.sessionId),
             );
             if (present) return sameLocalResource(snap.activeSessionId, route.sessionId);
           }
           if (route.muxTerminalId) {
-            const present = [...snap.terminalsById.keys()].some(id =>
+            const present = [...snap.terminalsById.keys()].some((id) =>
               sameLocalResource(id, route.muxTerminalId),
             );
             if (present) return sameLocalResource(snap.activeMuxTerminalId, route.muxTerminalId);
@@ -336,7 +331,7 @@ export function TerminalMultiplexer() {
     if (serverConnections.snapshot.generation === 0) return;
     const activeId = serverConnections.snapshot.activeServerId;
     const current =
-      serverConnections.snapshot.connections.find(connection => connection.id === activeId) ??
+      serverConnections.snapshot.connections.find((connection) => connection.id === activeId) ??
       serverConnections.snapshot.connections[0];
     if (
       current?.status === "offline" ||
@@ -346,12 +341,17 @@ export function TerminalMultiplexer() {
       return;
     }
     void client.reconcile().catch(() => undefined);
-  }, [client, serverConnections.snapshot.generation, serverConnections.snapshot.connections, serverConnections.snapshot.activeServerId]);
+  }, [
+    client,
+    serverConnections.snapshot.generation,
+    serverConnections.snapshot.connections,
+    serverConnections.snapshot.activeServerId,
+  ]);
 
   useEffect(() => {
     const activeId = serverConnections.snapshot.activeServerId;
     const current =
-      serverConnections.snapshot.connections.find(connection => connection.id === activeId) ??
+      serverConnections.snapshot.connections.find((connection) => connection.id === activeId) ??
       serverConnections.snapshot.connections[0];
     if (!current) return;
     if (
@@ -376,7 +376,7 @@ export function TerminalMultiplexer() {
   }, [client, serverConnections.snapshot]);
 
   useEffect(() => {
-    const onPopState = () => setRouteRevision(revision => revision + 1);
+    const onPopState = () => setRouteRevision((revision) => revision + 1);
     window.addEventListener("popstate", onPopState);
     return () => window.removeEventListener("popstate", onPopState);
   }, []);
@@ -387,10 +387,10 @@ export function TerminalMultiplexer() {
       return;
     }
     const requestedTerminal = route.muxTerminalId
-      ? snapshot.terminalsById.get(route.muxTerminalId) ??
-        [...snapshot.terminalsById.values()].find(terminal =>
+      ? (snapshot.terminalsById.get(route.muxTerminalId) ??
+        [...snapshot.terminalsById.values()].find((terminal) =>
           sameLocalResource(terminal.id, route.muxTerminalId),
-        )
+        ))
       : undefined;
     const requestedSessionId = route.sessionId ?? requestedTerminal?.sessionId;
     const sessions = [...snapshot.sessionsById.values()];
@@ -403,10 +403,12 @@ export function TerminalMultiplexer() {
     const tab = chooseTab(
       route.tabId,
       session,
-      tabs.map(id => snapshot.tabsById.get(id)).filter((value): value is SessionTab => Boolean(value)),
+      tabs
+        .map((id) => snapshot.tabsById.get(id))
+        .filter((value): value is SessionTab => Boolean(value)),
       requestedTerminal?.sessionId === session.id ? requestedTerminal.tabId : undefined,
     );
-    const ids = tab ? snapshot.terminalIdsByTab.get(tab.id) ?? [] : EMPTY_TERMINAL_IDS;
+    const ids = tab ? (snapshot.terminalIdsByTab.get(tab.id) ?? []) : EMPTY_TERMINAL_IDS;
     const mobileListRoute = isMobile && !route.muxTerminalId;
     const terminalId = mobileListRoute
       ? undefined
@@ -425,8 +427,7 @@ export function TerminalMultiplexer() {
     }
     const url = muxSessionUrl(session.id, tab?.id, terminalId);
     persistMuxSessionRoute(url, localStorage);
-    if (location.href !== new URL(url, location.origin).href)
-      history.replaceState(null, "", url);
+    if (location.href !== new URL(url, location.origin).href) history.replaceState(null, "", url);
   }, [
     client,
     snapshot.activeSessionId,
@@ -446,10 +447,8 @@ export function TerminalMultiplexer() {
   const visibleSessions = useMemo(
     () =>
       snapshot.visibleSessionIds
-        .map(id => snapshot.sessionsById.get(id))
-        .filter((session): session is NonNullable<typeof session> =>
-          Boolean(session),
-        ),
+        .map((id) => snapshot.sessionsById.get(id))
+        .filter((session): session is NonNullable<typeof session> => Boolean(session)),
     [snapshot.sessionsById, snapshot.visibleSessionIds],
   );
   const serverNamesBySessionId = useMemo(() => {
@@ -463,9 +462,7 @@ export function TerminalMultiplexer() {
   const activeSession = snapshot.activeSessionId
     ? snapshot.sessionsById.get(snapshot.activeSessionId)
     : undefined;
-  const activeTab = snapshot.activeTabId
-    ? snapshot.tabsById.get(snapshot.activeTabId)
-    : undefined;
+  const activeTab = snapshot.activeTabId ? snapshot.tabsById.get(snapshot.activeTabId) : undefined;
   const activeSessionId = activeSession?.id;
   const activeTabId = activeTab?.id;
   const tabIds = useMemo(
@@ -478,7 +475,7 @@ export function TerminalMultiplexer() {
   const visibleTabs = useMemo(
     () =>
       tabIds
-        .map(id => snapshot.tabsById.get(id))
+        .map((id) => snapshot.tabsById.get(id))
         .filter((tab): tab is SessionTab => Boolean(tab)),
     [snapshot.tabsById, tabIds],
   );
@@ -489,6 +486,18 @@ export function TerminalMultiplexer() {
         : EMPTY_TERMINAL_IDS,
     [activeTabId, snapshot.terminalIdsByTab],
   );
+  const dockTerminalIdsByTab = useMemo(() => {
+    const result = new Map<SessionTabId, MuxTerminalId>();
+    for (const tab of visibleTabs) {
+      const ids = snapshot.terminalIdsByTab.get(tab.id) ?? EMPTY_TERMINAL_IDS;
+      const terminalId =
+        tab.activeMuxTerminalId && ids.includes(tab.activeMuxTerminalId)
+          ? tab.activeMuxTerminalId
+          : ids[0];
+      if (terminalId) result.set(tab.id, terminalId);
+    }
+    return result;
+  }, [snapshot.terminalIdsByTab, visibleTabs]);
   const sessionTitlesById = useMemo(() => {
     const titles = new Map<SessionId, string>();
     for (const session of visibleSessions) titles.set(session.id, session.title);
@@ -503,11 +512,9 @@ export function TerminalMultiplexer() {
     ? snapshot.terminalsById.get(snapshot.activeMuxTerminalId)
     : undefined;
   const twoSidebarLayout = appearanceSettings.sessionLayout === "two-sidebars";
-  const singleSidebarLayout =
-    appearanceSettings.sessionLayout === "single-sidebar";
+  const singleSidebarLayout = appearanceSettings.sessionLayout === "single-sidebar";
   const sidebarLayout = twoSidebarLayout || singleSidebarLayout;
-  const sidebarsCollapsed =
-    sidebarLayout && appearanceSettings.sidebarCollapsed;
+  const sidebarsCollapsed = sidebarLayout && appearanceSettings.sidebarCollapsed;
   const sidebarOrientation = isMobile ? "horizontal" : "vertical";
   const toggleSidebars = useCallback(() => {
     setAppearanceSettings((previous) => ({
@@ -520,10 +527,7 @@ export function TerminalMultiplexer() {
     (width: number) => {
       setAppearanceSettings((previous) => ({
         ...previous,
-        sidebarWidth: Math.max(
-          MIN_SIDEBAR_WIDTH,
-          Math.min(MAX_SIDEBAR_WIDTH, width),
-        ),
+        sidebarWidth: Math.max(MIN_SIDEBAR_WIDTH, Math.min(MAX_SIDEBAR_WIDTH, width)),
       }));
     },
     [setAppearanceSettings],
@@ -534,10 +538,7 @@ export function TerminalMultiplexer() {
       setRuntimeTitles((previous) => {
         const current = previous.get(terminal.id);
         const next = nextRuntimeTerminalTitle(terminal, current, title, source);
-        if (
-          !next ||
-          (current?.title === next.title && current.source === next.source)
-        ) {
+        if (!next || (current?.title === next.title && current.source === next.source)) {
           return previous;
         }
         return new Map(previous).set(terminal.id, next);
@@ -547,7 +548,7 @@ export function TerminalMultiplexer() {
   );
 
   useEffect(() => {
-    setTerminalWorkspaces(previous => {
+    setTerminalWorkspaces((previous) => {
       const next = new Map(previous);
       let changed = false;
       for (const tabId of tabIds) {
@@ -579,8 +580,8 @@ export function TerminalMultiplexer() {
       const localJson = workspace ? serializeTerminalWorkspace(workspace) : undefined;
       const serverChanged = Boolean(
         previousServer &&
-          (previousServer.revision !== (tab.revision ?? 0) ||
-            previousServer.layoutJson !== tab.layoutJson),
+        (previousServer.revision !== (tab.revision ?? 0) ||
+          previousServer.layoutJson !== tab.layoutJson),
       );
       if (
         workspace &&
@@ -601,7 +602,7 @@ export function TerminalMultiplexer() {
       });
     }
     if (replacements.size === 0) return;
-    setTerminalWorkspaces(previous => {
+    setTerminalWorkspaces((previous) => {
       const next = new Map(previous);
       let changed = false;
       for (const [tabId, replacement] of replacements) {
@@ -614,10 +615,7 @@ export function TerminalMultiplexer() {
   }, [snapshot.tabsById, snapshot.terminalIdsByTab, tabIds, terminalWorkspaces]);
 
   const updateTerminalWorkspace = useCallback(
-    (
-      tabId: SessionTabId,
-      update: (workspace: TerminalWorkspace) => TerminalWorkspace,
-    ) => {
+    (tabId: SessionTabId, update: (workspace: TerminalWorkspace) => TerminalWorkspace) => {
       setTerminalWorkspaces((previous) => {
         const current = previous.get(tabId) ?? createTerminalWorkspace();
         const next = update(current);
@@ -631,7 +629,7 @@ export function TerminalMultiplexer() {
   const splitFocusedTerminalPanel = useCallback(
     (edge: "right" | "bottom") => {
       if (!activeTabId) return;
-      updateTerminalWorkspace(activeTabId, workspace =>
+      updateTerminalWorkspace(activeTabId, (workspace) =>
         splitTerminalPanel(workspace, workspace.focusedPanelId, edge),
       );
     },
@@ -659,6 +657,7 @@ export function TerminalMultiplexer() {
 
   const selectSession = useCallback(
     (id: SessionId) => {
+      navigationIntentRef.current += 1;
       markPerformance("yaade:session-switch");
       serverConnections.manager.selectSession(id);
       client.store.selectSession(id);
@@ -676,24 +675,15 @@ export function TerminalMultiplexer() {
 
   const selectTerminal = useCallback(
     (terminal: MuxTerminal, target?: TerminalOpenTarget) => {
+      navigationIntentRef.current += 1;
       markPerformance("yaade:terminal-switch");
       openTerminalInWorkspace(terminal, target);
       const current = client.store.getSnapshot().activeMuxTerminalId;
       serverConnections.manager.selectMuxTerminal(terminal.id);
       client.store.selectMuxTerminal(terminal.id);
       const tabId = terminal.tabId ?? client.store.getSnapshot().activeTabId;
-      const request = hostPorts.mux.selectTerminal?.(terminal.sessionId, terminal.id);
-      if (request) {
-        void request.catch(async error => {
-          setActionError(errorMessage(error));
-          await client.reconcileSession(terminal.sessionId).catch(() => undefined);
-        });
-      }
       const nextUrl = muxSessionUrl(terminal.sessionId, tabId, terminal.id);
-      if (
-        current !== terminal.id ||
-        location.href !== new URL(nextUrl, location.origin).href
-      ) {
+      if (current !== terminal.id || location.href !== new URL(nextUrl, location.origin).href) {
         writeMuxSessionLocation(nextUrl, "push", { yaadeMobileTerminal: terminal.id });
       }
     },
@@ -730,12 +720,10 @@ export function TerminalMultiplexer() {
           ? currentSnapshot.sessionsById.get(targetSessionId)
           : activeSession;
       const targetTabIds = targetSession
-        ? currentSnapshot.visibleTabIdsBySession.get(targetSession.id) ?? EMPTY_TAB_IDS
+        ? (currentSnapshot.visibleTabIdsBySession.get(targetSession.id) ?? EMPTY_TAB_IDS)
         : EMPTY_TAB_IDS;
       const preferredTabId = target?.tabId ?? targetSession?.activeTabId ?? targetTabIds[0];
-      const targetTab = preferredTabId
-        ? currentSnapshot.tabsById.get(preferredTabId)
-        : undefined;
+      const targetTab = preferredTabId ? currentSnapshot.tabsById.get(preferredTabId) : undefined;
       if (
         !targetSession ||
         !targetTab ||
@@ -745,6 +733,7 @@ export function TerminalMultiplexer() {
         return undefined;
       }
       let destinationTabId = targetTab.id;
+      const navigationIntent = ++navigationIntentRef.current;
       setActionError(undefined);
       try {
         // A new Window starts an async terminal creation. If that Window was
@@ -769,15 +758,12 @@ export function TerminalMultiplexer() {
           terminalWorkspaces.get(liveTab.id) ??
           restoreTerminalWorkspace(liveTab.layoutJson, targetTerminalIds);
         let hasEmptyPane = false;
-        currentWorkspace.tree.visitLeaves(leaf => {
+        currentWorkspace.tree.visitLeaves((leaf) => {
           if (leaf.view.kind === "empty") hasEmptyPane = true;
         });
         let destinationTab = liveTab;
         let rollbackTab: SessionTab | undefined;
-        if (
-          terminalPaneCount(currentWorkspace) >= MAX_TERMINAL_TILES &&
-          !hasEmptyPane
-        ) {
+        if (terminalPaneCount(currentWorkspace) >= MAX_TERMINAL_TILES && !hasEmptyPane) {
           const liveTabIds =
             liveSnapshot.visibleTabIdsBySession.get(liveSession.id) ?? EMPTY_TAB_IDS;
           const createdTab = await hostPorts.mux.createTab?.({
@@ -822,9 +808,11 @@ export function TerminalMultiplexer() {
           const created = await hostPorts.mux.createTerminal?.(command);
           if (created) client.store.replaceMuxTerminal(created);
           await client.reconcileSession(liveSession.id);
-          if (created) {
-            const openTarget =
-              target && destinationTab.id === target.tabId ? target : undefined;
+          if (
+            created &&
+            navigationIntentRef.current === navigationIntent
+          ) {
+            const openTarget = target && destinationTab.id === target.tabId ? target : undefined;
             selectTerminal(created, openTarget);
           }
           return created;
@@ -856,17 +844,12 @@ export function TerminalMultiplexer() {
         return undefined;
       }
     },
-    [
-      activeSession,
-      client,
-      hostPorts.mux,
-      selectTerminal,
-      terminalWorkspaces,
-    ],
+    [activeSession, client, hostPorts.mux, selectTerminal, terminalWorkspaces],
   );
 
   const selectTab = useCallback(
     (tab: SessionTab) => {
+      navigationIntentRef.current += 1;
       const currentSnapshot = client.store.getSnapshot();
       const session = currentSnapshot.sessionsById.get(tab.sessionId);
       const currentTab = currentSnapshot.tabsById.get(tab.id);
@@ -883,91 +866,84 @@ export function TerminalMultiplexer() {
       client.store.selectTab(tab.id);
       const nextTerminal = client.store.getSnapshot().activeMuxTerminalId;
       writeMuxSessionLocation(muxSessionUrl(session.id, tab.id, nextTerminal), "push");
-      const request = hostPorts.mux.selectTab?.({
-        _tag: "SelectSessionTab",
-        sessionId: tab.sessionId,
-        tabId: tab.id,
-      });
-      if (request) {
-        void request.catch(async error => {
-          const failedSnapshot = client.store.getSnapshot();
-          const failedSession = failedSnapshot.sessionsById.get(tab.sessionId);
-          const failedTab = failedSnapshot.tabsById.get(tab.id);
-          if (
-            closingTabIdsRef.current.has(tab.id) ||
-            !isLiveSessionTab(failedSession, failedTab)
-          ) {
-            return;
-          }
-          setActionError(errorMessage(error));
-          await client.reconcileSession(tab.sessionId).catch(() => undefined);
-        });
-      }
     },
     [client, serverConnections.manager],
   );
 
   const createTab = useCallback(async () => {
     if (!activeSession) return;
+    const navigationIntent = ++navigationIntentRef.current;
     try {
       const tab = await hostPorts.mux.createTab?.({
         _tag: "CreateSessionTab",
         sessionId: activeSession.id,
-        title: "New tab",
+        title: nextWindowTitle(visibleTabs),
       });
       if (!tab) return;
       await client.reconcileSession(activeSession.id);
-      selectTab(tab);
+      if (navigationIntentRef.current === navigationIntent) selectTab(tab);
     } catch (error) {
       setActionError(errorMessage(error));
     }
-  }, [activeSession, client, selectTab]);
+  }, [activeSession, client, selectTab, visibleTabs]);
 
-  const renameTab = useCallback(async (id: SessionTabId, title: string) => {
-    try {
-      const tab = await hostPorts.mux.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
-      if (tab) client.store.replaceTab(tab);
-    } catch (error) {
-      setActionError(errorMessage(error));
-    }
-  }, [client]);
+  const renameTab = useCallback(
+    async (id: SessionTabId, title: string) => {
+      try {
+        const tab = await hostPorts.mux.renameTab?.({ _tag: "RenameSessionTab", tabId: id, title });
+        if (tab) client.store.replaceTab(tab);
+      } catch (error) {
+        setActionError(errorMessage(error));
+      }
+    },
+    [client],
+  );
 
-  const reorderTabs = useCallback(async (ids: readonly SessionTabId[]) => {
-    if (!activeSession) return;
-    try {
-      await hostPorts.mux.reorderTabs?.({
-        _tag: "ReorderSessionTabs",
-        sessionId: activeSession.id,
-        tabIds: ids,
-      });
-      await client.reconcileSession(activeSession.id);
-    } catch (error) {
-      setActionError(errorMessage(error));
-    }
-  }, [activeSession, client]);
+  const reorderTabs = useCallback(
+    async (ids: readonly SessionTabId[]) => {
+      if (!activeSession) return;
+      try {
+        await hostPorts.mux.reorderTabs?.({
+          _tag: "ReorderSessionTabs",
+          sessionId: activeSession.id,
+          tabIds: ids,
+        });
+        await client.reconcileSession(activeSession.id);
+      } catch (error) {
+        setActionError(errorMessage(error));
+      }
+    },
+    [activeSession, client],
+  );
 
-  const closeTab = useCallback(async (tab: SessionTab) => {
-    closingTabIdsRef.current.add(tab.id);
-    try {
-      await hostPorts.mux.archiveTab?.({
-        _tag: "ArchiveSessionTab",
-        tabId: tab.id,
-        mode: "stop-terminals",
-      });
-      await client.reconcileSession(tab.sessionId);
-    } catch (error) {
-      setActionError(errorMessage(error));
-    } finally {
-      closingTabIdsRef.current.delete(tab.id);
-    }
-  }, [client]);
+  const closeTab = useCallback(
+    async (tab: SessionTab) => {
+      closingTabIdsRef.current.add(tab.id);
+      try {
+        await hostPorts.mux.archiveTab?.({
+          _tag: "ArchiveSessionTab",
+          tabId: tab.id,
+          mode: "stop-terminals",
+        });
+        await client.reconcileSession(tab.sessionId);
+      } catch (error) {
+        setActionError(errorMessage(error));
+      } finally {
+        closingTabIdsRef.current.delete(tab.id);
+      }
+    },
+    [client],
+  );
 
   const createSession = useCallback(async () => {
+    const navigationIntent = ++navigationIntentRef.current;
     try {
       const created = await hostPorts.mux.createSession?.("New session");
       if (!created) return;
       await client.reconcile();
-      selectSession(created.id);
+      if (navigationIntentRef.current === navigationIntent) {
+        selectSession(created.id);
+      }
     } catch (error) {
       setActionError(errorMessage(error));
     }
@@ -1025,8 +1001,7 @@ export function TerminalMultiplexer() {
 
   const requestCloseSession = useCallback(
     (sessionId: SessionId) => {
-      const sessionTerminals =
-        client.store.getSnapshot().terminalIdsBySession.get(sessionId) ?? [];
+      const sessionTerminals = client.store.getSnapshot().terminalIdsBySession.get(sessionId) ?? [];
       const live = sessionTerminals.some((id) => {
         const terminal = client.store.getSnapshot().terminalsById.get(id);
         return terminal ? isLive(terminal) : false;
@@ -1098,8 +1073,7 @@ export function TerminalMultiplexer() {
       [...snapshot.sessionsById.values()].find((session) => session.id === id);
     const terminalFor = (id: string) =>
       [...snapshot.terminalsById.values()].find((terminal) => terminal.id === id);
-    const tabFor = (id: string) =>
-      [...snapshot.tabsById.values()].find(tab => tab.id === id);
+    const tabFor = (id: string) => [...snapshot.tabsById.values()].find((tab) => tab.id === id);
     bridge.getState = () => ({
       ...previous.getState(),
       route: "session",
@@ -1109,12 +1083,10 @@ export function TerminalMultiplexer() {
       sessions: visibleSessions,
       tabs: activeSession
         ? (snapshot.visibleTabIdsBySession.get(activeSession.id) ?? [])
-            .map(id => snapshot.tabsById.get(id))
+            .map((id) => snapshot.tabsById.get(id))
             .filter((tab): tab is SessionTab => Boolean(tab))
         : [],
-      muxTerminals: [...snapshot.terminalsById.values()].filter(
-        (terminal) => !terminal.archivedAt,
-      ),
+      muxTerminals: [...snapshot.terminalsById.values()].filter((terminal) => !terminal.archivedAt),
       connection: snapshot.connection,
     });
     bridge.createSession = async () => {
@@ -1273,7 +1245,7 @@ export function TerminalMultiplexer() {
           return;
         case "pane.zoom":
           if (activeTab) {
-            updateTerminalWorkspace(activeTab.id, workspace =>
+            updateTerminalWorkspace(activeTab.id, (workspace) =>
               toggleTerminalPanelZoom(workspace, workspace.focusedPanelId),
             );
           }
@@ -1324,15 +1296,13 @@ export function TerminalMultiplexer() {
   keybindingContextRef.current = {
     overlayOpen: Boolean(
       switcherOpen ||
-        muxTerminalSwitcherOpen ||
-        settingsOpen ||
-        closeChoice ||
-        paneChromeOverlayOpen,
+      muxTerminalSwitcherOpen ||
+      settingsOpen ||
+      closeChoice ||
+      paneChromeOverlayOpen,
     ),
     zoomed: Boolean(
-      activeSession &&
-        activeTab &&
-        terminalWorkspaces.get(activeTab.id)?.zoomedPanelId,
+      activeSession && activeTab && terminalWorkspaces.get(activeTab.id)?.zoomedPanelId,
     ),
     contextKind: selected?.kind,
   };
@@ -1342,24 +1312,16 @@ export function TerminalMultiplexer() {
     const onKeyDown = (event: KeyboardEvent) => {
       const target = event.target instanceof HTMLElement ? event.target : null;
       const inTerminal = Boolean(
-        target?.closest(
-          "[data-ghostty-terminal-input], [data-ghostty-terminal-canvas]",
-        ),
+        target?.closest("[data-ghostty-terminal-input], [data-ghostty-terminal-canvas]"),
       );
       const inEditable =
         !inTerminal && Boolean(target?.closest("input, textarea, [contenteditable=true]"));
-      const result = resolveMuxSessionKeydown(
-        event,
-        keymapStateRef.current,
-        {
-          ...keybindingContextRef.current,
-          inEditable,
-          inTerminal,
-          inPrefixButton: Boolean(
-            target?.closest("[data-yaade-which-key-item]"),
-          ),
-        },
-      );
+      const result = resolveMuxSessionKeydown(event, keymapStateRef.current, {
+        ...keybindingContextRef.current,
+        inEditable,
+        inTerminal,
+        inPrefixButton: Boolean(target?.closest("[data-yaade-which-key-item]")),
+      });
       if (!result) return;
 
       event.preventDefault();
@@ -1371,8 +1333,7 @@ export function TerminalMultiplexer() {
       if (result.type === "prefix-literal") {
         clearPrefix();
         const target = focusedMuxTerminalRef.current ?? selectedTerminalRef.current;
-        const ptyId =
-          target?.output.kind === "process" ? target.output.ptyId : undefined;
+        const ptyId = target?.output.kind === "process" ? target.output.ptyId : undefined;
         if (ptyId) void window.yaade?.terminal.write?.(ptyId, result.byte);
         return;
       }
@@ -1406,11 +1367,7 @@ export function TerminalMultiplexer() {
   }, [clearPrefix, prefixPending]);
 
   const muxOverlayOpen = Boolean(
-    switcherOpen ||
-      muxTerminalSwitcherOpen ||
-      settingsOpen ||
-      closeChoice ||
-      paneChromeOverlayOpen,
+    switcherOpen || muxTerminalSwitcherOpen || settingsOpen || closeChoice || paneChromeOverlayOpen,
   );
   useEffect(() => {
     if (muxOverlayOpen) {
@@ -1430,12 +1387,12 @@ export function TerminalMultiplexer() {
 
   const activeTerminalWorkspace = useMemo(() => {
     if (!activeTab) return createTerminalWorkspace();
-    return terminalWorkspaces.get(activeTab.id) ??
-      restoreTerminalWorkspace(activeTab.layoutJson, terminalIds);
+    return (
+      terminalWorkspaces.get(activeTab.id) ??
+      restoreTerminalWorkspace(activeTab.layoutJson, terminalIds)
+    );
   }, [activeTab, terminalWorkspaces, terminalIds]);
-  const focusedView = activeTerminalWorkspace.tree.getView(
-    activeTerminalWorkspace.focusedPanelId,
-  );
+  const focusedView = activeTerminalWorkspace.tree.getView(activeTerminalWorkspace.focusedPanelId);
   focusedMuxTerminalRef.current =
     focusedView?.kind === "terminal"
       ? snapshot.terminalsById.get(focusedView.muxTerminalId)
@@ -1451,7 +1408,7 @@ export function TerminalMultiplexer() {
       (route.sessionId && !sameLocalResource(activeSession.id, route.sessionId)) ||
       (route.muxTerminalId &&
         !sameLocalResource(snapshot.activeMuxTerminalId, route.muxTerminalId) &&
-        [...snapshot.terminalsById.keys()].some(id => sameLocalResource(id, route.muxTerminalId)))
+        [...snapshot.terminalsById.keys()].some((id) => sameLocalResource(id, route.muxTerminalId)))
     ) {
       return;
     }
@@ -1527,7 +1484,7 @@ export function TerminalMultiplexer() {
             }
           }
         })
-        .catch(error => setActionError(errorMessage(error)))
+        .catch((error) => setActionError(errorMessage(error)))
         .then(() => undefined);
       layoutSaveTails.current.set(tabId, operation);
       void operation.then(() => {
@@ -1546,29 +1503,124 @@ export function TerminalMultiplexer() {
   const activeSessionTerminalIds = useMemo(() => new Set(terminalIds), [terminalIds]);
 
   const muxTerminalIdForDrag = useCallback(
-    (tabId: string): MuxTerminalId | undefined => terminalIds.find((id) => id === tabId),
-    [terminalIds],
+    (tabId: string): MuxTerminalId | undefined => {
+      for (const terminalId of snapshot.terminalsById.keys()) {
+        if (terminalId === tabId) return terminalId;
+      }
+      return undefined;
+    },
+    [snapshot.terminalsById],
   );
 
   const activateDockedTerminal = useCallback(
     (terminal: MuxTerminal) => {
-      if (client.store.getSnapshot().activeMuxTerminalId === terminal.id) return;
+      const alreadyActive = client.store.getSnapshot().activeMuxTerminalId === terminal.id;
       serverConnections.manager.selectMuxTerminal(terminal.id);
-      client.store.selectMuxTerminal(terminal.id);
-      const tabId = terminal.tabId ?? client.store.getSnapshot().activeTabId;
-      const request = hostPorts.mux.selectTerminal?.(terminal.sessionId, terminal.id);
-      if (request) {
-        void request.catch(async error => {
-          setActionError(errorMessage(error));
-          await client.reconcileSession(terminal.sessionId).catch(() => undefined);
-        });
+      if (!alreadyActive) {
+        client.store.selectMuxTerminal(terminal.id);
+        const request = hostPorts.mux.selectTerminal?.(terminal.sessionId, terminal.id);
+        if (request) {
+          void request.catch(async (error) => {
+            setActionError(errorMessage(error));
+            await client.reconcileSession(terminal.sessionId).catch(() => undefined);
+          });
+        }
       }
-      writeMuxSessionLocation(
-        muxSessionUrl(terminal.sessionId, tabId, terminal.id),
-        "replace",
-      );
+      const tabId = terminal.tabId ?? client.store.getSnapshot().activeTabId;
+      writeMuxSessionLocation(muxSessionUrl(terminal.sessionId, tabId, terminal.id), "replace");
     },
-    [client, serverConnections.manager],
+    [client, hostPorts.mux, serverConnections.manager],
+  );
+
+  const dockWindowTerminal = useCallback(
+    async (muxTerminalId: MuxTerminalId, target: PanelId, action: DropAction) => {
+      if (!activeTab) return;
+      const terminal = client.store.getSnapshot().terminalsById.get(muxTerminalId);
+      if (!terminal) return;
+
+      const preview = dockTerminalView(activeTerminalWorkspace, muxTerminalId, target, action);
+      if (preview === activeTerminalWorkspace) return;
+      if (!terminal.tabId || terminal.tabId === activeTab.id) {
+        updateTerminalWorkspace(activeTab.id, (workspace) =>
+          dockTerminalView(workspace, muxTerminalId, target, action),
+        );
+        activateDockedTerminal(terminal);
+        return;
+      }
+
+      const sourceTabId = terminal.tabId;
+      const sourceTerminalIds =
+        client.store.getSnapshot().terminalIdsByTab.get(sourceTabId) ?? EMPTY_TERMINAL_IDS;
+      const moveTerminal = hostPorts.mux.moveTerminal;
+      if (!moveTerminal) return;
+
+      setActionError(undefined);
+      try {
+        const moved = await moveTerminal({
+          _tag: "MoveTerminalToTab",
+          muxTerminalId,
+          targetTabId: activeTab.id,
+        });
+        client.store.replaceMuxTerminal(moved);
+
+        const remainingSourceIds = new Set(
+          sourceTerminalIds.filter((terminalId) => terminalId !== muxTerminalId),
+        );
+        updateTerminalWorkspace(sourceTabId, (workspace) =>
+          removeMissingTerminalViews(workspace, remainingSourceIds),
+        );
+        updateTerminalWorkspace(activeTab.id, (workspace) =>
+          dockTerminalView(workspace, muxTerminalId, target, action),
+        );
+        activateDockedTerminal(moved);
+
+        if (remainingSourceIds.size === 0) {
+          closingTabIdsRef.current.add(sourceTabId);
+          try {
+            await hostPorts.mux.archiveTab?.({
+              _tag: "ArchiveSessionTab",
+              tabId: sourceTabId,
+              mode: "keep-running",
+            });
+            setTerminalWorkspaces((previous) => {
+              if (!previous.has(sourceTabId)) return previous;
+              const next = new Map(previous);
+              next.delete(sourceTabId);
+              return next;
+            });
+          } finally {
+            closingTabIdsRef.current.delete(sourceTabId);
+          }
+        }
+        await client.reconcileSession(terminal.sessionId);
+      } catch (error) {
+        setActionError(errorMessage(error));
+        await client.reconcileSession(terminal.sessionId).catch(() => undefined);
+      }
+    },
+    [
+      activeTab,
+      activeTerminalWorkspace,
+      activateDockedTerminal,
+      client,
+      hostPorts.mux,
+      updateTerminalWorkspace,
+    ],
+  );
+
+  const reorderWindowTabs = useCallback(
+    (sourceId: string, targetId: string) => {
+      if (sourceId === targetId) return;
+      const ids = visibleTabs.map((tab) => tab.id);
+      const sourceIndex = ids.findIndex((id) => id === sourceId);
+      const targetIndex = ids.findIndex((id) => id === targetId);
+      if (sourceIndex < 0 || targetIndex < 0) return;
+      const [source] = ids.splice(sourceIndex, 1);
+      if (!source) return;
+      ids.splice(targetIndex, 0, source);
+      void reorderTabs(ids);
+    },
+    [reorderTabs, visibleTabs],
   );
 
   const terminalTabDnd = useMemo((): TabDndHandlers => {
@@ -1577,11 +1629,11 @@ export function TerminalMultiplexer() {
         if (!activeTab) return;
         const muxTerminalId = muxTerminalIdForDrag(tabId);
         if (!muxTerminalId) return;
-        updateTerminalWorkspace(activeTab.id, workspace =>
+        updateTerminalWorkspace(activeTab.id, (workspace) =>
           reorderTerminalTabs(workspace, panelId, muxTerminalId, toIndex),
         );
       },
-      tabIdsForPanel: panelId => {
+      tabIdsForPanel: (panelId) => {
         const view = activeTerminalWorkspace.tree.getView(panelId);
         return view?.kind === "terminal" ? [view.muxTerminalId] : [];
       },
@@ -1590,28 +1642,26 @@ export function TerminalMultiplexer() {
         const muxTerminalId = muxTerminalIdForDrag(sourceTabId);
         if (!muxTerminalId) return;
         const terminal = snapshot.terminalsById.get(muxTerminalId);
-        updateTerminalWorkspace(activeTab.id, workspace =>
+        updateTerminalWorkspace(activeTab.id, (workspace) =>
           dockTerminalView(workspace, muxTerminalId, target, action),
         );
         if (terminal) activateDockedTerminal(terminal);
       },
       onSessionDrop: (sourceTabId, target, action) => {
-        if (!activeTab) return;
         const muxTerminalId = muxTerminalIdForDrag(sourceTabId);
         if (!muxTerminalId) return;
-        const terminal = snapshot.terminalsById.get(muxTerminalId);
-        updateTerminalWorkspace(activeTab.id, workspace =>
-          dockTerminalView(workspace, muxTerminalId, target, action),
-        );
-        if (terminal) activateDockedTerminal(terminal);
+        void dockWindowTerminal(muxTerminalId, target, action);
       },
+      onSessionReorder: reorderWindowTabs,
     };
   }, [
     activeTab,
     activeTerminalWorkspace,
     activateDockedTerminal,
+    dockWindowTerminal,
     snapshot.terminalsById,
     muxTerminalIdForDrag,
+    reorderWindowTabs,
     updateTerminalWorkspace,
   ]);
 
@@ -1624,16 +1674,22 @@ export function TerminalMultiplexer() {
         if (terminal) void runTerminalAction("archive", terminal);
         return;
       }
-      updateTerminalWorkspace(activeTab.id, workspace => closeTerminalPanel(workspace, panelId));
+      updateTerminalWorkspace(activeTab.id, (workspace) => closeTerminalPanel(workspace, panelId));
     },
-    [activeTab, activeTerminalWorkspace, runTerminalAction, snapshot.terminalsById, updateTerminalWorkspace],
+    [
+      activeTab,
+      activeTerminalWorkspace,
+      runTerminalAction,
+      snapshot.terminalsById,
+      updateTerminalWorkspace,
+    ],
   );
 
   const handleTerminalPanelEvent = useCallback(
     (event: PanelEvent) => {
       if (!activeTab) return;
       if (event.type === "splitRatiosChanged") {
-        updateTerminalWorkspace(activeTab.id, workspace =>
+        updateTerminalWorkspace(activeTab.id, (workspace) =>
           resizeTerminalSplit(workspace, event.path, event.ratios),
         );
         return;
@@ -1646,7 +1702,7 @@ export function TerminalMultiplexer() {
   const focusWorkspacePanel = useCallback(
     (panelId: PanelId, terminal?: MuxTerminal) => {
       if (!activeTab) return;
-      updateTerminalWorkspace(activeTab.id, workspace => focusTerminalPanel(workspace, panelId));
+      updateTerminalWorkspace(activeTab.id, (workspace) => focusTerminalPanel(workspace, panelId));
       if (terminal) activateDockedTerminal(terminal);
     },
     [activeTab, activateDockedTerminal, updateTerminalWorkspace],
@@ -1656,8 +1712,7 @@ export function TerminalMultiplexer() {
     (panelId: PanelId, edge: "right" | "bottom", kind: TerminalKind) => {
       if (!activeSession || !activeTab) return;
       const tabId = activeTab.id;
-      const currentWorkspace =
-        terminalWorkspaces.get(tabId) ?? activeTerminalWorkspace;
+      const currentWorkspace = terminalWorkspaces.get(tabId) ?? activeTerminalWorkspace;
       const nextWorkspace = splitTerminalPanel(currentWorkspace, panelId, edge);
       if (nextWorkspace === currentWorkspace) return;
       const target: TerminalOpenTarget = {
@@ -1665,9 +1720,7 @@ export function TerminalMultiplexer() {
         tabId,
         panelId: nextWorkspace.focusedPanelId,
       };
-      updateTerminalWorkspace(tabId, workspace =>
-        splitTerminalPanel(workspace, panelId, edge),
-      );
+      updateTerminalWorkspace(tabId, (workspace) => splitTerminalPanel(workspace, panelId, edge));
       const requestKey = `${tabId}:${target.panelId.id}`;
       pendingTerminalPanelRequestsRef.current.add(requestKey);
       void createTerminal(kind, activeSession.id, target).finally(() => {
@@ -1687,7 +1740,7 @@ export function TerminalMultiplexer() {
   const splitTerminalPanelAt = useCallback(
     (panelId: PanelId, edge: "right" | "bottom") => {
       if (!activeTabId) return;
-      updateTerminalWorkspace(activeTabId, workspace =>
+      updateTerminalWorkspace(activeTabId, (workspace) =>
         splitTerminalPanel(workspace, panelId, edge),
       );
     },
@@ -1697,7 +1750,7 @@ export function TerminalMultiplexer() {
   const zoomTerminalPanel = useCallback(
     (panelId: PanelId) => {
       if (!activeTabId) return;
-      updateTerminalWorkspace(activeTabId, workspace =>
+      updateTerminalWorkspace(activeTabId, (workspace) =>
         toggleTerminalPanelZoom(workspace, panelId),
       );
     },
@@ -1715,10 +1768,7 @@ export function TerminalMultiplexer() {
         onTitleChange={(title) => updateRuntimeTitle(terminal, title, "terminal")}
       />
     ),
-    [
-      activeTheme,
-      updateRuntimeTitle,
-    ],
+    [activeTheme, updateRuntimeTitle],
   );
 
   const showMobileTerminalList = (terminal: MuxTerminal) => {
@@ -1730,7 +1780,7 @@ export function TerminalMultiplexer() {
     }
     persistMuxSessionRoute(listUrl, localStorage);
     history.replaceState(null, "", listUrl);
-    setRouteRevision(revision => revision + 1);
+    setRouteRevision((revision) => revision + 1);
   };
 
   const onPrefixHudSelect = (key: string) => {
@@ -1745,381 +1795,395 @@ export function TerminalMultiplexer() {
 
   const activeServerConnection =
     serverConnections.snapshot.connections.find(
-      connection => connection.id === serverConnections.snapshot.activeServerId,
+      (connection) => connection.id === serverConnections.snapshot.activeServerId,
     ) ?? serverConnections.snapshot.connections[0];
   const hostAccessRevoked = activeServerConnection?.status === "revoked";
 
   return (
     <MotionConfig reducedMotion="user">
       <LazyMotion features={loadMotionFeatures}>
-      <TooltipProvider delayDuration={400} skipDelayDuration={200}>
-        <LayoutGroup id="yaade-terminal-multiplexer">
-      <AmbientCanvas asChild>
-      <div
-        className="flex h-full min-h-0 flex-row overflow-hidden bg-transparent text-foreground"
-        data-yaade-shell="terminal-multiplexer"
-        data-yaade-session-layout={appearanceSettings.sessionLayout}
-        data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
-
-      >
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-        <Suspense fallback={<SessionLoadingState />}>
-          <TerminalDndRoot handlers={terminalTabDnd}>
-            {isMobile ? (
-              <MobileTerminalView
-                sessions={visibleSessions}
-                terminalsById={snapshot.terminalsById}
-                terminalIdsBySession={snapshot.terminalIdsBySession}
-                routeMuxTerminalId={parseMuxSessionRoute(location.href).muxTerminalId}
-                runtimeTitles={runtimeTitles}
-                onSelect={selectTerminal}
-                onShowTerminalList={showMobileTerminalList}
-                onCreateTerminal={(sessionId, kind) =>
-                  createTerminal(kind, sessionId)
-                }
-                onCreateSession={createSession}
-                onCloseSession={requestCloseSession}
-                actionError={actionError}
-                onCloseTerminal={terminal => runTerminalAction("archive", terminal)}
-                renderTerminal={renderTerminal}
-              />
-            ) : (
-              <>
-            {!sidebarLayout ? (
-              <header
-                className="flex h-[var(--yaade-tab-bar-height)] shrink-0 items-center gap-2 px-3"
-                data-yaade-session-tabs=""
-                data-yaade-top-tabbar=""
+        <TooltipProvider delayDuration={400} skipDelayDuration={200}>
+          <LayoutGroup id="yaade-terminal-multiplexer">
+            <AmbientCanvas asChild>
+              <div
+                className="flex h-full min-h-0 flex-row overflow-hidden bg-transparent text-foreground"
+                data-yaade-shell="terminal-multiplexer"
+                data-yaade-session-layout={appearanceSettings.sessionLayout}
+                data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
               >
-                <SessionSwitcher
-                  open={switcherOpen}
-                  onOpenChange={setSwitcherOpen}
-                  sessions={visibleSessions}
-                  activeSessionId={snapshot.activeSessionId}
-                  onSelect={session => selectSession(session.id)}
-                  onCreate={() => void createSession()}
-                  onClose={requestCloseSession}
-                  onRename={(id, title) => void renameSession(id, title)}
-                  terminalCounts={terminalCounts}
-                  serverNamesBySessionId={serverNamesBySessionId}
-                  className="max-w-52"
-                />
-                <SessionWindowTabStrip
-                  tabs={visibleTabs}
-                  activeTabId={activeTab?.id}
-                  onSelect={selectTab}
-                  onCreate={() => void createTab()}
-                  onClose={closeTab}
-                  onRename={(id, title) => void renameTab(id, title)}
-                  onReorder={ids => void reorderTabs(ids)}
-                />
-                <ShortcutTooltip
-                  label="Settings"
-                  shortcut={muxSessionDirectShortcutFor("settings.show")}
-                  side="bottom"
-                >
-                  <Button
-                    type="button"
-                    size="sm"
-                    variant="ghost"
-                    aria-label="Settings"
-                    onClick={() => setSettingsOpen(true)}
-                    data-yaade-session-settings=""
-                    className="h-[var(--yaade-tab-pill-height)] shrink-0 gap-1.5 px-2 text-xs"
-                  >
-                    Settings
-                    <Settings />
-                  </Button>
-                </ShortcutTooltip>
-              </header>
-            ) : null}
-            <div
-              className={cn(
-                "relative min-h-0 flex-1",
-                (twoSidebarLayout || singleSidebarLayout) &&
-                  "grid max-md:flex max-md:flex-col yaade-terminal-multiplexer-grid",
-                !sidebarLayout && "flex flex-col",
-              )}
-              style={
-                twoSidebarLayout
-                  ? {
-                      gridTemplateColumns: sidebarsCollapsed
-                        ? "0rem minmax(0, 1fr) 0rem"
-                        : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr) ${appearanceSettings.sidebarWidth}px`,
-                    }
-                  : singleSidebarLayout
-                    ? {
-                        gridTemplateColumns: sidebarsCollapsed
-                          ? "0rem minmax(0, 1fr)"
-                          : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr)`,
-                      }
-                    : undefined
-              }
-            >
-              {twoSidebarLayout ? (
-                <SessionTabStrip
-                  sessions={visibleSessions}
-                  activeSessionId={snapshot.activeSessionId}
-                  layout="two-sidebars"
-                  collapsed={sidebarsCollapsed}
-                  sidebarOrientation={sidebarOrientation}
-                  onSelect={selectSession}
-                  onClose={requestCloseSession}
-                  onOpenSettings={() => setSettingsOpen(true)}
-                  onCreate={() => void createSession()}
-                  onRename={(id, title) => void renameSession(id, title)}
-                  onReorder={(ids) => void reorderSessions(ids)}
-                  serverNamesBySessionId={serverNamesBySessionId}
-                />
-              ) : singleSidebarLayout ? (
-                <MotionAside
-                  initial={false}
-                  animate={{
-                    opacity: sidebarsCollapsed ? 0 : 1,
-                    x: sidebarsCollapsed ? -12 : 0,
-                  }}
-                  transition={yaadeMotion.sidebarTransition}
-                  className={cn(
-                    "flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
-                    sidebarsCollapsed &&
-                      "pointer-events-none max-md:hidden",
-                    "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
-                  )}
-                  aria-label="Navigation"
-                  aria-hidden={sidebarsCollapsed || undefined}
-                  inert={sidebarsCollapsed || undefined}
-                  data-yaade-single-sidebar=""
-                  data-yaade-sidebar-state={
-                    sidebarsCollapsed ? "collapsed" : "expanded"
-                  }
-                >
-                  <SessionTabStrip
-                    sessions={visibleSessions}
-                    activeSessionId={snapshot.activeSessionId}
-                    layout="single-sidebar"
-                    collapsed={sidebarsCollapsed}
-                    sidebarOrientation={sidebarOrientation}
-                    onSelect={selectSession}
-                    onClose={requestCloseSession}
-                    onOpenSettings={() => setSettingsOpen(true)}
-                    onCreate={() => void createSession()}
-                    onRename={(id, title) => void renameSession(id, title)}
-                    onReorder={(ids) => void reorderSessions(ids)}
-                    serverNamesBySessionId={serverNamesBySessionId}
-                  />
-                  <TerminalTabStrip
-                    terminalIds={terminalIds}
-                    terminalsById={snapshot.terminalsById}
-                    activeMuxTerminalId={snapshot.activeMuxTerminalId}
-                    openMuxTerminalIds={openMuxTerminalIds}
-                    runtimeTitles={runtimeTitles}
-                    sessionTitlesById={sessionTitlesById}
-                    sectionLabel="Terminals"
-                    emptyLabel="No terminals yet"
-                    layout="single-sidebar"
-                    collapsed={sidebarsCollapsed}
-                    sidebarOrientation={sidebarOrientation}
-                    dockable
-                    dockableTerminalIds={activeSessionTerminalIds}
-                    onSelect={selectTerminal}
-                    onAddKind={(kind) => void createTerminal(kind)}
-                    onClose={(terminal) => void runTerminalAction("archive", terminal)}
-                    onRename={(terminal, title) => void renameMuxTerminal(terminal, title)}
-                    onReorder={(ids) => void reorderMuxTerminals(ids)}
-                    onToggleSidebar={toggleSidebars}
-                  />
-                </MotionAside>
-              ) : null}
-              {twoSidebarLayout && !sidebarsCollapsed ? (
-                <SidebarResizeHandle
-                  value={appearanceSettings.sidebarWidth}
-                  min={MIN_SIDEBAR_WIDTH}
-                  max={MAX_SIDEBAR_WIDTH}
-                  side="left"
-                  label="Resize session sidebar"
-                  onChange={resizeSidebar}
-                />
-              ) : null}
-              {singleSidebarLayout && !sidebarsCollapsed ? (
-                <SidebarResizeHandle
-                  value={appearanceSettings.sidebarWidth}
-                  min={MIN_SIDEBAR_WIDTH}
-                  max={MAX_SIDEBAR_WIDTH}
-                  side="left"
-                  label="Resize sidebar"
-                  onChange={resizeSidebar}
-                />
-              ) : null}
-              <main
-                className={cn(
-                  "relative flex min-w-0 min-h-0 flex-1 flex-col",
-                  sidebarLayout && "col-start-2",
-                )}
-              >
-                {sidebarLayout ? (
-                  <SessionWindowTabStrip
-                    tabs={visibleTabs}
-                    activeTabId={activeTab?.id}
-                    onSelect={selectTab}
-                    onCreate={() => void createTab()}
-                    onClose={closeTab}
-                    onRename={(id, title) => void renameTab(id, title)}
-                    onReorder={ids => void reorderTabs(ids)}
-                  />
-                ) : null}
-                {snapshot.connection === "reconciling" ||
-                snapshot.connection === "offline" ? (
-                  <Alert className="m-4" data-yaade-connection={snapshot.connection}>
-                    <AlertTitle>
-                      {hostAccessRevoked
-                        ? "Access revoked"
-                        : snapshot.connection === "offline"
-                          ? "Host offline"
-                          : "Reconnecting"}
-                    </AlertTitle>
-                    <AlertDescription>
-                      {snapshot.connection === "offline"
-                        ? "Terminal state will refresh when the host returns."
-                        : "Reconciling session state without clearing current results."}
-                    </AlertDescription>
-                  </Alert>
-                ) : null}
-                {actionError ? (
-                  <Alert variant="destructive" className="m-4">
-                    <AlertTitle>Action failed</AlertTitle>
-                    <AlertDescription>{actionError}</AlertDescription>
-                  </Alert>
-                ) : null}
-                {sidebarLayout && sidebarsCollapsed ? (
-                  <SidebarHoverToggle
-                    side="left"
-                    collapsed
-                    onToggle={toggleSidebars}
-                  />
-                ) : null}
-                {twoSidebarLayout && sidebarsCollapsed ? (
-                  <SidebarHoverToggle
-                    side="right"
-                    collapsed
-                    onToggle={toggleSidebars}
-                  />
-                ) : null}
-                <div className="min-h-0 flex-1">
-                  {snapshot.connection === "connecting" &&
-                  visibleSessions.length === 0 ? (
-                    <SessionLoadingState />
-                  ) : activeSession && activeTab ? (
-                    <TerminalTilingWorkspace
-                      workspace={activeTerminalWorkspace}
-                    terminalsById={snapshot.terminalsById}
-                    runtimeTitles={runtimeTitles}
-                    onPanelEvent={handleTerminalPanelEvent}
-                    onFocusPanel={focusWorkspacePanel}
-                    onAddSplitTerminal={addTerminalToSplitPanel}
-                    onSplit={splitTerminalPanelAt}
-                    onZoom={zoomTerminalPanel}
-                    onCloseView={closeWorkspacePane}
-                    onChromeOverlayChange={setPaneChromeOverlayOpen}
-                    renderTerminal={renderTerminal}
-                  />
+                <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+                  <Suspense fallback={<SessionLoadingState />}>
+                    <TerminalDndRoot handlers={terminalTabDnd}>
+                      {isMobile ? (
+                        <MobileTerminalView
+                          sessions={visibleSessions}
+                          terminalsById={snapshot.terminalsById}
+                          terminalIdsBySession={snapshot.terminalIdsBySession}
+                          routeMuxTerminalId={parseMuxSessionRoute(location.href).muxTerminalId}
+                          runtimeTitles={runtimeTitles}
+                          onSelect={selectTerminal}
+                          onShowTerminalList={showMobileTerminalList}
+                          onCreateTerminal={(sessionId, kind) => createTerminal(kind, sessionId)}
+                          onCreateSession={createSession}
+                          onCloseSession={requestCloseSession}
+                          actionError={actionError}
+                          onCloseTerminal={(terminal) => runTerminalAction("archive", terminal)}
+                          renderTerminal={renderTerminal}
+                        />
+                      ) : (
+                        <>
+                          {!sidebarLayout ? (
+                            <header
+                              className="flex shrink-0 items-center"
+                              data-yaade-session-tabs=""
+                              data-yaade-top-tabbar=""
+                            >
+                              <div
+                                className="hidden shrink-0 items-center gap-1.5 lg:flex"
+                                data-yaade-brand=""
+                                aria-label="YAADE terminal workspace"
+                              >
+                                <span className="grid size-6 place-items-center rounded-[var(--yaade-control-radius)] bg-primary/10 text-primary">
+                                  <TerminalIcon className="size-3.5" aria-hidden />
+                                </span>
+                                <span className="text-2xs font-semibold tracking-[0.1em] text-foreground/80">
+                                  YAADE
+                                </span>
+                              </div>
+                              <div
+                                className="hidden h-4 w-px shrink-0 bg-border/60 lg:block"
+                                aria-hidden
+                              />
+                              <SessionSwitcher
+                                open={switcherOpen}
+                                onOpenChange={setSwitcherOpen}
+                                sessions={visibleSessions}
+                                activeSessionId={snapshot.activeSessionId}
+                                onSelect={(session) => selectSession(session.id)}
+                                onCreate={() => void createSession()}
+                                onClose={requestCloseSession}
+                                onRename={(id, title) => void renameSession(id, title)}
+                                terminalCounts={terminalCounts}
+                                serverNamesBySessionId={serverNamesBySessionId}
+                              />
+                              <SessionWindowTabStrip
+                                tabs={visibleTabs}
+                                activeTabId={activeTab?.id}
+                                onSelect={selectTab}
+                                onCreate={() => void createTab()}
+                                onClose={closeTab}
+                                onRename={(id, title) => void renameTab(id, title)}
+                                dockTerminalIdsByTab={dockTerminalIdsByTab}
+                              />
+                              <ShortcutTooltip
+                                label="Settings"
+                                shortcut={muxSessionDirectShortcutFor("settings.show")}
+                                side="bottom"
+                              >
+                                <Button
+                                  type="button"
+                                  size="icon-sm"
+                                  variant="ghost"
+                                  aria-label="Settings"
+                                  onClick={() => setSettingsOpen(true)}
+                                  data-yaade-session-settings=""
+                                  className="size-[var(--yaade-tab-pill-height)] shrink-0"
+                                >
+                                  <Settings />
+                                </Button>
+                              </ShortcutTooltip>
+                            </header>
+                          ) : null}
+                          <div
+                            className={cn(
+                              "relative min-h-0 flex-1",
+                              (twoSidebarLayout || singleSidebarLayout) &&
+                                "grid max-md:flex max-md:flex-col yaade-terminal-multiplexer-grid",
+                              !sidebarLayout && "flex flex-col",
+                            )}
+                            style={
+                              twoSidebarLayout
+                                ? {
+                                    gridTemplateColumns: sidebarsCollapsed
+                                      ? "0rem minmax(0, 1fr) 0rem"
+                                      : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr) ${appearanceSettings.sidebarWidth}px`,
+                                  }
+                                : singleSidebarLayout
+                                  ? {
+                                      gridTemplateColumns: sidebarsCollapsed
+                                        ? "0rem minmax(0, 1fr)"
+                                        : `${appearanceSettings.sidebarWidth}px minmax(0, 1fr)`,
+                                    }
+                                  : undefined
+                            }
+                          >
+                            {twoSidebarLayout ? (
+                              <SessionTabStrip
+                                sessions={visibleSessions}
+                                activeSessionId={snapshot.activeSessionId}
+                                layout="two-sidebars"
+                                collapsed={sidebarsCollapsed}
+                                sidebarOrientation={sidebarOrientation}
+                                onSelect={selectSession}
+                                onClose={requestCloseSession}
+                                onOpenSettings={() => setSettingsOpen(true)}
+                                onCreate={() => void createSession()}
+                                onRename={(id, title) => void renameSession(id, title)}
+                                onReorder={(ids) => void reorderSessions(ids)}
+                                serverNamesBySessionId={serverNamesBySessionId}
+                                terminalCounts={terminalCounts}
+                              />
+                            ) : singleSidebarLayout ? (
+                              <MotionAside
+                                initial={false}
+                                animate={{
+                                  opacity: sidebarsCollapsed ? 0 : 1,
+                                  x: sidebarsCollapsed ? -12 : 0,
+                                }}
+                                transition={yaadeMotion.sidebarTransition}
+                                className={cn(
+                                  "flex h-full min-h-0 w-full min-w-0 flex-col overflow-hidden border-r border-sidebar-border bg-sidebar text-sidebar-foreground",
+                                  sidebarsCollapsed && "pointer-events-none max-md:hidden",
+                                  "max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
+                                )}
+                                aria-label="Navigation"
+                                aria-hidden={sidebarsCollapsed || undefined}
+                                inert={sidebarsCollapsed || undefined}
+                                data-yaade-single-sidebar=""
+                                data-yaade-sidebar-state={
+                                  sidebarsCollapsed ? "collapsed" : "expanded"
+                                }
+                              >
+                                <SessionTabStrip
+                                  sessions={visibleSessions}
+                                  activeSessionId={snapshot.activeSessionId}
+                                  layout="single-sidebar"
+                                  collapsed={sidebarsCollapsed}
+                                  sidebarOrientation={sidebarOrientation}
+                                  onSelect={selectSession}
+                                  onClose={requestCloseSession}
+                                  onOpenSettings={() => setSettingsOpen(true)}
+                                  onCreate={() => void createSession()}
+                                  onRename={(id, title) => void renameSession(id, title)}
+                                  onReorder={(ids) => void reorderSessions(ids)}
+                                  serverNamesBySessionId={serverNamesBySessionId}
+                                  terminalCounts={terminalCounts}
+                                />
+                                <TerminalTabStrip
+                                  terminalIds={terminalIds}
+                                  terminalsById={snapshot.terminalsById}
+                                  activeMuxTerminalId={snapshot.activeMuxTerminalId}
+                                  openMuxTerminalIds={openMuxTerminalIds}
+                                  runtimeTitles={runtimeTitles}
+                                  sessionTitlesById={sessionTitlesById}
+                                  sectionLabel="Terminals"
+                                  emptyLabel="No terminals yet"
+                                  layout="single-sidebar"
+                                  collapsed={sidebarsCollapsed}
+                                  sidebarOrientation={sidebarOrientation}
+                                  dockable
+                                  dockableTerminalIds={activeSessionTerminalIds}
+                                  onSelect={selectTerminal}
+                                  onAddKind={(kind) => void createTerminal(kind)}
+                                  onClose={(terminal) =>
+                                    void runTerminalAction("archive", terminal)
+                                  }
+                                  onRename={(terminal, title) =>
+                                    void renameMuxTerminal(terminal, title)
+                                  }
+                                  onReorder={(ids) => void reorderMuxTerminals(ids)}
+                                  onToggleSidebar={toggleSidebars}
+                                />
+                              </MotionAside>
+                            ) : null}
+                            {twoSidebarLayout && !sidebarsCollapsed ? (
+                              <SidebarResizeHandle
+                                value={appearanceSettings.sidebarWidth}
+                                min={MIN_SIDEBAR_WIDTH}
+                                max={MAX_SIDEBAR_WIDTH}
+                                side="left"
+                                label="Resize session sidebar"
+                                onChange={resizeSidebar}
+                              />
+                            ) : null}
+                            {singleSidebarLayout && !sidebarsCollapsed ? (
+                              <SidebarResizeHandle
+                                value={appearanceSettings.sidebarWidth}
+                                min={MIN_SIDEBAR_WIDTH}
+                                max={MAX_SIDEBAR_WIDTH}
+                                side="left"
+                                label="Resize sidebar"
+                                onChange={resizeSidebar}
+                              />
+                            ) : null}
+                            <main
+                              className={cn(
+                                "relative flex min-w-0 min-h-0 flex-1 flex-col",
+                                sidebarLayout && "col-start-2",
+                              )}
+                            >
+                              {sidebarLayout ? (
+                                <SessionWindowTabStrip
+                                  tabs={visibleTabs}
+                                  activeTabId={activeTab?.id}
+                                  onSelect={selectTab}
+                                  onCreate={() => void createTab()}
+                                  onClose={closeTab}
+                                  onRename={(id, title) => void renameTab(id, title)}
+                                  dockTerminalIdsByTab={dockTerminalIdsByTab}
+                                />
+                              ) : null}
+                              {snapshot.connection === "reconciling" ||
+                              snapshot.connection === "offline" ? (
+                                <Alert className="m-4" data-yaade-connection={snapshot.connection}>
+                                  <AlertTitle>
+                                    {hostAccessRevoked
+                                      ? "Access revoked"
+                                      : snapshot.connection === "offline"
+                                        ? "Host offline"
+                                        : "Reconnecting"}
+                                  </AlertTitle>
+                                  <AlertDescription>
+                                    {snapshot.connection === "offline"
+                                      ? "Terminal state will refresh when the host returns."
+                                      : "Reconciling session state without clearing current results."}
+                                  </AlertDescription>
+                                </Alert>
+                              ) : null}
+                              {actionError ? (
+                                <Alert variant="destructive" className="m-4">
+                                  <AlertTitle>Action failed</AlertTitle>
+                                  <AlertDescription>{actionError}</AlertDescription>
+                                </Alert>
+                              ) : null}
+                              {sidebarLayout && sidebarsCollapsed ? (
+                                <SidebarHoverToggle
+                                  side="left"
+                                  collapsed
+                                  onToggle={toggleSidebars}
+                                />
+                              ) : null}
+                              {twoSidebarLayout && sidebarsCollapsed ? (
+                                <SidebarHoverToggle
+                                  side="right"
+                                  collapsed
+                                  onToggle={toggleSidebars}
+                                />
+                              ) : null}
+                              <div className="min-h-0 flex-1">
+                                {snapshot.connection === "connecting" &&
+                                visibleSessions.length === 0 ? (
+                                  <SessionLoadingState />
+                                ) : activeSession && activeTab ? (
+                                  <TerminalTilingWorkspace
+                                    workspace={activeTerminalWorkspace}
+                                    terminalsById={snapshot.terminalsById}
+                                    runtimeTitles={runtimeTitles}
+                                    onPanelEvent={handleTerminalPanelEvent}
+                                    onFocusPanel={focusWorkspacePanel}
+                                    onAddSplitTerminal={addTerminalToSplitPanel}
+                                    onSplit={splitTerminalPanelAt}
+                                    onZoom={zoomTerminalPanel}
+                                    onCloseView={closeWorkspacePane}
+                                    onChromeOverlayChange={setPaneChromeOverlayOpen}
+                                    renderTerminal={renderTerminal}
+                                  />
+                                ) : null}
+                              </div>
+                              {prefixPending ? <PrefixHud onSelect={onPrefixHudSelect} /> : null}
+                            </main>
+                            {twoSidebarLayout ? (
+                              <div
+                                className={
+                                  twoSidebarLayout
+                                    ? "relative col-start-3 min-h-0 min-w-0"
+                                    : "relative shrink-0"
+                                }
+                              >
+                                <TerminalTabStrip
+                                  terminalIds={terminalIds}
+                                  terminalsById={snapshot.terminalsById}
+                                  activeMuxTerminalId={snapshot.activeMuxTerminalId}
+                                  openMuxTerminalIds={openMuxTerminalIds}
+                                  runtimeTitles={runtimeTitles}
+                                  sessionTitlesById={sessionTitlesById}
+                                  sectionLabel="Terminals"
+                                  emptyLabel="No terminals yet"
+                                  layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
+                                  collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
+                                  sidebarOrientation={sidebarOrientation}
+                                  dockable
+                                  dockableTerminalIds={activeSessionTerminalIds}
+                                  onSelect={selectTerminal}
+                                  onAddKind={(kind) => void createTerminal(kind)}
+                                  onClose={(terminal) =>
+                                    void runTerminalAction("archive", terminal)
+                                  }
+                                  onRename={(terminal, title) =>
+                                    void renameMuxTerminal(terminal, title)
+                                  }
+                                  onReorder={(ids) => void reorderMuxTerminals(ids)}
+                                  onToggleSidebar={twoSidebarLayout ? toggleSidebars : undefined}
+                                />
+                              </div>
+                            ) : null}
+                            {twoSidebarLayout && !sidebarsCollapsed ? (
+                              <SidebarResizeHandle
+                                value={appearanceSettings.sidebarWidth}
+                                min={MIN_SIDEBAR_WIDTH}
+                                max={MAX_SIDEBAR_WIDTH}
+                                side="right"
+                                label="Resize terminal sidebar"
+                                onChange={resizeSidebar}
+                              />
+                            ) : null}
+                          </div>
+                        </>
+                      )}
+                    </TerminalDndRoot>
+                  </Suspense>
+                  {muxTerminalSwitcherOpen ? (
+                    <Suspense fallback={null}>
+                      <TerminalSwitcher
+                        open
+                        onOpenChange={setTerminalSwitcherOpen}
+                        sessionsById={snapshot.sessionsById}
+                        terminalsById={snapshot.terminalsById}
+                        activeMuxTerminalId={snapshot.activeMuxTerminalId}
+                        runtimeTitles={runtimeTitles}
+                        onSelect={selectTerminal}
+                      />
+                    </Suspense>
                   ) : null}
-                </div>
-                {prefixPending ? (
-                  <PrefixHud
-                    onSelect={onPrefixHudSelect}
-                  />
-                ) : null}
-              </main>
-              {twoSidebarLayout ? (
-                <div
-                  className={
-                    twoSidebarLayout
-                      ? "relative col-start-3 min-h-0 min-w-0"
-                      : "relative shrink-0"
-                  }
-                >
-                  <TerminalTabStrip
-                    terminalIds={terminalIds}
-                    terminalsById={snapshot.terminalsById}
-                    activeMuxTerminalId={snapshot.activeMuxTerminalId}
-                    openMuxTerminalIds={openMuxTerminalIds}
-                    runtimeTitles={runtimeTitles}
-                    sessionTitlesById={sessionTitlesById}
-                    sectionLabel="Terminals"
-                    emptyLabel="No terminals yet"
-                    layout={twoSidebarLayout ? "two-sidebars" : "tabs"}
-                    collapsed={twoSidebarLayout ? sidebarsCollapsed : false}
-                    sidebarOrientation={sidebarOrientation}
-                    dockable
-                    dockableTerminalIds={activeSessionTerminalIds}
-                    onSelect={selectTerminal}
-                    onAddKind={(kind) => void createTerminal(kind)}
-                    onClose={(terminal) => void runTerminalAction("archive", terminal)}
-                    onRename={(terminal, title) => void renameMuxTerminal(terminal, title)}
-                    onReorder={(ids) => void reorderMuxTerminals(ids)}
-                    onToggleSidebar={twoSidebarLayout ? toggleSidebars : undefined}
+                  {settingsOpen ? (
+                    <Suspense fallback={null}>
+                      <SettingsOverlay
+                        open
+                        onOpenChange={setSettingsOpen}
+                        settings={appearanceSettings}
+                        onSettingsChange={setAppearanceSettings}
+                        themes={bundledThemeList}
+                        onReset={resetAppearanceSettings}
+                        servers={serverConnections.servers}
+                        serverConnections={serverConnections.snapshot.connections}
+                        currentServerId="current-host"
+                        onServersChange={serverConnections.updateServers}
+                        onTestServer={serverConnections.testServer}
+                      />
+                    </Suspense>
+                  ) : null}
+                  <CloseSessionDialog
+                    sessionId={closeChoice?.sessionId}
+                    onCancel={() => setCloseChoice(undefined)}
+                    onClose={(mode) =>
+                      closeChoice ? void closeSession(closeChoice.sessionId, mode) : undefined
+                    }
                   />
                 </div>
-              ) : null}
-              {twoSidebarLayout && !sidebarsCollapsed ? (
-                <SidebarResizeHandle
-                  value={appearanceSettings.sidebarWidth}
-                  min={MIN_SIDEBAR_WIDTH}
-                  max={MAX_SIDEBAR_WIDTH}
-                  side="right"
-                  label="Resize terminal sidebar"
-                  onChange={resizeSidebar}
-                />
-              ) : null}
-            </div>
-              </>
-            )}
-          </TerminalDndRoot>
-        </Suspense>
-        {muxTerminalSwitcherOpen ? (
-          <Suspense fallback={null}>
-            <TerminalSwitcher
-              open
-              onOpenChange={setTerminalSwitcherOpen}
-              sessionsById={snapshot.sessionsById}
-              terminalsById={snapshot.terminalsById}
-              activeMuxTerminalId={snapshot.activeMuxTerminalId}
-              runtimeTitles={runtimeTitles}
-              onSelect={selectTerminal}
-            />
-          </Suspense>
-        ) : null}
-        {settingsOpen ? (
-          <Suspense fallback={null}>
-            <SettingsOverlay
-              open
-              onOpenChange={setSettingsOpen}
-              settings={appearanceSettings}
-              onSettingsChange={setAppearanceSettings}
-              themes={bundledThemeList}
-              onReset={resetAppearanceSettings}
-              servers={serverConnections.servers}
-              serverConnections={serverConnections.snapshot.connections}
-              currentServerId="current-host"
-              onServersChange={serverConnections.updateServers}
-              onTestServer={serverConnections.testServer}
-            />
-          </Suspense>
-        ) : null}
-        <CloseSessionDialog
-          sessionId={closeChoice?.sessionId}
-          onCancel={() => setCloseChoice(undefined)}
-          onClose={(mode) =>
-            closeChoice
-              ? void closeSession(closeChoice.sessionId, mode)
-              : undefined
-          }
-        />
-        </div>
-      </div>
-      </AmbientCanvas>
-        </LayoutGroup>
-      </TooltipProvider>
+              </div>
+            </AmbientCanvas>
+          </LayoutGroup>
+        </TooltipProvider>
       </LazyMotion>
     </MotionConfig>
   );

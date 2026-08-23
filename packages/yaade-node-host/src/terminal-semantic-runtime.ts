@@ -204,7 +204,7 @@ export class TerminalSemanticRuntime {
     if (delta !== 0) core.scroll(-delta)
     const rows = snap.rowData.slice(0, pageLimit).map((row, index) => ({
       rowId: `history-${pageOffset + index}`,
-      cells: row.cells.map(cell),
+      cells: row.cells.map(value => cell(value)),
       isWrapContinuation: row.isWrapContinuation,
       wrapsToNext: row.wrapsToNext,
     }))
@@ -292,7 +292,7 @@ export class TerminalSemanticRuntime {
     const core = this.core
     const screenRows = snap.rowData.map((row, index) => ({
       rowId: `screen-${index}`,
-      cells: row.cells.map(cell),
+      cells: row.cells.map(value => cell(value)),
       isWrapContinuation: row.isWrapContinuation,
       wrapsToNext: row.wrapsToNext,
     }))

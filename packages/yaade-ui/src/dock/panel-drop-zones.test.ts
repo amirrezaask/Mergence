@@ -12,10 +12,19 @@ describe("computeDropSites", () => {
     assert.equal(sites.length, 5)
   })
 
-  it("returns [] for very small panel", () => {
-    assert.deepEqual(computeDropSites(60, 60, FS), [])
+  it("returns [] when the dock compass cannot fit", () => {
+    assert.deepEqual(computeDropSites(150, 150, FS), [])
     assert.deepEqual(computeDropSites(0, H, FS), [])
     assert.deepEqual(computeDropSites(W, 0, FS), [])
+  })
+
+  it("keeps the dock compass compact on a large panel", () => {
+    const sites = computeDropSites(W, H, FS)
+    for (const site of sites) {
+      assert.ok(site.rect.w >= 3 * FS)
+      assert.ok(site.rect.w <= 3.4 * FS + 1)
+      assert.equal(site.rect.w, site.rect.h)
+    }
   })
 
   it("center site is centered on panel", () => {
@@ -53,15 +62,6 @@ describe("computeDropSites", () => {
     const c = sites.find(s => s.id === "center")!
     const b = sites.find(s => s.id === "bottom")!
     assert.ok(b.rect.y > c.rect.y + c.rect.h, "bottom not below center")
-  })
-
-  it("site dims are in [3*fs, min(w,h)/4]", () => {
-    const sites = computeDropSites(W, H, FS)
-    const minDim = Math.min(W, H)
-    for (const s of sites) {
-      assert.ok(s.rect.w >= 3 * FS, `site ${s.id} too small`)
-      assert.ok(s.rect.w <= minDim / 4 + 1, `site ${s.id} too large`)
-    }
   })
 
   it("center preview covers full panel", () => {

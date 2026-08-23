@@ -11,9 +11,11 @@
  */
 
 export type TerminalOutputWriter = {
-  enqueue: (data: string) => void
+  enqueue: (data: string, onConsumed?: () => void) => void
   /** Queue attach/reconnect replay without applying the live-output cap. */
-  enqueueReplay: (data: string) => void
+  enqueueReplay: (data: string, onConsumed?: () => void) => void
+  /** Discard unparsed live bytes before an authoritative delta replay. */
+  discardPending: () => void
   /** Drain pending bytes immediately (attach replay / dispose). */
   flush: () => void
   dispose: () => void
@@ -96,29 +98,36 @@ export function createTerminalOutputWriter(
   const interactiveMax =
     options.interactiveMaxChars ?? TERMINAL_OUTPUT_INTERACTIVE_MAX_CHARS
 
-  const pendingParts: string[] = []
+  type PendingPart = { data: string; onConsumed?: () => void }
+  const pendingParts: PendingPart[] = []
   let pendingChars = 0
   // Replay is kept separate so the live safety cap can never discard it. The
   // attach path supplies PTY-sized chunks and flushes this queue synchronously.
-  const replayParts: string[] = []
+  const replayParts: PendingPart[] = []
   let replayChars = 0
   let needsRefresh = false
   let raf = 0
   let frameFallback = 0
   let microScheduled = false
   let disposed = false
+  let gapDetected = false
   /** Once true, stay on rAF until the queue drains (flood mode). */
   let floodMode = false
 
   const shedOldest = () => {
     while (pendingChars > maxPending && pendingParts.length > 1) {
       const dropped = pendingParts.shift()!
-      pendingChars -= dropped.length
+      pendingChars -= dropped.data.length
+      gapDetected = true
     }
     if (pendingChars > maxPending && pendingParts.length === 1) {
       const only = pendingParts[0]!
-      pendingParts[0] = only.slice(only.length - maxPending)
-      pendingChars = pendingParts[0]!.length
+      only.data = only.data.slice(only.data.length - maxPending)
+      // The frame was only partially consumed, so a cumulative ACK for it
+      // would incorrectly acknowledge the discarded prefix.
+      delete only.onConsumed
+      gapDetected = true
+      pendingChars = only.data.length
     }
   }
 
@@ -133,35 +142,54 @@ export function createTerminalOutputWriter(
   }
 
   /** Take up to `limit` chars, leave the rest queued. */
-  const takePending = (limit: number): string => {
-    if (pendingParts.length === 0 || limit <= 0) return ""
+  const takePending = (
+    limit: number,
+  ): { data: string; consumed: Array<() => void> } => {
+    if (pendingParts.length === 0 || limit <= 0) {
+      return { data: "", consumed: [] }
+    }
     if (pendingChars <= limit) {
       const data =
-        pendingParts.length === 1 ? pendingParts[0]! : pendingParts.join("")
+        pendingParts.length === 1
+          ? pendingParts[0]!.data
+          : pendingParts.map(part => part.data).join("")
+      const consumed = gapDetected
+        ? []
+        : pendingParts.flatMap(part =>
+            part.onConsumed ? [part.onConsumed] : [],
+          )
       pendingParts.length = 0
       pendingChars = 0
-      return data
+      return { data, consumed }
     }
 
     const out: string[] = []
+    const consumed: Array<() => void> = []
     let taken = 0
     while (pendingParts.length > 0 && taken < limit) {
       const head = pendingParts[0]!
       const room = limit - taken
-      if (head.length <= room) {
+      if (head.data.length <= room) {
         pendingParts.shift()
-        out.push(head)
-        taken += head.length
-        pendingChars -= head.length
+        out.push(head.data)
+        if (!gapDetected && head.onConsumed) consumed.push(head.onConsumed)
+        taken += head.data.length
+        pendingChars -= head.data.length
       } else {
-        const chunkLength = Math.min(head.length, safeChunkLength(head, room))
-        out.push(head.slice(0, chunkLength))
-        pendingParts[0] = head.slice(chunkLength)
+        const chunkLength = Math.min(
+          head.data.length,
+          safeChunkLength(head.data, room),
+        )
+        out.push(head.data.slice(0, chunkLength))
+        head.data = head.data.slice(chunkLength)
         pendingChars -= chunkLength
         taken += chunkLength
       }
     }
-    return out.length === 1 ? out[0]! : out.join("")
+    return {
+      data: out.length === 1 ? out[0]! : out.join(""),
+      consumed,
+    }
   }
 
   const markRefresh = (data: string): void => {
@@ -182,17 +210,18 @@ export function createTerminalOutputWriter(
     if (doRefresh) needsRefresh = false
     const onPainted = () => {
       if (disposed) return
+      for (const part of parts) part.onConsumed?.()
       if (doRefresh) options.refreshAfterPaint?.()
       options.onPainted?.()
     }
     if (options.writeReplay) {
-      options.writeReplay(parts, onPainted)
+      options.writeReplay(parts.map(part => part.data), onPainted)
       return
     }
     // Keep the writer usable for simple renderers that do not need a special
     // replay hook. Production Ghostty supplies writeReplay so its callback is
     // detached for the complete batch.
-    for (const part of parts) options.write(part)
+    for (const part of parts) options.write(part.data)
     onPainted()
   }
 
@@ -205,7 +234,9 @@ export function createTerminalOutputWriter(
       if (pendingChars === 0) floodMode = false
       return
     }
-    const data = takePending(unlimited ? Number.POSITIVE_INFINITY : maxPerFlush)
+    const { data, consumed } = takePending(
+      unlimited ? Number.POSITIVE_INFINITY : maxPerFlush,
+    )
     const doRefresh = needsRefresh && pendingChars === 0
     if (doRefresh) needsRefresh = false
     if (data.length === 0) {
@@ -218,6 +249,7 @@ export function createTerminalOutputWriter(
     // callback. The parser owns its throughput scheduling.
     options.write(data, () => {
       if (disposed) return
+      for (const acknowledge of consumed) acknowledge()
       if (doRefresh) options.refreshAfterPaint?.()
       options.onPainted?.()
     })
@@ -284,19 +316,35 @@ export function createTerminalOutputWriter(
   }
 
   return {
-    enqueue(data) {
+    enqueue(data, onConsumed) {
       if (disposed || data.length === 0) return
-      pendingParts.push(data)
+      pendingParts.push(onConsumed ? { data, onConsumed } : { data })
       pendingChars += data.length
       shedOldest()
       markRefresh(data)
       scheduleNext()
     },
-    enqueueReplay(data) {
+    enqueueReplay(data, onConsumed) {
       if (disposed || data.length === 0) return
-      replayParts.push(data)
+      replayParts.push(onConsumed ? { data, onConsumed } : { data })
       replayChars += data.length
       markRefresh(data)
+    },
+    discardPending() {
+      if (raf) {
+        cancel(raf)
+        raf = 0
+      }
+      if (frameFallback) {
+        cancelFrameFallback(frameFallback)
+        frameFallback = 0
+      }
+      microScheduled = false
+      pendingParts.length = 0
+      pendingChars = 0
+      needsRefresh = false
+      floodMode = false
+      gapDetected = false
     },
     flush() {
       if (raf) {

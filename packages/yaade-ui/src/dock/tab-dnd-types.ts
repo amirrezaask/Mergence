@@ -4,6 +4,7 @@ import type { DropSiteKind } from "./panel-drop-zones.js"
 export const TAB_DND_PREFIX = "tab"
 export const DROP_DND_PREFIX = "drop"
 export const TABBAR_DND_PREFIX = "tabbar"
+export const SESSION_TAB_DROP_DND_PREFIX = "session-tab-drop"
 
 export type TabDragData = {
   type: "tab"
@@ -13,10 +14,12 @@ export type TabDragData = {
   dirty?: boolean
 }
 
-/** Drag a session from the sidebar into the tiled terminal workspace. */
+/** Drag an item outside the current pane tree into the tiled workspace. */
 export type SessionDragData = {
   type: "session"
   tabId: string
+  /** Stable source container id, used when dropping back onto its source strip. */
+  sourceId?: string
   label: string
 }
 
@@ -40,6 +43,15 @@ export function isSessionDragData(data: unknown): data is SessionDragData {
 
 export function sessionDndId(tabId: string): string {
   return `session:${tabId}`
+}
+
+export function sessionTabDropDndId(sourceId: string): string {
+  return `${SESSION_TAB_DROP_DND_PREFIX}:${sourceId}`
+}
+
+export function parseSessionTabDropDndId(id: string): string | null {
+  const prefix = `${SESSION_TAB_DROP_DND_PREFIX}:`
+  return id.startsWith(prefix) && id.length > prefix.length ? id.slice(prefix.length) : null
 }
 
 export function tabDndId(panelId: PanelId, tabId: string): string {

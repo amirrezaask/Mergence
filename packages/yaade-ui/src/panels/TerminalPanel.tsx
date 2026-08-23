@@ -26,7 +26,6 @@ import {
   scanTerminalPathLinks,
 } from "./terminal-links.js"
 import { DEFAULT_MONO_FONT_FAMILY } from "../theme/appearance-defaults.js"
-import { SemanticTerminalView, type SemanticTerminalSnapshot } from "./SemanticTerminalView.js"
 
 export type TerminalPanelProps = {
   cwdRootUri: string
@@ -287,8 +286,6 @@ export function TerminalPanel({
   const [displayExitCode, setDisplayExitCode] = useState(exitCode)
   const [connectedPtyId, setConnectedPtyId] = useState<string | null>(existingPtyId ?? null)
   const [terminalError, setTerminalError] = useState<string | null>(null)
-  const [semanticSnapshot, setSemanticSnapshot] = useState<SemanticTerminalSnapshot | null>(null)
-  const semanticModeRef = useRef(false)
   const themeRef = useRef(theme)
   themeRef.current = theme
   const statusRef = useRef(status)
@@ -329,7 +326,6 @@ export function TerminalPanel({
     let session: TerminalSession | null = null
     let surface: GhosttyTerminalSurface | null = null
     let unsub: (() => void) | null = null
-    let semanticUnsub: (() => void) | null = null
     let dataDispose: (() => void) | null = null
     let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
     const pendingTerminalInput: string[] = []
@@ -412,6 +408,32 @@ export function TerminalPanel({
       if (path) onOpenPathRef.current?.(path.path, path.line, path.column)
     }
 
+    const consumeAttachReplay = (replay: {
+      data: string
+      replayNeedsQueryResponses: boolean
+      replayTruncated: boolean
+    }): void => {
+      if (cancelled) throw new Error("terminal replay cancelled")
+      if (!outputWriter || !replay.data) return
+      onOutputRef.current?.(tabId, replay.data)
+      if (replay.replayTruncated) outputWriter.enqueueReplay("\x1bc")
+      if (replay.replayNeedsQueryResponses) {
+        outputWriter.enqueue(replay.data)
+      } else {
+        outputWriter.enqueueReplay(replay.data)
+      }
+      // Archive pages are bounded by the host. Parse each page before asking
+      // for the next one so a large scrollback never becomes one browser task
+      // or one unbounded client-side queue.
+      outputWriter.flush()
+    }
+    const attachToNewSurface = (id: string) =>
+      terminalApi.attach(id, {
+        replay: "full",
+        onReplay: consumeAttachReplay,
+      })
+
+    let receivingReplay = false
     const connectPty = (id: string, replayMayNeedQueryResponses = false) => {
       if (!session || !surface || cancelled) return
       session.ptyId = id
@@ -425,9 +447,15 @@ export function TerminalPanel({
           replay = false,
           replayNeedsQueryResponses = false,
           replayTruncated = false,
+          acknowledgeConsumed,
         ) => {
           onOutputRef.current?.(tabId, data)
-          if (semanticModeRef.current) return
+          if (replay && !receivingReplay) {
+            receivingReplay = true
+            outputWriter?.discardPending()
+          } else if (!replay) {
+            receivingReplay = false
+          }
           if (replay && replayTruncated) {
             // A reconnect gap means the ring starts after the current parser
             // state. Reset before applying the best-effort replacement stream.
@@ -439,10 +467,10 @@ export function TerminalPanel({
             !replayMayNeedQueryResponses &&
             !replayNeedsQueryResponses
           ) {
-            outputWriter?.enqueueReplay(data)
+            outputWriter?.enqueueReplay(data, acknowledgeConsumed)
             outputWriter?.flush()
           } else {
-            outputWriter?.enqueue(data)
+            outputWriter?.enqueue(data, acknowledgeConsumed)
             if (replay && replayNeedsQueryResponses) {
               outputWriter?.flush()
               // Query replies are queued on a microtask by the input writer;
@@ -452,11 +480,8 @@ export function TerminalPanel({
             }
           }
         },
+        { acknowledgement: "consumption" },
       )
-      semanticUnsub = terminalApi.onSemanticSnapshot?.(id, snapshot => {
-        semanticModeRef.current = true
-        setSemanticSnapshot(snapshot)
-      }) ?? null
       if (!readOnly) {
         inputWriter = createTerminalInputWriter(
           data => terminalApi.write(id, data),
@@ -494,30 +519,23 @@ export function TerminalPanel({
           }
           onPtyIdRef.current?.(tabId, id)
           if (title) onTitleChangeRef.current?.(tabId, title)
-          if (prepared === null) {
-            connectPty(id)
-            return
-          }
 
-          // The PTY may have produced output while WASM/fonts were loading.
-          // Attach before subscribing so the host client's replay floor orders
-          // replayed bytes before any live chunks that arrived in the meantime.
-          const attached = await terminalApi.attach(id)
+          // Creating the PTY does not subscribe this WebSocket to its stream.
+          // Every fresh surface therefore performs the same ordered attach as
+          // a restored one before it starts accepting live output.
+          const attached = await attachToNewSurface(id)
           if (cancelled) {
             void terminalApi.dispose(id)
             return
           }
-          if (!attached) throw new Error("precreated terminal disappeared before attach")
-          if (attached.semanticSnapshot) {
-            semanticModeRef.current = true
-            setSemanticSnapshot(attached.semanticSnapshot)
-          } else if (outputWriter) {
+          if (!attached) throw new Error("created terminal disappeared before attach")
+          if (outputWriter) {
             applyAttachReplay(
               attached,
               tabId,
               onOutputRef.current,
               outputWriter,
-              true,
+              !readOnly && attached.replayNeedsQueryResponses === true,
             )
           }
           if (attached.status === "exited") {
@@ -525,7 +543,10 @@ export function TerminalPanel({
             setDisplayExitCode(attached.exitCode)
             return
           }
-          connectPty(id, true)
+          connectPty(
+            id,
+            !readOnly && attached.replayNeedsQueryResponses === true,
+          )
         })
         .catch(error => {
           if (cancelled) return
@@ -541,8 +562,7 @@ export function TerminalPanel({
       if (deferPty) return
       if (initialOutput && !existingPtyId) surface.resetAndWrite(initialOutput)
       if (existingPtyId) {
-        void terminalApi
-          .attach(existingPtyId)
+        void attachToNewSurface(existingPtyId)
           .then(attached => {
             if (cancelled) return
             if (!attached) {
@@ -561,10 +581,7 @@ export function TerminalPanel({
                 createFreshPty()
                 return
               }
-              if (attached.semanticSnapshot) {
-                semanticModeRef.current = true
-                setSemanticSnapshot(attached.semanticSnapshot)
-              } else if (outputWriter) {
+              if (outputWriter) {
                 applyAttachReplay(attached, tabId, onOutputRef.current, outputWriter)
               }
               setDisplayStatus("exited")
@@ -573,10 +590,7 @@ export function TerminalPanel({
             }
             const respondToQueries =
               !readOnly && attached.replayNeedsQueryResponses === true
-            if (attached.semanticSnapshot) {
-              semanticModeRef.current = true
-              setSemanticSnapshot(attached.semanticSnapshot)
-            } else if (outputWriter) {
+            if (outputWriter) {
               applyAttachReplay(
                 attached,
                 tabId,
@@ -634,6 +648,10 @@ export function TerminalPanel({
           theme: terminalTheme(themeRef.current),
           font: { family: readTerminalFontFamily(), size: readRootFontSize() },
           visible: visibleRef.current,
+          // The host-side Ghostty runtime owns device/query responses. This
+          // browser core renders and encodes user input only, preventing every
+          // attached viewer from answering the same terminal query.
+          responsePolicy: "render-only",
           onData: data => {
             onInputRef.current?.(tabId, data)
             enqueueTerminalInput(data)
@@ -687,6 +705,10 @@ export function TerminalPanel({
           // parser slice bounded; the Canvas adapter has no internal async
           // write queue to yield for us.
           maxCharsPerFlush: 32 * 1024,
+          // The server allows at most 8 MiB of unacknowledged output per PTY.
+          // Keep the local queue above that ceiling so server-side resync wins
+          // before the writer's last-resort shedding path can drop a frame.
+          maxPendingChars: 16 * 1024 * 1024,
           write: (data, onPainted) => {
             surface?.write(data)
             onPainted?.()
@@ -736,7 +758,6 @@ export function TerminalPanel({
       pendingTerminalInput.length = 0
       outputWriter?.dispose()
       unsub?.()
-      semanticUnsub?.()
       if (surface) {
         unregisterTerminalInstance(tabId, surface)
         surface.dispose()
@@ -804,31 +825,13 @@ export function TerminalPanel({
       data-yaade-terminal-status={displayStatus}
       onMouseDown={() => focusTerminalInput(tabId)}
     >
-      <div className="yaade-terminal-surface yaade-terminal-surface relative min-h-0 flex-1 overflow-hidden">
+      <div className="yaade-terminal-surface relative min-h-0 flex-1 overflow-hidden">
         <div
           ref={containerRef}
-          className={
-            semanticSnapshot
-              ? "invisible absolute inset-0 overflow-hidden"
-              : "relative h-full min-h-0 w-full overflow-hidden"
-          }
+          className="relative h-full min-h-0 w-full overflow-hidden"
           data-yaade-terminal-fit=""
           data-yaade-terminal-surface=""
         />
-        {semanticSnapshot ? (
-          <div className="absolute inset-0">
-            <SemanticTerminalView
-              snapshot={semanticSnapshot}
-              focused={focused && isActive}
-              onInput={data => {
-                if (connectedPtyId && !readOnly) {
-                  void window.yaade?.terminal.write(connectedPtyId, data)
-                }
-                onInput?.(tabId, data)
-              }}
-            />
-          </div>
-        ) : null}
       </div>
       {displayStatus === "starting" || deferPty ? (
         <div

@@ -169,6 +169,7 @@ export type TerminalWsHotOp = Extract<
   | "terminal:writeBinary"
   | "terminal:resize"
   | "terminal:ready"
+  | "terminal:detach"
   | "terminal:attach"
 >
 

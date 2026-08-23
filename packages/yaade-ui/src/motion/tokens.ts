@@ -1,4 +1,9 @@
+const easeOutCss = "cubic-bezier(0.23, 1, 0.32, 1)"
+
 export const yaadeMotion = {
+  ease: {
+    outCss: easeOutCss,
+  },
   duration: {
     hot: 0.12,
     fast: 0.12,
@@ -25,6 +30,14 @@ export const yaadeMotion = {
   overlayTransition: { duration: 0.18 /* overlay */, ease: "easeOut" as const },
   quickFade: { duration: 0.12, ease: "easeOut" as const },
   tabGhostTransition: { duration: 0.18 /* overlay */, ease: "easeOut" as const },
+  dockDropTransition: { duration: 0.18, ease: easeOutCss },
+  /** Critically damped: pane geometry can be retargeted mid-settle without bounce. */
+  dockLayoutTransition: {
+    type: "spring" as const,
+    stiffness: 500,
+    damping: 45,
+    mass: 1,
+  },
   layoutTransition: { duration: 0.16, ease: "easeOut" as const },
   sidebarTransition: { duration: 0.16, ease: "easeOut" as const },
 }

@@ -168,7 +168,7 @@ describe("MuxSessionStore browser state", () => {
     assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [])
   })
 
-  it("follows authoritative active-terminal changes from another client", () => {
+  it("keeps active-terminal navigation local across another client's update", () => {
     const store = new MuxSessionStore()
     const tabId = Schema.decodeUnknownSync(SessionTabId)("tab-a")
     const otherId = Schema.decodeUnknownSync(MuxTerminalId)("term-b")
@@ -192,7 +192,7 @@ describe("MuxSessionStore browser state", () => {
       occurredAt: "2026-01-02",
       tab: { ...tab, activeMuxTerminalId: second.id, revision: 2, updatedAt: "2026-01-02" },
     })
-    assert.equal(store.getSnapshot().activeMuxTerminalId, second.id)
+    assert.equal(store.getSnapshot().activeMuxTerminalId, first.id)
   })
 
   it("keeps a newer local pane selection across layout-only tab updates", () => {

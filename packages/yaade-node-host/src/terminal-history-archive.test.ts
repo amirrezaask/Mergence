@@ -51,6 +51,38 @@ test("history is compressed into sequence-indexed blocks and replayed in bounded
   }
 })
 
+test("global retention trims active terminals without deleting their live archive", async () => {
+  const root = temporaryRoot()
+  try {
+    const archive = new TerminalHistoryArchive({
+      rootDir: root,
+      blockBytes: 1,
+      pageBytes: 1024,
+      maxTerminalBytes: 1024 * 1024,
+      maxTotalBytes: 1,
+    })
+    archive.append("active", 1, "first")
+    archive.append("active", 2, "second")
+    archive.append("active", 3, "third")
+    await archive.flushAll()
+
+    const terminalDir = path.join(
+      root,
+      Buffer.from("active").toString("base64url"),
+    )
+    const manifest = JSON.parse(
+      fs.readFileSync(path.join(terminalDir, "index.json"), "utf8"),
+    )
+    assert.equal(manifest.blocks.length, 1)
+    assert.equal(manifest.blocks[0].firstSequence, 3)
+    const page = await archive.readPage("active", 0)
+    assert.deepEqual(page.chunks, ["third"])
+    assert.equal(page.firstSequence, 3)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
 test("closed archives expire and total retention evicts oldest closed terminals", async () => {
   const root = temporaryRoot()
   try {
@@ -64,7 +96,10 @@ test("closed archives expire and total retention evicts oldest closed terminals"
     archive.append("old", 1, "old output")
     archive.closeTerminal("old")
     await archive.flushAll()
-    assert.equal(fs.readdirSync(root).length, 0)
+    // A live archive object keeps one minimal block so concurrent readers and
+    // queued manifest writes never race directory deletion.
+    assert.equal(fs.readdirSync(root).length, 1)
+    await archive.close()
 
     const retained = new TerminalHistoryArchive({
       rootDir: root,

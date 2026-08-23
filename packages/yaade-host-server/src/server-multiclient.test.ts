@@ -20,24 +20,38 @@ type IncomingFrame = {
 
 class SocketInbox {
   private readonly queued: IncomingFrame[] = []
-  private readonly waiters: Array<(frame: IncomingFrame) => void> = []
+  private readonly waiters: Array<{
+    predicate: (frame: IncomingFrame) => boolean
+    resolve: (frame: IncomingFrame) => void
+  }> = []
 
   constructor(socket: WebSocket) {
     socket.on("message", (data, isBinary) => {
       const frame = { data, binary: isBinary }
-      const waiter = this.waiters.shift()
-      if (waiter) waiter(frame)
-      else this.queued.push(frame)
+      const index = this.waiters.findIndex(waiter => waiter.predicate(frame))
+      if (index < 0) {
+        this.queued.push(frame)
+        return
+      }
+      this.waiters.splice(index, 1)[0]?.resolve(frame)
     })
   }
 
-  next(timeoutMs = 5_000): Promise<IncomingFrame> {
-    const queued = this.queued.shift()
-    if (queued) return Promise.resolve(queued)
+  matching(
+    predicate: (frame: IncomingFrame) => boolean,
+    timeoutMs = 5_000,
+  ): Promise<IncomingFrame> {
+    const queuedIndex = this.queued.findIndex(predicate)
+    if (queuedIndex >= 0) {
+      return Promise.resolve(this.queued.splice(queuedIndex, 1)[0]!)
+    }
     return new Promise((resolve, reject) => {
-      const waiter = (frame: IncomingFrame) => {
-        clearTimeout(timer)
-        resolve(frame)
+      const waiter = {
+        predicate,
+        resolve: (frame: IncomingFrame) => {
+          clearTimeout(timer)
+          resolve(frame)
+        },
       }
       const timer = setTimeout(() => {
         const index = this.waiters.indexOf(waiter)
@@ -49,25 +63,22 @@ class SocketInbox {
   }
 
   async result(requestId: string): Promise<void> {
-    for (;;) {
-      const frame = await this.next()
-      if (frame.binary) continue
-      const result = tryDecodeTerminalWsResult(JSON.parse(String(frame.data)))
-      if (!result || result.requestId !== requestId) continue
-      if (!result.ok) throw new Error(result.error?.message ?? "terminal command failed")
-      return
-    }
+    const frame = await this.matching(candidate => {
+      if (candidate.binary) return false
+      const result = tryDecodeTerminalWsResult(JSON.parse(String(candidate.data)))
+      return result?.requestId === requestId
+    })
+    const result = tryDecodeTerminalWsResult(JSON.parse(String(frame.data)))
+    if (!result?.ok) throw new Error(result?.error?.message ?? "terminal command failed")
   }
 
   async terminalData(terminalId: string, marker: string): Promise<string> {
-    for (;;) {
-      const frame = await this.next()
-      if (!frame.binary) continue
-      const decoded = decodeTerminalDataFrame(toArrayBufferView(frame.data))
-      if (decoded?.id === terminalId && decoded.data.includes(marker)) {
-        return decoded.data
-      }
-    }
+    const frame = await this.matching(candidate => {
+      if (!candidate.binary) return false
+      const decoded = decodeTerminalDataFrame(toArrayBufferView(candidate.data))
+      return decoded?.id === terminalId && decoded.data.includes(marker)
+    })
+    return decodeTerminalDataFrame(toArrayBufferView(frame.data))?.data ?? ""
   }
 }
 

@@ -130,6 +130,10 @@ export function hostRealtimeReconnectDelay(attempt: number): Duration.Duration {
   return Duration.millis(Math.min(10_000, 250 * 2 ** Math.max(0, attempt)));
 }
 
+const REALTIME_CONNECT_TIMEOUT_MS = 15_000;
+const REALTIME_HEARTBEAT_INTERVAL_MS = 15_000;
+const REALTIME_HEARTBEAT_TIMEOUT_MS = 45_000;
+
 export function createClientId(
   cryptoSource: Crypto | undefined = globalThis.crypto,
 ): string {
@@ -237,6 +241,7 @@ export class WebHostTransport implements YaadeHostTransport {
       timeout: ReturnType<typeof setTimeout>;
     }
   >();
+  private readonly unobservedRealtime = new Map<string, string>();
   private realtimeRequestSequence = 0;
   private loopFiber: Fiber.RuntimeFiber<void, never> | null = null;
   private reconnectRequested = false;
@@ -361,13 +366,21 @@ export class WebHostTransport implements YaadeHostTransport {
     if (this.closed || !isTerminalWsHotOp(channel)) return false;
     const socket = this.socket;
     if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+    const requestId = `${this.clientId}:unobserved:${++this.realtimeRequestSequence}`;
+    this.unobservedRealtime.set(requestId, channel);
+    // A healthy server answers these immediately. Bound defensive bookkeeping
+    // so a peer that violates the result contract cannot leak browser memory.
+    if (this.unobservedRealtime.size > 1_024) {
+      const oldest = this.unobservedRealtime.keys().next().value;
+      if (oldest) this.unobservedRealtime.delete(oldest);
+    }
     try {
-      const requestId = `${this.clientId}:unobserved:${++this.realtimeRequestSequence}`;
       socket.send(
         encodeTerminalWsCommand(requestId, channel as TerminalWsHotOp, args),
       );
       return true;
     } catch {
+      this.unobservedRealtime.delete(requestId);
       return false;
     }
   }
@@ -419,8 +432,12 @@ export class WebHostTransport implements YaadeHostTransport {
               message: "host websocket disconnected",
             }),
           );
-          self.rejectRealtime(new Error("host websocket disconnected"));
         }
+        // Realtime commands belong to the socket that carried them. Even an
+        // intentional foreground reconnect cannot preserve or retransmit raw
+        // terminal input safely, so fail them immediately instead of leaving
+        // callers parked until the ten-second request timeout.
+        self.rejectRealtime(new Error("host websocket disconnected"));
         const delay = hostRealtimeReconnectDelay(self.reconnectAttempt++);
         if (self.reconnectRequested) {
           self.reconnectRequested = false;
@@ -505,15 +522,47 @@ export class WebHostTransport implements YaadeHostTransport {
         Effect.flatMap((socket) =>
           Effect.async<void>((resume) => {
             let settled = false;
+            let heartbeat: ReturnType<typeof setInterval> | null = null;
+            let lastPongAt = Date.now();
+            const connectTimeout = setTimeout(() => {
+              try {
+                socket.close(4000, "realtime connection timed out");
+              } catch {
+                finish();
+              }
+            }, REALTIME_CONNECT_TIMEOUT_MS);
+            const stopTimers = () => {
+              clearTimeout(connectTimeout);
+              if (heartbeat !== null) {
+                clearInterval(heartbeat);
+                heartbeat = null;
+              }
+            };
             const finish = () => {
               if (settled) return;
               settled = true;
+              stopTimers();
               resume(Effect.void);
             };
             socket.addEventListener("open", () => {
+              clearTimeout(connectTimeout);
               self.reconnectAttempt = 0;
               self.synchronized = false;
               self.dispatch("connection:status", "synchronizing");
+              lastPongAt = Date.now();
+              heartbeat = setInterval(() => {
+                if (Date.now() - lastPongAt > REALTIME_HEARTBEAT_TIMEOUT_MS) {
+                  socket.close(4000, "realtime heartbeat timed out");
+                  return;
+                }
+                if (socket.readyState === WebSocket.OPEN) {
+                  try {
+                    socket.send("ping");
+                  } catch {
+                    socket.close();
+                  }
+                }
+              }, REALTIME_HEARTBEAT_INTERVAL_MS);
               const token =
                 self.authToken === undefined ? readHostAuthToken() : self.authToken;
               if (token) {
@@ -527,6 +576,10 @@ export class WebHostTransport implements YaadeHostTransport {
             socket.addEventListener("message", (event) => {
               if (typeof event.data !== "string") {
                 self.handleBinaryMessage(event.data);
+                return;
+              }
+              if (event.data === "pong") {
+                lastPongAt = Date.now();
                 return;
               }
               let raw: unknown;
@@ -584,6 +637,7 @@ export class WebHostTransport implements YaadeHostTransport {
               }
             });
             return Effect.sync(() => {
+              stopTimers();
               try {
                 socket.close();
               } catch {
@@ -710,14 +764,23 @@ export class WebHostTransport implements YaadeHostTransport {
         : undefined;
     if (!acceptHostEvent(this.lastSequence, message, identity)) return;
     this.lastSequence = message.sequence;
-    try {
-      this.dispatch(message.channel, ...message.args);
-    } finally {
-      const socket = this.socket;
+    const socket = this.socket;
+    let acknowledged = false;
+    const acknowledge = () => {
+      if (acknowledged) return;
+      acknowledged = true;
       if (socket?.readyState === WebSocket.OPEN) {
         socket.send(encodeTerminalWsAck(decoded.id, decoded.terminalSequence));
       }
-    }
+    };
+    const delivered = this.dispatch(
+      message.channel,
+      ...message.args,
+      acknowledge,
+    );
+    // A transport without an API projection still must not strand server-side
+    // flow credit forever.
+    if (delivered === 0) acknowledge();
   }
 
   private rejectPending(error: HostDisconnectedError): void {
@@ -728,7 +791,18 @@ export class WebHostTransport implements YaadeHostTransport {
 
   private resolveRealtime(result: import("@yaade/rpc").TerminalWsResult): void {
     const pending = this.pendingRealtime.get(result.requestId);
-    if (!pending) return;
+    if (!pending) {
+      const channel = this.unobservedRealtime.get(result.requestId);
+      if (!channel) return;
+      this.unobservedRealtime.delete(result.requestId);
+      if (!result.ok) {
+        this.dispatch(
+          "protocol:error",
+          `${channel} failed: ${result.error?.message ?? "terminal command failed"}`,
+        );
+      }
+      return;
+    }
     clearTimeout(pending.timeout);
     this.pendingRealtime.delete(result.requestId);
     if (result.ok) {
@@ -746,10 +820,40 @@ export class WebHostTransport implements YaadeHostTransport {
       pending.reject(error);
     }
     this.pendingRealtime.clear();
+    if (this.unobservedRealtime.size > 0) {
+      const count = this.unobservedRealtime.size;
+      this.unobservedRealtime.clear();
+      this.dispatch(
+        "protocol:error",
+        `${count} terminal command${count === 1 ? " was" : "s were"} not acknowledged before disconnect`,
+      );
+    }
   }
 
-  private dispatch(channel: string, ...args: unknown[]): void {
-    this.listeners.get(channel)?.forEach((listener) => listener(...args));
+  private dispatch(channel: string, ...args: unknown[]): number {
+    const listeners = this.listeners.get(channel);
+    if (!listeners) return 0;
+    let delivered = 0;
+    for (const listener of [...listeners]) {
+      delivered += 1;
+      try {
+        listener(...args);
+      } catch (error) {
+        if (channel === "protocol:error") continue;
+        const message =
+          error instanceof Error ? error.message : String(error);
+        for (const onProtocolError of [
+          ...(this.listeners.get("protocol:error") ?? []),
+        ]) {
+          try {
+            onProtocolError(`Realtime listener failed: ${message}`);
+          } catch {
+            // A diagnostic listener must not compromise socket delivery.
+          }
+        }
+      }
+    }
+    return delivered;
   }
 }
 

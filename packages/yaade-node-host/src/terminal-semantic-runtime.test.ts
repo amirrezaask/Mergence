@@ -1,7 +1,12 @@
 import assert from "node:assert/strict"
 import { pathToFileURL } from "node:url"
 import { test } from "vite-plus/test"
-import { applyTerminalSemanticPatch, type TerminalSemanticPatch, type TerminalSemanticSnapshot } from "@yaade/rpc"
+import { Schema } from "effect"
+import {
+  applyTerminalSemanticPatch,
+  TerminalSemanticSnapshot,
+  type TerminalSemanticPatch,
+} from "@yaade/rpc"
 import { TerminalHost } from "./terminal.js"
 import { TerminalSemanticRuntime } from "./terminal-semantic-runtime.js"
 import { fixtureLaunch } from "./test-support/runtime-harness.js"
@@ -29,6 +34,7 @@ test("semantic realtime updates send an initial snapshot followed by row patches
 
     const initial = updates[0]
     assert.ok(initial && !("baseRevision" in initial))
+    Schema.decodeUnknownSync(TerminalSemanticSnapshot)(initial)
     let applied: TerminalSemanticSnapshot = initial
     const patches = updates.slice(1)
     assert.ok(patches.length >= 2)
@@ -59,20 +65,22 @@ test("Ghostty answers DA1 once and exposes alternate-screen snapshots", async ()
       "semantic-client",
     )
     await terminal.waitForSemantic(created.id)
-    const deadline = Date.now() + 5_000
-    let output = ""
-    while (Date.now() < deadline) {
-      const attached = terminal.attach(created.id, "semantic-client")
-      output = attached?.outputChunks.join("") ?? ""
-      if (output.includes("QUERY_RESPONSE_0=")) break
-      await new Promise(resolve => setTimeout(resolve, 20))
-    }
+    await terminal.waitForExit(created.id)
+    const attached = terminal.attach(created.id, "semantic-client")
+    const output = attached?.outputChunks.join("") ?? ""
     const snapshot = terminal.readSemanticSnapshot(created.id)
     assert.ok(snapshot)
     assert.equal(snapshot.schemaVersion, 1)
     assert.ok(snapshot.revision >= 1)
-    const da1Answers = output.match(/QUERY_RESPONSE_0=/g) ?? []
-    assert.equal(da1Answers.length, 1, `expected one DA1 answer, got ${JSON.stringify(output)}`)
+    assert.equal(attached?.exitCode, 0, output)
+    for (let query = 0; query < 3; query += 1) {
+      const answers = output.match(new RegExp(`QUERY_RESPONSE_${query}=`, "g")) ?? []
+      assert.equal(
+        answers.length,
+        1,
+        `expected one response for query ${query}, got ${JSON.stringify(output)}`,
+      )
+    }
   } finally {
     terminal.stopAll()
   }

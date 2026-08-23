@@ -30,7 +30,11 @@ export class TerminalV3Store {
 
   applySnapshot(message: TerminalSnapshotMessage): TerminalV3ApplyResult {
     if (this.terminalId !== null && this.terminalId !== message.terminalId) return "ignored"
-    if (this.ownerEpoch === message.ownerEpoch && this.terminalEpoch === message.terminalEpoch && message.revision < this.revision) {
+    if (
+      this.ownerEpoch === message.ownerEpoch &&
+      this.terminalEpoch === message.terminalEpoch &&
+      message.revision <= this.revision
+    ) {
       return "ignored"
     }
     if (
@@ -56,12 +60,12 @@ export class TerminalV3Store {
     ) return "resync-required"
     if (
       message.revision !== message.patch.revision ||
-      !Number.isSafeInteger(message.revision) ||
-      message.revision <= this.revision ||
-      message.baseRevision !== this.revision
+      !Number.isSafeInteger(message.revision)
     ) {
       return "resync-required"
     }
+    if (message.revision <= this.revision) return "ignored"
+    if (message.baseRevision !== this.revision) return "resync-required"
     const next = applyTerminalSemanticPatch(this.current, message.terminalEpoch, message.patch)
     if (!next) return "resync-required"
     this.current = next

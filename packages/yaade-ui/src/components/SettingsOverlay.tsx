@@ -70,6 +70,7 @@ import {
 } from "@/theme/bundled.js"
 import { yaadeMotion } from "@/motion/tokens.js"
 import { DEFAULT_MONO_FONT_NAME } from "../theme/appearance-defaults.js"
+import { MOBILE_MEDIA_QUERY } from "../hooks/use-mobile.js"
 import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
 
 /** Navigation chrome for the Session shell. */
@@ -278,11 +279,11 @@ function SettingsSectionHeader({ category }: { category: SettingsCategory }) {
 
 function useCompactSettingsNavigation(): boolean {
   const [compact, setCompact] = useState(() =>
-    window.matchMedia("(max-width: 767px)").matches,
+    window.matchMedia(MOBILE_MEDIA_QUERY).matches,
   )
 
   useEffect(() => {
-    const media = window.matchMedia("(max-width: 767px)")
+    const media = window.matchMedia(MOBILE_MEDIA_QUERY)
     const sync = () => setCompact(media.matches)
     media.addEventListener("change", sync)
     return () => media.removeEventListener("change", sync)

@@ -464,30 +464,36 @@ export class MuxSessionStore {
         this.notify(this.sessionListeners, event.session.id)
         if (event.session.id === this.activeSessionId) {
           const tabIds = this.visibleTabIdsBySession.get(event.session.id) ?? []
-          const nextTabId = event.session.activeTabId && tabIds.includes(event.session.activeTabId)
-            ? event.session.activeTabId
-            : this.selectedTabForSession(event.session.id)
+          const keepLocalTab =
+            this.activeTabId != null && tabIds.includes(this.activeTabId)
+          const nextTabId = keepLocalTab
+            ? this.activeTabId
+            : event.session.activeTabId && tabIds.includes(event.session.activeTabId)
+              ? event.session.activeTabId
+              : this.selectedTabForSession(event.session.id)
           this.activeTabId = nextTabId
-          this.activeMuxTerminalId = nextTabId
-            ? this.selectedTerminalForTab(nextTabId)
-            : undefined
+          const terminalIds = nextTabId
+            ? this.terminalIdsByTab.get(nextTabId) ?? []
+            : []
+          if (
+            !this.activeMuxTerminalId ||
+            !terminalIds.includes(this.activeMuxTerminalId)
+          ) {
+            this.activeMuxTerminalId = nextTabId
+              ? this.selectedTerminalForTab(nextTabId)
+              : undefined
+          }
         }
         break
       case "SessionTabCreated":
       case "SessionTabUpdated":
       case "SessionTabArchived": {
-        const previousActive =
-          current && "activeMuxTerminalId" in current
-            ? current.activeMuxTerminalId
-            : undefined
         this.tabsById = new Map(this.tabsById).set(event.tab.id, event.tab)
         this.rebuildVisibleTabs()
         this.notify(this.tabListeners, event.tab.id)
         if (this.activeTabId === event.tab.id) {
           const ids = this.terminalIdsByTab.get(event.tab.id) ?? []
           const keepLocal =
-            event._tag === "SessionTabUpdated" &&
-            event.tab.activeMuxTerminalId === previousActive &&
             this.activeMuxTerminalId != null &&
             ids.includes(this.activeMuxTerminalId)
           if (!keepLocal) {

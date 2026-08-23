@@ -144,6 +144,62 @@ describe("MuxSessionStore", () => {
     db.close()
   })
 
+  it("moves a terminal between Windows without interrupting its runtime record", () => {
+    const db = database()
+    const store = new MuxSessionStore(db)
+    const session = store.listSessions()[0]
+    assert.ok(session)
+    const sourceTab = store.listTabs(session.id)[0]
+    assert.ok(sourceTab)
+    const targetTab = store.createTab(session.id, "Target")
+    const movedTerminal = store.createMuxTerminal({
+      sessionId: session.id,
+      tabId: sourceTab.id,
+      kind: "terminal",
+      title: "Move me",
+      position: 0,
+      input: { _tag: "TerminalInput", kind: "terminal" },
+      output: terminalOutput(),
+    })
+    const remainingTerminal = store.createMuxTerminal({
+      sessionId: session.id,
+      tabId: sourceTab.id,
+      kind: "terminal",
+      title: "Stay here",
+      position: 1,
+      input: { _tag: "TerminalInput", kind: "terminal" },
+      output: terminalOutput(),
+    })
+    store.setActiveMuxTerminal(session.id, movedTerminal.id)
+
+    const moved = store.moveMuxTerminal(movedTerminal.id, targetTab.id)
+
+    assert.equal(moved.tabId, targetTab.id)
+    assert.equal(moved.revision, movedTerminal.revision + 1)
+    assert.deepEqual(
+      store.listMuxTerminalsByTab(sourceTab.id).map(item => item.id),
+      [remainingTerminal.id],
+    )
+    assert.deepEqual(
+      store.listMuxTerminalsByTab(targetTab.id).map(item => item.id),
+      [movedTerminal.id],
+    )
+    assert.equal(store.getTab(sourceTab.id)?.activeMuxTerminalId, remainingTerminal.id)
+    assert.equal(store.getTab(targetTab.id)?.activeMuxTerminalId, movedTerminal.id)
+    assert.equal(store.getSession(session.id)?.activeTabId, targetTab.id)
+    assert.equal(store.getSession(session.id)?.activeMuxTerminalId, movedTerminal.id)
+
+    const otherSession = store.createSession("Other session")
+    const otherTab = store.listTabs(otherSession.id)[0]
+    assert.ok(otherTab)
+    assert.throws(
+      () => store.moveMuxTerminal(remainingTerminal.id, otherTab.id),
+      MuxSessionStorageError,
+    )
+    assert.equal(store.getMuxTerminal(remainingTerminal.id)?.tabId, sourceTab.id)
+    db.close()
+  })
+
   it("compare-and-set rejects stale revisions and updates output", () => {
     const db = database()
     const store = new MuxSessionStore(db)

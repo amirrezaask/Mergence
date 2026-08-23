@@ -29,11 +29,13 @@ export function SemanticTerminalView({
   onInput,
 }: SemanticTerminalViewProps) {
   return (
-    <pre
+    <div
       data-yaade-terminal-semantic=""
       data-revision={String(snapshot.revision)}
       data-screen={snapshot.activeScreen}
       data-focused={focused ? "1" : undefined}
+      role="region"
+      aria-label="Terminal output"
       tabIndex={0}
       className="h-full min-h-0 flex-1 overflow-hidden bg-background p-2 font-mono text-xs leading-tight text-foreground outline-none"
       onKeyDown={event => {
@@ -61,10 +63,10 @@ export function SemanticTerminalView({
       }}
     >
       {snapshot.screenRows.map(row => (
-        <div key={row.rowId} data-row-id={row.rowId}>
+        <div key={row.rowId} data-row-id={row.rowId} className="whitespace-pre">
           {rowText(row) || " "}
         </div>
       ))}
-    </pre>
+    </div>
   )
 }

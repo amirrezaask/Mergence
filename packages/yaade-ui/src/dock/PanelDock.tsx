@@ -1,4 +1,4 @@
-import { Fragment, memo, useEffect, useMemo, useState, type ReactNode } from "react"
+import { Fragment, useMemo, type ReactNode } from "react"
 import { LayoutGroup, LazyMotion, MotionConfig } from "motion/react"
 import { div as MotionDiv } from "motion/react-m"
 import type { PanelEvent, PanelNode } from "@yaade/panels"
@@ -14,7 +14,7 @@ import { cn } from "@/lib/utils.js"
 import { yaadeMotion } from "@/motion/tokens.js"
 import { usePanelDragSource } from "./PanelDragContext.js"
 import { PanelDropOverlay } from "./PanelDropOverlay.js"
-import { TabDndRoot, type TabDndHandlers } from "./TabDndRoot.js"
+import { TabDndRoot, useDropHot, type TabDndHandlers } from "./TabDndRoot.js"
 
 const loadMotionFeatures = () => import("motion/react").then(({ domMax }) => domMax)
 
@@ -67,16 +67,11 @@ function PanelLeaf<TView>({
   leafClassName?: string
 }) {
   const tabDrag = usePanelDragSource()
-  const [dragOver, setDragOver] = useState(false)
+  const dropHot = useDropHot()
   const onClose = () => onEvent({ type: "panelClose", panelId })
   const meta: PanelSlotMeta = { focused, onClose }
-  const isDropTarget =
-    tabDrag != null &&
-    (tabDrag.panelId == null || tabDrag.panelId.id !== panelId.id)
-
-  useEffect(() => {
-    if (!tabDrag) setDragOver(false)
-  }, [tabDrag])
+  const isHotDropTarget =
+    tabDrag != null && dropHot?.panelId.id === panelId.id
 
   return (
     <MotionDiv
@@ -84,33 +79,27 @@ function PanelLeaf<TView>({
       initial={{ opacity: 0, scale: 0.985 }}
       animate={{ opacity: 1, scale: 1 }}
       transition={{
-        layout: yaadeMotion.layoutTransition,
+        layout: yaadeMotion.dockLayoutTransition,
         opacity: yaadeMotion.quickFade,
         scale: yaadeMotion.layoutTransition,
       }}
       className={cn(
-        "relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden",
+        "relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden transition-[border-color,box-shadow] duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]",
         "rounded-lg border border-border bg-card",
-        dragOver && isDropTarget
-          ? "ring-1 ring-primary/40"
-          : "",
+        isHotDropTarget ? "ring-1 ring-primary/40" : "",
         leafClassName,
       )}
       data-yaade-panel-leaf={panelId.id}
       data-yaade-session-window=""
       data-focused={focused ? "" : undefined}
-      data-yaade-panel-dragged-over={dragOver && isDropTarget ? "" : undefined}
+      data-yaade-panel-dragged-over={isHotDropTarget ? "" : undefined}
       onPointerDownCapture={() => onFocusPanel(panelId)}
-      onPointerEnter={() => {
-        if (isDropTarget) setDragOver(true)
-      }}
-      onPointerLeave={() => setDragOver(false)}
     >
       {renderHeader(view, panelId, meta)}
       <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
         {renderContent(view, panelId, meta)}
-        <PanelDropOverlay panelId={panelId} />
       </div>
+      <PanelDropOverlay panelId={panelId} />
     </MotionDiv>
   )
 }
@@ -242,11 +231,11 @@ function PanelDockWithDnd<TView>(props: PanelDockProps<TView>) {
 }
 
 /** Self-contained dock that owns its `TabDndRoot`. */
-export const PanelDock = memo(PanelDockWithDnd) as <TView>(
-  props: PanelDockProps<TView>,
-) => ReactNode
+export function PanelDock<TView>(props: PanelDockProps<TView>): ReactNode {
+  return <PanelDockWithDnd {...props} />
+}
 
 /** Dock layout for callers that already provide the surrounding DnD context. */
-export const PanelDockInDnd = memo(PanelDockInner) as <TView>(
-  props: PanelDockInDndProps<TView>,
-) => ReactNode
+export function PanelDockInDnd<TView>(props: PanelDockInDndProps<TView>): ReactNode {
+  return <PanelDockInner {...props} />
+}

@@ -18,6 +18,7 @@ import {
   encodeTerminalStreamV3,
   TerminalSemanticPatch,
   TerminalSemanticSnapshot,
+  terminalAttachControlResult,
   hostErrorHttpStatus,
   getHostRoute,
   hostErrorWire,
@@ -68,10 +69,20 @@ const MAX_JSON_BODY_BYTES = 2 * 1024 * 1024;
 const MAX_INFLIGHT_RPC = 32;
 const MAX_WS_COMMAND_QUEUE = 64;
 const MAX_WS_PAYLOAD_BYTES = 1024 * 1024;
+const configuredTerminalFlowBytes = Number(
+  process.env.YAADE_TERMINAL_UNACKNOWLEDGED_BYTES,
+);
+const MAX_TERMINAL_UNACKNOWLEDGED_BYTES =
+  Number.isSafeInteger(configuredTerminalFlowBytes) &&
+  configuredTerminalFlowBytes >= 64 * 1024
+    ? configuredTerminalFlowBytes
+    : 8 * 1024 * 1024;
 const LEGACY_PROTOCOL_SOCKETS = new WeakSet<WebSocket>();
 const DEVICE_EVENT_SOCKETS = new WeakMap<WebSocket, { deviceId: string }>();
 const ACTIVE_EVENT_SOCKETS = new Set<WebSocket>();
 const CLIENT_SOCKETS = new Map<string, WebSocket>();
+const PENDING_AUTH_SOCKETS = new Set<WebSocket>();
+const MAX_PENDING_AUTH_SOCKETS = 64;
 const SOCKET_WRITERS = new WeakMap<WebSocket, ClientSocketWriter>();
 
 function socketWriter(ws: WebSocket): ClientSocketWriter {
@@ -111,6 +122,63 @@ function sendSocketFrame(ws: WebSocket, data: string | Uint8Array): boolean {
 
 function sendReliableSocketJson(ws: WebSocket, value: unknown): boolean {
   return socketWriter(ws).enqueueReliable(JSON.stringify(value));
+}
+
+function enqueueSemanticResyncNotices(
+  writer: ClientSocketWriter,
+  runtime: Pick<HostRuntime, "terminal"> | undefined,
+  satisfiedTerminalId?: string,
+): void {
+  for (const terminalId of writer.consumeResyncRequired()) {
+    // A full snapshot queued for this terminal already satisfies any patch
+    // replacement marker. Sending another resync notice would create an
+    // attach/snapshot loop, especially when a grid exceeds the frame budget.
+    if (terminalId === satisfiedTerminalId) continue
+    const inspected = runtime?.terminal.inspect(terminalId)
+    const snapshot = runtime?.terminal.readSemanticSnapshot(terminalId)
+    if (!inspected?.terminalEpoch || !snapshot) continue
+    try {
+      writer.enqueueReliable(
+        encodeTerminalStreamV3({
+          type: "terminal.resync-required",
+          terminalId,
+          terminalEpoch: inspected.terminalEpoch,
+          latestRevision: snapshot.revision,
+        }),
+      )
+    } catch {
+      // A later semantic update or explicit attach will request the same
+      // authoritative snapshot; never let one malformed render frame break
+      // reliable control traffic for the socket.
+    }
+  }
+}
+
+function enqueueSemanticSnapshot(
+  writer: ClientSocketWriter,
+  runtime: Pick<HostRuntime, "terminal" | "identity">,
+  terminalId: string,
+): void {
+  const inspected = runtime.terminal.inspect(terminalId)
+  const snapshot = runtime.terminal.readSemanticSnapshot(terminalId)
+  if (!inspected?.terminalEpoch || !snapshot) return
+  try {
+    writer.enqueueSemanticRender(
+      terminalId,
+      encodeTerminalStreamV3({
+        type: "terminal.snapshot",
+        terminalId,
+        ownerEpoch: runtime.identity.serverEpoch,
+        terminalEpoch: inspected.terminalEpoch,
+        revision: snapshot.revision,
+        snapshot,
+      }),
+    )
+    enqueueSemanticResyncNotices(writer, runtime, terminalId)
+  } catch {
+    // Raw replay remains available when an individual semantic snapshot cannot
+    // be encoded within the negotiated frame limit.
+  }
 }
 
 function runtimeOwnerEpoch(runtime: HostRuntime): string {
@@ -1054,6 +1122,9 @@ function handleLegacyEventSocket(
     if (cmd.op === "terminal:attach") {
       const id = cmd.args[0];
       if (typeof id === "string" && id) attachedTerminals.add(id);
+    } else if (cmd.op === "terminal:detach") {
+      const id = cmd.args[0]
+      if (typeof id === "string" && id) attachedTerminals.delete(id)
     }
     const command = commandTail.then(async () => {
       if (checksClosedWriter && typeof cmd.args[0] === "string") {
@@ -1076,7 +1147,10 @@ function handleLegacyEventSocket(
           type: "terminal:result",
           requestId: cmd.requestId,
           ok: true,
-          value: result.value,
+          value:
+            cmd.op === "terminal:attach"
+              ? terminalAttachControlResult(result.value)
+              : result.value,
         });
         return;
       }
@@ -1132,9 +1206,24 @@ function handleModernEventSocket(
     startModernEventSocket(runtime, managed, ws, url, principal)
     return
   }
+  if (PENDING_AUTH_SOCKETS.size >= MAX_PENDING_AUTH_SOCKETS) {
+    ws.close(1013, "too many unauthenticated connections")
+    return
+  }
+  PENDING_AUTH_SOCKETS.add(ws)
   let authenticated = false
-  const timeout = setTimeout(() => {
-    if (!authenticated) ws.close(4003, "authentication required")
+  let timeout: ReturnType<typeof setTimeout> | undefined
+  const finishPendingAuth = () => {
+    PENDING_AUTH_SOCKETS.delete(ws)
+    if (timeout) clearTimeout(timeout)
+    timeout = undefined
+  }
+  ws.once("close", finishPendingAuth)
+  timeout = setTimeout(() => {
+    if (!authenticated) {
+      finishPendingAuth()
+      ws.close(4003, "authentication required")
+    }
   }, 5_000)
   const authenticate = (data: WebSocket.RawData) => {
     const text = wsDataToText(data)
@@ -1147,12 +1236,12 @@ function handleModernEventSocket(
       !tokensEqual(expectedToken, record.token) &&
       !runtime.devices.session(record.token)
     ) {
-      clearTimeout(timeout)
+      finishPendingAuth()
       ws.close(4003, "authentication failed")
       return
     }
     authenticated = true
-    clearTimeout(timeout)
+    finishPendingAuth()
     ws.off("message", authenticate)
     const principal = principalForToken(
       runtime,
@@ -1184,7 +1273,15 @@ function startModernEventSocket(
   let synchronizing = true;
   const pendingEvents: HostEvent[] = [];
   const attachedTerminals = new Set<string>();
-  const terminalFlow = new TerminalFlowControl();
+  const rawTerminals = new Set<string>();
+  const semanticTerminals = new Set<string>();
+  const terminalFlow = new TerminalFlowControl(
+    MAX_TERMINAL_UNACKNOWLEDGED_BYTES,
+    Math.min(
+      24 * 1024 * 1024,
+      MAX_TERMINAL_UNACKNOWLEDGED_BYTES * 3,
+    ),
+  );
   const send = (event: HostEvent) => {
     if (event.channel === "terminal:data") {
       const terminalId = String(event.args[0] ?? "");
@@ -1199,7 +1296,7 @@ function startModernEventSocket(
         Buffer.byteLength(output, "utf8"),
       );
       if (!decision.accepted) {
-        attachedTerminals.delete(terminalId);
+        rawTerminals.delete(terminalId);
         sendReliableSocketJson(ws, {
           type: "terminal:replay-required",
           terminalId,
@@ -1213,7 +1310,11 @@ function startModernEventSocket(
   const unsubscribe = runtime.events.subscribe(event => {
     if (event.channel === "terminal:data") {
       const id = String(event.args[0] ?? "");
-      if (!attachedTerminals.has(id)) return;
+      if (!rawTerminals.has(id)) return;
+    }
+    if (event.channel === "terminal:semantic") {
+      const id = String(event.args[0] ?? "");
+      if (!semanticTerminals.has(id)) return;
     }
     if (synchronizing) pendingEvents.push(event);
     else send(event);
@@ -1285,13 +1386,33 @@ function startModernEventSocket(
       const id = cmd.args[0];
       if (typeof id === "string" && id) {
         attachedTerminals.add(id);
+        const mode =
+          cmd.args[2] === "raw" ||
+          cmd.args[2] === "semantic" ||
+          cmd.args[2] === "both"
+            ? cmd.args[2]
+            : "both";
+        if (mode === "raw" || mode === "both") rawTerminals.add(id);
+        if (mode === "semantic" || mode === "both") {
+          semanticTerminals.add(id);
+        }
         const sequence = cmd.args[1];
-        terminalFlow.reset(
-          id,
-          typeof sequence === "number" && Number.isSafeInteger(sequence)
-            ? Math.max(0, sequence)
-            : 0,
-        );
+        if (rawTerminals.has(id)) {
+          terminalFlow.reset(
+            id,
+            typeof sequence === "number" && Number.isSafeInteger(sequence)
+              ? Math.max(0, sequence)
+              : 0,
+          );
+        }
+      }
+    } else if (cmd.op === "terminal:detach") {
+      const id = cmd.args[0]
+      if (typeof id === "string" && id) {
+        attachedTerminals.delete(id)
+        rawTerminals.delete(id)
+        semanticTerminals.delete(id)
+        terminalFlow.delete(id)
       }
     }
     const command = commandTail.then(async () => {
@@ -1311,9 +1432,25 @@ function startModernEventSocket(
           type: "terminal:result",
           requestId: cmd.requestId,
           ok: true,
-          value: result.value,
+          value:
+            cmd.op === "terminal:attach"
+              ? terminalAttachControlResult(result.value)
+              : result.value,
         });
+        if (
+          cmd.op === "terminal:attach" &&
+          typeof cmd.args[0] === "string" &&
+          semanticTerminals.has(cmd.args[0])
+        ) {
+          enqueueSemanticSnapshot(socketWriter(ws), runtime, cmd.args[0])
+        }
         return;
+      }
+      if (cmd.op === "terminal:attach" && typeof cmd.args[0] === "string") {
+        attachedTerminals.delete(cmd.args[0])
+        rawTerminals.delete(cmd.args[0])
+        semanticTerminals.delete(cmd.args[0])
+        terminalFlow.delete(cmd.args[0])
       }
       const error = hostErrorWire(result.error);
       sendReliableSocketJson(ws, {
@@ -1342,6 +1479,16 @@ function sendEventSocketMessage(
   _attachedTerminals?: Set<string>,
 ): void {
   if (ws.readyState !== WebSocket.OPEN) return;
+  const streamedTerminalId =
+    event.channel === "terminal:data" || event.channel === "terminal:semantic"
+      ? String(event.args[0] ?? "")
+      : null
+  if (
+    streamedTerminalId &&
+    _attachedTerminals &&
+    !_attachedTerminals.has(streamedTerminalId)
+  ) return
+  if (event.channel === "terminal:semantic" && LEGACY_PROTOCOL_SOCKETS.has(ws)) return
   const wireEvent =
     LEGACY_PROTOCOL_SOCKETS.has(ws) && event.protocolVersion === 2
       ? {
@@ -1400,6 +1547,7 @@ function sendEventSocketMessage(
             patch,
           })
           writer.enqueueSemanticRender(semanticId, frame)
+          enqueueSemanticResyncNotices(writer, _runtime)
           return
         }
         const snapshot = Schema.decodeUnknownSync(TerminalSemanticSnapshot)(update)
@@ -1412,9 +1560,12 @@ function sendEventSocketMessage(
           snapshot,
         })
         writer.enqueueSemanticRender(semanticId, frame)
+        enqueueSemanticResyncNotices(writer, _runtime)
         return
       } catch {
-        writer.enqueueReliable(data)
+        if (_runtime && semanticId) {
+          enqueueSemanticSnapshot(writer, _runtime, semanticId)
+        }
         return
       }
     }

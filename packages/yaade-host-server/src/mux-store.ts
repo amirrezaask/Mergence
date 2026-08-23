@@ -732,6 +732,70 @@ export class MuxSessionStore {
     return this.listMuxTerminalsByTab(tab.id);
   }
 
+  moveMuxTerminal(id: MuxTerminalId, targetTabId: SessionTabId): MuxTerminal {
+    const current = this.getMuxTerminal(id);
+    if (!current || current.archivedAt) {
+      throw new MuxSessionStorageError({ message: `terminal not found: ${id}` });
+    }
+    const targetTab = this.getTab(targetTabId);
+    if (!targetTab || targetTab.archivedAt || targetTab.sessionId !== current.sessionId) {
+      throw new MuxSessionStorageError({
+        message: `target tab does not belong to terminal session: ${targetTabId}`,
+      });
+    }
+    if (current.tabId === targetTabId) return current;
+
+    const sourceTab = current.tabId ? this.getTab(current.tabId) : null;
+    const targetTerminals = this.listMuxTerminalsByTab(targetTabId);
+    const targetPosition = (targetTerminals.at(-1)?.position ?? -1) + 1;
+    const timestamp = now();
+
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      this.db
+        .prepare(
+          "UPDATE mux_terminals SET tab_id=?,position=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
+        )
+        .run(targetTabId, targetPosition, timestamp, id);
+
+      if (sourceTab) {
+        const sourceActiveId =
+          sourceTab.activeMuxTerminalId === id
+            ? (this.listMuxTerminalsByTab(sourceTab.id)[0]?.id ?? null)
+            : (sourceTab.activeMuxTerminalId ?? null);
+        this.db
+          .prepare(
+            "UPDATE app_tabs SET active_terminal_id=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
+          )
+          .run(sourceActiveId, timestamp, sourceTab.id);
+      }
+      this.db
+        .prepare(
+          "UPDATE app_tabs SET active_terminal_id=?,updated_at=?,revision=revision+1 WHERE id=? AND archived_at IS NULL",
+        )
+        .run(id, timestamp, targetTabId);
+      this.db
+        .prepare(
+          "UPDATE app_sessions SET active_tab_id=?,active_terminal_id=?,updated_at=?,revision=revision+1 WHERE id=? AND machine=? AND archived_at IS NULL",
+        )
+        .run(targetTabId, id, timestamp, current.sessionId, this.machine);
+      this.db.exec("COMMIT");
+    } catch (error) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        /* preserve the original mutation failure */
+      }
+      throw error;
+    }
+
+    const moved = this.getMuxTerminal(id);
+    if (!moved) {
+      throw new MuxSessionStorageError({ message: `terminal not found after move: ${id}` });
+    }
+    return moved;
+  }
+
   archiveMuxTerminal(id: MuxTerminalId): MuxTerminal {
     const current = this.getMuxTerminal(id);
     if (!current)

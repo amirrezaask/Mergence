@@ -6,6 +6,7 @@ import {
   CloseTerminal,
   CreateSessionTab,
   CreateTerminal,
+  MoveTerminalToTab,
   RenameSessionTab,
   ReorderSessions,
   ReorderSessionTabs,
@@ -22,6 +23,7 @@ import {
   TerminalLease,
   TerminalMutationFence as RpcTerminalMutationFence,
 } from "./host.js"
+import { TerminalSemanticSnapshot } from "./terminal-stream-v3.js"
 
 /**
  * The policy applied before a route handler runs.  Keeping this next to the
@@ -104,16 +106,23 @@ const TerminalCreateResult = Schema.Struct({
   osPid: Schema.optional(Schema.NullOr(Schema.Number)),
   processIdentity: Schema.optional(Schema.NullOr(ProcessIdentity)),
   terminalEpoch: Schema.optional(Schema.String),
+  ownerId: Schema.optional(Schema.String),
+  ownerEpoch: Schema.optional(Schema.String),
+  protocolVersion: Schema.optional(Schema.Number),
 })
 const TerminalAttachArgs = Schema.Tuple(
   Schema.String,
   Schema.optionalElement(Schema.Number),
+  Schema.optionalElement(Schema.Literal("raw", "semantic", "both")),
 )
 const TerminalAttachResult = Schema.NullOr(
   Schema.Struct({
     id: Schema.String,
     title: Schema.NullOr(Schema.String),
     terminalEpoch: Schema.optional(Schema.String),
+    ownerId: Schema.optional(Schema.String),
+    ownerEpoch: Schema.optional(Schema.String),
+    protocolVersion: Schema.optional(Schema.Number),
     checkpoint: Schema.optional(TerminalCheckpoint),
     replayQuality: Schema.optional(Schema.Literal("exact", "checkpoint", "degraded")),
     outputChunks: Schema.Array(Schema.String),
@@ -127,6 +136,7 @@ const TerminalAttachResult = Schema.NullOr(
     status: Schema.Literal("running", "exited"),
     exitCode: Schema.NullOr(Schema.Number),
     signal: Schema.NullOr(Schema.Number),
+    semanticSnapshot: Schema.optional(Schema.NullOr(TerminalSemanticSnapshot)),
   }),
 )
 const TerminalReplayPage = Schema.Struct({
@@ -166,6 +176,12 @@ export type HostMuxSessionSnapshot = {
 export type HostTerminalAttachResult = {
   id: string
   title?: string
+  terminalEpoch?: string
+  ownerId?: string
+  ownerEpoch?: string
+  protocolVersion?: number
+  checkpoint?: Schema.Schema.Type<typeof TerminalCheckpoint>
+  replayQuality?: "exact" | "checkpoint" | "degraded"
   outputChunks?: string[]
   output: string
   replayTruncated?: boolean
@@ -177,6 +193,7 @@ export type HostTerminalAttachResult = {
   status: "running" | "exited"
   exitCode?: number
   signal?: number
+  semanticSnapshot?: Schema.Schema.Type<typeof TerminalSemanticSnapshot> | null
 }
 
 type HostRouteResultOverrides = {
@@ -193,6 +210,7 @@ type HostRouteResultOverrides = {
   "mux:getSession": HostMuxSessionSnapshot | null
   "mux:createTerminal": MuxTerminal
   "mux:reorderTerminals": MuxTerminal[]
+  "mux:moveTerminal": MuxTerminal
   "mux:selectTerminal": AppSession
   "mux:getTerminal": MuxTerminal | null
   "mux:stopTerminal": MuxTerminal
@@ -204,6 +222,7 @@ type HostRouteResultOverrides = {
   "terminal:writeBinary": void
   "terminal:resize": void
   "terminal:ready": void
+  "terminal:detach": void
   "terminal:dispose": void
   "terminal:attach": HostTerminalAttachResult | null
   "terminal:readReplayPage": Schema.Schema.Type<typeof TerminalReplayPage> | null
@@ -235,6 +254,7 @@ export const HOST_ROUTES = {
   "mux:getSession": route(StringArgs, Schema.NullOr(SessionSnapshot)),
   "mux:createTerminal": route(Schema.Tuple(CreateTerminal), MuxTerminal),
   "mux:reorderTerminals": route(Schema.Tuple(ReorderTerminals), Schema.Array(MuxTerminal)),
+  "mux:moveTerminal": route(Schema.Tuple(MoveTerminalToTab), MuxTerminal),
   "mux:selectTerminal": route(Schema.Tuple(Schema.String, Schema.optionalElement(MuxTerminalId)), AppSession),
   "mux:getTerminal": route(Schema.Tuple(MuxTerminalId), Schema.NullOr(MuxTerminal)),
   "mux:stopTerminal": route(Schema.Tuple(MuxTerminalId, Schema.Number), MuxTerminal),
@@ -277,6 +297,7 @@ export const HOST_ROUTES = {
     { pathPolicy: { kind: "terminal-id-or-path" } },
   ),
   "terminal:ready": route(StringArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
+  "terminal:detach": route(StringArgs, Schema.Null, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:attach": route(TerminalAttachArgs, TerminalAttachResult, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:readReplayPage": route(
     TerminalReplayPageArgs,
@@ -346,6 +367,13 @@ export function decodeHostRouteResult(
   const route = getHostRoute(name)
   if (!route) throw new Error(`unknown host channel: ${name}`)
   return route.decodeResult(value)
+}
+
+export function terminalAttachControlResult(value: unknown) {
+  const decoded = Schema.decodeUnknownSync(TerminalAttachResult)(value)
+  if (decoded === null) return null
+  const { semanticSnapshot: _semanticSnapshot, ...control } = decoded
+  return control
 }
 
 export const HOST_ROUTE_CHANNELS = HOST_ROUTE_ENTRIES
