@@ -4,6 +4,8 @@
 
 Run coding agents on the machine with the horsepower. Watch them from the machine with the keyboard. Reconnect from your phone when curiosity wins.
 
+![YAADE terminal multiplexer](assets/yaade-terminal.png)
+
 ```text
 ┌──────────────────── your screens ────────────────────┐
 │  browser            desktop            phone         │
