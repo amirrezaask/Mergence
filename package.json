@@ -2,7 +2,7 @@
   "name": "yaade",
   "private": true,
   "scripts": {
-    "build": "vp run build:server && vp run build:web && vp run build:release -- --skip-web",
+    "build": "vp run build:release",
     "build:server": "vp run --filter @yaade/server build",
     "build:web": "vp run --filter @yaade/web build",
     "build:desktop": "cargo build --release --manifest-path apps/desktop/Cargo.toml",
