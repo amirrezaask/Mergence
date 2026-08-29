@@ -2,7 +2,7 @@
   "name": "yaade",
   "private": true,
   "scripts": {
-    "build": "vp run build:release",
+    "build": "vp run build:release && vp run build:desktop",
     "build:server": "vp run --filter @yaade/server build",
     "build:web": "vp run --filter @yaade/web build",
     "build:desktop": "vp run --filter @yaade/desktop build",
