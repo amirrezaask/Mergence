@@ -82,4 +82,14 @@ Use release builds and identical shells, output, terminal dimensions, SQLite fil
 
 ## Current migration state
 
-The first Rust slice ports configuration, protocol-v2 identity and capability models, binary terminal framing, the bounded event hub, and the complete writer-lease/mutation-fence registry. Unit tests cover their current TypeScript behavior. The TypeScript executable remains the release server.
+The Rust host now has an executable daemon and covers the main browser path:
+
+- SQLite-backed Session, Window, layout, and terminal state with revision fencing
+- PTY creation, replay, DA1 handling, live cwd and foreground-process inspection, resize, exit, and cleanup
+- protocol 1 replay plus protocol 2 hello, snapshot, in-band authentication, binary terminal output, acknowledgements, and replay-required recovery
+- host-token and paired-device authentication, scope enforcement, origin checks, path confinement, session rotation, device revocation, and diagnostics
+- HTTP RPC/static serving, runtime manifests, graceful SIGINT/SIGTERM shutdown, and user-service/status/doctor/pair CLI commands
+
+The Rust browser harness passes 15 of the 15 core tests that also pass against the current TypeScript host. The remaining core test, `closing a new Window during automatic terminal creation stays quiet`, currently fails against both hosts because the application no longer calls the patched `mux.selectTab` method expected by the test.
+
+Cutover is still blocked on native Ghostty semantic snapshots and patches, normalized differential protocol tests, persisted replay/checkpoints, a dedicated bounded SQLite owner, cross-platform PTY lifecycle coverage, and release benchmarks. The TypeScript executable therefore remains the release server.

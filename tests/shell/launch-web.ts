@@ -9,8 +9,10 @@ import { wrapPlaywrightPage } from "./playwright-driver.js"
 import type { LaunchShellResult } from "./driver.js"
 
 const REPO_ROOT = path.resolve(__dirname, "../..")
-const HOST_SERVER_ENTRY = path.join(REPO_ROOT, "packages/yaade-host-server/src/cli.ts")
-const RUN_TS_ENTRY = path.join(REPO_ROOT, "scripts/run-ts.mjs")
+const HOST_SERVER_ENTRY = path.join(
+  REPO_ROOT,
+  "apps/server/target/debug/yaade-server",
+)
 
 export type LaunchWebOptions = {
   workspaceRel?: string
@@ -179,10 +181,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
     : sourceWorkspace
   if (isFixture && !fs.existsSync(workspace)) fs.cpSync(sourceWorkspace, workspace, { recursive: true })
   if (!fs.existsSync(HOST_SERVER_ENTRY)) {
-    throw new Error(`Host server entry missing at ${HOST_SERVER_ENTRY}`)
-  }
-  if (!fs.existsSync(RUN_TS_ENTRY)) {
-    throw new Error(`Vite+ TypeScript runner missing at ${RUN_TS_ENTRY}; run vp install`)
+    throw new Error(`Rust host server missing at ${HOST_SERVER_ENTRY}; run vp run build:server`)
   }
 
   const sharedEnv: NodeJS.ProcessEnv = {
@@ -206,10 +205,8 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   }
 
   const server: TestServerProcess = spawn(
-    process.execPath,
+    HOST_SERVER_ENTRY,
     [
-      RUN_TS_ENTRY,
-      HOST_SERVER_ENTRY,
       "--host",
       "127.0.0.1",
       "--port",

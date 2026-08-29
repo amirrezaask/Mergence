@@ -54,6 +54,10 @@ function distIsFresh(): boolean {
 
 export default function globalSetup(): void {
   if (process.env.YAADE_SKIP_E2E_BUILD === "1") return
+  execFileSync("cargo", ["build", "--manifest-path", "apps/server/Cargo.toml"], {
+    cwd: repoRoot,
+    stdio: "inherit",
+  })
   if (distIsFresh()) {
     console.log("[global-setup] apps/web/dist is newer than sources; skipping SPA build")
     return

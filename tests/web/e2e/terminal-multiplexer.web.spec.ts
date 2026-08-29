@@ -38,7 +38,19 @@ test("session switcher creates and archives a session", async ({ launchApp }) =>
   ).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole("button", { name: /Switch session/ }).click();
-  await popover.getByRole("button", { name: "Close New session" }).click();
+  await expect(popover).toHaveAttribute("data-yaade-glass-material", "floating");
+  const renameButton = popover.getByRole("button", { name: "Rename New session" });
+  await renameButton.focus();
+  await page.keyboard.press("Enter");
+  const renameInput = popover.getByRole("textbox", { name: "Rename New session" });
+  await renameInput.fill("API work");
+  await renameInput.press("Enter");
+  await expect(
+    page.getByRole("button", { name: "Switch session, current API work" }),
+  ).toBeVisible({ timeout: 30_000 });
+  await expect(popover.getByRole("option", { name: "API work" })).toBeVisible();
+
+  await popover.getByRole("button", { name: "Close API work" }).click();
   await expect(page.getByRole("dialog", { name: "Close session?" })).toBeVisible();
   await page.getByRole("button", { name: "Stop terminals and archive" }).click();
   await expect(page.getByRole("button", { name: "Switch session, current Session 1" })).toBeVisible(

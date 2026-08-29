@@ -151,6 +151,11 @@ impl EventHub {
     }
 
     #[must_use]
+    pub fn subscriber_count(&self) -> usize {
+        self.sender.receiver_count()
+    }
+
+    #[must_use]
     pub fn last_sequence(&self) -> u64 {
         self.state
             .lock()
@@ -160,7 +165,9 @@ impl EventHub {
 }
 
 fn is_ephemeral(channel: &str) -> bool {
-    channel == "terminal:data" || channel == "terminal:semantic"
+    channel == "terminal:data"
+        || channel == "terminal:semantic"
+        || channel == "security:device-revoked"
 }
 
 fn estimate_event_bytes(event: &HostEvent) -> usize {

@@ -278,11 +278,25 @@ pub fn is_loopback_hostname(hostname: &str) -> bool {
 }
 
 pub fn path_allowed(candidate: &Path, roots: &[PathBuf]) -> bool {
-    let candidate = absolute_path(candidate.to_owned(), Path::new("/"));
+    let candidate = canonical_existing_ancestor(candidate);
     roots.iter().any(|root| {
-        let root = absolute_path(root.to_owned(), Path::new("/"));
-        candidate == root || candidate.starts_with(root)
+        let root = root
+            .canonicalize()
+            .unwrap_or_else(|_| absolute_path(root.to_owned(), Path::new("/")));
+        candidate == root || candidate.starts_with(&root)
     })
+}
+
+fn canonical_existing_ancestor(path: &Path) -> PathBuf {
+    let mut current = absolute_path(path.to_owned(), Path::new("/"));
+    loop {
+        if let Ok(canonical) = current.canonicalize() {
+            return canonical;
+        }
+        if !current.pop() {
+            return absolute_path(path.to_owned(), Path::new("/"));
+        }
+    }
 }
 
 fn home_dir(environment: &BTreeMap<String, String>) -> Option<PathBuf> {
@@ -424,6 +438,21 @@ mod tests {
 
         assert_eq!(config.launch_config.workspace_path, workspace);
         assert!(config.allowed_roots.contains(&workspace));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn rejects_a_symlink_that_escapes_an_allowed_root() {
+        use std::os::unix::fs::symlink;
+
+        let root = temp_root();
+        let allowed = root.join("allowed");
+        let outside = root.join("outside");
+        fs::create_dir_all(&allowed).expect("allowed root");
+        fs::create_dir_all(&outside).expect("outside root");
+        symlink(&outside, allowed.join("escape")).expect("symlink");
+
+        assert!(!path_allowed(&allowed.join("escape/file.txt"), &[allowed]));
     }
 
     #[test]

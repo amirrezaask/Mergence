@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Permissions for the YAADE desktop window",
+  "windows": ["main"],
+  "permissions": ["core:webview:allow-set-webview-zoom"]
+}
