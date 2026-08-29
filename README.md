@@ -90,6 +90,17 @@ vp run dev:server
 vp run dev:desktop
 ```
 
+## Release
+
+```bash
+pnpm build
+./dist/yaade serve
+```
+
+`pnpm build` produces one native Rust binary containing both the multiplexer API
+and the web client. `yaade serve` listens on `http://127.0.0.1:7774` by default.
+Use `--port` or `YAADE_PORT` to override it.
+
 ## Remote mode
 
 Run the host where the code and compute live. Connect from somewhere more comfortable.

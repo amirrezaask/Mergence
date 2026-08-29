@@ -13,8 +13,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const RUST_HOST_ENTRY = path.join(
   REPO_ROOT,
   process.platform === "win32"
-    ? "apps/server/target/debug/yaade-server.exe"
-    : "apps/server/target/debug/yaade-server",
+    ? "apps/server/target/debug/yaade.exe"
+    : "apps/server/target/debug/yaade",
 )
 
 type ServiceOptions = {
@@ -74,7 +74,7 @@ async function freePort(): Promise<number> {
 }
 
 test.describe("O — service lifecycle", { tag: "@p2" }, () => {
-  test("O01 user-service install/start/status/stop/uninstall leaves user data", async (_fixtures, testInfo) => {
+  test("O01 user-service install/start/status/stop/uninstall leaves user data", async ({ page: _page }, testInfo) => {
     test.skip(Boolean(process.env.CI) && !process.env.YAADE_SERVICE_E2E, "user-service install is release/cross-platform, not pull-request CI")
     test.skip(process.platform === "win32" && !process.env.YAADE_SERVICE_E2E, "Windows scheduled-task install needs an interactive runner")
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-service-e2e-"))
@@ -137,7 +137,7 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
     }
   })
 
-  test("O02 client discovers an auto-started daemon", async (_fixtures, testInfo) => {
+  test("O02 client discovers an auto-started daemon", async ({ page: _page }, testInfo) => {
     test.skip(Boolean(process.env.CI) && !process.env.YAADE_SERVICE_E2E, "user-service install is release/cross-platform, not pull-request CI")
     test.skip(process.platform === "win32" && !process.env.YAADE_SERVICE_E2E, "Windows scheduled-task install needs an interactive runner")
     const harness = await createDurableRuntimeHarness()

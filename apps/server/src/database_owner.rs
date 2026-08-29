@@ -97,13 +97,13 @@ impl DatabaseOwner {
         let sql = sql.to_owned();
         let result = self.call(move |connection| {
             connection.execute_batch(
-                "CREATE TABLE IF NOT EXISTS schema_migrations(
+                "CREATE TABLE IF NOT EXISTS rust_schema_migrations(
                     name TEXT PRIMARY KEY,
                     applied_at TEXT NOT NULL
                 );",
             )?;
             let exists = connection.query_row(
-                "SELECT EXISTS(SELECT 1 FROM schema_migrations WHERE name=?)",
+                "SELECT EXISTS(SELECT 1 FROM rust_schema_migrations WHERE name=?)",
                 [&name],
                 |row| row.get::<_, bool>(0),
             )?;
@@ -113,7 +113,7 @@ impl DatabaseOwner {
             let transaction = connection.transaction()?;
             transaction.execute_batch(&sql)?;
             transaction.execute(
-                "INSERT INTO schema_migrations(name,applied_at) VALUES(?,?)",
+                "INSERT INTO rust_schema_migrations(name,applied_at) VALUES(?,?)",
                 rusqlite::params![name, crate::model::now_iso()],
             )?;
             transaction.commit()?;
@@ -192,6 +192,33 @@ mod tests {
         }).expect("query");
         assert!(!transient);
         assert_eq!(DatabaseOwner::queue_capacity(), 64);
+    }
+
+    #[test]
+    fn migrations_do_not_conflict_with_the_legacy_version_table() {
+        let owner = DatabaseOwner::open(Path::new(":memory:")).expect("owner");
+        owner
+            .call(|database| {
+                database.execute_batch(
+                    "CREATE TABLE schema_migrations(version INTEGER PRIMARY KEY);
+                     INSERT INTO schema_migrations(version) VALUES(20);",
+                )
+            })
+            .expect("legacy schema");
+
+        assert!(
+            owner
+                .apply_migration("one", "CREATE TABLE sample(value TEXT);")
+                .expect("migration")
+        );
+        let legacy_version = owner
+            .call(|database| {
+                database.query_row("SELECT version FROM schema_migrations", [], |row| {
+                    row.get::<_, i64>(0)
+                })
+            })
+            .expect("legacy version");
+        assert_eq!(legacy_version, 20);
     }
 
     #[test]

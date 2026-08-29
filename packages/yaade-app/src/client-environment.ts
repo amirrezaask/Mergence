@@ -1,5 +1,5 @@
 const TAURI_APP_HOSTNAME = "tauri.localhost"
-const LOCAL_HOST_URL = "http://127.0.0.1:4747"
+const LOCAL_HOST_URL = "http://127.0.0.1:7774"
 
 type ClientLocation = Pick<Location, "hostname" | "origin" | "protocol">
 

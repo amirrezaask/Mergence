@@ -105,8 +105,8 @@ impl HostConfig {
             return Err(ConfigError::PublicBindWithoutToken { host });
         }
 
-        let port_text =
-            arg_or_env(&args, "port", environment, "YAADE_PORT").unwrap_or_else(|| "0".to_owned());
+        let port_text = arg_or_env(&args, "port", environment, "YAADE_PORT")
+            .unwrap_or_else(|| "7774".to_owned());
         let port = port_text
             .parse::<u16>()
             .map_err(|_| ConfigError::InvalidPort(port_text.clone()))?;
@@ -392,7 +392,7 @@ mod tests {
         let config = HostConfig::from_parts([], &environment, &root, &home, None).expect("config");
 
         assert_eq!(config.host, "127.0.0.1");
-        assert_eq!(config.port, 0);
+        assert_eq!(config.port, 7774);
         assert_eq!(config.allowed_roots, vec![home.clone()]);
         assert_eq!(config.launch_path, home);
         assert!(config.features.terminal_checkpoints);

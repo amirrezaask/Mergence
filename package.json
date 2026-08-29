@@ -23,7 +23,7 @@
     "typecheck": "vp run -r typecheck",
     "lint": "vp lint",
     "lint:server:rust": "cargo fmt --manifest-path apps/server/Cargo.toml -- --check && cargo clippy --manifest-path apps/server/Cargo.toml --all-targets -- -D warnings",
-    "test": "vp test",
+    "test": "vp test && cargo test --manifest-path apps/server/Cargo.toml",
     "test:bench": "vp exec playwright test --project=bench"
   },
   "devDependencies": {

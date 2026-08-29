@@ -40,7 +40,7 @@ describe("client environment", () => {
         origin: "tauri://localhost",
         protocol: "tauri:",
       }),
-      "http://127.0.0.1:4747",
+      "http://127.0.0.1:7774",
     )
     assert.equal(
       resolveCurrentHostUrl({
@@ -48,7 +48,7 @@ describe("client environment", () => {
         origin: "http://tauri.localhost",
         protocol: "http:",
       }),
-      "http://127.0.0.1:4747",
+      "http://127.0.0.1:7774",
     )
   })
 })

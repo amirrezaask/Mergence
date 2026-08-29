@@ -12,6 +12,7 @@ async function freePort(): Promise<number> {
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Node's address API returns a documented string/object union.
       if (!address || typeof address === "string") {
         reject(new Error("could not allocate a port"))
         return
@@ -47,13 +48,13 @@ async function startRemoteHost(): Promise<{
   const hostExecutable = path.join(
     process.cwd(),
     process.platform === "win32"
-      ? "apps/server/target/debug/yaade-server.exe"
-      : "apps/server/target/debug/yaade-server",
+      ? "apps/server/target/debug/yaade.exe"
+      : "apps/server/target/debug/yaade",
   )
   const child = spawn(
     hostExecutable,
     [
-      "run",
+      "serve",
       root,
       "--host",
       "0.0.0.0",

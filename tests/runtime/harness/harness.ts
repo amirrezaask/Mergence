@@ -13,8 +13,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const HOST_SERVER_ENTRY = path.join(
   REPO_ROOT,
   process.platform === "win32"
-    ? "apps/server/target/debug/yaade-server.exe"
-    : "apps/server/target/debug/yaade-server",
+    ? "apps/server/target/debug/yaade.exe"
+    : "apps/server/target/debug/yaade",
 )
 type TestServerProcess = ChildProcessByStdio<null, Readable, Readable>
 
@@ -24,6 +24,7 @@ async function freePort(): Promise<number> {
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Node's address API returns a documented string/object union.
       if (!address || typeof address === "string") return reject(new Error("no test port"))
       server.close(error => (error ? reject(error) : resolve(address.port)))
     })
@@ -98,7 +99,7 @@ export async function createDurableRuntimeHarness(
   const spawnApi = (): TestServerProcess => spawn(
     HOST_SERVER_ENTRY,
     [
-      "run",
+      "serve",
       "--host", "127.0.0.1",
       "--port", String(port),
       "--data-dir", dataDir,

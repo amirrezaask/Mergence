@@ -2,7 +2,7 @@
 
 ## Product
 
-YAADE is a server-hosted browser terminal multiplexer for running coding agents. The TypeScript server owns PTYs, child processes, and persistence; the browser renders Sessions → Windows → tiled terminals as a control and observation UI.
+YAADE is a server-hosted browser terminal multiplexer for running coding agents. The Rust server owns PTYs, child processes, and persistence; the browser renders Sessions → Windows → tiled terminals as a control and observation UI.
 
 The only supported terminal type is `terminal` — a server-side PTY with replay, flow control, and mobile controls. Coding agents are ordinary CLI processes launched inside these terminals.
 

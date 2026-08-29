@@ -12,8 +12,8 @@ const REPO_ROOT = path.resolve(__dirname, "../..")
 const HOST_SERVER_ENTRY = path.join(
   REPO_ROOT,
   process.platform === "win32"
-    ? "apps/server/target/debug/yaade-server.exe"
-    : "apps/server/target/debug/yaade-server",
+    ? "apps/server/target/debug/yaade.exe"
+    : "apps/server/target/debug/yaade",
 )
 
 export type LaunchWebOptions = {
@@ -209,6 +209,7 @@ export async function launchWeb(options: LaunchWebOptions = {}): Promise<LaunchS
   const server: TestServerProcess = spawn(
     HOST_SERVER_ENTRY,
     [
+      "serve",
       "--host",
       "127.0.0.1",
       "--port",

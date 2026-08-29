@@ -78,10 +78,10 @@ export default defineConfig(({ command }) => ({
     host: viteHost,
     allowedHosts,
     proxy: {
-      "/api": `http://${proxyHost}:${process.env.YAADE_PORT ?? 4747}`,
-      "/health": `http://${proxyHost}:${process.env.YAADE_PORT ?? 4747}`,
+      "/api": `http://${proxyHost}:${process.env.YAADE_PORT ?? 7774}`,
+      "/health": `http://${proxyHost}:${process.env.YAADE_PORT ?? 7774}`,
       "/ws": {
-        target: `ws://${proxyHost}:${process.env.YAADE_PORT ?? 4747}`,
+        target: `ws://${proxyHost}:${process.env.YAADE_PORT ?? 7774}`,
         ws: true,
       },
     },

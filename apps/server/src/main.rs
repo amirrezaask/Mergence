@@ -18,7 +18,7 @@ use yaade_server::{
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("[host-server] {error}");
+        eprintln!("[yaade] {error}");
         std::process::exit(1);
     }
 }
@@ -26,7 +26,7 @@ async fn main() {
 async fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = std::env::args_os().skip(1).collect::<Vec<OsString>>();
     let command = args.first().and_then(|argument| argument.to_str());
-    if command == Some("run") {
+    if matches!(command, Some("serve" | "run")) {
         args.remove(0);
         return run_server(args).await;
     }
@@ -42,7 +42,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
             .map(PathBuf::from)
             .map_or_else(std::env::current_exe, Ok)?;
         let mut options = UserServiceOptions::new(executable, config.data_dir);
-        options.args = std::iter::once("run".to_owned())
+        options.args = std::iter::once("serve".to_owned())
             .chain(
                 service_args
                     .into_iter()

@@ -22,6 +22,8 @@ use futures_util::{
     SinkExt as _, StreamExt as _,
     stream::{SplitSink, SplitStream},
 };
+#[cfg(feature = "embedded-web")]
+use include_dir::{Dir, include_dir};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use sha2::{Digest as _, Sha256};
@@ -48,6 +50,9 @@ const MAX_JSON_BODY_BYTES: usize = 2 * 1024 * 1024;
 const MAX_WS_COMMAND_QUEUE: usize = 64;
 const MAX_INFLIGHT_RPC: usize = 32;
 const MAX_PENDING_AUTH: usize = 64;
+
+#[cfg(feature = "embedded-web")]
+static EMBEDDED_WEB: Dir<'static> = include_dir!("$CARGO_MANIFEST_DIR/../web/dist");
 
 #[derive(Clone)]
 struct AppState {
@@ -956,16 +961,72 @@ async fn fallback(
             json!({ "error": { "code": "NOT_FOUND", "message": format!("no route {}", uri.path()), "details": {} } }),
         );
     }
-    if method == Method::GET
-        && let Some(root) = state.runtime.config.static_dir.as_deref()
-        && let Some(response) = serve_static(root, uri.path(), request.headers()).await
-    {
-        return response;
+    if method == Method::GET {
+        if let Some(root) = state.runtime.config.static_dir.as_deref()
+            && let Some(response) = serve_static(root, uri.path(), request.headers()).await
+        {
+            return response;
+        }
+        #[cfg(feature = "embedded-web")]
+        if let Some(response) = serve_embedded_static(uri.path(), request.headers()) {
+            return response;
+        }
     }
     json_response(
         StatusCode::NOT_FOUND,
         json!({ "error": { "code": "NOT_FOUND", "message": format!("no route {}", uri.path()), "details": {} } }),
     )
+}
+
+#[cfg(feature = "embedded-web")]
+fn serve_embedded_static(pathname: &str, headers: &HeaderMap) -> Option<Response> {
+    let relative = if pathname == "/" {
+        "index.html"
+    } else {
+        pathname.trim_start_matches('/')
+    };
+    let path = EMBEDDED_WEB
+        .get_file(relative)
+        .map(|_| relative)
+        .unwrap_or("index.html");
+    let accept = headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("");
+    let (served, encoding) = if accepts_encoding(accept, "br")
+        && EMBEDDED_WEB.get_file(format!("{path}.br")).is_some()
+    {
+        (format!("{path}.br"), Some("br"))
+    } else if accepts_encoding(accept, "gzip")
+        && EMBEDDED_WEB.get_file(format!("{path}.gz")).is_some()
+    {
+        (format!("{path}.gz"), Some("gzip"))
+    } else {
+        (path.to_owned(), None)
+    };
+    let file = EMBEDDED_WEB.get_file(&served)?;
+    let mut response = Response::new(Body::from(Bytes::from_static(file.contents())));
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(mime_guess::from_path(path).first_or_octet_stream().as_ref()).ok()?,
+    );
+    response.headers_mut().insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_static(if path.starts_with("assets/") && hashed_asset_name(path) {
+            "public, max-age=31536000, immutable"
+        } else {
+            "no-cache"
+        }),
+    );
+    response
+        .headers_mut()
+        .insert(header::VARY, HeaderValue::from_static("Accept-Encoding"));
+    if let Some(encoding) = encoding {
+        response
+            .headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static(encoding));
+    }
+    Some(response)
 }
 
 async fn serve_static(root: &Path, pathname: &str, headers: &HeaderMap) -> Option<Response> {
