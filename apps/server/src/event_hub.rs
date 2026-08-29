@@ -241,10 +241,12 @@ mod tests {
         }
         let replay = hub.replay_window(9_992);
         assert_eq!(replay.events.len(), 8);
-        assert!(replay
-            .events
-            .windows(2)
-            .all(|pair| pair[0].sequence < pair[1].sequence));
+        assert!(
+            replay
+                .events
+                .windows(2)
+                .all(|pair| pair[0].sequence < pair[1].sequence)
+        );
     }
 
     #[test]

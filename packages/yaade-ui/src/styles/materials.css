@@ -21,10 +21,10 @@
 
   /* Structural glass uses alpha, edges, and depth without a live blur. Only
    * overlapping floating surfaces pay for backdrop filtering. */
-  --yaade-material-shell-fill: color-mix(in srgb, white 64%, transparent);
-  --yaade-material-chrome-fill: color-mix(in srgb, white 72%, transparent);
-  --yaade-material-content-fill: color-mix(in srgb, var(--background) 94%, transparent);
-  --yaade-material-floating-fill: color-mix(in srgb, white 68%, transparent);
+  --yaade-material-shell-fill: color-mix(in srgb, white 24%, transparent);
+  --yaade-material-chrome-fill: color-mix(in srgb, white 34%, transparent);
+  --yaade-material-content-fill: color-mix(in srgb, var(--background) 96%, transparent);
+  --yaade-material-floating-fill: color-mix(in srgb, white 76%, transparent);
 
   --yaade-material-shell-fallback: color-mix(in srgb, var(--card) 96%, transparent);
   --yaade-material-chrome-fallback: color-mix(in srgb, var(--card) 98%, transparent);
@@ -55,12 +55,12 @@
     brightness(var(--yaade-material-floating-brightness));
 
   /* Optical edges and elevation. */
-  --yaade-material-light-edge: color-mix(in srgb, white 38%, transparent);
-  --yaade-material-dark-edge: color-mix(in srgb, var(--foreground) 8%, transparent);
-  --yaade-material-specular: color-mix(in srgb, white 55%, transparent);
-  --yaade-material-specular-soft: color-mix(in srgb, white 22%, transparent);
-  --yaade-material-rim-side: color-mix(in srgb, white 28%, transparent);
-  --yaade-material-thickness: color-mix(in srgb, black 8%, transparent);
+  --yaade-material-light-edge: color-mix(in srgb, var(--foreground) 14%, transparent);
+  --yaade-material-dark-edge: color-mix(in srgb, var(--foreground) 12%, transparent);
+  --yaade-material-specular: color-mix(in srgb, white 88%, transparent);
+  --yaade-material-specular-soft: color-mix(in srgb, white 38%, transparent);
+  --yaade-material-rim-side: color-mix(in srgb, white 52%, transparent);
+  --yaade-material-thickness: color-mix(in srgb, black 10%, transparent);
   --yaade-material-sheen: linear-gradient(
     165deg,
     color-mix(in srgb, white 22%, transparent) 0%,
@@ -103,11 +103,12 @@
   --yaade-tab-bar-height: 3.25rem;
   --yaade-tab-pill-height: 2.375rem;
   --yaade-tab-pill-inactive-fill: transparent;
-  --yaade-tab-pill-active-fill: color-mix(in srgb, white 62%, transparent);
+  --yaade-tab-pill-active-fill: color-mix(in srgb, white 72%, transparent);
   --yaade-tab-pill-active-shadow:
-    inset 0 1px 0 color-mix(in srgb, white 72%, transparent),
-    0 1px 2px color-mix(in srgb, var(--foreground) 10%, transparent),
-    0 8px 18px -12px color-mix(in srgb, var(--foreground) 26%, transparent);
+    inset 0 1px 0 color-mix(in srgb, white 94%, transparent),
+    inset 0 -1px 0 color-mix(in srgb, var(--foreground) 7%, transparent),
+    0 1px 2px color-mix(in srgb, var(--foreground) 16%, transparent),
+    0 10px 24px -14px color-mix(in srgb, var(--foreground) 38%, transparent);
 
   /* Motion */
   --yaade-material-hover-duration: var(--yaade-motion-hot);
@@ -129,7 +130,18 @@
 }
 
 :root:not(.dark) {
+  --yaade-canvas-background:
+    radial-gradient(
+      ellipse 72% 46% at 50% -14%,
+      color-mix(in oklch, white 46%, transparent),
+      transparent 68%
+    ),
+    var(--background);
   --yaade-canvas-noise-opacity: 0;
+  --yaade-material-shell-shadow: 0 18px 48px -30px
+    color-mix(in srgb, var(--foreground) 22%, transparent);
+  --yaade-material-chrome-shadow: 0 10px 26px -18px
+    color-mix(in srgb, var(--foreground) 24%, transparent);
 }
 
 .dark {
@@ -433,4 +445,14 @@
   border-radius: var(--yaade-pill-radius);
   background-color: var(--yaade-tab-pill-active-fill);
   box-shadow: var(--yaade-tab-pill-active-shadow);
+  -webkit-backdrop-filter: blur(16px) saturate(1.24);
+  backdrop-filter: blur(16px) saturate(1.24);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  [data-yaade-window-tab-pill] {
+    background-color: var(--yaade-material-chrome-fallback);
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
 }

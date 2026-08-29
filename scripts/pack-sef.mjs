@@ -42,8 +42,13 @@ export function packSelfExtracting(runtimeDir, outfile, options = {}) {
   if (requireWeb && !fs.existsSync(path.join(resolved, "web", "index.html"))) {
     die(`Runtime SPA missing under ${resolved}/web`)
   }
-  if (!fs.existsSync(path.join(resolved, "backend", "host-server.mjs"))) {
-    die(`Runtime host-server.mjs missing under ${resolved}/backend`)
+  const rustServer = path.join(
+    resolved,
+    "backend",
+    process.platform === "win32" ? "yaade-server.exe" : "yaade-server",
+  )
+  if (!fs.existsSync(rustServer)) {
+    die(`Runtime Rust server missing under ${resolved}/backend`)
   }
 
   const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-sef-"))
@@ -83,7 +88,7 @@ if [ ! -f "$READY" ]; then
   mv "$TMP" "$CACHE"
   chmod +x "$CACHE/${launcherName}" 2>/dev/null || true
   if [ -x "$CACHE/node/bin/node" ]; then chmod +x "$CACHE/node/bin/node"; fi
-  find "$CACHE/backend/node_modules/node-pty" -name 'spawn-helper' -exec chmod +x {} + 2>/dev/null || true
+  chmod +x "$CACHE/backend/yaade-server" 2>/dev/null || true
   touch "$READY"
 fi
 exec "$CACHE/${launcherName}" "$@"

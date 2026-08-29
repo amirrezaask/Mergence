@@ -1,12 +1,19 @@
-use std::{path::PathBuf, time::Duration};
+use std::time::Duration;
 
+use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use futures_util::{SinkExt as _, StreamExt as _};
 use reqwest::StatusCode;
+use ring::{
+    rand::SystemRandom,
+    signature::{Ed25519KeyPair, KeyPair as _},
+};
 use serde_json::{Value, json};
 use tempfile::TempDir;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use yaade_server::{
     config::{HostConfig, HostFeatures, LaunchConfig, LaunchSource},
+    device_auth::{AuthenticateDevice, DeviceScope, PairDevice},
+    runtime::Principal,
     server::{RunningServer, serve},
 };
 
@@ -19,7 +26,10 @@ impl Harness {
     async fn start(token: Option<&str>) -> Self {
         let temp = tempfile::tempdir().expect("temp dir");
         let server = serve(config(&temp, 0, token)).await.expect("server");
-        Self { server, _temp: temp }
+        Self {
+            server,
+            _temp: temp,
+        }
     }
 
     fn http(&self, path: &str) -> String {
@@ -48,7 +58,9 @@ fn config(temp: &TempDir, port: u16, token: Option<&str>) -> HostConfig {
         static_dir: None,
         auth_token: token.map(str::to_owned),
         cors_origins: Vec::new(),
-        features: HostFeatures { terminal_checkpoints: true },
+        features: HostFeatures {
+            terminal_checkpoints: true,
+        },
     }
 }
 
@@ -76,7 +88,10 @@ async fn modern_socket(
         .await
         .expect("connect");
     if let Some(token) = token {
-        assert_eq!(json_message(&mut socket).await["type"], "protocol:auth-required");
+        assert_eq!(
+            json_message(&mut socket).await["type"],
+            "protocol:auth-required"
+        );
         socket
             .send(Message::Text(
                 json!({ "type": "protocol:auth", "token": token })
@@ -93,14 +108,69 @@ async fn modern_socket(
 async fn host_token_gate_keeps_health_public_and_requires_token_for_api_and_websocket() {
     let harness = Harness::start(Some("secret-token")).await;
     let client = reqwest::Client::new();
-    assert_eq!(client.get(harness.http("/health")).send().await.expect("health").status(), StatusCode::OK);
-    assert_eq!(client.get(harness.http("/api/v1/system")).send().await.expect("system").status(), StatusCode::UNAUTHORIZED);
-    assert_eq!(client.get(harness.http("/api/v1/system")).bearer_auth("secret-token").send().await.expect("system").status(), StatusCode::OK);
+    assert_eq!(
+        client
+            .get(harness.http("/health"))
+            .send()
+            .await
+            .expect("health")
+            .status(),
+        StatusCode::OK
+    );
+    assert_eq!(
+        client
+            .get(harness.http("/api/v1/system"))
+            .send()
+            .await
+            .expect("system")
+            .status(),
+        StatusCode::UNAUTHORIZED
+    );
+    assert_eq!(
+        client
+            .get(harness.http("/api/v1/system"))
+            .bearer_auth("secret-token")
+            .send()
+            .await
+            .expect("system")
+            .status(),
+        StatusCode::OK
+    );
 
     let denied = connect_async(harness.ws("?protocol=1&token=wrong")).await;
-    assert!(matches!(denied, Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status() == 401));
+    assert!(
+        matches!(denied, Err(tokio_tungstenite::tungstenite::Error::Http(response)) if response.status() == 401)
+    );
     let allowed = connect_async(harness.ws("?protocol=1&token=secret-token")).await;
     assert!(allowed.is_ok());
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn unauthenticated_websocket_admission_is_globally_bounded() {
+    let harness = Harness::start(Some("admission-secret")).await;
+    let mut pending = Vec::new();
+    for index in 0..64 {
+        let (mut socket, _) =
+            connect_async(harness.ws(&format!("?protocol=2&clientId=pending-{index}")))
+                .await
+                .expect("connect pending");
+        assert_eq!(
+            json_message(&mut socket).await["type"],
+            "protocol:auth-required"
+        );
+        pending.push(socket);
+    }
+    let (mut overflow, _) = connect_async(harness.ws("?protocol=2&clientId=overflow"))
+        .await
+        .expect("overflow upgrade");
+    let close = tokio::time::timeout(Duration::from_secs(2), overflow.next())
+        .await
+        .expect("overflow close timeout");
+    assert!(
+        matches!(close, Some(Ok(Message::Close(Some(frame)))) if frame.code == tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode::Again)
+    );
+    drop(pending);
     harness.server.shutdown().await;
 }
 
@@ -112,16 +182,24 @@ async fn modern_realtime_connections_receive_identity_snapshot_and_post_snapshot
     assert_eq!(hello["type"], "protocol:hello");
     let snapshot = json_message(&mut socket).await;
     assert_eq!(snapshot["type"], "runtime:snapshot");
-    assert!(snapshot["sessions"].as_array().is_some_and(|sessions| !sessions.is_empty()));
+    assert!(
+        snapshot["sessions"]
+            .as_array()
+            .is_some_and(|sessions| !sessions.is_empty())
+    );
 
     let response = reqwest::Client::new()
         .post(harness.http("/api/v1/rpc"))
         .json(&json!({ "channel": "mux:createSession", "args": ["Realtime"] }))
-        .send().await.expect("rpc");
+        .send()
+        .await
+        .expect("rpc");
     assert_eq!(response.status(), StatusCode::OK);
     let event = loop {
         let value = json_message(&mut socket).await;
-        if value["channel"] == "mux:event" { break value; }
+        if value["channel"] == "mux:event" {
+            break value;
+        }
     };
     assert_eq!(event["protocolVersion"], 2);
     assert_eq!(event["serverId"], hello["identity"]["serverId"]);
@@ -161,7 +239,11 @@ async fn start_host_server_binds_an_os_assigned_high_port_when_preferred_is_zero
 #[tokio::test]
 async fn start_host_server_binds_next_port_when_preferred_is_taken() {
     let (_occupied, preferred) = (30_000_u16..40_000)
-        .find_map(|port| std::net::TcpListener::bind(("127.0.0.1", port)).ok().map(|listener| (listener, port)))
+        .find_map(|port| {
+            std::net::TcpListener::bind(("127.0.0.1", port))
+                .ok()
+                .map(|listener| (listener, port))
+        })
         .expect("reserve port");
     let temp = tempfile::tempdir().expect("temp dir");
     let server = serve(config(&temp, preferred, None)).await.expect("server");
@@ -170,38 +252,272 @@ async fn start_host_server_binds_next_port_when_preferred_is_taken() {
 }
 
 #[tokio::test]
+async fn stale_websocket_reconnect_receives_replay_gap_before_retained_history() {
+    let harness = Harness::start(None).await;
+    for sequence in 0..1_100 {
+        harness
+            .server
+            .runtime
+            .events
+            .emit("replay:test", vec![json!(sequence)]);
+    }
+    let (mut socket, _) = connect_async(harness.ws("?protocol=1&since=1"))
+        .await
+        .expect("connect");
+    let gap = json_message(&mut socket).await;
+    assert_eq!(gap["channel"], "protocol:replay-gap");
+    assert!(gap["args"][0].as_u64().is_some_and(|floor| floor > 1));
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn paired_observe_scope_cannot_mutate_rpc_or_administer_devices() {
+    let harness = Harness::start(None).await;
+    let random = SystemRandom::new();
+    let document = Ed25519KeyPair::generate_pkcs8(&random).expect("generate key");
+    let key = Ed25519KeyPair::from_pkcs8(document.as_ref()).expect("key");
+    let code = harness
+        .server
+        .runtime
+        .devices
+        .create_pairing_code()
+        .expect("code");
+    let device = harness
+        .server
+        .runtime
+        .devices
+        .pair(PairDevice {
+            code: code.code,
+            device_id: Some("observe_device".to_owned()),
+            name: "Observer".to_owned(),
+            public_key: json!({
+                "kty": "OKP", "crv": "Ed25519",
+                "x": URL_SAFE_NO_PAD.encode(key.public_key().as_ref()),
+            }),
+            algorithm: "Ed25519".to_owned(),
+            scopes: Some(vec![DeviceScope::Observe]),
+        })
+        .expect("pair");
+    let challenge = harness
+        .server
+        .runtime
+        .devices
+        .challenge(&device.id)
+        .expect("challenge");
+    let session = harness
+        .server
+        .runtime
+        .devices
+        .authenticate(AuthenticateDevice {
+            device_id: device.id,
+            nonce: challenge.nonce.clone(),
+            signature: URL_SAFE_NO_PAD.encode(key.sign(challenge.nonce.as_bytes()).as_ref()),
+        })
+        .expect("authenticate");
+    let client = reqwest::Client::new();
+    let observed = client
+        .post(harness.http("/api/v1/rpc"))
+        .bearer_auth(&session.token)
+        .json(&json!({ "channel": "mux:listSessions", "args": [false] }))
+        .send()
+        .await
+        .expect("observe");
+    assert_eq!(observed.status(), StatusCode::OK);
+    let denied = client
+        .post(harness.http("/api/v1/rpc"))
+        .bearer_auth(&session.token)
+        .json(&json!({ "channel": "mux:createSession", "args": ["Denied"] }))
+        .send()
+        .await
+        .expect("control");
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    let devices = client
+        .get(harness.http("/api/v1/security/devices"))
+        .bearer_auth(&session.token)
+        .send()
+        .await
+        .expect("devices");
+    assert_eq!(devices.status(), StatusCode::FORBIDDEN);
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn process_exit_updates_terminals_in_archived_keep_running_session() {
+    let harness = Harness::start(None).await;
+    let principal = Principal::local("lifecycle-test".to_owned());
+    let snapshot = harness.server.runtime.store.list_snapshots(false).remove(0);
+    let terminal = harness.server.runtime.dispatch(
+        &principal,
+        "mux:createTerminal",
+        &[json!({
+            "sessionId": snapshot.session.id,
+            "tabId": snapshot.tabs[0].id,
+            "kind": "terminal",
+            "title": "Short lived",
+            "input": { "_tag": "TerminalInput", "kind": "terminal", "shellArgs": ["-c", "exit 0"] },
+        })],
+    ).expect("create terminal");
+    let terminal_id = terminal["id"].as_str().expect("terminal id").to_owned();
+    harness
+        .server
+        .runtime
+        .dispatch(
+            &principal,
+            "mux:archiveSession",
+            &[json!({ "sessionId": snapshot.session.id, "mode": "keep-running" })],
+        )
+        .expect("archive");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            let status = harness
+                .server
+                .runtime
+                .store
+                .get_terminal(&terminal_id)
+                .map(|terminal| terminal.status);
+            if status == Some(yaade_server::model::TerminalStatus::Succeeded) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("exit update");
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
+async fn persisted_replay_pages_and_checkpoints_recover_trimmed_terminal_output() {
+    let harness = Harness::start(None).await;
+    let principal = Principal::local("replay-test".to_owned());
+    let cwd = std::env::current_dir().expect("cwd").display().to_string();
+    let created = harness
+        .server
+        .runtime
+        .dispatch(
+            &principal,
+            "terminal:create",
+            &[
+                json!(cwd),
+                json!({
+                    "command": "/bin/sh",
+                    "args": ["-c", "head -c 2600000 /dev/zero | tr '\\000' x"]
+                }),
+            ],
+        )
+        .expect("create");
+    let terminal_id = created["id"].as_str().expect("terminal id");
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if harness
+                .server
+                .runtime
+                .terminal
+                .inspect(terminal_id)
+                .is_some_and(|terminal| {
+                    terminal.status == yaade_server::terminal::TerminalProcessStatus::Exited
+                })
+            {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("terminal exit");
+    let attach = harness
+        .server
+        .runtime
+        .dispatch(
+            &principal,
+            "terminal:attach",
+            &[json!(terminal_id), json!(0), json!("raw")],
+        )
+        .expect("attach");
+    assert_eq!(attach["replayQuality"], "checkpoint");
+    assert_eq!(attach["checkpoint"]["checkpointVersion"], 1);
+    assert_eq!(attach["archiveAvailable"], true);
+    let page = harness
+        .server
+        .runtime
+        .dispatch(
+            &principal,
+            "terminal:readReplayPage",
+            &[json!(terminal_id), json!(0), json!(64 * 1024)],
+        )
+        .expect("page");
+    assert!(
+        page["chunks"]
+            .as_array()
+            .is_some_and(|chunks| !chunks.is_empty())
+    );
+    assert!(
+        page["lastSequence"]
+            .as_u64()
+            .is_some_and(|sequence| sequence > 0)
+    );
+    harness.server.shutdown().await;
+}
+
+#[tokio::test]
 async fn two_websocket_clients_receive_same_live_pty_and_survive_one_disconnect() {
     let harness = Harness::start(None).await;
     let client = reqwest::Client::new();
-    let create: Value = client.post(harness.http("/api/v1/rpc"))
+    let create: Value = client
+        .post(harness.http("/api/v1/rpc"))
         .json(&json!({
             "channel": "terminal:create",
-            "args": [PathBuf::from(std::env::current_dir().expect("cwd")).display().to_string(), {
+            "args": [std::env::current_dir().expect("cwd").display().to_string(), {
                 "command": "/bin/sh",
                 "args": ["-c", "printf READY; sleep 2"]
             }]
         }))
-        .send().await.expect("create").json().await.expect("create json");
+        .send()
+        .await
+        .expect("create")
+        .json()
+        .await
+        .expect("create json");
     let terminal_id = create["value"]["id"].as_str().expect("terminal id");
+    // Terminal protocol version 2 means Ghostty semantic ownership. The Rust
+    // host is deliberately raw-only until it has a native Ghostty adapter.
+    assert!(create["value"].get("protocolVersion").is_none());
 
     let mut first = modern_socket(&harness, None).await;
-    for _ in 0..2 { let _ = json_message(&mut first).await; }
+    for _ in 0..2 {
+        let _ = json_message(&mut first).await;
+    }
     let mut second = modern_socket(&harness, None).await;
-    for _ in 0..2 { let _ = json_message(&mut second).await; }
+    for _ in 0..2 {
+        let _ = json_message(&mut second).await;
+    }
     for (request, socket) in [("one", &mut first), ("two", &mut second)] {
-        socket.send(Message::Text(json!({
-            "requestId": request,
-            "op": "terminal:attach",
-            "args": [terminal_id, 0, "raw"]
-        }).to_string().into())).await.expect("attach");
+        socket
+            .send(Message::Text(
+                json!({
+                    "requestId": request,
+                    "op": "terminal:attach",
+                    "args": [terminal_id, 0, "raw"]
+                })
+                .to_string()
+                .into(),
+            ))
+            .await
+            .expect("attach");
         let result = json_message(socket).await;
         assert_eq!(result["ok"], true);
         assert!(result["value"]["outputChunks"].as_array().is_some());
     }
     first.close(None).await.expect("close first");
-    second.send(Message::Text("ping".into())).await.expect("ping");
+    second
+        .send(Message::Text("ping".into()))
+        .await
+        .expect("ping");
     let pong = tokio::time::timeout(Duration::from_secs(2), second.next())
-        .await.expect("pong timeout").expect("socket open").expect("pong");
+        .await
+        .expect("pong timeout")
+        .expect("socket open")
+        .expect("pong");
     assert_eq!(pong, Message::Text("pong".into()));
     harness.server.shutdown().await;
 }

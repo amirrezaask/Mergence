@@ -10,8 +10,12 @@ import type { ApiHandle, BrowserHandle } from "./types.js"
 import { waitForHttpOk, waitUntil } from "./wait.js"
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..")
-const HOST_SERVER_ENTRY = path.join(REPO_ROOT, "packages/yaade-host-server/src/cli.ts")
-const RUN_TS_ENTRY = path.join(REPO_ROOT, "scripts/run-ts.mjs")
+const HOST_SERVER_ENTRY = path.join(
+  REPO_ROOT,
+  process.platform === "win32"
+    ? "apps/server/target/debug/yaade-server.exe"
+    : "apps/server/target/debug/yaade-server",
+)
 type TestServerProcess = ChildProcessByStdio<null, Readable, Readable>
 
 async function freePort(): Promise<number> {
@@ -92,10 +96,9 @@ export async function createDurableRuntimeHarness(
   const hostToken = options.env?.YAADE_HOST_TOKEN
 
   const spawnApi = (): TestServerProcess => spawn(
-    process.execPath,
+    HOST_SERVER_ENTRY,
     [
-      RUN_TS_ENTRY,
-      HOST_SERVER_ENTRY,
+      "run",
       "--host", "127.0.0.1",
       "--port", String(port),
       "--data-dir", dataDir,

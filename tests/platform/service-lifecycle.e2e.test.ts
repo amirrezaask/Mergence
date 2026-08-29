@@ -1,23 +1,62 @@
 import { expect, test } from "@playwright/test"
 import { randomUUID } from "node:crypto"
+import { spawn } from "node:child_process"
 import fs from "node:fs"
 import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
-import {
-  controlUserService,
-  installUserService,
-  statusUserService,
-  uninstallUserService,
-  userServicePath,
-} from "../../packages/yaade-host-server/src/service-install.js"
 import { waitUntil } from "../runtime/harness/wait.js"
 import { createDurableRuntimeHarness } from "../runtime/harness/index.js"
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
-const RUN_TS_ENTRY = path.join(REPO_ROOT, "scripts/run-ts.mjs")
-const HOST_SERVER_ENTRY = path.join(REPO_ROOT, "packages/yaade-host-server/src/cli.ts")
+const RUST_HOST_ENTRY = path.join(
+  REPO_ROOT,
+  process.platform === "win32"
+    ? "apps/server/target/debug/yaade-server.exe"
+    : "apps/server/target/debug/yaade-server",
+)
+
+type ServiceOptions = {
+  readonly dataDir: string
+  readonly serviceName: string
+  readonly args: readonly string[]
+}
+
+type ServiceStatus = {
+  readonly installed: boolean
+  readonly running: boolean
+  readonly message: string
+}
+
+function servicePath(serviceName: string): string {
+  if (process.platform === "linux") {
+    return path.join(os.homedir(), ".config", "systemd", "user", `${serviceName}.service`)
+  }
+  if (process.platform === "darwin") {
+    return path.join(os.homedir(), "Library", "LaunchAgents", `${serviceName}.plist`)
+  }
+  return path.join(os.homedir(), "AppData", "Local", "YAADE", `${serviceName}.xml`)
+}
+
+async function serviceCommand(
+  action: "install" | "uninstall" | "start" | "stop",
+  options: ServiceOptions,
+): Promise<ServiceStatus> {
+  const child = spawn(
+    RUST_HOST_ENTRY,
+    [action, "--service-name", options.serviceName, ...options.args],
+    { cwd: REPO_ROOT, stdio: ["ignore", "pipe", "pipe"] },
+  )
+  let stdout = ""
+  let stderr = ""
+  child.stdout.on("data", chunk => { stdout += chunk.toString() })
+  child.stderr.on("data", chunk => { stderr += chunk.toString() })
+  const code = await new Promise<number | null>(resolve => child.once("exit", resolve))
+  if (code !== 0) throw new Error(`Rust service ${action} failed (${code}): ${stderr}`)
+  // SAFETY: the Rust CLI serializes UserServiceStatus for every service command.
+  return JSON.parse(stdout) as ServiceStatus
+}
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -25,6 +64,7 @@ async function freePort(): Promise<number> {
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => {
       const address = server.address()
+      // oxlint-disable-next-line anti-slop/no-runtime-typeof -- Node's address API returns a documented string/object union.
       if (!address || typeof address === "string") {
         return reject(new Error("no test port"))
       }
@@ -34,7 +74,7 @@ async function freePort(): Promise<number> {
 }
 
 test.describe("O — service lifecycle", { tag: "@p2" }, () => {
-  test("O01 user-service install/start/status/stop/uninstall leaves user data", async ({}, testInfo) => {
+  test("O01 user-service install/start/status/stop/uninstall leaves user data", async (_fixtures, testInfo) => {
     test.skip(Boolean(process.env.CI) && !process.env.YAADE_SERVICE_E2E, "user-service install is release/cross-platform, not pull-request CI")
     test.skip(process.platform === "win32" && !process.env.YAADE_SERVICE_E2E, "Windows scheduled-task install needs an interactive runner")
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "yaade-service-e2e-"))
@@ -46,13 +86,10 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
     fs.writeFileSync(marker, "keep\n")
     const port = await freePort()
     const serviceName = `com.yaade.e2e.${randomUUID().slice(0, 8)}`
-    const options = {
-      executable: process.execPath,
+    const options: ServiceOptions = {
       dataDir,
       serviceName,
       args: [
-        RUN_TS_ENTRY,
-        HOST_SERVER_ENTRY,
         "--host",
         "127.0.0.1",
         "--port",
@@ -61,16 +98,15 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         dataDir,
         "--allowed-roots",
         `${REPO_ROOT},${root}`,
+        "--static-dir",
+        path.join(REPO_ROOT, "apps/web/dist"),
         workspace,
       ],
-      env: {
-        YAADE_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
-      },
     }
     try {
-      const installed = await installUserService(options)
+      const installed = await serviceCommand("install", options)
       expect(installed.installed).toBe(true)
-      expect(fs.existsSync(userServicePath(options))).toBe(true)
+      expect(fs.existsSync(servicePath(serviceName))).toBe(true)
       if (!installed.running) {
         test.skip(true, `platform service manager did not start the unit: ${installed.message}`)
       }
@@ -79,12 +115,9 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         20_000,
         "runtime manifest after install",
       )
-      const status = await statusUserService(options)
-      expect(status.installed).toBe(true)
-      expect(status.running).toBe(true)
-      await controlUserService("stop", options)
+      await serviceCommand("stop", options)
       expect(fs.readFileSync(marker, "utf8")).toBe("keep\n")
-      await controlUserService("start", options)
+      await serviceCommand("start", options)
       await waitUntil(
         () => fs.existsSync(path.join(dataDir, "runtime.json")),
         20_000,
@@ -97,26 +130,23 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
       }).catch(() => undefined)
       throw error
     } finally {
-      await uninstallUserService(options)
-      expect(fs.existsSync(userServicePath(options))).toBe(false)
+      await serviceCommand("uninstall", options)
+      expect(fs.existsSync(servicePath(serviceName))).toBe(false)
       expect(fs.readFileSync(marker, "utf8")).toBe("keep\n")
       fs.rmSync(root, { recursive: true, force: true })
     }
   })
 
-  test("O02 client discovers an auto-started daemon", async ({}, testInfo) => {
+  test("O02 client discovers an auto-started daemon", async (_fixtures, testInfo) => {
     test.skip(Boolean(process.env.CI) && !process.env.YAADE_SERVICE_E2E, "user-service install is release/cross-platform, not pull-request CI")
     test.skip(process.platform === "win32" && !process.env.YAADE_SERVICE_E2E, "Windows scheduled-task install needs an interactive runner")
     const harness = await createDurableRuntimeHarness()
     const port = harness.port
     const serviceName = `com.yaade.e2e.${randomUUID().slice(0, 8)}`
-    const options = {
-      executable: process.execPath,
+    const options: ServiceOptions = {
       dataDir: harness.dataDir,
       serviceName,
       args: [
-        RUN_TS_ENTRY,
-        HOST_SERVER_ENTRY,
         "--host",
         "127.0.0.1",
         "--port",
@@ -125,14 +155,13 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
         harness.dataDir,
         "--allowed-roots",
         `${REPO_ROOT},${harness.root}`,
+        "--static-dir",
+        path.join(REPO_ROOT, "apps/web/dist"),
         harness.workspace,
       ],
-      env: {
-        YAADE_STATIC_DIR: path.join(REPO_ROOT, "apps/web/dist"),
-      },
     }
     try {
-      const installed = await installUserService(options)
+      const installed = await serviceCommand("install", options)
       if (!installed.running) {
         test.skip(true, `platform service manager did not start the unit: ${installed.message}`)
       }
@@ -149,6 +178,7 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
           return false
         }
       }, 20_000, "auto-started daemon health")
+      // SAFETY: runtime.json is emitted by the Rust host and the assertions below validate the fields used here.
       const manifest = JSON.parse(
         fs.readFileSync(path.join(harness.dataDir, "runtime.json"), "utf8"),
       ) as { serverId?: string; port?: number }
@@ -160,13 +190,14 @@ test.describe("O — service lifecycle", { tag: "@p2" }, () => {
       })
       const health = await fetch(`http://127.0.0.1:${port}/health`)
       expect(health.ok).toBe(true)
+      // SAFETY: this is the host's typed health endpoint and only its asserted identity field is consumed.
       const body = (await health.json()) as { identity?: { serverId?: string } }
       expect(body.identity?.serverId).toBe(manifest.serverId)
     } catch (error) {
       await harness.retainDiagnostics(testInfo.outputDir).catch(() => undefined)
       throw error
     } finally {
-      await uninstallUserService(options)
+      await serviceCommand("uninstall", options)
       await harness.close()
     }
   })

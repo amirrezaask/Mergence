@@ -1,8 +1,8 @@
 /**
  * Semantic palette contract for YAADE's terminal shell.
  *
- * The default pair is one Liquid Glass language: a milky silver-blue field
- * in light, a near-black silver-blue void in dark, white-frost materials,
+ * The default pair is one Liquid Glass language: a macOS graphite field in
+ * light, a near-black silver-blue void in dark, white-frost materials,
  * and one system-blue interaction color. Status colors stay purpose-built so
  * they remain readable through translucent chrome.
  */
@@ -46,21 +46,22 @@ export type YaadeSemanticTokens = {
 }
 
 export const shadcnDefaultLight: YaadeSemanticTokens = {
-  // Silver-blue daylight canvas with milky materials and system-blue focus.
-  background: "oklch(0.955 0.012 248)",
-  foreground: "oklch(0.22 0.018 258)",
-  card: "oklch(0.992 0.006 248)",
-  cardForeground: "oklch(0.22 0.018 258)",
-  popover: "oklch(0.985 0.008 248)",
-  popoverForeground: "oklch(0.22 0.018 258)",
+  // macOS graphite daylight: a calm neutral work field, lifted chrome, and
+  // system-blue interaction color without a blue wash over the whole window.
+  background: "oklch(0.915 0.006 255)",
+  foreground: "oklch(0.2 0.012 258)",
+  card: "oklch(0.955 0.005 255)",
+  cardForeground: "oklch(0.2 0.012 258)",
+  popover: "oklch(0.975 0.005 255)",
+  popoverForeground: "oklch(0.2 0.012 258)",
   primary: "oklch(0.52 0.21 255)",
   primaryForeground: "oklch(0.99 0 255)",
-  secondary: "oklch(0.915 0.022 248)",
-  secondaryForeground: "oklch(0.22 0.018 258)",
-  muted: "oklch(0.925 0.014 248)",
-  mutedForeground: "oklch(0.45 0.026 258)",
-  accent: "oklch(0.89 0.055 250)",
-  accentForeground: "oklch(0.24 0.075 255)",
+  secondary: "oklch(0.88 0.012 255)",
+  secondaryForeground: "oklch(0.2 0.012 258)",
+  muted: "oklch(0.895 0.008 255)",
+  mutedForeground: "oklch(0.43 0.018 258)",
+  accent: "oklch(0.86 0.035 252)",
+  accentForeground: "oklch(0.22 0.07 255)",
   destructive: "oklch(0.55 0.205 26)",
   destructiveForeground: "oklch(0.99 0 255)",
   success: "oklch(0.57 0.145 158)",
@@ -70,16 +71,16 @@ export const shadcnDefaultLight: YaadeSemanticTokens = {
   info: "oklch(0.52 0.2 255)",
   infoForeground: "oklch(0.99 0 255)",
   backdrop: "rgba(16, 24, 40, 0.38)",
-  border: "oklch(0.8 0.024 250)",
-  input: "oklch(0.57 0.03 250)",
+  border: "oklch(0.73 0.014 255)",
+  input: "oklch(0.54 0.022 255)",
   ring: "oklch(0.52 0.21 255)",
-  sidebar: "oklch(0.94 0.018 248)",
-  sidebarForeground: "oklch(0.22 0.018 258)",
+  sidebar: "oklch(0.9 0.008 255)",
+  sidebarForeground: "oklch(0.2 0.012 258)",
   sidebarPrimary: "oklch(0.52 0.21 255)",
   sidebarPrimaryForeground: "oklch(0.99 0 255)",
-  sidebarAccent: "oklch(0.88 0.06 250)",
-  sidebarAccentForeground: "oklch(0.24 0.075 255)",
-  sidebarBorder: "oklch(0.8 0.024 250)",
+  sidebarAccent: "oklch(0.85 0.04 252)",
+  sidebarAccentForeground: "oklch(0.22 0.07 255)",
+  sidebarBorder: "oklch(0.73 0.014 255)",
   sidebarRing: "oklch(0.52 0.21 255)",
 }
 

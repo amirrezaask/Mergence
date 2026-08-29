@@ -2,21 +2,12 @@
   "name": "@yaade/server",
   "version": "0.0.1",
   "private": true,
-  "type": "module",
   "scripts": {
-    "dev": "node ../../scripts/run-ts.mjs src/index.ts --port 4747",
-    "start": "node ../../scripts/run-ts.mjs src/index.ts",
+    "dev": "cargo run --manifest-path Cargo.toml -- --port 4747",
+    "start": "cargo run --release --manifest-path Cargo.toml --",
     "build": "node ../../scripts/build-server.mjs",
-    "typecheck": "tsc --noEmit",
-    "test": "vp -C ../../packages/yaade-host-server test",
-    "test:rust": "cargo test --manifest-path Cargo.toml",
-    "lint:rust": "cargo fmt --manifest-path Cargo.toml -- --check && cargo clippy --manifest-path Cargo.toml --all-targets -- -D warnings"
-  },
-  "dependencies": {
-    "@yaade/host-server": "workspace:*"
-  },
-  "devDependencies": {
-    "@types/node": "^22.15.29",
-    "typescript": "^7.0.2"
+    "typecheck": "cargo check --manifest-path Cargo.toml",
+    "test": "cargo test --manifest-path Cargo.toml",
+    "lint": "cargo fmt --manifest-path Cargo.toml -- --check && cargo clippy --manifest-path Cargo.toml --all-targets -- -D warnings"
   }
 }

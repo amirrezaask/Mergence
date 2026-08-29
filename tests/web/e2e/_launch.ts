@@ -28,8 +28,7 @@ export const REPO_ROOT = resolve(__dirname, "..", "..")
 export const SAMPLE = "fixtures/sample-workspace"
 
 /**
- * PTY availability. On macOS ensure node-pty spawn-helper is +x
- * (`packages/yaade-node-host/scripts/fix-node-pty-perms.mjs`).
+ * PTY availability is provided by the Rust host (`portable-pty`/ConPTY).
  */
 export function hasPtySpawn(): boolean {
   return process.platform !== "win32"

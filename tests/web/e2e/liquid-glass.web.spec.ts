@@ -86,11 +86,7 @@ test("settings keep fixed material and typography while allowing font selection"
 }) => {
   const { page } = await launchApp();
   await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible();
-  await page.getByRole("button", { name: /Switch session/ }).click();
-  await page
-    .locator('[data-yaade-session-switcher-popover=""]')
-    .getByRole("button", { name: "Settings" })
-    .click();
+  await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.locator("[data-yaade-settings-overlay]")).toBeVisible();
 
   await expect(page.locator("[data-yaade-interface-material-option]")).toHaveCount(0);
@@ -118,6 +114,37 @@ test("settings keep fixed material and typography while allowing font selection"
   await expect(fontInput).toHaveValue(nextFont);
 });
 
+test("light mode uses macOS graphite materials and a distinct glass tab", async ({
+  launchApp,
+}) => {
+  const { page } = await launchApp();
+  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("radio", { name: "Light color mode" }).click();
+  await page.getByRole("button", { name: /Close settings/ }).click();
+
+  await expect(page.locator("html")).not.toHaveClass(/dark/);
+  const material = await page.evaluate(() => {
+    const root = getComputedStyle(document.documentElement);
+    const topBar = document.querySelector<HTMLElement>("[data-yaade-top-tabbar]");
+    const pill = document.querySelector<HTMLElement>("[data-yaade-window-tab-pill]");
+    if (!topBar || !pill) throw new Error("light title bar material is unavailable");
+    const topBarStyle = getComputedStyle(topBar);
+    const pillStyle = getComputedStyle(pill);
+    return {
+      backgroundToken: root.getPropertyValue("--background").trim(),
+      topBarBackground: topBarStyle.backgroundColor,
+      pillBackground: pillStyle.backgroundColor,
+      pillBackdropFilter: pillStyle.backdropFilter,
+      pillShadow: pillStyle.boxShadow,
+    };
+  });
+
+  expect(material.backgroundToken).toContain("0.915");
+  expect(material.topBarBackground).not.toBe(material.pillBackground);
+  expect(material.pillBackdropFilter).toContain("blur(16px)");
+  expect(material.pillShadow).not.toBe("none");
+});
+
 test("top Window tabs use compact separated pills with a raised active surface", async ({
   launchApp,
 }) => {
@@ -134,7 +161,7 @@ test("top Window tabs use compact separated pills with a raised active surface",
   expect(pillHeight).toBeGreaterThan(24);
   expect(pillHeight).toBeLessThan(tabBarHeight - 8);
   await expect(topBar.getByRole("button", { name: "Switch terminal" })).toHaveCount(0);
-  await expect(topBar.getByRole("button", { name: "Settings" })).toHaveCount(0);
+  await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible();
   await expect(topBar.locator('[data-yaade-window-controls=""]')).toHaveCount(0);
 
   const newTab = page.locator('[data-yaade-new-session-tab=""]');

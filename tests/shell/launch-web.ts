@@ -11,7 +11,9 @@ import type { LaunchShellResult } from "./driver.js"
 const REPO_ROOT = path.resolve(__dirname, "../..")
 const HOST_SERVER_ENTRY = path.join(
   REPO_ROOT,
-  "apps/server/target/debug/yaade-server",
+  process.platform === "win32"
+    ? "apps/server/target/debug/yaade-server.exe"
+    : "apps/server/target/debug/yaade-server",
 )
 
 export type LaunchWebOptions = {

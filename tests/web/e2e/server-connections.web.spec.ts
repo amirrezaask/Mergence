@@ -44,11 +44,16 @@ async function startRemoteHost(): Promise<{
   const dataDir = path.join(root, "data")
   const url = `http://127.0.0.1:${port}`
   const token = "remote-e2e-token"
+  const hostExecutable = path.join(
+    process.cwd(),
+    process.platform === "win32"
+      ? "apps/server/target/debug/yaade-server.exe"
+      : "apps/server/target/debug/yaade-server",
+  )
   const child = spawn(
-    process.execPath,
+    hostExecutable,
     [
-      path.join(process.cwd(), "scripts/run-ts.mjs"),
-      path.join(process.cwd(), "packages/yaade-host-server/src/cli.ts"),
+      "run",
       root,
       "--host",
       "0.0.0.0",
@@ -108,11 +113,7 @@ test("settings manage multiple remote server definitions and aggregate sessions"
     const launched = await launchApp({ withTerminal: false })
     closeApp = launched.app.close
     const { page } = launched
-    await page.getByRole("button", { name: /Switch session/ }).click()
-    await page
-      .locator('[data-yaade-session-switcher-popover=""]')
-      .getByRole("button", { name: "Settings" })
-      .click()
+    await page.getByRole("button", { name: "Settings" }).click()
     await expect(page.locator("[data-yaade-settings-overlay]")).toBeVisible()
     await page.getByRole("tab", { name: "Servers" }).click()
 

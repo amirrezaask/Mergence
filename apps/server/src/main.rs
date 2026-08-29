@@ -35,11 +35,23 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("install" | "uninstall" | "start" | "stop" | "restart")
     ) {
         let command = args.remove(0).to_string_lossy().into_owned();
+        let service_name = take_option(&mut args, "--service-name")?;
+        let service_args = args.clone();
         let config = HostConfig::load(args)?;
         let executable = std::env::var_os("YAADE_SERVER_EXECUTABLE")
             .map(PathBuf::from)
             .map_or_else(std::env::current_exe, Ok)?;
-        let options = UserServiceOptions::new(executable, config.data_dir);
+        let mut options = UserServiceOptions::new(executable, config.data_dir);
+        options.args = std::iter::once("run".to_owned())
+            .chain(
+                service_args
+                    .into_iter()
+                    .map(|argument| argument.to_string_lossy().into_owned()),
+            )
+            .collect();
+        if let Some(service_name) = service_name {
+            options.service_name = service_name;
+        }
         let status = match command.as_str() {
             "install" => install_user_service(&options)?,
             "uninstall" => uninstall_user_service(&options),
@@ -62,6 +74,20 @@ async fn run_server(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error
     let config = HostConfig::load(args)?;
     serve(config).await?.wait().await;
     Ok(())
+}
+
+fn take_option(
+    args: &mut Vec<OsString>,
+    name: &str,
+) -> Result<Option<String>, Box<dyn std::error::Error>> {
+    let Some(index) = args.iter().position(|argument| argument == name) else {
+        return Ok(None);
+    };
+    args.remove(index);
+    if index == args.len() {
+        return Err(format!("{name} requires a value").into());
+    }
+    Ok(Some(args.remove(index).to_string_lossy().into_owned()))
 }
 
 fn inspect_runtime(action: &str, args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {

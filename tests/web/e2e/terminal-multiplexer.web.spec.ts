@@ -10,15 +10,9 @@ test("Session shell exposes only Terminal", async ({ launchApp }) => {
   const topBar = page.locator("[data-yaade-top-tabbar]");
   await expect(topBar).toBeVisible();
   await expect(topBar.getByRole("button", { name: "Switch terminal" })).toHaveCount(0);
-  const sessionSwitcher = topBar.getByRole("button", { name: /Switch session/ });
-  await expect(sessionSwitcher).toBeVisible();
-  await expect(topBar.locator('[data-yaade-session-settings=""]')).toHaveCount(0);
-  await sessionSwitcher.click();
-  await expect(
-    page
-      .locator('[data-yaade-session-switcher-popover=""]')
-      .getByRole("button", { name: "Settings" }),
-  ).toBeVisible();
+  await expect(topBar.getByRole("button", { name: /Switch session/ })).toBeVisible();
+  await expect(topBar.locator('[data-yaade-session-settings=""]')).toBeVisible();
+  await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible();
 
   await expect(page.locator("[data-yaade-which-key]")).toHaveCount(0);
 });
@@ -741,11 +735,7 @@ test("closing Settings returns keyboard focus to the terminal", async ({ launchA
   });
   await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible();
   await focusTerminal(page);
-  await page.getByRole("button", { name: /Switch session/ }).click();
-  await page
-    .locator('[data-yaade-session-switcher-popover=""]')
-    .getByRole("button", { name: "Settings" })
-    .click();
+  await page.getByRole("button", { name: "Settings" }).click();
   await expect(page.getByRole("dialog")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(page.getByRole("dialog")).toHaveCount(0);

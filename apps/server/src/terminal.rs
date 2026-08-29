@@ -68,7 +68,6 @@ pub struct TerminalCreateResult {
     pub os_pid: Option<u32>,
     pub process_identity: Option<ProcessIdentity>,
     pub terminal_epoch: String,
-    pub protocol_version: u8,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -84,7 +83,6 @@ pub struct TerminalInspect {
     pub os_pid: Option<u32>,
     pub process_identity: Option<ProcessIdentity>,
     pub terminal_epoch: String,
-    pub protocol_version: u8,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -116,7 +114,6 @@ pub struct TerminalAttach {
     pub id: String,
     pub title: Option<String>,
     pub terminal_epoch: String,
-    pub protocol_version: u8,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<TerminalCheckpoint>,
     pub replay_quality: &'static str,
@@ -286,7 +283,7 @@ impl TerminalHost {
         let cols = launch.cols.unwrap_or(80).clamp(1, 1000);
         let rows = launch.rows.unwrap_or(24).clamp(1, 1000);
         let command = launch.command.clone().unwrap_or_else(default_shell);
-        let args = if launch.command.is_some() {
+        let args = if launch.command.is_some() || !launch.args.is_empty() {
             launch.args.clone()
         } else {
             default_shell_args(&command)
@@ -404,7 +401,6 @@ impl TerminalHost {
             os_pid,
             process_identity,
             terminal_epoch,
-            protocol_version: 2,
         })
     }
 
@@ -435,7 +431,6 @@ impl TerminalHost {
             os_pid: entry.os_pid,
             process_identity: entry.process_identity.clone(),
             terminal_epoch: entry.terminal_epoch.clone(),
-            protocol_version: 2,
         })
     }
 
@@ -534,7 +529,6 @@ impl TerminalHost {
             id: entry.id.clone(),
             title: entry.title.clone(),
             terminal_epoch: entry.terminal_epoch.clone(),
-            protocol_version: 2,
             replay_quality: if checkpoint.is_some() {
                 "checkpoint"
             } else if truncated {

@@ -12,7 +12,7 @@ use uuid::Uuid;
 use crate::{
     database_owner::{DatabaseError, DatabaseOwner},
     model::{
-    AppSession, MuxTerminal, SessionSnapshot, SessionTab, TerminalInput, TerminalOutput,
+        AppSession, MuxTerminal, SessionSnapshot, SessionTab, TerminalInput, TerminalOutput,
         TerminalStatus, now_iso,
     },
 };
@@ -132,12 +132,10 @@ impl StateStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(|error| StoreError::Storage(error.to_string()))?;
         }
-        let connection = Connection::open(path)?;
-        connection.busy_timeout(std::time::Duration::from_millis(SQLITE_BUSY_TIMEOUT_MS))?;
-        connection.execute_batch(
-            "PRAGMA journal_mode=WAL;
-             PRAGMA foreign_keys=ON;
-             CREATE TABLE IF NOT EXISTS host_identity(
+        let database = DatabaseOwner::open(path)?;
+        database.apply_migration(
+            "0001-rust-runtime",
+            "CREATE TABLE IF NOT EXISTS host_identity(
                singleton INTEGER PRIMARY KEY CHECK(singleton=1),
                server_id TEXT NOT NULL,
                created_at TEXT NOT NULL
@@ -149,32 +147,28 @@ impl StateStore {
                updated_at TEXT NOT NULL
              );",
         )?;
-        let quick_check: String =
-            connection.query_row("PRAGMA quick_check", [], |row| row.get(0))?;
-        if quick_check != "ok" {
-            return Err(StoreError::Storage(format!(
-                "sqlite integrity check failed: {quick_check}"
-            )));
-        }
-        let server_id = connection
-            .query_row(
-                "SELECT server_id FROM host_identity WHERE singleton=1",
-                [],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?
-            .unwrap_or_else(|| Uuid::new_v4().to_string());
-        connection.execute(
-            "INSERT OR IGNORE INTO host_identity(singleton,server_id,created_at) VALUES(1,?,?)",
-            params![server_id, now_iso()],
-        )?;
-        let persisted = connection
-            .query_row(
-                "SELECT state_json FROM rust_runtime_state WHERE singleton=1 AND schema_version=?",
-                [STATE_SCHEMA_VERSION],
-                |row| row.get::<_, String>(0),
-            )
-            .optional()?;
+        let (server_id, persisted) = database.call(|connection| {
+            let server_id = connection
+                .query_row(
+                    "SELECT server_id FROM host_identity WHERE singleton=1",
+                    [],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?
+                .unwrap_or_else(|| Uuid::new_v4().to_string());
+            connection.execute(
+                "INSERT OR IGNORE INTO host_identity(singleton,server_id,created_at) VALUES(1,?,?)",
+                params![server_id, now_iso()],
+            )?;
+            let persisted = connection
+                .query_row(
+                    "SELECT state_json FROM rust_runtime_state WHERE singleton=1 AND schema_version=?",
+                    [STATE_SCHEMA_VERSION],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()?;
+            Ok((server_id, persisted))
+        })?;
         let mut state = persisted
             .as_deref()
             .and_then(|json| serde_json::from_str::<PersistedState>(json).ok())
@@ -184,14 +178,16 @@ impl StateStore {
             .unwrap_or_else(|| PersistedState::new(machine));
         state.ensure_visible_session();
         let encoded = serde_json::to_string(&state)?;
-        connection.execute(
-            "INSERT INTO rust_runtime_state(singleton,schema_version,state_json,updated_at)
-             VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET
-             schema_version=excluded.schema_version,state_json=excluded.state_json,updated_at=excluded.updated_at",
-            params![STATE_SCHEMA_VERSION, encoded, now_iso()],
-        )?;
+        database.call(move |connection| {
+            connection.execute(
+                "INSERT INTO rust_runtime_state(singleton,schema_version,state_json,updated_at)
+                 VALUES(1,?,?,?) ON CONFLICT(singleton) DO UPDATE SET
+                 schema_version=excluded.schema_version,state_json=excluded.state_json,updated_at=excluded.updated_at",
+                params![STATE_SCHEMA_VERSION, encoded, now_iso()],
+            )
+        })?;
         Ok(Self {
-            connection: Mutex::new(connection),
+            database,
             state: Mutex::new(state),
             server_id,
         })
@@ -210,24 +206,17 @@ impl StateStore {
         &self.server_id
     }
 
-    pub(crate) fn with_connection<T>(
-        &self,
-        operation: impl FnOnce(&Connection) -> Result<T, rusqlite::Error>,
-    ) -> Result<T, StoreError> {
-        operation(
-            &self
-                .connection
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner()),
-        )
-        .map_err(Into::into)
+    pub(crate) fn with_connection<T, F>(&self, operation: F) -> Result<T, StoreError>
+    where
+        T: Send + 'static,
+        F: FnOnce(&mut Connection) -> Result<T, rusqlite::Error> + Send + 'static,
+    {
+        self.database.call(operation).map_err(Into::into)
     }
 
     pub fn health(&self) -> bool {
-        self.connection
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .query_row("SELECT 1", [], |_| Ok(()))
+        self.database
+            .call(|connection| connection.query_row("SELECT 1", [], |_| Ok(())))
             .is_ok()
     }
 
@@ -245,13 +234,12 @@ impl StateStore {
         let mut next = current.clone();
         let result = operation(&mut next)?;
         let encoded = serde_json::to_string(&next)?;
-        self.connection
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .execute(
+        self.database.call(move |connection| {
+            connection.execute(
                 "UPDATE rust_runtime_state SET state_json=?,updated_at=? WHERE singleton=1",
                 params![encoded, now_iso()],
-            )?;
+            )
+        })?;
         *current = next;
         Ok(result)
     }
@@ -1105,7 +1093,11 @@ mod tests {
         let store = store();
         let first = store.list_snapshots(false)[0].session.clone();
         let second = store.create_session("Second").expect("second");
-        assert!(store.reorder_sessions(&[first.id.clone()]).is_err());
+        assert!(
+            store
+                .reorder_sessions(std::slice::from_ref(&first.id))
+                .is_err()
+        );
         let reordered = store
             .reorder_sessions(&[second.id.clone(), first.id.clone()])
             .expect("reorder");
@@ -1127,7 +1119,9 @@ mod tests {
             .expect("terminal");
         store.archive_terminal(&terminal.id).expect("archive");
         let session = store.get_session(&snapshot.session.id).expect("session");
-        let tab = store.get_tab(snapshot.session.active_tab_id.as_deref().expect("tab")).expect("tab");
+        let tab = store
+            .get_tab(snapshot.session.active_tab_id.as_deref().expect("tab"))
+            .expect("tab");
         assert_eq!(session.active_mux_terminal_id, None);
         assert_eq!(tab.active_mux_terminal_id, None);
     }
@@ -1150,7 +1144,9 @@ mod tests {
                 value.output = TerminalOutput::running("pty-1".to_owned(), 0);
             })
             .expect("running");
-        let target = store.create_tab(&snapshot.session.id, "Window 2").expect("tab");
+        let target = store
+            .create_tab(&snapshot.session.id, "Window 2")
+            .expect("tab");
         let moved = store.move_terminal(&running.id, &target.id).expect("move");
         assert_eq!(moved.output.pty_id.as_deref(), Some("pty-1"));
         assert_eq!(moved.status, TerminalStatus::Running);
@@ -1169,7 +1165,11 @@ mod tests {
                 TerminalInput::default(),
             )
             .expect("terminal");
-        assert!(store.select_terminal(&second.id, Some(&terminal.id)).is_err());
+        assert!(
+            store
+                .select_terminal(&second.id, Some(&terminal.id))
+                .is_err()
+        );
     }
 
     #[test]

@@ -18,7 +18,6 @@
         "height": 900,
         "minWidth": 900,
         "minHeight": 600,
-        "decorations": false,
         "resizable": true,
         "shadow": true,
         "zoomHotkeysEnabled": true

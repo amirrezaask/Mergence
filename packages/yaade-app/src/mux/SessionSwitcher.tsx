@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Layers3, Pencil, Plus, Settings, X } from "lucide-react";
+import { Check, Layers3, Pencil, Plus, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
 import { cn, formatKeyBinding } from "@yaade/ui/session";
 import { Button, Input, Popover, PopoverContent, PopoverTrigger } from "@yaade/ui/primitives";
@@ -12,7 +12,6 @@ export type SessionSwitcherProps = {
 	readonly activeSessionId?: AppSession["id"];
 	readonly onSelect: (session: AppSession) => void;
 	readonly onCreate: () => void;
-	readonly onOpenSettings: () => void;
 	readonly onClose?: (id: SessionId) => void;
 	readonly onRename?: (id: SessionId, title: string) => void;
 	readonly terminalCounts?: ReadonlyMap<SessionId, number>;
@@ -47,12 +46,6 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 		setEditingId(null);
 		props.onOpenChange(false);
 		props.onCreate();
-	};
-
-	const openSettings = () => {
-		setEditingId(null);
-		props.onOpenChange(false);
-		props.onOpenSettings();
 	};
 
 	return (
@@ -213,7 +206,7 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 						})
 					)}
 				</div>
-				<div className="relative z-1 mt-2 flex flex-col gap-1 border-t border-border/60 p-1.5">
+				<div className="relative z-1 mt-2 border-t border-border/60 p-1.5">
 					<Button
 						type="button"
 						variant="ghost"
@@ -227,20 +220,6 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 							<Plus />
 						</span>
 						New session
-					</Button>
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="h-10 w-full justify-start gap-2 rounded-[var(--yaade-control-radius)] text-foreground hover:bg-accent/60"
-						aria-label="Settings"
-						data-yaade-session-settings=""
-						onClick={openSettings}
-					>
-						<span className="grid size-6 place-items-center text-muted-foreground">
-							<Settings />
-						</span>
-						Settings
 					</Button>
 				</div>
 			</PopoverContent>

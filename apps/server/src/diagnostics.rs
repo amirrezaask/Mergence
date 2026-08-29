@@ -1,6 +1,13 @@
 use serde_json::Value;
 
-const SECRET_KEY_PARTS: &[&str] = &["token", "secret", "password", "authorization", "cookie", "privatekey"];
+const SECRET_KEY_PARTS: &[&str] = &[
+    "token",
+    "secret",
+    "password",
+    "authorization",
+    "cookie",
+    "privatekey",
+];
 
 /// Recursively redact diagnostic values by key and by known secret value.
 pub fn redact_diagnostics(value: &Value, known_secrets: &[&str]) -> Value {
@@ -10,7 +17,10 @@ pub fn redact_diagnostics(value: &Value, known_secrets: &[&str]) -> Value {
                 .iter()
                 .map(|(key, value)| {
                     let normalized = key.to_ascii_lowercase().replace(['_', '-'], "");
-                    let value = if SECRET_KEY_PARTS.iter().any(|part| normalized.contains(part)) {
+                    let value = if SECRET_KEY_PARTS
+                        .iter()
+                        .any(|part| normalized.contains(part))
+                    {
                         Value::String("[redacted]".to_owned())
                     } else {
                         redact_diagnostics(value, known_secrets)

@@ -203,10 +203,12 @@ impl DeviceAuthService {
     pub fn create_pairing_code(&self) -> Result<ExpiringCode, DeviceAuthError> {
         let code = hex_upper(&random_bytes::<5>()?);
         let expires_at = timestamp_after(PAIRING_TTL);
-        self.store.with_connection(|db| {
+        let code_hash = sha256_hex(&code);
+        let stored_expires_at = expires_at.clone();
+        self.store.with_connection(move |db| {
             db.execute(
                 "INSERT INTO pairing_codes(id,code_hash,expires_at) VALUES(?,?,?)",
-                params![Uuid::new_v4().to_string(), sha256_hex(&code), expires_at],
+                params![Uuid::new_v4().to_string(), code_hash, stored_expires_at],
             )
         })?;
         Ok(ExpiringCode { code, expires_at })
@@ -226,10 +228,12 @@ impl DeviceAuthService {
             ));
         }
         let now = now_iso();
-        let pairing_id = self.store.with_connection(|db| {
+        let code_hash = sha256_hex(&code);
+        let lookup_now = now.clone();
+        let pairing_id = self.store.with_connection(move |db| {
             db.query_row(
                 "SELECT id FROM pairing_codes WHERE code_hash=? AND used_at IS NULL AND expires_at>? ORDER BY expires_at DESC LIMIT 1",
-                params![sha256_hex(&code), now],
+                params![code_hash, lookup_now],
                 |row| row.get::<_, String>(0),
             ).optional()
         })?;
@@ -243,11 +247,12 @@ impl DeviceAuthService {
                 "admin pairing requires a local administrator".to_owned(),
             ));
         }
-        let consumed = self.store.with_connection(|db| {
+        let consumed_now = now.clone();
+        let consumed = self.store.with_connection(move |db| {
             db.execute(
-            "UPDATE pairing_codes SET used_at=? WHERE id=? AND used_at IS NULL AND expires_at>?",
-            params![now, pairing_id, now],
-        )
+                "UPDATE pairing_codes SET used_at=? WHERE id=? AND used_at IS NULL AND expires_at>?",
+                params![consumed_now, pairing_id, consumed_now],
+            )
         })?;
         if consumed != 1 {
             self.record_failure("pair");
@@ -268,15 +273,17 @@ impl DeviceAuthService {
             last_used_at: None,
             revoked_at: None,
         };
-        self.store.with_connection(|db| db.execute(
+        let stored_device = device.clone();
+        let public_key = serde_json::to_string(&input.public_key).unwrap_or_default();
+        self.store.with_connection(move |db| db.execute(
             "INSERT INTO devices(id,name,public_key,algorithm,scopes_json,created_at) VALUES(?,?,?,?,?,?)",
             params![
-                device.id,
-                device.name,
-                serde_json::to_string(&input.public_key).unwrap_or_default(),
-                device.algorithm,
-                serde_json::to_string(&device.scopes).unwrap_or_else(|_| "[\"control\"]".to_owned()),
-                device.created_at,
+                stored_device.id,
+                stored_device.name,
+                public_key,
+                stored_device.algorithm,
+                serde_json::to_string(&stored_device.scopes).unwrap_or_else(|_| "[\"control\"]".to_owned()),
+                stored_device.created_at,
             ],
         ))?;
         self.audit("device.paired", Some(&id), json!({ "name": device.name }))?;
@@ -293,10 +300,11 @@ impl DeviceAuthService {
     }
 
     pub fn revoke(&self, device_id: &str) -> Result<bool, DeviceAuthError> {
-        let changed = self.store.with_connection(|db| {
+        let stored_device_id = device_id.to_owned();
+        let changed = self.store.with_connection(move |db| {
             db.execute(
                 "UPDATE devices SET revoked_at=COALESCE(revoked_at, ?) WHERE id=?",
-                params![now_iso(), device_id],
+                params![now_iso(), stored_device_id],
             )
         })?;
         let mut ephemeral = self.lock();
@@ -470,7 +478,8 @@ impl DeviceAuthService {
     }
 
     fn device_row(&self, id: &str) -> Result<Option<(String, PairedDevice)>, DeviceAuthError> {
-        self.store.with_connection(|db| db.query_row(
+        let id = id.to_owned();
+        self.store.with_connection(move |db| db.query_row(
             "SELECT public_key,id,name,algorithm,scopes_json,created_at,last_used_at,revoked_at FROM devices WHERE id=?",
             [id],
             |row| {
@@ -486,7 +495,8 @@ impl DeviceAuthService {
     }
 
     fn touch_device(&self, id: &str) -> Result<(), DeviceAuthError> {
-        self.store.with_connection(|db| {
+        let id = id.to_owned();
+        self.store.with_connection(move |db| {
             db.execute(
                 "UPDATE devices SET last_used_at=? WHERE id=?",
                 params![now_iso(), id],
@@ -501,7 +511,9 @@ impl DeviceAuthService {
         device_id: Option<&str>,
         details: Value,
     ) -> Result<(), DeviceAuthError> {
-        self.store.with_connection(|db| db.execute(
+        let action = action.to_owned();
+        let device_id = device_id.map(str::to_owned);
+        self.store.with_connection(move |db| db.execute(
             "INSERT INTO audit_events(id,occurred_at,device_id,action,resource_type,resource_id,details_json) VALUES(?,?,?,?,?,?,?)",
             params![Uuid::new_v4().to_string(), now_iso(), device_id, action, "device", device_id, details.to_string()],
         ))?;
@@ -762,8 +774,18 @@ mod tests {
             .expect("authenticate");
         let rotated = service.rotate(&authenticated.token).expect("rotate");
         assert_eq!(rotated.device.id, device.id);
-        assert!(service.session(&authenticated.token).expect("old lookup").is_none());
-        assert!(service.session(&rotated.token).expect("new lookup").is_some());
+        assert!(
+            service
+                .session(&authenticated.token)
+                .expect("old lookup")
+                .is_none()
+        );
+        assert!(
+            service
+                .session(&rotated.token)
+                .expect("new lookup")
+                .is_some()
+        );
     }
 
     #[test]
@@ -787,13 +809,20 @@ mod tests {
             })
             .expect("pair");
         let challenge = service.challenge(&device.id).expect("challenge");
-        let authenticated = service.authenticate(AuthenticateDevice {
-            device_id: device.id.clone(),
-            nonce: challenge.nonce.clone(),
-            signature: URL_SAFE_NO_PAD.encode(key.sign(challenge.nonce.as_bytes()).as_ref()),
-        }).expect("authenticate");
+        let authenticated = service
+            .authenticate(AuthenticateDevice {
+                device_id: device.id.clone(),
+                nonce: challenge.nonce.clone(),
+                signature: URL_SAFE_NO_PAD.encode(key.sign(challenge.nonce.as_bytes()).as_ref()),
+            })
+            .expect("authenticate");
         assert!(service.revoke(&device.id).expect("revoke"));
-        assert!(service.session(&authenticated.token).expect("lookup").is_none());
+        assert!(
+            service
+                .session(&authenticated.token)
+                .expect("lookup")
+                .is_none()
+        );
     }
 
     #[test]

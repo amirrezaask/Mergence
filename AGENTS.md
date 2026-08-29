@@ -10,13 +10,11 @@ Do not add standalone Git, search, editor, file-browser, or agent-chat surfaces.
 
 ## Layout
 
-- `apps/server` — thin server executable that uses `@yaade/host-server`
+- `apps/server` — Rust HTTP/WS host, session multiplexer, PTY lifecycle, persistence, and service CLI
 - `apps/web` — thin Vite web executable that uses `@yaade/app`
 - `packages/yaade-app` — React Session shell
 - `packages/yaade-rpc` — Effect Schema contracts
-- `packages/yaade-host-server` — reusable HTTP/WS host, session multiplexer, and terminal lifecycle
 - `packages/yaade-host-client` — browser control and observation transport
-- `packages/yaade-node-host` — server filesystem, PTY, and child-process implementation
 - `packages/yaade-panels` — dock tree
 - `packages/yaade-ui` — design system and Terminal surfaces
 - `packages/yaade-workspace` — shared terminal host ports and keyboard helpers

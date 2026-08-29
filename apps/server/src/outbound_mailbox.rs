@@ -47,15 +47,23 @@ pub struct OutboundFrame {
 impl OutboundFrame {
     #[must_use]
     pub fn new(data: impl Into<Vec<u8>>) -> Self {
-        Self { data: data.into(), terminal_id: None }
+        Self {
+            data: data.into(),
+            terminal_id: None,
+        }
     }
 
     #[must_use]
     pub fn terminal(terminal_id: &str, data: impl Into<Vec<u8>>) -> Self {
-        Self { data: data.into(), terminal_id: Some(terminal_id.to_owned()) }
+        Self {
+            data: data.into(),
+            terminal_id: Some(terminal_id.to_owned()),
+        }
     }
 
-    fn bytes(&self) -> usize { self.data.len() }
+    fn bytes(&self) -> usize {
+        self.data.len()
+    }
 }
 
 #[derive(Clone)]
@@ -124,7 +132,11 @@ impl OutboundMailbox {
         accepted(false, false)
     }
 
-    pub fn enqueue_semantic(&mut self, terminal_id: &str, mut frame: OutboundFrame) -> EnqueueResult {
+    pub fn enqueue_semantic(
+        &mut self,
+        terminal_id: &str,
+        mut frame: OutboundFrame,
+    ) -> EnqueueResult {
         let bytes = frame.bytes();
         if terminal_id.is_empty() || bytes > self.limits.semantic_max_bytes {
             self.resync.insert(terminal_id.to_owned());
@@ -154,16 +166,28 @@ impl OutboundMailbox {
         accepted(false, false)
     }
 
-    pub fn next(&mut self) -> Option<OutboundFrame> {
-        enum Source { Reliable, Legacy, Semantic(String) }
-        let mut selected = self.reliable.front().map(|frame| (frame.order, Source::Reliable));
+    pub fn pop_next(&mut self) -> Option<OutboundFrame> {
+        enum Source {
+            Reliable,
+            Legacy,
+            Semantic(String),
+        }
+        let mut selected = self
+            .reliable
+            .front()
+            .map(|frame| (frame.order, Source::Reliable));
         if let Some(frame) = self.legacy.front()
-            && selected.as_ref().is_none_or(|(order, _)| frame.order < *order)
+            && selected
+                .as_ref()
+                .is_none_or(|(order, _)| frame.order < *order)
         {
             selected = Some((frame.order, Source::Legacy));
         }
         for (id, frame) in &self.semantic {
-            if selected.as_ref().is_none_or(|(order, _)| frame.order < *order) {
+            if selected
+                .as_ref()
+                .is_none_or(|(order, _)| frame.order < *order)
+            {
                 selected = Some((frame.order, Source::Semantic(id.clone())));
             }
         }
@@ -210,11 +234,21 @@ impl OutboundMailbox {
 }
 
 fn accepted(replaced: bool, requires_resync: bool) -> EnqueueResult {
-    EnqueueResult { accepted: true, replaced, requires_resync, overflow: None }
+    EnqueueResult {
+        accepted: true,
+        replaced,
+        requires_resync,
+        overflow: None,
+    }
 }
 
 fn rejected(overflow: Overflow, requires_resync: bool) -> EnqueueResult {
-    EnqueueResult { accepted: false, replaced: false, requires_resync, overflow: Some(overflow) }
+    EnqueueResult {
+        accepted: false,
+        replaced: false,
+        requires_resync,
+        overflow: Some(overflow),
+    }
 }
 
 #[cfg(test)]
@@ -235,12 +269,25 @@ mod tests {
     #[test]
     fn reliable_frames_are_ordered_and_bounded_without_silent_drops() {
         let mut mailbox = OutboundMailbox::new(limits());
-        assert!(mailbox.enqueue_reliable(OutboundFrame::new(b"four".to_vec())).accepted);
-        assert!(mailbox.enqueue_reliable(OutboundFrame::new(b"more".to_vec())).accepted);
-        assert_eq!(mailbox.enqueue_reliable(OutboundFrame::new(b"nope".to_vec())).overflow, Some(Overflow::Reliable));
-        assert_eq!(mailbox.next().expect("first").data, b"four");
-        assert_eq!(mailbox.next().expect("second").data, b"more");
-        assert!(mailbox.next().is_none());
+        assert!(
+            mailbox
+                .enqueue_reliable(OutboundFrame::new(b"four".to_vec()))
+                .accepted
+        );
+        assert!(
+            mailbox
+                .enqueue_reliable(OutboundFrame::new(b"more".to_vec()))
+                .accepted
+        );
+        assert_eq!(
+            mailbox
+                .enqueue_reliable(OutboundFrame::new(b"nope".to_vec()))
+                .overflow,
+            Some(Overflow::Reliable)
+        );
+        assert_eq!(mailbox.pop_next().expect("first").data, b"four");
+        assert_eq!(mailbox.pop_next().expect("second").data, b"more");
+        assert!(mailbox.pop_next().is_none());
     }
 
     #[test]
@@ -250,10 +297,14 @@ mod tests {
         custom.legacy_max_bytes = 32;
         let mut mailbox = OutboundMailbox::new(custom);
         for value in ["one", "two", "three"] {
-            assert!(mailbox.enqueue_legacy("a", OutboundFrame::new(value.as_bytes().to_vec())).accepted);
+            assert!(
+                mailbox
+                    .enqueue_legacy("a", OutboundFrame::new(value.as_bytes().to_vec()))
+                    .accepted
+            );
         }
         for value in ["one", "two", "three"] {
-            assert_eq!(mailbox.next().expect("frame").data, value.as_bytes());
+            assert_eq!(mailbox.pop_next().expect("frame").data, value.as_bytes());
         }
         assert!(mailbox.consume_resync_required().is_empty());
     }
@@ -261,15 +312,31 @@ mod tests {
     #[test]
     fn default_legacy_budget_tolerates_more_than_eight_mebibytes() {
         let mut mailbox = OutboundMailbox::new(MailboxLimits::default());
-        assert!(mailbox.enqueue_legacy("a", OutboundFrame::new(vec![0; 9 * 1024 * 1024])).accepted);
-        assert!(!mailbox.enqueue_legacy("a", OutboundFrame::new(vec![0; 24 * 1024 * 1024])).accepted);
+        assert!(
+            mailbox
+                .enqueue_legacy("a", OutboundFrame::new(vec![0; 9 * 1024 * 1024]))
+                .accepted
+        );
+        assert!(
+            !mailbox
+                .enqueue_legacy("a", OutboundFrame::new(vec![0; 24 * 1024 * 1024]))
+                .accepted
+        );
     }
 
     #[test]
     fn legacy_overflow_rejects_instead_of_replacing_earlier_chunks() {
         let mut mailbox = OutboundMailbox::new(limits());
-        assert!(mailbox.enqueue_legacy("a", OutboundFrame::new(b"one".to_vec())).accepted);
-        assert!(mailbox.enqueue_legacy("a", OutboundFrame::new(b"two".to_vec())).accepted);
+        assert!(
+            mailbox
+                .enqueue_legacy("a", OutboundFrame::new(b"one".to_vec()))
+                .accepted
+        );
+        assert!(
+            mailbox
+                .enqueue_legacy("a", OutboundFrame::new(b"two".to_vec()))
+                .accepted
+        );
         let overflow = mailbox.enqueue_legacy("a", OutboundFrame::new(b"bad".to_vec()));
         assert_eq!(overflow.overflow, Some(Overflow::Legacy));
         assert_eq!(mailbox.pending_frames(), 2);
@@ -278,10 +345,14 @@ mod tests {
     #[test]
     fn semantic_frames_replace_stale_state_and_mark_resync() {
         let mut mailbox = OutboundMailbox::new(limits());
-        assert!(mailbox.enqueue_semantic("a", OutboundFrame::new(b"snap".to_vec())).accepted);
+        assert!(
+            mailbox
+                .enqueue_semantic("a", OutboundFrame::new(b"snap".to_vec()))
+                .accepted
+        );
         let replacement = mailbox.enqueue_semantic("a", OutboundFrame::new(b"newer".to_vec()));
         assert!(replacement.accepted && replacement.replaced && replacement.requires_resync);
-        assert_eq!(mailbox.next().expect("snapshot").data, b"newer");
+        assert_eq!(mailbox.pop_next().expect("snapshot").data, b"newer");
         assert_eq!(mailbox.consume_resync_required(), vec!["a"]);
     }
 
@@ -300,8 +371,8 @@ mod tests {
         mailbox.enqueue_reliable(OutboundFrame::new(b"response".to_vec()));
         mailbox.enqueue_legacy("a", OutboundFrame::new(b"output".to_vec()));
         mailbox.enqueue_reliable(OutboundFrame::new(b"event".to_vec()));
-        assert_eq!(mailbox.next().expect("response").data, b"response");
-        assert_eq!(mailbox.next().expect("output").data, b"output");
-        assert_eq!(mailbox.next().expect("event").data, b"event");
+        assert_eq!(mailbox.pop_next().expect("response").data, b"response");
+        assert_eq!(mailbox.pop_next().expect("output").data, b"output");
+        assert_eq!(mailbox.pop_next().expect("event").data, b"event");
     }
 }

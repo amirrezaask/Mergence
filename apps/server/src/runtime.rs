@@ -263,6 +263,7 @@ impl HostRuntime {
         args: &[Value],
     ) -> Result<Value, RuntimeError> {
         self.authorize(principal, channel)?;
+        validate_route_args(channel, args)?;
         if channel.starts_with("terminal:")
             && let Some(candidate) = args.first().and_then(Value::as_str)
             && candidate.starts_with("file:")
@@ -814,6 +815,14 @@ impl HostRuntime {
                 Ok(json!(self.terminal.create(&path, launch)?))
             }
             "terminal:attach" => {
+                if matches!(
+                    args.get(2).and_then(Value::as_str),
+                    Some("semantic" | "both")
+                ) {
+                    return Err(RuntimeError::Invalid(
+                        "semantic terminal mode is not available on this host".to_owned(),
+                    ));
+                }
                 let lease = self.terminal.acquire_lease(
                     id,
                     &principal.principal_id,
@@ -1036,6 +1045,97 @@ fn route_capability(channel: &str) -> RouteCapability {
     RouteCapability::Control
 }
 
+fn validate_route_args(channel: &str, args: &[Value]) -> Result<(), RuntimeError> {
+    let string_at = |index: usize| args.get(index).is_some_and(Value::is_string);
+    let number_at = |index: usize| args.get(index).is_some_and(Value::is_number);
+    let object_at = |index: usize| args.get(index).is_some_and(Value::is_object);
+    let valid = match channel {
+        "mux:listSessions" => args.len() == 1 && args[0].is_boolean(),
+        "mux:createSession" => args.is_empty() || (args.len() == 1 && string_at(0)),
+        "mux:renameSession" | "mux:renameTerminal" => {
+            args.len() == 2 && string_at(0) && string_at(1)
+        }
+        "mux:getSession" | "mux:getTerminal" => args.len() == 1 && string_at(0),
+        "mux:selectTerminal" => {
+            (args.len() == 1 || args.len() == 2)
+                && string_at(0)
+                && (args.len() == 1 || string_at(1))
+        }
+        "mux:stopTerminal" | "mux:restartTerminal" => {
+            args.len() == 2 && string_at(0) && number_at(1)
+        }
+        "mux:reorderSessions"
+        | "mux:createTab"
+        | "mux:renameTab"
+        | "mux:saveTabLayout"
+        | "mux:reorderTabs"
+        | "mux:archiveTab"
+        | "mux:selectTab"
+        | "mux:archiveSession"
+        | "mux:restoreSession"
+        | "mux:createTerminal"
+        | "mux:reorderTerminals"
+        | "mux:moveTerminal"
+        | "mux:closeTerminal" => args.len() == 1 && object_at(0),
+        "terminal:create" => {
+            (args.len() == 1 || args.len() == 2)
+                && string_at(0)
+                && (args.len() == 1 || args[1].is_null() || object_at(1))
+        }
+        "terminal:write" | "terminal:writeBinary" => {
+            (args.len() == 2 || args.len() == 3)
+                && string_at(0)
+                && string_at(1)
+                && (args.len() == 2 || object_at(2))
+        }
+        "terminal:resize" => {
+            (args.len() == 3 || args.len() == 4)
+                && string_at(0)
+                && number_at(1)
+                && number_at(2)
+                && (args.len() == 3 || object_at(3))
+        }
+        "terminal:acquireLease" => {
+            (args.len() == 1 || args.len() == 2)
+                && string_at(0)
+                && (args.len() == 1 || matches!(args[1].as_str(), Some("writer" | "observer")))
+        }
+        "terminal:renewLease" | "terminal:releaseLease" => {
+            args.len() == 2 && string_at(0) && string_at(1)
+        }
+        "terminal:transferControl" => {
+            args.len() == 3 && string_at(0) && string_at(1) && string_at(2)
+        }
+        "terminal:attach" => {
+            (1..=3).contains(&args.len())
+                && string_at(0)
+                && (args.len() < 2 || number_at(1))
+                && (args.len() < 3 || matches!(args[2].as_str(), Some("raw" | "semantic" | "both")))
+        }
+        "terminal:readReplayPage" => {
+            (args.len() == 2 || args.len() == 3)
+                && string_at(0)
+                && number_at(1)
+                && (args.len() == 2 || number_at(2))
+        }
+        "terminal:requestControl"
+        | "terminal:listViewers"
+        | "terminal:ready"
+        | "terminal:detach"
+        | "terminal:getCwd"
+        | "terminal:getForegroundProcess"
+        | "terminal:dispose" => args.len() == 1 && string_at(0),
+        _ => true,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(RuntimeError::Invalid(format!(
+            "arguments for {channel} do not match the host route schema"
+        )))
+    }
+}
+
 fn is_known_route(channel: &str) -> bool {
     matches!(
         channel,
@@ -1160,15 +1260,24 @@ mod tests {
 
     #[test]
     fn route_policy_separates_observation_control_admin_and_local_admin() {
-        assert_eq!(route_capability("terminal:attach"), RouteCapability::Observe);
+        assert_eq!(
+            route_capability("terminal:attach"),
+            RouteCapability::Observe
+        );
         assert_eq!(route_capability("terminal:write"), RouteCapability::Control);
         assert_eq!(route_capability("terminal:dispose"), RouteCapability::Admin);
-        assert_eq!(route_capability("terminal:stopAll"), RouteCapability::LocalAdmin);
+        assert_eq!(
+            route_capability("terminal:stopAll"),
+            RouteCapability::LocalAdmin
+        );
     }
 
     #[test]
     fn unknown_routes_fail_closed_for_paired_principals() {
-        assert_eq!(route_capability("future:mutation"), RouteCapability::LocalAdmin);
+        assert_eq!(
+            route_capability("future:mutation"),
+            RouteCapability::LocalAdmin
+        );
         let principal = Principal::paired(
             "device_1234".to_owned(),
             &[DeviceScope::Admin],
@@ -1187,6 +1296,33 @@ mod tests {
         assert!(principal.can_observe);
         assert!(!principal.can_control);
         assert!(!principal.can_admin);
+    }
+
+    #[test]
+    fn route_argument_tuples_are_validated_before_dispatch() {
+        assert!(validate_route_args("mux:listSessions", &[json!(false)]).is_ok());
+        assert!(validate_route_args("mux:listSessions", &[]).is_err());
+        assert!(
+            validate_route_args(
+                "mux:renameTerminal",
+                &[json!("terminal-id"), json!("shell")]
+            )
+            .is_ok()
+        );
+        assert!(validate_route_args("mux:renameTerminal", &[json!("terminal-id")]).is_err());
+        assert!(
+            validate_route_args("terminal:resize", &[json!("id"), json!(80), json!(24)]).is_ok()
+        );
+        assert!(
+            validate_route_args("terminal:resize", &[json!("id"), json!("80"), json!(24)]).is_err()
+        );
+        assert!(
+            validate_route_args(
+                "terminal:attach",
+                &[json!("id"), json!(0), json!("invalid")]
+            )
+            .is_err()
+        );
     }
 
     #[test]
