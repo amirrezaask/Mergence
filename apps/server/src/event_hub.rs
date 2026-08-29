@@ -225,6 +225,29 @@ mod tests {
     }
 
     #[test]
+    fn drops_a_single_event_that_exceeds_the_byte_budget() {
+        let hub = EventHub::with_limits(identity(), 4, 32);
+        hub.emit("mux:event", vec![serde_json::json!("x".repeat(256))]);
+        let replay = hub.replay_window(0);
+        assert!(replay.events.is_empty());
+        assert_eq!(replay.last_sequence, 1);
+    }
+
+    #[test]
+    fn preserves_sequence_order_after_repeated_compaction() {
+        let hub = EventHub::with_limits(identity(), 8, 4096);
+        for value in 1..=10_000 {
+            hub.emit("mux:event", vec![serde_json::json!(value)]);
+        }
+        let replay = hub.replay_window(9_992);
+        assert_eq!(replay.events.len(), 8);
+        assert!(replay
+            .events
+            .windows(2)
+            .all(|pair| pair[0].sequence < pair[1].sequence));
+    }
+
+    #[test]
     fn reports_replay_gap_after_count_eviction() {
         let hub = EventHub::with_limits(identity(), 2, 4096);
         for value in 1..=4 {

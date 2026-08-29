@@ -72,6 +72,13 @@ pub struct RunningServer {
 }
 
 impl RunningServer {
+    pub async fn shutdown(self) {
+        self.runtime.shutdown();
+        self.task.abort();
+        let _ = self.task.await;
+        let _ = std::fs::remove_file(self.runtime.config.data_dir.join("runtime.json"));
+    }
+
     pub async fn wait(self) {
         let _ = self.task.await;
         let manifest = self.runtime.config.data_dir.join("runtime.json");
@@ -699,15 +706,8 @@ async fn handle_socket(
                 let event = match event {
                     Ok(event) => event,
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        for id in raw.drain() {
-                            let sequence = flow.get(&id).map_or(0, |state| state.acknowledged);
-                            if send_json(&mut sender, &json!({
-                                "type": "terminal:replay-required",
-                                "terminalId": id,
-                                "sequence": sequence,
-                            })).await.is_err() { break; }
-                        }
-                        continue;
+                        let _ = close_socket(&mut sender, 1013, "outbound mailbox overflow").await;
+                        break;
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
@@ -1248,5 +1248,73 @@ mod tests {
         assert!(allowed_cors_origin("tauri://localhost", &[]));
         assert!(allowed_cors_origin("http://127.0.0.1:4747", &[]));
         assert!(!allowed_cors_origin("file:///tmp/index.html", &[]));
+    }
+
+    #[test]
+    fn websocket_origin_accepts_non_browser_and_exact_same_origin_clients() {
+        assert!(allowed_websocket_origin(None, None, &[]));
+        assert!(allowed_websocket_origin(
+            Some("https://host.example:9443"),
+            Some("host.example:9443"),
+            &[],
+        ));
+        assert!(!allowed_websocket_origin(
+            Some("https://attacker.example"),
+            Some("host.example"),
+            &[],
+        ));
+    }
+
+    #[test]
+    fn remote_bind_http_origins_require_desktop_loopback_or_https() {
+        assert!(allowed_http_origin("tauri://localhost", "0.0.0.0", &[]));
+        assert!(allowed_http_origin("http://127.0.0.1:3000", "0.0.0.0", &[]));
+        assert!(allowed_http_origin(
+            "https://client.example",
+            "0.0.0.0",
+            &["https://client.example".to_owned()],
+        ));
+        assert!(!allowed_http_origin(
+            "http://client.example",
+            "0.0.0.0",
+            &["http://client.example".to_owned()],
+        ));
+    }
+
+    #[test]
+    fn acknowledgements_release_per_terminal_output_credit() {
+        let mut flow = TerminalFlow::new(0);
+        assert!(flow.reserve(1, 40, 64));
+        assert!(!flow.reserve(2, 30, 64));
+        flow.acknowledge(1);
+        assert!(flow.reserve(2, 30, 64));
+        assert_eq!(flow.acknowledged, 1);
+    }
+
+    #[test]
+    fn lagging_terminals_have_independent_credit() {
+        let mut first = TerminalFlow::new(0);
+        let mut second = TerminalFlow::new(0);
+        assert!(first.reserve(1, 64, 64));
+        assert!(!first.reserve(2, 1, 64));
+        assert!(second.reserve(1, 64, 64));
+    }
+
+    #[test]
+    fn stale_acknowledgements_do_not_release_newer_frames() {
+        let mut flow = TerminalFlow::new(4);
+        assert!(flow.reserve(5, 32, 64));
+        flow.acknowledge(4);
+        assert_eq!(flow.outstanding, 32);
+        assert!(!flow.reserve(6, 33, 64));
+    }
+
+    #[test]
+    fn flow_can_resynchronize_from_a_known_acknowledged_sequence() {
+        let mut flow = TerminalFlow::new(42);
+        assert_eq!(flow.acknowledged, 42);
+        assert!(flow.reserve(43, 64, 64));
+        flow.acknowledge(43);
+        assert_eq!(flow.outstanding, 0);
     }
 }

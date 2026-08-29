@@ -9,13 +9,15 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use uuid::Uuid;
 
-use crate::model::{
+use crate::{
+    database_owner::{DatabaseError, DatabaseOwner},
+    model::{
     AppSession, MuxTerminal, SessionSnapshot, SessionTab, TerminalInput, TerminalOutput,
-    TerminalStatus, now_iso,
+        TerminalStatus, now_iso,
+    },
 };
 
 const STATE_SCHEMA_VERSION: u32 = 1;
-const SQLITE_BUSY_TIMEOUT_MS: u64 = 8_000;
 
 #[derive(Debug, Error)]
 pub enum StoreError {
@@ -38,6 +40,12 @@ impl StoreError {
             Self::Invalid(_) => "OPERATION_FAILED",
             Self::Storage(_) => "OPERATION_FAILED",
         }
+    }
+}
+
+impl From<DatabaseError> for StoreError {
+    fn from(error: DatabaseError) -> Self {
+        Self::Storage(error.to_string())
     }
 }
 
@@ -114,7 +122,7 @@ impl PersistedState {
 }
 
 pub struct StateStore {
-    connection: Mutex<Connection>,
+    database: DatabaseOwner,
     state: Mutex<PersistedState>,
     server_id: String,
 }
@@ -186,6 +194,14 @@ impl StateStore {
             connection: Mutex::new(connection),
             state: Mutex::new(state),
             server_id,
+        })
+    }
+
+    pub fn reset_runtime_state(&self) -> Result<(), StoreError> {
+        let machine = self.state().machine.clone();
+        self.mutate(|state| {
+            *state = PersistedState::new(machine);
+            Ok(())
         })
     }
 
@@ -1043,6 +1059,26 @@ mod tests {
     }
 
     #[test]
+    fn host_identity_remains_stable_across_database_reopen() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("yaade.sqlite3");
+        let first = StateStore::open(&path, "machine".to_owned()).expect("first");
+        let identity = first.server_id().to_owned();
+        drop(first);
+        let second = StateStore::open(&path, "machine".to_owned()).expect("second");
+        assert_eq!(second.server_id(), identity);
+    }
+
+    #[test]
+    fn corrupt_database_is_refused_without_wiping_it() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("yaade.sqlite3");
+        fs::write(&path, b"not sqlite").expect("corrupt database");
+        assert!(StateStore::open(&path, "machine".to_owned()).is_err());
+        assert_eq!(fs::read(&path).expect("database retained"), b"not sqlite");
+    }
+
+    #[test]
     fn creates_a_default_session_and_tab() {
         let store = store();
         let snapshots = store.list_snapshots(false);
@@ -1062,6 +1098,78 @@ mod tests {
         let visible = store.list_snapshots(false);
         assert_eq!(visible.len(), 1);
         assert_ne!(visible[0].session.id, id);
+    }
+
+    #[test]
+    fn incomplete_reorders_are_rejected_and_valid_reorders_increment_revisions() {
+        let store = store();
+        let first = store.list_snapshots(false)[0].session.clone();
+        let second = store.create_session("Second").expect("second");
+        assert!(store.reorder_sessions(&[first.id.clone()]).is_err());
+        let reordered = store
+            .reorder_sessions(&[second.id.clone(), first.id.clone()])
+            .expect("reorder");
+        assert_eq!(reordered[0].id, second.id);
+        assert!(reordered[0].revision > second.revision);
+    }
+
+    #[test]
+    fn archiving_a_focused_terminal_clears_focus_pointers() {
+        let store = store();
+        let snapshot = store.list_snapshots(false).remove(0);
+        let terminal = store
+            .create_terminal(
+                &snapshot.session.id,
+                snapshot.session.active_tab_id.as_deref(),
+                "Terminal",
+                TerminalInput::default(),
+            )
+            .expect("terminal");
+        store.archive_terminal(&terminal.id).expect("archive");
+        let session = store.get_session(&snapshot.session.id).expect("session");
+        let tab = store.get_tab(snapshot.session.active_tab_id.as_deref().expect("tab")).expect("tab");
+        assert_eq!(session.active_mux_terminal_id, None);
+        assert_eq!(tab.active_mux_terminal_id, None);
+    }
+
+    #[test]
+    fn moving_a_terminal_preserves_its_runtime_output() {
+        let store = store();
+        let snapshot = store.list_snapshots(false).remove(0);
+        let terminal = store
+            .create_terminal(
+                &snapshot.session.id,
+                snapshot.session.active_tab_id.as_deref(),
+                "Terminal",
+                TerminalInput::default(),
+            )
+            .expect("terminal");
+        let running = store
+            .update_terminal(&terminal.id, Some(terminal.revision), |value| {
+                value.status = TerminalStatus::Running;
+                value.output = TerminalOutput::running("pty-1".to_owned(), 0);
+            })
+            .expect("running");
+        let target = store.create_tab(&snapshot.session.id, "Window 2").expect("tab");
+        let moved = store.move_terminal(&running.id, &target.id).expect("move");
+        assert_eq!(moved.output.pty_id.as_deref(), Some("pty-1"));
+        assert_eq!(moved.status, TerminalStatus::Running);
+    }
+
+    #[test]
+    fn active_terminal_must_belong_to_the_selected_session() {
+        let store = store();
+        let first = store.list_snapshots(false).remove(0);
+        let second = store.create_session("Second").expect("second");
+        let terminal = store
+            .create_terminal(
+                &first.session.id,
+                first.session.active_tab_id.as_deref(),
+                "Terminal",
+                TerminalInput::default(),
+            )
+            .expect("terminal");
+        assert!(store.select_terminal(&second.id, Some(&terminal.id)).is_err());
     }
 
     #[test]

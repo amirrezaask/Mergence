@@ -1,7 +1,7 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
 import { AnimatePresence, LayoutGroup } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
-import { AppWindow, Plus, X } from "lucide-react";
+import { Plus, SquareTerminal, X } from "lucide-react";
 import type { MuxTerminalId, SessionTab, SessionTabId } from "@yaade/rpc";
 import { Button, Input } from "@yaade/ui/primitives";
 import { cn, useDockReorderTarget, useDockSource, yaadeMotion } from "@yaade/ui/session";
@@ -29,7 +29,7 @@ function handleWindowTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
 }
 
 function WindowTabProcessTile() {
-  return <AppWindow className="size-3.5 shrink-0" aria-hidden />;
+  return <SquareTerminal className="size-3.5 shrink-0" aria-hidden />;
 }
 
 export type SessionWindowTabStripProps = {
@@ -86,7 +86,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
     >
       <LayoutGroup id="yaade-window-tabs">
         <nav
-          className="flex h-full min-w-0 items-center overflow-x-auto"
+          className="flex h-full min-w-0 flex-1 items-center overflow-x-auto"
           aria-label="Windows"
           role="tablist"
           onKeyDown={handleWindowTabKeyDown}

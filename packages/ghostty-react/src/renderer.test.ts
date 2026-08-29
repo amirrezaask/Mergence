@@ -202,3 +202,49 @@ test("renderGhosttySnapshot snaps fractional row origins to device pixels", () =
 
   assert.deepEqual(rowTops, [4.5])
 })
+
+test("renderGhosttySnapshot shares snapped edges between adjacent rows", () => {
+  const rowRects: number[][] = []
+  const context = contextWith({
+    fillRect: (left: number, top: number, width: number, height: number) => {
+      if (left === 4 && width === 10) rowRects.push([top, height])
+    },
+  })
+  const rows = [0, 1].map(() => ({
+    cells: [cell("x")],
+    text: "x",
+    isWrapContinuation: false,
+    wrapsToNext: false,
+  }))
+  const value: GhosttySnapshot = {
+    ...snapshot(rows[0]!.cells),
+    rows: 2,
+    dirtyRows: new Set([0, 1]),
+    rowData: rows,
+  }
+  const pixelRatio = 1.25
+
+  renderGhosttySnapshot({
+    context,
+    snapshot: value,
+    metrics: { width: 10, height: 17, baseline: 12 },
+    fontSize: 12,
+    fontFamily: "monospace",
+    padding: 4,
+    originY: 4.2,
+    pixelRatio,
+    forceFull: false,
+    cursorOn: false,
+  })
+
+  assert.equal(rowRects.length, 2)
+  const [first, second] = rowRects
+  assert.ok(first)
+  assert.ok(second)
+  assert.equal(first[0]! + first[1]!, second[0])
+  assert.ok(
+    rowRects
+      .flat()
+      .every(value => Math.abs(value * pixelRatio - Math.round(value * pixelRatio)) < 1e-9),
+  )
+})

@@ -108,7 +108,11 @@ test("settings manage multiple remote server definitions and aggregate sessions"
     const launched = await launchApp({ withTerminal: false })
     closeApp = launched.app.close
     const { page } = launched
-    await page.getByRole("button", { name: "Settings" }).click()
+    await page.getByRole("button", { name: /Switch session/ }).click()
+    await page
+      .locator('[data-yaade-session-switcher-popover=""]')
+      .getByRole("button", { name: "Settings" })
+      .click()
     await expect(page.locator("[data-yaade-settings-overlay]")).toBeVisible()
     await page.getByRole("tab", { name: "Servers" }).click()
 

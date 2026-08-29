@@ -9,6 +9,7 @@ use std::{
         atomic::{AtomicU64, Ordering},
     },
     thread,
+    time::Instant,
 };
 
 use base64::Engine as _;
@@ -23,6 +24,7 @@ use crate::{
     terminal_control::{
         RuntimeTerminalLease, TerminalControlError, TerminalControlRegistry, TerminalLeaseRequest,
     },
+    terminal_history::{HistoryError, TerminalHistoryArchive, TerminalHistoryPage},
     wire::{TerminalLeaseMode, TerminalMutationFence},
 };
 
@@ -30,6 +32,8 @@ const MAX_ENTRIES: usize = 64;
 const MAX_REPLAY_BYTES: usize = 2 * 1024 * 1024;
 const EXITED_REPLAY_BYTES: usize = 256 * 1024;
 const MAX_WRITE_BYTES: usize = 1024 * 1024;
+const CHECKPOINT_BYTES: usize = 512 * 1024;
+const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 const EXITED_DISPOSE_TTL: std::time::Duration = std::time::Duration::from_secs(90);
 
 #[derive(Clone, Debug, Default, Deserialize)]
@@ -92,16 +96,35 @@ pub enum TerminalProcessStatus {
 
 #[derive(Clone, Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
+pub struct TerminalCheckpoint {
+    #[serde(rename = "checkpointVersion")]
+    pub checkpoint_version: u8,
+    #[serde(rename = "terminalEpoch")]
+    pub terminal_epoch: String,
+    pub sequence: u64,
+    pub cols: u16,
+    pub rows: u16,
+    #[serde(rename = "createdAt")]
+    pub created_at: String,
+    #[serde(rename = "syntheticAnsi")]
+    pub synthetic_ansi: String,
+}
+
+#[derive(Clone, Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalAttach {
     pub id: String,
     pub title: Option<String>,
     pub terminal_epoch: String,
     pub protocol_version: u8,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub checkpoint: Option<TerminalCheckpoint>,
     pub replay_quality: &'static str,
     pub output_chunks: Vec<String>,
     pub output: String,
     pub replay_truncated: bool,
     pub replay_needs_query_responses: bool,
+    pub archive_available: bool,
     pub last_sequence: u64,
     pub cols: u16,
     pub rows: u16,
@@ -122,6 +145,8 @@ pub enum TerminalError {
     Runtime(String),
     #[error(transparent)]
     Control(#[from] TerminalControlError),
+    #[error(transparent)]
+    History(#[from] HistoryError),
 }
 
 impl TerminalError {
@@ -129,7 +154,9 @@ impl TerminalError {
     pub const fn wire_code(&self) -> &'static str {
         match self {
             Self::NotFound(_) => "NOT_FOUND",
-            Self::Limit | Self::Invalid(_) | Self::Runtime(_) => "OPERATION_FAILED",
+            Self::Limit | Self::Invalid(_) | Self::Runtime(_) | Self::History(_) => {
+                "OPERATION_FAILED"
+            }
             Self::Control(error) => error.code.as_wire_code(),
         }
     }
@@ -156,6 +183,10 @@ struct EntryState {
     replay_ready_clients: HashSet<String>,
     da1_leftover: String,
     live_cwd: Option<PathBuf>,
+    recorder: Option<vt100::Parser>,
+    checkpoint: Option<TerminalCheckpoint>,
+    bytes_since_checkpoint: usize,
+    last_checkpoint_at: Instant,
 }
 
 struct TerminalEntry {
@@ -178,11 +209,16 @@ pub struct TerminalHost {
     events: Arc<EventHub>,
     next_id: AtomicU64,
     cleanup_tx: tokio::sync::mpsc::UnboundedSender<(String, String)>,
+    history: TerminalHistoryArchive,
+    checkpoints: bool,
 }
 
 impl TerminalHost {
-    #[must_use]
-    pub fn new(events: Arc<EventHub>) -> Arc<Self> {
+    pub fn new(
+        events: Arc<EventHub>,
+        history_root: &Path,
+        checkpoints: bool,
+    ) -> Result<Arc<Self>, TerminalError> {
         let (cleanup_tx, mut cleanup_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = Arc::new(Self {
             entries: Mutex::new(HashMap::new()),
@@ -190,6 +226,8 @@ impl TerminalHost {
             events,
             next_id: AtomicU64::new(0),
             cleanup_tx,
+            history: TerminalHistoryArchive::open(history_root)?,
+            checkpoints,
         });
         let weak = Arc::downgrade(&host);
         tokio::spawn(async move {
@@ -205,7 +243,7 @@ impl TerminalHost {
                 });
             }
         });
-        host
+        Ok(host)
     }
 
     pub fn create(
@@ -337,6 +375,10 @@ impl TerminalHost {
                 replay_ready_clients: HashSet::new(),
                 da1_leftover: String::new(),
                 live_cwd: None,
+                recorder: self.checkpoints.then(|| vt100::Parser::new(rows, cols, 0)),
+                checkpoint: None,
+                bytes_since_checkpoint: 0,
+                last_checkpoint_at: Instant::now(),
             }),
         });
         self.control
@@ -352,7 +394,7 @@ impl TerminalHost {
         let thread_name = format!("yaade-pty-{id}");
         thread::Builder::new()
             .name(thread_name)
-            .stack_size(256 * 1024)
+            .stack_size(1024 * 1024)
             .spawn(move || output_loop(weak, entry, &mut reader))
             .map_err(|error| TerminalError::Runtime(error.to_string()))?;
 
@@ -442,6 +484,15 @@ impl TerminalHost {
             .unwrap_or_else(|poisoned| poisoned.into_inner());
         state.cols = cols;
         state.rows = rows;
+        if state.recorder.is_some() {
+            state
+                .recorder
+                .as_mut()
+                .expect("recorder checked")
+                .screen_mut()
+                .set_size(rows, cols);
+            store_checkpoint(&entry.terminal_epoch, &mut state);
+        }
         Ok(())
     }
 
@@ -460,22 +511,43 @@ impl TerminalHost {
             .replay
             .front()
             .map_or(state.sequence + 1, |chunk| chunk.sequence);
-        let truncated = state.replay_truncated && after_sequence + 1 < replay_floor;
+        let checkpoint = state
+            .checkpoint
+            .as_ref()
+            .filter(|checkpoint| state.replay_truncated && after_sequence < checkpoint.sequence)
+            .cloned();
+        let raw_after = checkpoint.as_ref().map_or(after_sequence, |checkpoint| {
+            after_sequence.max(checkpoint.sequence)
+        });
+        let truncated =
+            state.replay_truncated && checkpoint.is_none() && after_sequence + 1 < replay_floor;
+        let mut output_chunks = state
+            .replay
+            .iter()
+            .filter(|chunk| chunk.sequence > raw_after)
+            .map(|chunk| chunk.data.clone())
+            .collect::<Vec<_>>();
+        if self.history.available(id) && raw_after < state.sequence {
+            output_chunks = bounded_replay_tail(output_chunks, EXITED_REPLAY_BYTES);
+        }
         Ok(TerminalAttach {
             id: entry.id.clone(),
             title: entry.title.clone(),
             terminal_epoch: entry.terminal_epoch.clone(),
             protocol_version: 2,
-            replay_quality: if truncated { "degraded" } else { "exact" },
-            output_chunks: state
-                .replay
-                .iter()
-                .filter(|chunk| chunk.sequence > after_sequence)
-                .map(|chunk| chunk.data.clone())
-                .collect(),
+            replay_quality: if checkpoint.is_some() {
+                "checkpoint"
+            } else if truncated {
+                "degraded"
+            } else {
+                "exact"
+            },
+            checkpoint,
+            output_chunks,
             output: String::new(),
-            replay_truncated: truncated,
+            replay_truncated: state.replay_truncated && after_sequence + 1 < replay_floor,
             replay_needs_query_responses: !state.replay_ready_clients.contains(client_id),
+            archive_available: true,
             last_sequence: state.sequence,
             cols: state.cols,
             rows: state.rows,
@@ -483,6 +555,18 @@ impl TerminalHost {
             exit_code: state.exit_code,
             signal: state.signal,
         })
+    }
+
+    pub fn read_replay_page(
+        &self,
+        id: &str,
+        after_sequence: u64,
+        max_bytes: Option<usize>,
+    ) -> Result<Option<TerminalHistoryPage>, TerminalError> {
+        self.entry(id)?;
+        self.history
+            .read_page(id, after_sequence, max_bytes)
+            .map_err(Into::into)
     }
 
     pub fn mark_replay_ready(&self, id: &str, client_id: &str) -> Result<(), TerminalError> {
@@ -525,6 +609,7 @@ impl TerminalHost {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .unregister_terminal(id, Some(&entry.terminal_epoch));
+        self.history.close_terminal(id)?;
         entry
             .child
             .lock()
@@ -544,6 +629,7 @@ impl TerminalHost {
         for id in ids {
             let _ = self.dispose(&id);
         }
+        let _ = self.history.flush_all();
     }
 
     pub fn get_cwd(&self, id: &str) -> Result<String, TerminalError> {
@@ -773,7 +859,20 @@ fn output_loop(
                 if let Some(cwd) = parse_osc7_cwd(&data) {
                     state.live_cwd = Some(cwd.canonicalize().unwrap_or(cwd));
                 }
+                if let Some(recorder) = state.recorder.as_mut() {
+                    recorder.process(data.as_bytes());
+                    state.bytes_since_checkpoint =
+                        state.bytes_since_checkpoint.saturating_add(bytes);
+                    if state.bytes_since_checkpoint >= CHECKPOINT_BYTES
+                        || state.last_checkpoint_at.elapsed() >= CHECKPOINT_INTERVAL
+                    {
+                        store_checkpoint(&entry.terminal_epoch, &mut state);
+                    }
+                }
                 drop(state);
+                if let Err(error) = host.history.append(&entry.id, sequence, &data) {
+                    eprintln!("[terminal-history] {error}");
+                }
                 if da1_queries > 0
                     && let Ok(mut writer) = entry.writer.lock()
                 {
@@ -814,6 +913,9 @@ fn output_loop(
     }
     state.status = TerminalProcessStatus::Exited;
     state.exit_code = Some(exit_code);
+    if state.recorder.is_some() {
+        store_checkpoint(&entry.terminal_epoch, &mut state);
+    }
     state.signal = signal;
     while state.replay_bytes > EXITED_REPLAY_BYTES && state.replay.len() > 1 {
         if let Some(dropped) = state.replay.pop_front() {
@@ -827,9 +929,53 @@ fn output_loop(
         args.push(json!(signal));
     }
     host.events.emit("terminal:exit", args);
+    if let Err(error) = host.history.close_terminal(&entry.id) {
+        eprintln!("[terminal-history] {error}");
+    }
     let _ = host
         .cleanup_tx
         .send((entry.id.clone(), entry.terminal_epoch.clone()));
+}
+
+fn store_checkpoint(terminal_epoch: &str, state: &mut EntryState) {
+    let Some(recorder) = state.recorder.as_ref() else {
+        return;
+    };
+    let screen = recorder.screen();
+    let (row, column) = screen.cursor_position();
+    let mut ansi = Vec::with_capacity(state.cols as usize * state.rows as usize + 64);
+    ansi.extend_from_slice(b"\x1b[0m\x1b[2J\x1b[H");
+    if screen.alternate_screen() {
+        ansi.extend_from_slice(b"\x1b[?1049h");
+    } else {
+        ansi.extend_from_slice(b"\x1b[?1049l");
+    }
+    ansi.extend_from_slice(&screen.contents_formatted());
+    ansi.extend_from_slice(format!("\x1b[{};{}H", row + 1, column + 1).as_bytes());
+    state.checkpoint = Some(TerminalCheckpoint {
+        checkpoint_version: 1,
+        terminal_epoch: terminal_epoch.to_owned(),
+        sequence: state.sequence,
+        cols: state.cols,
+        rows: state.rows,
+        created_at: crate::model::now_iso(),
+        synthetic_ansi: String::from_utf8_lossy(&ansi).into_owned(),
+    });
+    state.bytes_since_checkpoint = 0;
+    state.last_checkpoint_at = Instant::now();
+}
+
+fn bounded_replay_tail(chunks: Vec<String>, max_bytes: usize) -> Vec<String> {
+    let mut total = 0_usize;
+    let mut start = chunks.len();
+    for (index, chunk) in chunks.iter().enumerate().rev() {
+        if start < chunks.len() && total.saturating_add(chunk.len()) > max_bytes {
+            break;
+        }
+        start = index;
+        total = total.saturating_add(chunk.len());
+    }
+    chunks.into_iter().skip(start).collect()
 }
 
 fn parse_osc7_cwd(chunk: &str) -> Option<PathBuf> {

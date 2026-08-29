@@ -98,7 +98,11 @@ impl TerminalHistoryArchive {
     }
 
     #[cfg(test)]
-    pub fn with_limits(root: &Path, block_bytes: usize, page_bytes: usize) -> Result<Self, HistoryError> {
+    pub fn with_limits(
+        root: &Path,
+        block_bytes: usize,
+        page_bytes: usize,
+    ) -> Result<Self, HistoryError> {
         fs::create_dir_all(root)?;
         Ok(Self {
             root: root.to_owned(),
@@ -115,7 +119,10 @@ impl TerminalHistoryArchive {
         let mut states = self.states();
         let state = self.state_for(&mut states, terminal_id)?;
         state.pending_bytes = state.pending_bytes.saturating_add(data.len());
-        state.pending.push(HistoryRecord { sequence, data: data.to_owned() });
+        state.pending.push(HistoryRecord {
+            sequence,
+            data: data.to_owned(),
+        });
         state.manifest.updated_at = now_millis();
         if state.pending_bytes >= self.block_bytes {
             flush_state(state)?;
@@ -137,7 +144,9 @@ impl TerminalHistoryArchive {
         }
         let state = self.state_for(&mut states, terminal_id)?;
         flush_state(state)?;
-        let limit = max_bytes.unwrap_or(self.page_bytes).clamp(1, self.page_bytes);
+        let limit = max_bytes
+            .unwrap_or(self.page_bytes)
+            .clamp(1, self.page_bytes);
         let mut chunks = Vec::new();
         let mut bytes = 0_usize;
         let mut first_sequence = 0_u64;
@@ -214,11 +223,14 @@ impl TerminalHistoryArchive {
 
     #[must_use]
     pub fn available(&self, terminal_id: &str) -> bool {
-        self.states().contains_key(terminal_id) || self.terminal_dir(terminal_id).join("index.json").is_file()
+        self.states().contains_key(terminal_id)
+            || self.terminal_dir(terminal_id).join("index.json").is_file()
     }
 
     fn states(&self) -> MutexGuard<'_, HashMap<String, ArchiveState>> {
-        self.states.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+        self.states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
     fn state_for<'a>(
@@ -244,7 +256,10 @@ impl TerminalHistoryArchive {
                 terminal_id.to_owned(),
                 ArchiveState {
                     dir,
-                    manifest: ArchiveManifest { closed_at: None, ..manifest },
+                    manifest: ArchiveManifest {
+                        closed_at: None,
+                        ..manifest
+                    },
                     pending: Vec::new(),
                     pending_bytes: 0,
                 },
@@ -256,7 +271,8 @@ impl TerminalHistoryArchive {
     }
 
     fn terminal_dir(&self, terminal_id: &str) -> PathBuf {
-        self.root.join(URL_SAFE_NO_PAD.encode(terminal_id.as_bytes()))
+        self.root
+            .join(URL_SAFE_NO_PAD.encode(terminal_id.as_bytes()))
     }
 
     fn cleanup_expired(&self) -> Result<(), HistoryError> {
@@ -276,7 +292,9 @@ impl TerminalHistoryArchive {
                     manifest.closed_at = Some(now);
                     write_manifest_value(&dir, &manifest)?;
                 }
-                Some(closed) if now.saturating_sub(closed) > CLOSED_RETENTION.as_millis() as u64 => {
+                Some(closed)
+                    if now.saturating_sub(closed) > CLOSED_RETENTION.as_millis() as u64 =>
+                {
                     fs::remove_dir_all(dir)?;
                 }
                 Some(_) => {}
@@ -294,8 +312,14 @@ impl TerminalHistoryArchive {
                 continue;
             }
             let dir = item.path();
-            let Some(manifest) = read_manifest(&dir)? else { continue };
-            let bytes = manifest.blocks.iter().map(|block| block.stored_bytes).sum::<u64>();
+            let Some(manifest) = read_manifest(&dir)? else {
+                continue;
+            };
+            let bytes = manifest
+                .blocks
+                .iter()
+                .map(|block| block.stored_bytes)
+                .sum::<u64>();
             total = total.saturating_add(bytes);
             archives.push((manifest.updated_at, bytes, dir));
         }
@@ -320,7 +344,9 @@ fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
     let records = std::mem::take(&mut state.pending);
     let uncompressed_bytes = std::mem::take(&mut state.pending_bytes) as u64;
     let first_sequence = records.first().map_or(0, |record| record.sequence);
-    let last_sequence = records.last().map_or(first_sequence, |record| record.sequence);
+    let last_sequence = records
+        .last()
+        .map_or(first_sequence, |record| record.sequence);
     let file = format!("{first_sequence:012}-{last_sequence:012}.json.gz");
     let encoded = serde_json::to_vec(&records)?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
@@ -341,7 +367,12 @@ fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
 }
 
 fn enforce_terminal_quota(state: &mut ArchiveState) -> Result<(), HistoryError> {
-    let mut bytes = state.manifest.blocks.iter().map(|block| block.stored_bytes).sum::<u64>();
+    let mut bytes = state
+        .manifest
+        .blocks
+        .iter()
+        .map(|block| block.stored_bytes)
+        .sum::<u64>();
     while bytes > MAX_TERMINAL_BYTES && state.manifest.blocks.len() > 1 {
         let block = state.manifest.blocks.remove(0);
         bytes = bytes.saturating_sub(block.stored_bytes);
@@ -404,15 +435,24 @@ mod tests {
         archive.append("term-1", 1, "one").expect("append");
         archive.append("term-1", 2, "two").expect("append");
         archive.append("term-1", 3, "three").expect("append");
-        let first = archive.read_page("term-1", 0, None).expect("read").expect("page");
+        let first = archive
+            .read_page("term-1", 0, None)
+            .expect("read")
+            .expect("page");
         assert_eq!(first.chunks, vec!["one"]);
         assert!(!first.complete);
-        let second = archive.read_page("term-1", first.next_sequence, None).expect("read").expect("page");
+        let second = archive
+            .read_page("term-1", first.next_sequence, None)
+            .expect("read")
+            .expect("page");
         assert_eq!(second.chunks, vec!["two"]);
         drop(archive);
 
         let reopened = TerminalHistoryArchive::with_limits(&root, 4, 5).expect("reopen");
-        let final_page = reopened.read_page("term-1", second.next_sequence, None).expect("read").expect("page");
+        let final_page = reopened
+            .read_page("term-1", second.next_sequence, None)
+            .expect("read")
+            .expect("page");
         assert_eq!(final_page.chunks, vec!["three"]);
         assert!(final_page.complete);
         fs::remove_dir_all(root).expect("cleanup");
@@ -422,7 +462,12 @@ mod tests {
     fn missing_history_returns_null() {
         let root = temp_dir();
         let archive = TerminalHistoryArchive::with_limits(&root, 4, 5).expect("archive");
-        assert!(archive.read_page("missing", 0, None).expect("read").is_none());
+        assert!(
+            archive
+                .read_page("missing", 0, None)
+                .expect("read")
+                .is_none()
+        );
         fs::remove_dir_all(root).expect("cleanup");
     }
 }

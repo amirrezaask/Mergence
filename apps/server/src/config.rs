@@ -399,6 +399,27 @@ mod tests {
     }
 
     #[test]
+    fn accepts_public_bind_with_host_token() {
+        let root = temp_root();
+        let environment = BTreeMap::from([("HOME".to_owned(), root.display().to_string())]);
+        let config = HostConfig::from_parts(
+            [
+                OsString::from("--host"),
+                OsString::from("0.0.0.0"),
+                OsString::from("--token"),
+                OsString::from("secret"),
+            ],
+            &environment,
+            &root,
+            &root,
+            None,
+        )
+        .expect("public config");
+        assert_eq!(config.host, "0.0.0.0");
+        assert_eq!(config.auth_token.as_deref(), Some("secret"));
+    }
+
+    #[test]
     fn rejects_public_bind_without_token() {
         let root = temp_root();
         let environment = BTreeMap::from([("HOME".to_owned(), root.display().to_string())]);
@@ -438,6 +459,40 @@ mod tests {
 
         assert_eq!(config.launch_config.workspace_path, workspace);
         assert!(config.allowed_roots.contains(&workspace));
+    }
+
+    #[test]
+    fn cwd_under_home_is_the_default_workspace() {
+        let root = temp_root();
+        let home = root.join("home");
+        let cwd = home.join("project");
+        fs::create_dir_all(&cwd).expect("cwd");
+        let environment = BTreeMap::from([("HOME".to_owned(), home.display().to_string())]);
+        let config = HostConfig::from_parts([], &environment, &cwd, &home, None).expect("config");
+        assert_eq!(config.launch_path, cwd);
+    }
+
+    #[test]
+    fn cwd_outside_allowed_roots_falls_back_to_home() {
+        let root = temp_root();
+        let home = root.join("home");
+        let cwd = root.join("outside");
+        fs::create_dir_all(&home).expect("home");
+        fs::create_dir_all(&cwd).expect("cwd");
+        let environment = BTreeMap::from([("HOME".to_owned(), home.display().to_string())]);
+        let config = HostConfig::from_parts([], &environment, &cwd, &home, None).expect("config");
+        assert_eq!(config.launch_path, home);
+    }
+
+    #[test]
+    fn terminal_checkpoints_can_be_disabled() {
+        let root = temp_root();
+        let environment = BTreeMap::from([
+            ("HOME".to_owned(), root.display().to_string()),
+            ("YAADE_TERMINAL_CHECKPOINTS".to_owned(), "0".to_owned()),
+        ]);
+        let config = HostConfig::from_parts([], &environment, &root, &root, None).expect("config");
+        assert!(!config.features.terminal_checkpoints);
     }
 
     #[cfg(unix)]

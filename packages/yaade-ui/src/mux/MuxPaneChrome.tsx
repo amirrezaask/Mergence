@@ -167,7 +167,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
       aria-haspopup="dialog"
       aria-expanded={contextOpen}
       data-yaade-mux-context-trigger=""
-      className="size-5 text-muted-foreground/55 opacity-70 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100"
+      className="size-5 text-muted-foreground/55 opacity-0 hover:text-foreground focus-visible:text-foreground group-hover/mux-chrome:opacity-70 group-focus-within/mux-chrome:opacity-70"
       onPointerDown={event => event.stopPropagation()}
       onClick={event => {
         event.stopPropagation()
@@ -271,6 +271,7 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           />
           <div
             className="flex shrink-0 items-center gap-0.5"
+            data-yaade-mux-pane-controls=""
             onPointerDown={event => event.stopPropagation()}
           >
             <SplitControl

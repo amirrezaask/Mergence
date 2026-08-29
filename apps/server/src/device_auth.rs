@@ -732,6 +732,96 @@ mod tests {
     }
 
     #[test]
+    fn credential_rotation_keeps_metadata_and_invalidates_old_token() {
+        let service = service();
+        let random = SystemRandom::new();
+        let document = Ed25519KeyPair::generate_pkcs8(&random).expect("generate key");
+        let key = Ed25519KeyPair::from_pkcs8(document.as_ref()).expect("parse key");
+        let code = service.create_pairing_code().expect("pairing code");
+        let device = service
+            .pair(PairDevice {
+                code: code.code,
+                device_id: Some("device_rotate".to_owned()),
+                name: "Browser".to_owned(),
+                public_key: json!({
+                    "kty": "OKP",
+                    "crv": "Ed25519",
+                    "x": URL_SAFE_NO_PAD.encode(key.public_key().as_ref()),
+                }),
+                algorithm: "Ed25519".to_owned(),
+                scopes: None,
+            })
+            .expect("pair");
+        let challenge = service.challenge(&device.id).expect("challenge");
+        let authenticated = service
+            .authenticate(AuthenticateDevice {
+                device_id: device.id.clone(),
+                nonce: challenge.nonce.clone(),
+                signature: URL_SAFE_NO_PAD.encode(key.sign(challenge.nonce.as_bytes()).as_ref()),
+            })
+            .expect("authenticate");
+        let rotated = service.rotate(&authenticated.token).expect("rotate");
+        assert_eq!(rotated.device.id, device.id);
+        assert!(service.session(&authenticated.token).expect("old lookup").is_none());
+        assert!(service.session(&rotated.token).expect("new lookup").is_some());
+    }
+
+    #[test]
+    fn revocation_invalidates_active_sessions() {
+        let service = service();
+        let random = SystemRandom::new();
+        let document = Ed25519KeyPair::generate_pkcs8(&random).expect("generate key");
+        let key = Ed25519KeyPair::from_pkcs8(document.as_ref()).expect("parse key");
+        let code = service.create_pairing_code().expect("pairing code");
+        let device = service
+            .pair(PairDevice {
+                code: code.code,
+                device_id: Some("device_revoke".to_owned()),
+                name: "Browser".to_owned(),
+                public_key: json!({
+                    "kty": "OKP", "crv": "Ed25519",
+                    "x": URL_SAFE_NO_PAD.encode(key.public_key().as_ref()),
+                }),
+                algorithm: "Ed25519".to_owned(),
+                scopes: None,
+            })
+            .expect("pair");
+        let challenge = service.challenge(&device.id).expect("challenge");
+        let authenticated = service.authenticate(AuthenticateDevice {
+            device_id: device.id.clone(),
+            nonce: challenge.nonce.clone(),
+            signature: URL_SAFE_NO_PAD.encode(key.sign(challenge.nonce.as_bytes()).as_ref()),
+        }).expect("authenticate");
+        assert!(service.revoke(&device.id).expect("revoke"));
+        assert!(service.session(&authenticated.token).expect("lookup").is_none());
+    }
+
+    #[test]
+    fn repeated_failed_authentications_are_rate_limited_and_bounded() {
+        let service = service();
+        for index in 0..FAILURE_LIMIT {
+            let result = service.authenticate(AuthenticateDevice {
+                device_id: "unknown_device".to_owned(),
+                nonce: format!("nonce-{index}"),
+                signature: "invalid".to_owned(),
+            });
+            assert!(result.is_err());
+        }
+        assert!(matches!(
+            service.authenticate(AuthenticateDevice {
+                device_id: "unknown_device".to_owned(),
+                nonce: "final".to_owned(),
+                signature: "invalid".to_owned(),
+            }),
+            Err(DeviceAuthError::RateLimited)
+        ));
+        for index in 0..(MAX_FAILURE_KEYS + 100) {
+            service.record_failure(&format!("device-{index:08}"));
+        }
+        assert!(service.lock().failures.len() <= MAX_FAILURE_KEYS);
+    }
+
+    #[test]
     fn rejects_admin_pairing() {
         let service = service();
         let code = service.create_pairing_code().expect("pairing code");

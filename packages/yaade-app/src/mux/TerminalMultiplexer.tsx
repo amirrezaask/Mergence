@@ -42,7 +42,6 @@ import {
 	PanelLeftOpen,
 	PanelRightClose,
 	PanelRightOpen,
-	Settings,
 	Terminal as TerminalIcon,
 } from "lucide-react";
 import {
@@ -81,9 +80,9 @@ import {
 import { SessionTabStrip } from "./SessionTabStrip.js";
 import { SessionWindowTabStrip } from "./SessionWindowTabStrip.js";
 import { SessionSwitcher } from "./SessionSwitcher.js";
-import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { TerminalTabStrip } from "./TerminalTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
+import { ClientWindowControls } from "./ClientWindowControls.js";
 import { nextRuntimeTerminalTitle, type RuntimeTerminalTitle } from "./terminal-title.js";
 import { SessionLoadingState } from "./SessionEmptyState.js";
 import {
@@ -1834,11 +1833,12 @@ export function TerminalMultiplexer() {
 												<>
 													{!sidebarLayout ? (
 														<header
-															className="flex shrink-0 items-center"
+															className="group/titlebar flex shrink-0 items-center"
 															data-yaade-session-tabs=""
 															data-yaade-top-tabbar=""
+															data-tauri-drag-region=""
 														>
-
+															<ClientWindowControls />
 															<SessionSwitcher
 																open={switcherOpen}
 																onOpenChange={setSwitcherOpen}
@@ -1846,6 +1846,7 @@ export function TerminalMultiplexer() {
 																activeSessionId={snapshot.activeSessionId}
 																onSelect={(session) => selectSession(session.id)}
 																onCreate={() => void createSession()}
+																onOpenSettings={() => setSettingsOpen(true)}
 																onClose={requestCloseSession}
 																onRename={(id, title) => void renameSession(id, title)}
 																terminalCounts={terminalCounts}
@@ -1860,23 +1861,6 @@ export function TerminalMultiplexer() {
 																onRename={(id, title) => void renameTab(id, title)}
 																dockTerminalIdsByTab={dockTerminalIdsByTab}
 															/>
-															<ShortcutTooltip
-																label="Settings"
-																shortcut={muxSessionDirectShortcutFor("settings.show")}
-																side="bottom"
-															>
-																<Button
-																	type="button"
-																	size="icon-sm"
-																	variant="ghost"
-																	aria-label="Settings"
-																	onClick={() => setSettingsOpen(true)}
-																	data-yaade-session-settings=""
-																	className="size-[var(--yaade-tab-pill-height)] shrink-0"
-																>
-																	<Settings />
-																</Button>
-															</ShortcutTooltip>
 														</header>
 													) : null}
 													<div

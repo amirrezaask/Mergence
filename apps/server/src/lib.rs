@@ -6,9 +6,12 @@
 //! the existing application boundary during the parity migration.
 
 pub mod config;
+pub mod database_owner;
 pub mod device_auth;
+pub mod diagnostics;
 pub mod event_hub;
 pub mod model;
+pub mod outbound_mailbox;
 pub mod runtime;
 pub mod server;
 pub mod service;

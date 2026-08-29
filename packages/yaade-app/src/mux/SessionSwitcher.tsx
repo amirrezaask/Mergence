@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Layers3, Pencil, Plus, X } from "lucide-react";
+import { Check, Layers3, Pencil, Plus, Settings, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
 import { cn, formatKeyBinding } from "@yaade/ui/session";
 import { Button, Input, Popover, PopoverContent, PopoverTrigger } from "@yaade/ui/primitives";
@@ -12,6 +12,7 @@ export type SessionSwitcherProps = {
 	readonly activeSessionId?: AppSession["id"];
 	readonly onSelect: (session: AppSession) => void;
 	readonly onCreate: () => void;
+	readonly onOpenSettings: () => void;
 	readonly onClose?: (id: SessionId) => void;
 	readonly onRename?: (id: SessionId, title: string) => void;
 	readonly terminalCounts?: ReadonlyMap<SessionId, number>;
@@ -48,6 +49,12 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 		props.onCreate();
 	};
 
+	const openSettings = () => {
+		setEditingId(null);
+		props.onOpenChange(false);
+		props.onOpenSettings();
+	};
+
 	return (
 		<Popover open={props.open} onOpenChange={props.onOpenChange}>
 			<PopoverTrigger asChild>
@@ -82,12 +89,6 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 				data-yaade-glass-elevated="true"
 				data-yaade-session-switcher-popover=""
 			>
-				<div className="relative z-1 flex items-center justify-between px-3 pb-2 pt-3">
-					<span className="text-xs font-semibold text-foreground">Sessions</span>
-					<span className="font-mono text-3xs tabular-nums text-muted-foreground">
-						{props.sessions.length}
-					</span>
-				</div>
 				<div
 					className="relative z-1 mx-1.5 flex max-h-[min(22rem,calc(100dvh-12rem))] flex-col gap-1 overflow-y-auto"
 					role="listbox"
@@ -178,14 +179,6 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 														</span>
 													) : null}
 												</span>
-												{count > 0 ? (
-													<span
-														className="shrink-0 rounded-full bg-background/45 px-1.5 py-0.5 font-mono text-3xs tabular-nums text-muted-foreground"
-														aria-label={`${count} terminal${count === 1 ? "" : "s"}`}
-													>
-														{count}
-													</span>
-												) : null}
 											</button>
 											{props.onRename ? (
 												<Button
@@ -220,7 +213,7 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 						})
 					)}
 				</div>
-				<div className="relative z-1 mt-2 border-t border-border/60 p-1.5">
+				<div className="relative z-1 mt-2 flex flex-col gap-1 border-t border-border/60 p-1.5">
 					<Button
 						type="button"
 						variant="ghost"
@@ -234,6 +227,20 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 							<Plus />
 						</span>
 						New session
+					</Button>
+					<Button
+						type="button"
+						variant="ghost"
+						size="sm"
+						className="h-10 w-full justify-start gap-2 rounded-[var(--yaade-control-radius)] text-foreground hover:bg-accent/60"
+						aria-label="Settings"
+						data-yaade-session-settings=""
+						onClick={openSettings}
+					>
+						<span className="grid size-6 place-items-center text-muted-foreground">
+							<Settings />
+						</span>
+						Settings
 					</Button>
 				</div>
 			</PopoverContent>

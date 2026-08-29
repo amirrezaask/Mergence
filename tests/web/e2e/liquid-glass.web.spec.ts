@@ -86,7 +86,11 @@ test("settings keep fixed material and typography while allowing font selection"
 }) => {
   const { page } = await launchApp();
   await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible();
-  await page.getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("button", { name: /Switch session/ }).click();
+  await page
+    .locator('[data-yaade-session-switcher-popover=""]')
+    .getByRole("button", { name: "Settings" })
+    .click();
   await expect(page.locator("[data-yaade-settings-overlay]")).toBeVisible();
 
   await expect(page.locator("[data-yaade-interface-material-option]")).toHaveCount(0);
@@ -130,7 +134,8 @@ test("top Window tabs use compact separated pills with a raised active surface",
   expect(pillHeight).toBeGreaterThan(24);
   expect(pillHeight).toBeLessThan(tabBarHeight - 8);
   await expect(topBar.getByRole("button", { name: "Switch terminal" })).toHaveCount(0);
-  await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible();
+  await expect(topBar.getByRole("button", { name: "Settings" })).toHaveCount(0);
+  await expect(topBar.locator('[data-yaade-window-controls=""]')).toHaveCount(0);
 
   const newTab = page.locator('[data-yaade-new-session-tab=""]');
   await expect(newTab).toBeVisible();
@@ -151,7 +156,10 @@ test("top Window tabs use compact separated pills with a raised active surface",
   expect(secondTabBox.left - firstTabBox.right).toBeLessThanOrEqual(4);
   const newTabBox = await newTab.boundingBox();
   if (!newTabBox) throw new Error("New Window button geometry is unavailable");
-  expect(newTabBox.x - secondTabBox.right).toBeLessThanOrEqual(4);
+  expect(newTabBox.x - secondTabBox.right).toBeGreaterThan(24);
+  const topBarBox = await topBar.boundingBox();
+  if (!topBarBox) throw new Error("Title bar geometry is unavailable");
+  expect(topBarBox.x + topBarBox.width - (newTabBox.x + newTabBox.width)).toBeLessThanOrEqual(24);
 
   const activeTab = page.locator(
     '[data-yaade-window-tabs] [data-yaade-session-tab][data-active="true"]',
@@ -208,6 +216,21 @@ test("top Window tabs use compact separated pills with a raised active surface",
   await expect(switched.locator('[data-yaade-window-tab-pill=""]')).toBeVisible();
 
   await expect(page.locator("[data-yaade-top-tabbar] > span")).toHaveCount(0);
+});
+
+test("pane controls stay quiet until the pane is hovered or keyboard-focused", async ({
+  launchApp,
+}) => {
+  const { page } = await launchApp();
+  const paneChrome = page.locator('[data-yaade-mux-pane-chrome]').first();
+  const paneControls = paneChrome.locator('[data-yaade-mux-pane-controls=""]');
+
+  await expect(paneChrome).toBeVisible();
+  await expect(paneControls).toHaveCSS("opacity", "0");
+  await paneChrome.hover();
+  await expect(paneControls).toHaveCSS("opacity", "1");
+  await expect(paneControls.getByRole("button", { name: "Split right" })).toBeVisible();
+  await expect(paneControls.getByRole("button", { name: "Close pane" })).toBeVisible();
 });
 
 test("window tabs close with the x button and have no overflow menu", async ({ launchApp }) => {

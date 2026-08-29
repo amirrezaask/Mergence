@@ -1,8 +1,27 @@
 import assert from "node:assert/strict"
 import { describe, it } from "vite-plus/test"
-import { resolveCurrentHostUrl } from "./client-environment.js"
+import { isDesktopClient, resolveCurrentHostUrl } from "./client-environment.js"
 
-describe("resolveCurrentHostUrl", () => {
+describe("client environment", () => {
+  it("distinguishes browser and desktop locations", () => {
+    assert.equal(
+      isDesktopClient({
+        hostname: "yaade.example",
+        origin: "https://yaade.example",
+        protocol: "https:",
+      }),
+      false,
+    )
+    assert.equal(
+      isDesktopClient({
+        hostname: "tauri.localhost",
+        origin: "http://tauri.localhost",
+        protocol: "http:",
+      }),
+      true,
+    )
+  })
+
   it("uses the serving origin in a browser", () => {
     assert.equal(
       resolveCurrentHostUrl({

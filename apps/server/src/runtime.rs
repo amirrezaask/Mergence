@@ -143,6 +143,7 @@ impl HostRuntime {
             &config.data_dir.join("yaade.sqlite3"),
             machine_hostname.clone(),
         )?);
+        store.reset_runtime_state()?;
         let devices = Arc::new(DeviceAuthService::new(Arc::clone(&store)).map_err(|error| {
             RuntimeError::Invalid(format!(
                 "device authentication initialization failed: {error}"
@@ -156,7 +157,11 @@ impl HostRuntime {
             started_at: now_iso(),
         };
         let events = Arc::new(EventHub::new(identity.clone()));
-        let terminal = TerminalHost::new(Arc::clone(&events));
+        let terminal = TerminalHost::new(
+            Arc::clone(&events),
+            &config.data_dir.join("terminal-history"),
+            config.features.terminal_checkpoints,
+        )?;
         let capabilities =
             ServerCapabilities::parity(&identity, config.features.terminal_checkpoints);
         let runtime = Arc::new(Self {
@@ -278,36 +283,11 @@ impl HostRuntime {
     }
 
     fn authorize(&self, principal: &Principal, channel: &str) -> Result<(), RuntimeError> {
-        if !is_known_route(channel) && !principal.local_admin {
-            return Err(RuntimeError::ScopeDenied(channel.to_owned()));
-        }
-        let observe = matches!(
-            channel,
-            "mux:listSessions"
-                | "mux:getSession"
-                | "mux:getTerminal"
-                | "terminal:listViewers"
-                | "terminal:attach"
-                | "terminal:detach"
-                | "terminal:readReplayPage"
-                | "terminal:ready"
-                | "terminal:getCwd"
-                | "terminal:getForegroundProcess"
-        );
-        let admin = matches!(
-            channel,
-            "terminal:dispose"
-                | "terminal:transferControl"
-                | "mux:archiveTab"
-                | "mux:archiveSession"
-                | "mux:closeTerminal"
-        );
-        let allowed = if admin {
-            principal.can_admin
-        } else if observe {
-            principal.can_observe
-        } else {
-            principal.can_control
+        let allowed = match route_capability(channel) {
+            RouteCapability::Observe => principal.can_observe,
+            RouteCapability::Control => principal.can_control,
+            RouteCapability::Admin => principal.can_admin,
+            RouteCapability::LocalAdmin => principal.local_admin,
         };
         if allowed {
             Ok(())
@@ -955,7 +935,15 @@ impl HostRuntime {
                 self.terminal.detach(id, &principal.connection_id)?;
                 Ok(Value::Null)
             }
-            "terminal:readReplayPage" => Ok(Value::Null),
+            "terminal:readReplayPage" => Ok(json!(
+                self.terminal.read_replay_page(
+                    id,
+                    number(args, 1)?,
+                    args.get(2)
+                        .and_then(Value::as_u64)
+                        .and_then(|value| usize::try_from(value).ok()),
+                )?
+            )),
             "terminal:getCwd" => Ok(json!(self.terminal.get_cwd(id)?)),
             "terminal:getForegroundProcess" => Ok(json!(self.terminal.get_foreground_process(id)?)),
             "terminal:dispose" => {
@@ -1006,6 +994,46 @@ impl HostRuntime {
     fn emit_terminal_updated(&self, terminal: &MuxTerminal) {
         self.emit_terminal("MuxTerminalUpdated", terminal);
     }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum RouteCapability {
+    Observe,
+    Control,
+    Admin,
+    LocalAdmin,
+}
+
+fn route_capability(channel: &str) -> RouteCapability {
+    if !is_known_route(channel) {
+        return RouteCapability::LocalAdmin;
+    }
+    if matches!(
+        channel,
+        "terminal:dispose"
+            | "terminal:transferControl"
+            | "mux:archiveTab"
+            | "mux:archiveSession"
+            | "mux:closeTerminal"
+    ) {
+        return RouteCapability::Admin;
+    }
+    if matches!(
+        channel,
+        "mux:listSessions"
+            | "mux:getSession"
+            | "mux:getTerminal"
+            | "terminal:listViewers"
+            | "terminal:attach"
+            | "terminal:detach"
+            | "terminal:readReplayPage"
+            | "terminal:ready"
+            | "terminal:getCwd"
+            | "terminal:getForegroundProcess"
+    ) {
+        return RouteCapability::Observe;
+    }
+    RouteCapability::Control
 }
 
 fn is_known_route(channel: &str) -> bool {
@@ -1124,4 +1152,55 @@ fn file_uri_or_path(value: &str) -> Result<PathBuf, RuntimeError> {
             .ok_or_else(|| RuntimeError::Invalid("invalid file URI".to_owned()));
     }
     Ok(PathBuf::from(value))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn route_policy_separates_observation_control_admin_and_local_admin() {
+        assert_eq!(route_capability("terminal:attach"), RouteCapability::Observe);
+        assert_eq!(route_capability("terminal:write"), RouteCapability::Control);
+        assert_eq!(route_capability("terminal:dispose"), RouteCapability::Admin);
+        assert_eq!(route_capability("terminal:stopAll"), RouteCapability::LocalAdmin);
+    }
+
+    #[test]
+    fn unknown_routes_fail_closed_for_paired_principals() {
+        assert_eq!(route_capability("future:mutation"), RouteCapability::LocalAdmin);
+        let principal = Principal::paired(
+            "device_1234".to_owned(),
+            &[DeviceScope::Admin],
+            "connection".to_owned(),
+        );
+        assert!(!principal.local_admin);
+    }
+
+    #[test]
+    fn observe_scope_allows_attach_but_not_write() {
+        let principal = Principal::paired(
+            "device_1234".to_owned(),
+            &[DeviceScope::Observe],
+            "connection".to_owned(),
+        );
+        assert!(principal.can_observe);
+        assert!(!principal.can_control);
+        assert!(!principal.can_admin);
+    }
+
+    #[test]
+    fn correlation_identity_is_server_derived_for_each_principal() {
+        let local = Principal::local("local-connection".to_owned());
+        let token = Principal::token("token-connection".to_owned());
+        let paired = Principal::paired(
+            "device_1234".to_owned(),
+            &[DeviceScope::Control],
+            "device-connection".to_owned(),
+        );
+        assert_eq!(local.principal_id, "local-development");
+        assert_eq!(token.principal_id, "host-token");
+        assert_eq!(paired.principal_id, "device:device_1234");
+        assert_ne!(local.connection_id, token.connection_id);
+    }
 }
