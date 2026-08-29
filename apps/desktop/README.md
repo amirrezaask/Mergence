@@ -35,11 +35,23 @@ These values only choose the initially open overlay; normal interaction remains
 unchanged.
 
 The GPUI shell bundles static Geist and Geist Mono faces plus matching Lucide
-SVG geometry. The current slice includes real host hydration, animated Session
-and Window selection/creation, terminal attachment, semantic screen rendering,
-ANSI replay fallback for pre-semantic PTYs, cursor and overlay motion, theme
-switching, loading/empty/error states, reduced-motion fallback, and native
-macOS title-bar integration. Use `⌘/Ctrl` + `+` or `-` to zoom terminal text and
-`⌘/Ctrl` + `0` to reset it; these shortcuts remain available while the terminal
-has focus. Live terminal patches, input, resize, tiling, and full settings
-parity are the next slice.
+SVG geometry. It hydrates the same Session → Window → terminal model as the web
+client, consumes semantic terminal snapshots and patches over the realtime
+socket, and falls back to bounded ANSI replay when a host cannot publish a
+semantic screen. Terminal input, bracketed paste, IME composition, resize,
+reconnect, tiling, pane drag-and-drop, pane zoom, rename controls, terminal
+switching, session close confirmation, loading/empty/error states, reduced-motion
+fallback, and native macOS title-bar integration are supported.
+
+Useful controls:
+
+- `⌘/Ctrl` + `+`, `-`, or `0` changes or resets terminal text size.
+- `⌘/Ctrl` + `K` opens the terminal switcher.
+- `⌘/Ctrl` + `Shift-N` creates a Session; `Shift-T` creates a Window; `T`
+  creates a terminal; `W` closes the focused terminal.
+- `⌘/Ctrl` + `D` and `Shift-D` split right and down; `Shift-Enter` toggles
+  pane zoom.
+
+These shortcuts remain available while a terminal has focus. The host remains
+the owner of PTYs and persisted state; the desktop process never starts or
+owns terminal processes itself.

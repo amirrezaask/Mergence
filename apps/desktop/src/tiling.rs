@@ -134,10 +134,7 @@ impl TerminalWorkspace {
             let Some(panel) = panel else { break };
             workspace.close_panel(panel);
         }
-        let mut open = workspace
-            .terminal_ids()
-            .into_iter()
-            .collect::<HashSet<_>>();
+        let mut open = workspace.terminal_ids().into_iter().collect::<HashSet<_>>();
         for terminal_id in live_terminal_ids {
             if open.contains(terminal_id) || workspace.pane_count() >= MAX_TERMINAL_TILES {
                 continue;
@@ -305,12 +302,11 @@ impl TerminalWorkspace {
             };
             *view = TerminalPaneView::Empty;
         } else {
-            self.root = remove_panel(self.root.clone(), panel_id).unwrap_or_else(|| {
-                PanelNode::Leaf {
+            self.root =
+                remove_panel(self.root.clone(), panel_id).unwrap_or_else(|| PanelNode::Leaf {
                     panel_id: PanelId::new(self.next_panel_id),
                     view: TerminalPaneView::Empty,
-                }
-            });
+                });
         }
         let leaves = self.leaf_ids();
         if !leaves.contains(&self.focused_panel_id) {
@@ -344,7 +340,9 @@ impl TerminalWorkspace {
             PanelNode::Row { split } | PanelNode::Column { split } => split,
         };
         if ratios.len() != split.children.len()
-            || ratios.iter().any(|ratio| !ratio.is_finite() || *ratio <= 0.0)
+            || ratios
+                .iter()
+                .any(|ratio| !ratio.is_finite() || *ratio <= 0.0)
         {
             return false;
         }
@@ -429,12 +427,16 @@ impl TerminalWorkspace {
                 *view = TerminalPaneView::Empty;
             }
         } else {
-            self.root = remove_panel(self.root.clone(), panel_id).unwrap_or_else(|| self.root.clone());
+            self.root =
+                remove_panel(self.root.clone(), panel_id).unwrap_or_else(|| self.root.clone());
         }
     }
 
     fn remove_missing(&mut self, live_terminal_ids: &[String]) {
-        let live = live_terminal_ids.iter().map(String::as_str).collect::<HashSet<_>>();
+        let live = live_terminal_ids
+            .iter()
+            .map(String::as_str)
+            .collect::<HashSet<_>>();
         let missing = self
             .leaf_ids()
             .into_iter()
@@ -456,7 +458,10 @@ fn validate_node(node: &PanelNode) -> bool {
         PanelNode::Row { split } | PanelNode::Column { split } => {
             split.children.len() >= 2
                 && split.children.len() == split.ratios.len()
-                && split.ratios.iter().all(|ratio| ratio.is_finite() && *ratio > 0.0)
+                && split
+                    .ratios
+                    .iter()
+                    .all(|ratio| ratio.is_finite() && *ratio > 0.0)
                 && split.children.iter().all(validate_node)
         }
     }
@@ -634,8 +639,18 @@ mod tests {
         let first = workspace.panel_for_terminal("terminal-0").expect("first");
         let second = workspace.panel_for_terminal("terminal-1").expect("second");
         assert!(workspace.dock_terminal("terminal-1", first, None));
-        assert_eq!(workspace.view(first).and_then(TerminalPaneView::terminal_id), Some("terminal-1"));
-        assert_eq!(workspace.view(second).and_then(TerminalPaneView::terminal_id), Some("terminal-0"));
+        assert_eq!(
+            workspace
+                .view(first)
+                .and_then(TerminalPaneView::terminal_id),
+            Some("terminal-1")
+        );
+        assert_eq!(
+            workspace
+                .view(second)
+                .and_then(TerminalPaneView::terminal_id),
+            Some("terminal-0")
+        );
     }
 
     #[test]

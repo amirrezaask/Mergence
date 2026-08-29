@@ -53,7 +53,13 @@ impl HostClient {
         pty_id: &str,
         after_sequence: u64,
     ) -> Result<Option<TerminalAttachResult>> {
-        self.invoke("terminal:attach", json!([pty_id, after_sequence]))
+        // Native clients consume the host's semantic stream. The optional
+        // third argument keeps this compatible with older hosts that only
+        // understand the two-argument attach route.
+        self.invoke(
+            "terminal:attach",
+            json!([pty_id, after_sequence, "semantic"]),
+        )
     }
 
     pub fn write_terminal(&self, pty_id: &str, data: &str) -> Result<()> {
@@ -65,14 +71,96 @@ impl HostClient {
     }
 
     pub fn create_session(&self) -> Result<AppSession> {
-        self.invoke("mux:createSession", json!([]))
+        self.invoke("mux:createSession", json!(["New session"]))
     }
 
-    pub fn create_tab(&self, session_id: &str) -> Result<SessionTab> {
+    pub fn create_tab(&self, session_id: &str, title: Option<&str>) -> Result<SessionTab> {
+        let mut command = json!({
+            "_tag": "CreateSessionTab",
+            "sessionId": session_id,
+        });
+        if let Some(title) = title {
+            command["title"] = json!(title);
+        }
+        self.invoke("mux:createTab", json!([command]))
+    }
+
+    pub fn rename_session(&self, session_id: &str, title: &str) -> Result<AppSession> {
+        self.invoke("mux:renameSession", json!([session_id, title]))
+    }
+
+    pub fn reorder_sessions(&self, session_ids: &[String]) -> Result<Vec<AppSession>> {
         self.invoke(
-            "mux:createTab",
-            json!([{ "_tag": "CreateSessionTab", "sessionId": session_id }]),
+            "mux:reorderSessions",
+            json!([{
+                "_tag": "ReorderSessions",
+                "sessionIds": session_ids,
+            }]),
         )
+    }
+
+    pub fn rename_tab(&self, tab_id: &str, title: &str) -> Result<SessionTab> {
+        self.invoke(
+            "mux:renameTab",
+            json!([{
+                "_tag": "RenameSessionTab",
+                "tabId": tab_id,
+                "title": title,
+            }]),
+        )
+    }
+
+    pub fn reorder_tabs(&self, session_id: &str, tab_ids: &[String]) -> Result<Vec<SessionTab>> {
+        self.invoke(
+            "mux:reorderTabs",
+            json!([{
+                "_tag": "ReorderSessionTabs",
+                "sessionId": session_id,
+                "tabIds": tab_ids,
+            }]),
+        )
+    }
+
+    pub fn select_tab(&self, session_id: &str, tab_id: Option<&str>) -> Result<AppSession> {
+        self.invoke(
+            "mux:selectTab",
+            match tab_id {
+                Some(tab_id) => json!([{
+                    "_tag": "SelectSessionTab",
+                    "sessionId": session_id,
+                    "tabId": tab_id,
+                }]),
+                None => json!([{
+                    "_tag": "SelectSessionTab",
+                    "sessionId": session_id,
+                }]),
+            },
+        )
+    }
+
+    pub fn archive_session(&self, session_id: &str, mode: &str) -> Result<AppSession> {
+        self.invoke(
+            "mux:archiveSession",
+            json!([{
+                "_tag": "ArchiveSession",
+                "sessionId": session_id,
+                "mode": mode,
+            }]),
+        )
+    }
+
+    pub fn restore_session(&self, session_id: &str) -> Result<AppSession> {
+        self.invoke(
+            "mux:restoreSession",
+            json!([{
+                "_tag": "RestoreSession",
+                "sessionId": session_id,
+            }]),
+        )
+    }
+
+    pub fn get_session(&self, session_id: &str) -> Result<Option<SessionSnapshot>> {
+        self.invoke("mux:getSession", json!([session_id]))
     }
 
     pub fn archive_tab(&self, tab_id: &str) -> Result<SessionTab> {
@@ -108,6 +196,50 @@ impl HostClient {
             json!([{
                 "_tag": "CloseTerminal",
                 "muxTerminalId": mux_terminal_id
+            }]),
+        )
+    }
+
+    pub fn stop_terminal(&self, mux_terminal_id: &str, revision: u64) -> Result<MuxTerminal> {
+        self.invoke("mux:stopTerminal", json!([mux_terminal_id, revision]))
+    }
+
+    pub fn restart_terminal(&self, mux_terminal_id: &str, revision: u64) -> Result<MuxTerminal> {
+        self.invoke("mux:restartTerminal", json!([mux_terminal_id, revision]))
+    }
+
+    pub fn rename_terminal(&self, mux_terminal_id: &str, title: &str) -> Result<MuxTerminal> {
+        self.invoke("mux:renameTerminal", json!([mux_terminal_id, title]))
+    }
+
+    pub fn get_terminal(&self, mux_terminal_id: &str) -> Result<Option<MuxTerminal>> {
+        self.invoke("mux:getTerminal", json!([mux_terminal_id]))
+    }
+
+    pub fn reorder_terminals(
+        &self,
+        session_id: &str,
+        tab_id: Option<&str>,
+        terminal_ids: &[String],
+    ) -> Result<Vec<MuxTerminal>> {
+        let mut command = json!({
+            "_tag": "ReorderTerminals",
+            "sessionId": session_id,
+            "muxTerminalIds": terminal_ids,
+        });
+        if let Some(tab_id) = tab_id {
+            command["tabId"] = json!(tab_id);
+        }
+        self.invoke("mux:reorderTerminals", json!([command]))
+    }
+
+    pub fn move_terminal(&self, mux_terminal_id: &str, target_tab_id: &str) -> Result<MuxTerminal> {
+        self.invoke(
+            "mux:moveTerminal",
+            json!([{
+                "_tag": "MoveTerminalToTab",
+                "muxTerminalId": mux_terminal_id,
+                "targetTabId": target_tab_id,
             }]),
         )
     }

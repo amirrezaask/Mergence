@@ -20,8 +20,8 @@ use url::Url;
 use crate::{
     host::HostConfig,
     model::{
-        SessionSnapshot, TerminalAttachResult, TerminalPatchMessage,
-        TerminalResyncRequiredMessage, TerminalSnapshotMessage, TerminalStreamMessage,
+        SessionSnapshot, TerminalAttachResult, TerminalPatchMessage, TerminalResyncRequiredMessage,
+        TerminalSnapshotMessage, TerminalStreamMessage,
     },
 };
 
@@ -39,10 +39,10 @@ const EVENT_CAPACITY: usize = 256;
 pub enum RealtimeEvent {
     Connected(Vec<SessionSnapshot>),
     Disconnected,
-    Semantic(TerminalStreamMessage),
+    Semantic(Box<TerminalStreamMessage>),
     AttachResult {
         terminal_id: String,
-        result: Option<TerminalAttachResult>,
+        result: Option<Box<TerminalAttachResult>>,
     },
     WorkspaceInvalidated,
     TerminalExited {
@@ -354,9 +354,9 @@ async fn run_connection(
     let (socket, _) = match tokio_tungstenite::connect_async(url.as_str()).await {
         Ok(socket) => socket,
         Err(error) => {
-            return ConnectionEnd::Reconnect(anyhow!(error).context(format!(
-                "could not connect realtime socket at {url}"
-            )));
+            return ConnectionEnd::Reconnect(
+                anyhow!(error).context(format!("could not connect realtime socket at {url}")),
+            );
         }
     };
     let (mut writer, mut reader) = socket.split();
@@ -393,7 +393,7 @@ async fn run_connection(
                                 &mut request_sequence,
                                 &mut pending,
                                 "terminal:attach",
-                                json!([terminal_id, after_sequence]),
+                                json!([terminal_id, after_sequence, "semantic"]),
                                 PendingCommand::Attach { terminal_id },
                             ).await
                         {
@@ -521,7 +521,7 @@ async fn run_connection(
                                         &mut request_sequence,
                                         &mut pending,
                                         "terminal:attach",
-                                        json!([terminal_id, after_sequence]),
+                                        json!([terminal_id, after_sequence, "semantic"]),
                                         PendingCommand::Attach { terminal_id },
                                     ).await {
                                         return ConnectionEnd::Reconnect(error);
@@ -563,7 +563,7 @@ async fn run_connection(
                                     }
                                     if events.send(RealtimeEvent::AttachResult {
                                         terminal_id: terminal_id.clone(),
-                                        result: attached,
+                                        result: attached.map(Box::new),
                                     }).await.is_err() {
                                         return ConnectionEnd::Shutdown;
                                     }
@@ -591,7 +591,7 @@ async fn run_connection(
                                     &mut request_sequence,
                                     &mut pending,
                                     "terminal:attach",
-                                    json!([terminal_id, floor]),
+                                    json!([terminal_id, floor, "semantic"]),
                                     PendingCommand::Attach { terminal_id },
                                 ).await {
                                     return ConnectionEnd::Reconnect(error);
@@ -629,7 +629,7 @@ async fn run_connection(
                     }
                     Message::Binary(bytes) => {
                         if let Some(message) = decode_terminal_stream_v3(bytes.as_ref()) {
-                            if events.send(RealtimeEvent::Semantic(message)).await.is_err() {
+                            if events.send(RealtimeEvent::Semantic(Box::new(message))).await.is_err() {
                                 return ConnectionEnd::Shutdown;
                             }
                             continue;
@@ -838,9 +838,14 @@ mod tests {
     #[test]
     fn decodes_semantic_v3_snapshot_frame() {
         let response: crate::model::HostRpcResponse<Option<TerminalAttachResult>> =
-            serde_json::from_str(include_str!("../tests/fixtures/terminal-attach-success.json"))
-                .expect("fixture");
-        let crate::model::HostRpcResponse::Success { value: Some(result) } = response else {
+            serde_json::from_str(include_str!(
+                "../tests/fixtures/terminal-attach-success.json"
+            ))
+            .expect("fixture");
+        let crate::model::HostRpcResponse::Success {
+            value: Some(result),
+        } = response
+        else {
             panic!("fixture");
         };
         let message = json!({

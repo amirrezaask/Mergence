@@ -5,14 +5,13 @@ use std::{
 };
 
 use gpui::{
-    Animation, AnimationExt as _, AnyElement, AppContext as _, Bounds, BoxShadow,
-    ClickEvent, Context, CursorStyle, DragMoveEvent, ElementInputHandler, EntityInputHandler,
-    FocusHandle, FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement, KeyBinding,
-    KeyDownEvent, Keystroke, MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point,
-    Render, Rgba,
-    SharedString, StrikethroughStyle, Styled as _, StyledText, TextRun, Timer, UTF16Selection,
-    UnderlineStyle, Window, WindowControlArea, actions, canvas, div, ease_out_quint, font, point,
-    prelude::*, pulsating_between, px, relative, svg,
+    Animation, AnimationExt as _, AnyElement, AppContext as _, Bounds, BoxShadow, ClickEvent,
+    Context, CursorStyle, DragMoveEvent, ElementInputHandler, EntityInputHandler, FocusHandle,
+    FontStyle, FontWeight, HighlightStyle, Hsla, IntoElement, KeyBinding, KeyDownEvent, Keystroke,
+    MouseButton, MouseDownEvent, ParentElement as _, Pixels, Point, Render, Rgba, SharedString,
+    StrikethroughStyle, Styled as _, StyledText, TextRun, Timer, UTF16Selection, UnderlineStyle,
+    Window, WindowControlArea, actions, canvas, div, ease_out_quint, font, point, prelude::*,
+    pulsating_between, px, relative, svg,
 };
 
 use crate::host::{HostClient, HostConfig};
@@ -48,10 +47,18 @@ actions!(
         SplitPaneRight,
         SplitPaneDown,
         TogglePaneZoom,
+        OpenTerminalSwitcher,
+        NewSession,
+        NewWindow,
+        NewTerminal,
+        CloseTerminal,
+        CloseSession,
+        NextTerminal,
+        PreviousTerminal,
     ]
 );
 
-pub fn desktop_key_bindings() -> [KeyBinding; 8] {
+pub fn desktop_key_bindings() -> [KeyBinding; 16] {
     [
         KeyBinding::new("secondary-=", ZoomIn, None),
         KeyBinding::new("secondary-+", ZoomIn, None),
@@ -61,6 +68,14 @@ pub fn desktop_key_bindings() -> [KeyBinding; 8] {
         KeyBinding::new("secondary-d", SplitPaneRight, None),
         KeyBinding::new("secondary-shift-d", SplitPaneDown, None),
         KeyBinding::new("secondary-shift-enter", TogglePaneZoom, None),
+        KeyBinding::new("secondary-k", OpenTerminalSwitcher, None),
+        KeyBinding::new("secondary-shift-n", NewSession, None),
+        KeyBinding::new("secondary-shift-t", NewWindow, None),
+        KeyBinding::new("secondary-t", NewTerminal, None),
+        KeyBinding::new("secondary-w", CloseTerminal, None),
+        KeyBinding::new("secondary-shift-w", CloseSession, None),
+        KeyBinding::new("secondary-]", NextTerminal, None),
+        KeyBinding::new("secondary-[", PreviousTerminal, None),
     ]
 }
 
@@ -129,6 +144,33 @@ struct PaneDrag {
     title: String,
 }
 
+#[derive(Clone, Debug)]
+struct SessionDrag {
+    session_id: String,
+    title: String,
+}
+
+#[derive(Clone, Debug)]
+struct TabDrag {
+    tab_id: String,
+    title: String,
+}
+
+#[derive(Clone, Debug)]
+enum RenameTarget {
+    Session(String),
+    Tab(String),
+    Terminal(String),
+}
+
+#[derive(Clone, Debug)]
+struct RenameState {
+    target: RenameTarget,
+    value: String,
+    selection: Range<usize>,
+    marked_range: Option<Range<usize>>,
+}
+
 struct DragPreview {
     label: String,
     background: Hsla,
@@ -142,11 +184,30 @@ struct WorkspacePayload {
     selection: WorkspaceSelection,
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 enum Mutation {
     CreateSession,
     CreateTab,
-    ArchiveTab,
+    ArchiveTab {
+        tab_id: String,
+    },
+    ArchiveSession {
+        session_id: String,
+        mode: &'static str,
+    },
+}
+
+enum RenameResult {
+    Session(crate::model::AppSession),
+    Tab(crate::model::SessionTab),
+    Terminal(crate::model::MuxTerminal),
+}
+
+enum MutationOutcome {
+    Session(crate::model::AppSession),
+    Tab(crate::model::SessionTab),
+    ArchivedTab(crate::model::SessionTab),
+    ArchivedSession(crate::model::AppSession),
 }
 
 pub struct DesktopApp {
@@ -163,10 +224,8 @@ pub struct DesktopApp {
     selection: WorkspaceSelection,
     terminal_workspace: TerminalWorkspace,
     workspace_tab_id: Option<String>,
-    workspace_server_revision: Option<u64>,
-    workspace_server_layout: Option<String>,
-    workspace_layout_dirty: bool,
     terminal_views: HashMap<String, TerminalViewState>,
+    pending_terminal_creations: HashSet<String>,
     attached_ptys: HashSet<String>,
     split_bounds: HashMap<String, Bounds<Pixels>>,
     ime_composition: String,
@@ -174,10 +233,15 @@ pub struct DesktopApp {
     session_switcher_open: bool,
     session_switcher_closing: bool,
     session_switcher_transition: u64,
+    terminal_switcher_open: bool,
+    terminal_switcher_closing: bool,
+    terminal_switcher_transition: u64,
+    close_session_id: Option<String>,
     settings_open: bool,
     settings_closing: bool,
     settings_transition: u64,
     action_error: Option<String>,
+    rename: Option<RenameState>,
     workspace_request: u64,
     workspace_reload_revision: u64,
     terminal_request: u64,
@@ -221,10 +285,8 @@ impl DesktopApp {
             },
             terminal_workspace: TerminalWorkspace::new(),
             workspace_tab_id: None,
-            workspace_server_revision: None,
-            workspace_server_layout: None,
-            workspace_layout_dirty: false,
             terminal_views: HashMap::new(),
+            pending_terminal_creations: HashSet::new(),
             attached_ptys: HashSet::new(),
             split_bounds: HashMap::new(),
             ime_composition: String::new(),
@@ -232,10 +294,15 @@ impl DesktopApp {
             session_switcher_open: preview_session_switcher,
             session_switcher_closing: false,
             session_switcher_transition: 0,
+            terminal_switcher_open: false,
+            terminal_switcher_closing: false,
+            terminal_switcher_transition: 0,
+            close_session_id: None,
             settings_open: preview_settings,
             settings_closing: false,
             settings_transition: 0,
             action_error: None,
+            rename: None,
             workspace_request: 0,
             workspace_reload_revision: 0,
             terminal_request: 0,
@@ -308,11 +375,11 @@ impl DesktopApp {
             RealtimeEvent::Disconnected => {
                 self.realtime_connected = false;
             }
-            RealtimeEvent::Semantic(message) => self.apply_semantic_message(message, cx),
+            RealtimeEvent::Semantic(message) => self.apply_semantic_message(*message, cx),
             RealtimeEvent::AttachResult {
                 terminal_id,
                 result,
-            } => self.apply_attach_result(&terminal_id, result, cx),
+            } => self.apply_attach_result(&terminal_id, result.map(|attached| *attached), cx),
             RealtimeEvent::WorkspaceInvalidated => self.schedule_workspace_reload(cx),
             RealtimeEvent::TerminalExited {
                 terminal_id,
@@ -324,7 +391,8 @@ impl DesktopApp {
                     .iter_mut()
                     .find(|(_, state)| state.pty_id == terminal_id)
                 {
-                    let signal = signal.map_or_else(String::new, |value| format!(" (signal {value})"));
+                    let signal =
+                        signal.map_or_else(String::new, |value| format!(" (signal {value})"));
                     state.load_state = TerminalLoadState::Unavailable(format!(
                         "Process exited with status {exit_code}{signal}."
                     ));
@@ -379,6 +447,39 @@ impl DesktopApp {
                 if app.session_switcher_transition == transition {
                     app.session_switcher_open = false;
                     app.session_switcher_closing = false;
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn set_terminal_switcher_open(&mut self, open: bool, cx: &mut Context<Self>) {
+        self.terminal_switcher_transition = self.terminal_switcher_transition.wrapping_add(1);
+        let transition = self.terminal_switcher_transition;
+        self.bump_motion();
+        if open {
+            self.terminal_switcher_open = true;
+            self.terminal_switcher_closing = false;
+            cx.notify();
+            return;
+        }
+        if !self.terminal_switcher_open {
+            return;
+        }
+        self.terminal_switcher_closing = true;
+        let duration = if self.reduced_motion {
+            1
+        } else {
+            self.theme.motion.hot_ms
+        };
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            Timer::after(Duration::from_millis(duration.max(1))).await;
+            let _ = this.update(cx, |app, cx| {
+                if app.terminal_switcher_transition == transition {
+                    app.terminal_switcher_open = false;
+                    app.terminal_switcher_closing = false;
                     cx.notify();
                 }
             });
@@ -441,12 +542,7 @@ impl DesktopApp {
         self.action_error = None;
         self.bump_motion();
         let client = self.client.clone();
-        let load = cx.background_spawn(async move {
-            client.list_sessions().map(|snapshots| WorkspacePayload {
-                selection: WorkspaceSelection::resolve(&snapshots, requested_session.as_deref()),
-                snapshots,
-            })
-        });
+        let load = cx.background_spawn(async move { client.list_sessions() });
         cx.spawn(async move |this, cx| {
             let result = load.await;
             let _ = this.update(cx, |app, cx| {
@@ -454,7 +550,9 @@ impl DesktopApp {
                     return;
                 }
                 match result {
-                    Ok(payload) => app.apply_workspace_payload(payload, cx),
+                    Ok(snapshots) => {
+                        app.apply_workspace_snapshots(snapshots, requested_session.as_deref(), cx);
+                    }
                     Err(error) => {
                         if app.snapshots.is_empty() {
                             app.workspace_state = WorkspaceState::Error(error.to_string());
@@ -476,7 +574,55 @@ impl DesktopApp {
         requested_session: Option<&str>,
         cx: &mut Context<Self>,
     ) {
-        let selection = WorkspaceSelection::resolve(&snapshots, requested_session);
+        let mut selection = WorkspaceSelection::resolve(&snapshots, requested_session);
+        let preserve_local = requested_session
+            .zip(self.selection.session_id.as_deref())
+            .is_some_and(|(requested, current)| requested == current);
+        if preserve_local {
+            let current_tab = self.selection.tab_id.as_deref().and_then(|tab_id| {
+                active_snapshot(&snapshots, &self.selection).and_then(|snapshot| {
+                    snapshot
+                        .tabs
+                        .iter()
+                        .find(|tab| tab.id == tab_id && tab.archived_at.is_none())
+                })
+            });
+            if let Some(tab) = current_tab {
+                selection.tab_id = Some(tab.id.clone());
+                let current_terminal =
+                    self.selection
+                        .terminal_id
+                        .as_deref()
+                        .and_then(|terminal_id| {
+                            active_snapshot(&snapshots, &self.selection).and_then(|snapshot| {
+                                snapshot.mux_terminals.iter().find(|terminal| {
+                                    terminal.id == terminal_id
+                                        && terminal.archived_at.is_none()
+                                        && (terminal.tab_id.as_deref() == Some(tab.id.as_str())
+                                            || terminal.tab_id.is_none())
+                                })
+                            })
+                        });
+                selection.terminal_id = current_terminal
+                    .map(|terminal| terminal.id.clone())
+                    .or_else(|| {
+                        tab.active_mux_terminal_id.clone().or_else(|| {
+                            active_snapshot(&snapshots, &selection).and_then(|snapshot| {
+                                snapshot
+                                    .mux_terminals
+                                    .iter()
+                                    .filter(|terminal| {
+                                        terminal.archived_at.is_none()
+                                            && (terminal.tab_id.as_deref() == Some(tab.id.as_str())
+                                                || terminal.tab_id.is_none())
+                                    })
+                                    .min_by(|left, right| left.position.total_cmp(&right.position))
+                                    .map(|terminal| terminal.id.clone())
+                            })
+                        })
+                    });
+            }
+        }
         self.apply_workspace_payload(
             WorkspacePayload {
                 snapshots,
@@ -509,11 +655,20 @@ impl DesktopApp {
         let Some(tab) = snapshot.tabs.iter().find(|tab| tab.id == tab_id) else {
             return;
         };
+        let legacy_terminal_tab_id = snapshot
+            .tabs
+            .iter()
+            .filter(|tab| tab.archived_at.is_none())
+            .min_by(|left, right| left.position.total_cmp(&right.position))
+            .map(|tab| tab.id.as_str());
         let mut terminals = snapshot
             .mux_terminals
             .iter()
             .filter(|terminal| {
-                terminal.archived_at.is_none() && terminal.tab_id.as_deref() == Some(tab_id.as_str())
+                terminal.archived_at.is_none()
+                    && (terminal.tab_id.as_deref() == Some(tab_id.as_str())
+                        || (terminal.tab_id.is_none()
+                            && legacy_terminal_tab_id == Some(tab_id.as_str())))
             })
             .cloned()
             .collect::<Vec<_>>();
@@ -529,7 +684,7 @@ impl DesktopApp {
             local_layout.as_deref().or(tab.layout_json.as_deref()),
             &live_ids,
         );
-        self.workspace_tab_id = Some(tab_id);
+        self.workspace_tab_id = Some(tab_id.clone());
         self.selection.terminal_id = self
             .terminal_workspace
             .view(self.terminal_workspace.focused_panel_id)
@@ -537,6 +692,19 @@ impl DesktopApp {
             .map(str::to_string)
             .or_else(|| terminals.first().map(|terminal| terminal.id.clone()));
         self.reconcile_terminal_views(cx);
+        if terminals.is_empty() {
+            let key = format!("{}:{}", snapshot.session.id, tab_id);
+            if self.pending_terminal_creations.insert(key.clone()) {
+                let panel = self.terminal_workspace.focused_panel_id;
+                self.create_terminal_in_panel(panel, cx);
+                // The host event/reload path removes this guard once the new
+                // terminal appears; keeping it here also prevents duplicate
+                // creates while the request is in flight.
+            }
+        } else {
+            self.pending_terminal_creations
+                .remove(&format!("{}:{}", snapshot.session.id, tab_id));
+        }
     }
 
     fn reconcile_terminal_views(&mut self, cx: &mut Context<Self>) {
@@ -689,11 +857,7 @@ impl DesktopApp {
         self.terminal_requests.remove(mux_terminal_id);
     }
 
-    fn apply_semantic_message(
-        &mut self,
-        message: TerminalStreamMessage,
-        _cx: &mut Context<Self>,
-    ) {
+    fn apply_semantic_message(&mut self, message: TerminalStreamMessage, _cx: &mut Context<Self>) {
         let terminal_id = match &message {
             TerminalStreamMessage::Snapshot(message) => message.terminal_id.as_str(),
             TerminalStreamMessage::Patch(message) => message.terminal_id.as_str(),
@@ -744,12 +908,153 @@ impl DesktopApp {
         self.selection = WorkspaceSelection::resolve(&self.snapshots, Some(session_id));
         self.workspace_tab_id = None;
         self.set_session_switcher_open(false, cx);
+        self.set_terminal_switcher_open(false, cx);
         self.reconcile_terminal_workspace(cx);
+        let client = self.client.clone();
+        let selected_session = session_id.to_string();
+        let tab_id = self.selection.tab_id.clone();
+        cx.background_spawn(async move {
+            let _ = client.select_tab(&selected_session, tab_id.as_deref());
+        })
+        .detach();
         cx.notify();
     }
 
-    fn select_tab(&mut self, tab_id: &str, cx: &mut Context<Self>) {
+    fn select_terminal(&mut self, terminal_id: &str, cx: &mut Context<Self>) {
+        let Some(terminal) = self
+            .snapshots
+            .iter()
+            .flat_map(|snapshot| &snapshot.mux_terminals)
+            .find(|terminal| terminal.id == terminal_id && terminal.archived_at.is_none())
+            .cloned()
+        else {
+            return;
+        };
+        self.selection = WorkspaceSelection::resolve(&self.snapshots, Some(&terminal.session_id));
+        self.selection.tab_id = terminal.tab_id.clone().or(self.selection.tab_id.clone());
+        self.selection.terminal_id = Some(terminal.id.clone());
+        self.workspace_tab_id = None;
+        self.set_terminal_switcher_open(false, cx);
+        self.set_session_switcher_open(false, cx);
+        self.reconcile_terminal_workspace(cx);
+        let client = self.client.clone();
+        let session_id = terminal.session_id;
+        let selected_terminal = terminal.id;
+        cx.background_spawn(async move {
+            let _ = client.select_terminal(&session_id, Some(&selected_terminal));
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn cycle_terminal(&mut self, direction: isize, cx: &mut Context<Self>) {
+        let mut terminals = self
+            .snapshots
+            .iter()
+            .filter(|snapshot| snapshot.session.archived_at.is_none())
+            .flat_map(|snapshot| &snapshot.mux_terminals)
+            .filter(|terminal| terminal.archived_at.is_none())
+            .cloned()
+            .collect::<Vec<_>>();
+        terminals.sort_by(|left, right| {
+            left.session_id
+                .cmp(&right.session_id)
+                .then(left.position.total_cmp(&right.position))
+        });
+        if terminals.is_empty() {
+            return;
+        }
+        let current = self
+            .selection
+            .terminal_id
+            .as_deref()
+            .and_then(|id| terminals.iter().position(|terminal| terminal.id == id))
+            .unwrap_or(0);
+        let next = (current as isize + direction).rem_euclid(terminals.len() as isize) as usize;
+        self.select_terminal(&terminals[next].id, cx);
+    }
+
+    fn reorder_sessions(&mut self, source_id: &str, target_id: &str, cx: &mut Context<Self>) {
+        if source_id == target_id {
+            return;
+        }
+        let mut ids = self
+            .snapshots
+            .iter()
+            .filter(|snapshot| snapshot.session.archived_at.is_none())
+            .map(|snapshot| (snapshot.session.position, snapshot.session.id.clone()))
+            .collect::<Vec<_>>();
+        ids.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let mut ids = ids.into_iter().map(|(_, id)| id).collect::<Vec<_>>();
+        let Some(source_index) = ids.iter().position(|id| id == source_id) else {
+            return;
+        };
+        let Some(target_index) = ids.iter().position(|id| id == target_id) else {
+            return;
+        };
+        let source = ids.remove(source_index);
+        ids.insert(target_index, source);
+        let client = self.client.clone();
+        let requested_session = self.selection.session_id.clone();
+        let task = cx.background_spawn(async move { client.reorder_sessions(&ids) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |app, cx| match result {
+                Ok(_) => app.reload_workspace(requested_session, cx),
+                Err(error) => {
+                    app.action_error = Some(format!("Could not reorder Sessions: {error}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn reorder_tabs(&mut self, source_id: &str, target_id: &str, cx: &mut Context<Self>) {
+        if source_id == target_id {
+            return;
+        }
         let Some(snapshot) = active_snapshot(&self.snapshots, &self.selection) else {
+            return;
+        };
+        let mut ids = snapshot
+            .tabs
+            .iter()
+            .filter(|tab| tab.archived_at.is_none())
+            .map(|tab| (tab.position, tab.id.clone()))
+            .collect::<Vec<_>>();
+        ids.sort_by(|left, right| left.0.total_cmp(&right.0));
+        let mut ids = ids.into_iter().map(|(_, id)| id).collect::<Vec<_>>();
+        let Some(source_index) = ids.iter().position(|id| id == source_id) else {
+            return;
+        };
+        let Some(target_index) = ids.iter().position(|id| id == target_id) else {
+            return;
+        };
+        let source = ids.remove(source_index);
+        ids.insert(target_index, source);
+        let Some(session_id) = self.selection.session_id.clone() else {
+            return;
+        };
+        let client = self.client.clone();
+        let request_session_id = session_id.clone();
+        let task =
+            cx.background_spawn(async move { client.reorder_tabs(&request_session_id, &ids) });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |app, cx| match result {
+                Ok(_) => app.reload_workspace(Some(session_id), cx),
+                Err(error) => {
+                    app.action_error = Some(format!("Could not reorder Windows: {error}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+    }
+
+    fn select_tab(&mut self, tab_id: &str, cx: &mut Context<Self>) {
+        let Some(snapshot) = active_snapshot(&self.snapshots, &self.selection).cloned() else {
             return;
         };
         let Some(tab) = snapshot
@@ -759,11 +1064,19 @@ impl DesktopApp {
         else {
             return;
         };
+        let legacy_terminal_tab_id = snapshot
+            .tabs
+            .iter()
+            .filter(|tab| tab.archived_at.is_none())
+            .min_by(|left, right| left.position.total_cmp(&right.position))
+            .map(|tab| tab.id.as_str());
         let mut terminals = snapshot
             .mux_terminals
             .iter()
             .filter(|terminal| {
-                terminal.archived_at.is_none() && terminal.tab_id.as_deref() == Some(tab_id)
+                terminal.archived_at.is_none()
+                    && (terminal.tab_id.as_deref() == Some(tab_id)
+                        || (terminal.tab_id.is_none() && legacy_terminal_tab_id == Some(tab_id)))
             })
             .collect::<Vec<_>>();
         terminals.sort_by(|left, right| left.position.total_cmp(&right.position));
@@ -775,39 +1088,128 @@ impl DesktopApp {
         self.selection.tab_id = Some(tab.id.clone());
         self.selection.terminal_id = terminal.map(|value| value.id.clone());
         self.workspace_tab_id = None;
+        self.set_terminal_switcher_open(false, cx);
         self.bump_motion();
         self.reconcile_terminal_workspace(cx);
+        let client = self.client.clone();
+        let session_id = tab.session_id.clone();
+        let selected_tab = tab.id.clone();
+        cx.background_spawn(async move {
+            let _ = client.select_tab(&session_id, Some(&selected_tab));
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn request_close_session(&mut self, session_id: &str, cx: &mut Context<Self>) {
+        let live = self
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.session.id == session_id)
+            .is_some_and(|snapshot| {
+                snapshot.mux_terminals.iter().any(|terminal| {
+                    terminal.archived_at.is_none()
+                        && matches!(
+                            terminal.status.as_str(),
+                            "created" | "starting" | "running" | "waiting"
+                        )
+                })
+            });
+        if live {
+            self.close_session_id = Some(session_id.to_string());
+            self.bump_motion();
+            cx.notify();
+        } else {
+            self.run_mutation(
+                Mutation::ArchiveSession {
+                    session_id: session_id.to_string(),
+                    mode: "keep-running",
+                },
+                cx,
+            );
+        }
+    }
+
+    fn close_session_with_mode(&mut self, mode: &'static str, cx: &mut Context<Self>) {
+        let Some(session_id) = self.close_session_id.clone() else {
+            return;
+        };
+        self.run_mutation(Mutation::ArchiveSession { session_id, mode }, cx);
+    }
+
+    fn apply_created_tab(&mut self, tab: crate::model::SessionTab, cx: &mut Context<Self>) {
+        let session_id = tab.session_id.clone();
+        let tab_id = tab.id.clone();
+        if let Some(snapshot) = self
+            .snapshots
+            .iter_mut()
+            .find(|snapshot| snapshot.session.id == session_id)
+            && !snapshot.tabs.iter().any(|existing| existing.id == tab_id)
+        {
+            snapshot.tabs.push(tab.clone());
+        }
+        self.selection.session_id = Some(session_id.clone());
+        self.selection.tab_id = Some(tab_id.clone());
+        self.selection.terminal_id = None;
+        self.workspace_tab_id = None;
+        self.set_session_switcher_open(false, cx);
+        self.reconcile_terminal_workspace(cx);
+        let client = self.client.clone();
+        cx.background_spawn(async move {
+            let _ = client.select_tab(&session_id, Some(&tab_id));
+        })
+        .detach();
+        self.schedule_workspace_reload(cx);
         cx.notify();
     }
 
     fn run_mutation(&mut self, mutation: Mutation, cx: &mut Context<Self>) {
         let client = self.client.clone();
         let session_id = self.selection.session_id.clone();
-        let tab_id = self.selection.tab_id.clone();
+        let tab_title = session_id.as_deref().and_then(|session_id| {
+            self.snapshots
+                .iter()
+                .find(|snapshot| snapshot.session.id == session_id)
+                .map(|snapshot| next_window_title(&snapshot.tabs))
+        });
         self.action_error = None;
         let task = cx.background_spawn(async move {
             match mutation {
-                Mutation::CreateSession => client.create_session().map(|session| Some(session.id)),
+                Mutation::CreateSession => client.create_session().map(MutationOutcome::Session),
                 Mutation::CreateTab => {
                     let session_id = session_id
                         .as_deref()
                         .ok_or_else(|| anyhow::anyhow!("Choose a session first."))?;
                     client
-                        .create_tab(session_id)
-                        .map(|_| Some(session_id.to_string()))
+                        .create_tab(session_id, tab_title.as_deref())
+                        .map(MutationOutcome::Tab)
                 }
-                Mutation::ArchiveTab => {
-                    let tab_id = tab_id
-                        .as_deref()
-                        .ok_or_else(|| anyhow::anyhow!("Choose a Window first."))?;
-                    client.archive_tab(tab_id).map(|tab| Some(tab.session_id))
-                }
+                Mutation::ArchiveTab {
+                    tab_id: requested_tab_id,
+                } => client
+                    .archive_tab(&requested_tab_id)
+                    .map(MutationOutcome::ArchivedTab),
+                Mutation::ArchiveSession { session_id, mode } => client
+                    .archive_session(&session_id, mode)
+                    .map(MutationOutcome::ArchivedSession),
             }
         });
         cx.spawn(async move |this, cx| {
             let result = task.await;
             let _ = this.update(cx, |app, cx| match result {
-                Ok(requested_session) => app.reload_workspace(requested_session, cx),
+                Ok(MutationOutcome::Session(session)) => {
+                    app.reload_workspace(Some(session.id), cx);
+                }
+                Ok(MutationOutcome::Tab(tab)) => {
+                    app.apply_created_tab(tab, cx);
+                }
+                Ok(MutationOutcome::ArchivedTab(tab)) => {
+                    app.reload_workspace(Some(tab.session_id), cx);
+                }
+                Ok(MutationOutcome::ArchivedSession(session)) => {
+                    app.close_session_id = None;
+                    app.reload_workspace(Some(session.id), cx);
+                }
                 Err(error) => {
                     app.action_error = Some(error.to_string());
                     cx.notify();
@@ -817,12 +1219,188 @@ impl DesktopApp {
         .detach();
     }
 
-    fn focus_panel(
+    fn begin_rename(
         &mut self,
-        panel_id: PanelId,
+        target: RenameTarget,
+        value: String,
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        let cursor = value.encode_utf16().count();
+        self.rename = Some(RenameState {
+            target,
+            value,
+            selection: cursor..cursor,
+            marked_range: None,
+        });
+        self.ime_composition.clear();
+        self.ime_marked_range = None;
+        self.focus_handle.focus(window);
+        cx.notify();
+    }
+
+    fn cancel_rename(&mut self, cx: &mut Context<Self>) {
+        if self.rename.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn commit_rename(&mut self, cx: &mut Context<Self>) {
+        let Some(rename) = self.rename.take() else {
+            return;
+        };
+        let title = rename.value.trim().to_string();
+        if title.is_empty() {
+            cx.notify();
+            return;
+        }
+        let client = self.client.clone();
+        let task = cx.background_spawn(async move {
+            match rename.target {
+                RenameTarget::Session(id) => client
+                    .rename_session(&id, &title)
+                    .map(RenameResult::Session),
+                RenameTarget::Tab(id) => client.rename_tab(&id, &title).map(RenameResult::Tab),
+                RenameTarget::Terminal(id) => client
+                    .rename_terminal(&id, &title)
+                    .map(RenameResult::Terminal),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |app, cx| match result {
+                Ok(RenameResult::Session(session)) => {
+                    if let Some(snapshot) = app
+                        .snapshots
+                        .iter_mut()
+                        .find(|snapshot| snapshot.session.id == session.id)
+                    {
+                        snapshot.session = session;
+                    }
+                    cx.notify();
+                }
+                Ok(RenameResult::Tab(tab)) => {
+                    if let Some(snapshot) = app
+                        .snapshots
+                        .iter_mut()
+                        .find(|snapshot| snapshot.session.id == tab.session_id)
+                        && let Some(existing) =
+                            snapshot.tabs.iter_mut().find(|item| item.id == tab.id)
+                    {
+                        *existing = tab;
+                    }
+                    cx.notify();
+                }
+                Ok(RenameResult::Terminal(terminal)) => {
+                    if let Some(snapshot) = app
+                        .snapshots
+                        .iter_mut()
+                        .find(|snapshot| snapshot.session.id == terminal.session_id)
+                        && let Some(existing) = snapshot
+                            .mux_terminals
+                            .iter_mut()
+                            .find(|item| item.id == terminal.id)
+                    {
+                        *existing = terminal.clone();
+                    }
+                    if let Some(state) = app.terminal_views.get_mut(&terminal.id) {
+                        state.title = terminal.title.clone();
+                    }
+                    cx.notify();
+                }
+                Err(error) => {
+                    app.action_error = Some(format!("Could not rename item: {error}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
+        cx.notify();
+    }
+
+    fn handle_rename_key_down(&mut self, event: &KeyDownEvent, cx: &mut Context<Self>) -> bool {
+        let key = event.keystroke.key.as_str();
+        if key == "escape" {
+            self.cancel_rename(cx);
+            return true;
+        }
+        if key == "enter" {
+            self.commit_rename(cx);
+            return true;
+        }
+        let modifiers = event.keystroke.modifiers;
+        let Some(rename) = self.rename.as_mut() else {
+            return false;
+        };
+        let has_selection = rename.selection.start != rename.selection.end;
+        let cursor = if has_selection && key == "left" {
+            rename.selection.start
+        } else {
+            rename.selection.end
+        };
+        match key {
+            "left" => {
+                let next = if has_selection {
+                    rename.selection.start
+                } else if modifiers.control || modifiers.platform {
+                    previous_word_boundary(&rename.value, cursor)
+                } else {
+                    previous_utf16_boundary(&rename.value, cursor)
+                };
+                rename.selection = next..next;
+                cx.notify();
+            }
+            "right" => {
+                let next = if has_selection {
+                    rename.selection.end
+                } else if modifiers.control || modifiers.platform {
+                    next_word_boundary(&rename.value, cursor)
+                } else {
+                    next_utf16_boundary(&rename.value, cursor)
+                };
+                rename.selection = next..next;
+                cx.notify();
+            }
+            "home" => {
+                rename.selection = 0..0;
+                cx.notify();
+            }
+            "end" => {
+                let end = rename.value.encode_utf16().count();
+                rename.selection = end..end;
+                cx.notify();
+            }
+            "backspace" => {
+                let start = if rename.selection.start != rename.selection.end {
+                    rename.selection.start.min(rename.selection.end)
+                } else {
+                    previous_utf16_boundary(&rename.value, cursor)
+                };
+                replace_utf16_range(&mut rename.value, start..cursor, "");
+                rename.selection = start..start;
+                cx.notify();
+            }
+            "delete" => {
+                let start = rename.selection.start.min(rename.selection.end);
+                let end = if has_selection {
+                    rename.selection.end.max(rename.selection.start)
+                } else {
+                    next_utf16_boundary(&rename.value, cursor)
+                };
+                replace_utf16_range(&mut rename.value, start..end, "");
+                rename.selection = start..start;
+                cx.notify();
+            }
+            "a" if modifiers.control || modifiers.platform => {
+                rename.selection = 0..rename.value.encode_utf16().count();
+                cx.notify();
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    fn focus_panel(&mut self, panel_id: PanelId, window: &mut Window, cx: &mut Context<Self>) {
         if !self.terminal_workspace.focus(panel_id) {
             return;
         }
@@ -880,6 +1458,8 @@ impl DesktopApp {
             let result = task.await;
             let _ = this.update(cx, |app, cx| match result {
                 Ok(terminal) => {
+                    app.pending_terminal_creations
+                        .remove(&format!("{}:{}", session_id, tab_id));
                     if app.selection.session_id.as_deref() == Some(session_id.as_str())
                         && app.selection.tab_id.as_deref() == Some(tab_id.as_str())
                     {
@@ -904,6 +1484,8 @@ impl DesktopApp {
                     cx.notify();
                 }
                 Err(error) => {
+                    app.pending_terminal_creations
+                        .remove(&format!("{}:{}", session_id, tab_id));
                     app.action_error = Some(error.to_string());
                     cx.notify();
                 }
@@ -959,6 +1541,77 @@ impl DesktopApp {
             self.schedule_layout_save(cx);
             cx.notify();
         }
+    }
+
+    fn run_terminal_action(
+        &mut self,
+        action: &'static str,
+        terminal_id: &str,
+        cx: &mut Context<Self>,
+    ) {
+        let Some(terminal) = self
+            .snapshots
+            .iter()
+            .flat_map(|snapshot| &snapshot.mux_terminals)
+            .find(|terminal| terminal.id == terminal_id && terminal.archived_at.is_none())
+            .cloned()
+        else {
+            return;
+        };
+        if action == "close" {
+            self.set_terminal_switcher_open(false, cx);
+        }
+        if action == "close"
+            && let Some(panel) = self.terminal_workspace.panel_for_terminal(terminal_id)
+        {
+            self.close_panel(panel, cx);
+            return;
+        }
+        let client = self.client.clone();
+        let id = terminal.id.clone();
+        let revision = terminal.revision;
+        let task = cx.background_spawn(async move {
+            match action {
+                "stop" => client.stop_terminal(&id, revision),
+                "restart" => client.restart_terminal(&id, revision),
+                "close" => client.close_terminal(&id),
+                _ => Err(anyhow::anyhow!("Unknown terminal action.")),
+            }
+        });
+        cx.spawn(async move |this, cx| {
+            let result = task.await;
+            let _ = this.update(cx, |app, cx| match result {
+                Ok(updated) => {
+                    if action == "close" {
+                        app.terminal_views.remove(&updated.id);
+                        if let Some(state) = app
+                            .snapshots
+                            .iter_mut()
+                            .find(|snapshot| snapshot.session.id == updated.session_id)
+                        {
+                            state.mux_terminals.retain(|item| item.id != updated.id);
+                        }
+                    } else if let Some(state) = app
+                        .snapshots
+                        .iter_mut()
+                        .find(|snapshot| snapshot.session.id == updated.session_id)
+                        && let Some(existing) = state
+                            .mux_terminals
+                            .iter_mut()
+                            .find(|item| item.id == updated.id)
+                    {
+                        *existing = updated;
+                    }
+                    app.schedule_workspace_reload(cx);
+                    cx.notify();
+                }
+                Err(error) => {
+                    app.action_error = Some(format!("Terminal action failed: {error}"));
+                    cx.notify();
+                }
+            });
+        })
+        .detach();
     }
 
     fn dock_terminal(
@@ -1093,7 +1746,8 @@ impl DesktopApp {
         let width = (bounds.size.width - px(TERMINAL_PADDING_PX * 2.0)).max(px(1.0));
         let height = (bounds.size.height - px(TERMINAL_PADDING_PX * 2.0)).max(px(1.0));
         let cols = ((width / px(self.terminal_cell_width.max(1.0))).floor() as usize).clamp(2, 500);
-        let rows = ((height / px(self.terminal_line_height.max(1.0))).floor() as usize).clamp(1, 300);
+        let rows =
+            ((height / px(self.terminal_line_height.max(1.0))).floor() as usize).clamp(1, 300);
         let Some(state) = self.terminal_views.get_mut(mux_terminal_id) else {
             return;
         };
@@ -1173,10 +1827,73 @@ impl DesktopApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if self.rename.is_some() {
+            if self.handle_rename_key_down(event, cx) {
+                cx.stop_propagation();
+            }
+            return;
+        }
+        if event.keystroke.key.as_str() == "escape"
+            && (self.settings_open
+                || self.session_switcher_open
+                || self.terminal_switcher_open
+                || self.close_session_id.is_some())
+        {
+            self.set_settings_open(false, cx);
+            self.set_session_switcher_open(false, cx);
+            self.set_terminal_switcher_open(false, cx);
+            self.close_session_id = None;
+            cx.stop_propagation();
+            cx.notify();
+            return;
+        }
+        if self.settings_open || self.session_switcher_open || self.terminal_switcher_open {
+            return;
+        }
         if let Some(data) = terminal_key_data(&event.keystroke, &self.focused_terminal_modes()) {
             cx.stop_propagation();
             self.send_terminal_input(data, cx);
         }
+    }
+
+    fn render_rename_field(
+        &self,
+        id: SharedString,
+        value: String,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let entity = cx.entity();
+        let input_entity = entity.clone();
+        let focus_handle = self.focus_handle.clone();
+        let measure = canvas(
+            |_, _, _| (),
+            move |bounds, _, window, cx| {
+                window.handle_input(
+                    &focus_handle,
+                    ElementInputHandler::new(bounds, input_entity.clone()),
+                    cx,
+                );
+            },
+        )
+        .absolute()
+        .inset_0();
+        div()
+            .id(id)
+            .relative()
+            .min_w_0()
+            .flex_1()
+            .h(px(24.0))
+            .px_1()
+            .flex()
+            .items_center()
+            .border_1()
+            .border_color(self.theme.primary.opacity(0.65))
+            .bg(self.theme.background)
+            .font_family(UI_FONT)
+            .text_size(px(12.0))
+            .text_color(self.theme.foreground)
+            .child(value)
+            .child(measure)
     }
 
     fn render_icon(path: &'static str, size: f32, color: Hsla) -> gpui::Svg {
@@ -1230,6 +1947,7 @@ impl DesktopApp {
             .active(|style| style.opacity(0.88))
             .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
                 let open = !app.session_switcher_open || app.session_switcher_closing;
+                app.set_terminal_switcher_open(false, cx);
                 app.set_session_switcher_open(open, cx);
             }))
             .child(Self::render_icon(
@@ -1285,6 +2003,26 @@ impl DesktopApp {
                 .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
                     app.select_tab(&tab_id, cx);
                 }));
+            let tab_drag = TabDrag {
+                tab_id: tab.id.clone(),
+                title: tab.title.clone(),
+            };
+            let target_id = tab.id.clone();
+            let preview_background = theme.popover;
+            let preview_foreground = theme.foreground;
+            let preview_border = theme.border;
+            tab_button = tab_button
+                .on_drag(tab_drag, move |drag, _, _, cx| {
+                    cx.new(|_| DragPreview {
+                        label: drag.title.clone(),
+                        background: preview_background,
+                        foreground: preview_foreground,
+                        border: preview_border,
+                    })
+                })
+                .on_drop(cx.listener(move |app, drag: &TabDrag, _, cx| {
+                    app.reorder_tabs(&drag.tab_id, &target_id, cx);
+                }));
             if active {
                 tab_button = tab_button.bg(theme.card).shadow(vec![BoxShadow {
                     color: theme.foreground.opacity(0.12),
@@ -1293,26 +2031,68 @@ impl DesktopApp {
                     offset: point(px(0.0), px(5.0)),
                 }]);
             }
-            tab_button = tab_button
-                .child(Self::render_icon(
-                    "icons/app-window.svg",
-                    14.0,
-                    if active {
-                        theme.foreground
-                    } else {
-                        theme.muted_foreground
-                    },
-                ))
-                .child(
+            tab_button = tab_button.child(Self::render_icon(
+                "icons/app-window.svg",
+                14.0,
+                if active {
+                    theme.foreground
+                } else {
+                    theme.muted_foreground
+                },
+            ));
+            let editing = matches!(
+                self.rename.as_ref().map(|rename| &rename.target),
+                Some(RenameTarget::Tab(id)) if id == &tab.id,
+            );
+            if editing {
+                if let Some(rename) = self.rename.as_ref() {
+                    tab_button = tab_button.child(self.render_rename_field(
+                        SharedString::from(format!("rename-window-{}", tab.id)),
+                        rename.value.clone(),
+                        cx,
+                    ));
+                }
+            } else {
+                tab_button = tab_button.child(
                     div()
                         .min_w_0()
                         .flex_1()
                         .truncate()
                         .text_size(px(12.0))
                         .font_weight(FontWeight::MEDIUM)
-                        .child(tab.title),
+                        .child(tab.title.clone()),
                 );
-            if active {
+                let rename_id = tab.id.clone();
+                let rename_title = tab.title.clone();
+                tab_button = tab_button.child(
+                    div()
+                        .id(SharedString::from(format!("rename-window-{}", tab.id)))
+                        .size(px(20.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(999.0))
+                        .cursor_pointer()
+                        .text_color(theme.muted_foreground)
+                        .hover(|style| style.bg(theme.accent))
+                        .on_click(cx.listener(move |app, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            app.begin_rename(
+                                RenameTarget::Tab(rename_id.clone()),
+                                rename_title.clone(),
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(Self::render_icon(
+                            "icons/pencil.svg",
+                            12.0,
+                            theme.muted_foreground,
+                        )),
+                );
+            }
+            if !editing {
                 let close_id = tab.id.clone();
                 tab_button = tab_button.child(
                     div()
@@ -1326,9 +2106,13 @@ impl DesktopApp {
                         .text_color(theme.muted_foreground)
                         .hover(|style| style.bg(theme.accent))
                         .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
-                            if app.selection.tab_id.as_deref() == Some(close_id.as_str()) {
-                                app.run_mutation(Mutation::ArchiveTab, cx);
-                            }
+                            cx.stop_propagation();
+                            app.run_mutation(
+                                Mutation::ArchiveTab {
+                                    tab_id: close_id.clone(),
+                                },
+                                cx,
+                            );
                         }))
                         .child(Self::render_icon(
                             "icons/x.svg",
@@ -1377,6 +2161,29 @@ impl DesktopApp {
             ));
         window_tabs = window_tabs.child(new_window);
 
+        let terminal_switcher = div()
+            .id("open-terminal-switcher")
+            .size(px(metrics.tab_pill_height_px))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(px(metrics.control_radius_px))
+            .cursor_pointer()
+            .text_color(theme.foreground)
+            .hover(|style| style.bg(theme.accent))
+            .active(|style| style.opacity(0.82))
+            .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
+                app.set_session_switcher_open(false, cx);
+                app.set_settings_open(false, cx);
+                app.set_terminal_switcher_open(!app.terminal_switcher_open, cx);
+            }))
+            .child(Self::render_icon(
+                "icons/terminal.svg",
+                15.0,
+                theme.muted_foreground,
+            ));
+
         let settings = div()
             .id("open-settings")
             .size(px(metrics.tab_pill_height_px))
@@ -1391,6 +2198,7 @@ impl DesktopApp {
             .active(|style| style.opacity(0.82))
             .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
                 app.set_session_switcher_open(false, cx);
+                app.set_terminal_switcher_open(false, cx);
                 app.set_settings_open(true, cx);
             }))
             .child(Self::render_icon(
@@ -1443,6 +2251,7 @@ impl DesktopApp {
             .child(div().w(px(1.0)).h(px(16.0)).bg(theme.border.opacity(0.60)))
             .child(session_switcher)
             .child(window_tabs)
+            .child(terminal_switcher)
             .child(settings)
     }
 
@@ -1477,12 +2286,13 @@ impl DesktopApp {
         for snapshot in sessions {
             let active = active_session_id.as_deref() == Some(snapshot.session.id.as_str());
             let session_id = snapshot.session.id.clone();
+            let session_title = snapshot.session.title.clone();
             let terminal_count = snapshot
                 .mux_terminals
                 .iter()
                 .filter(|terminal| terminal.archived_at.is_none())
                 .count();
-            let row = div()
+            let mut row = div()
                 .id(SharedString::from(format!(
                     "session-option-{}",
                     snapshot.session.id
@@ -1515,25 +2325,117 @@ impl DesktopApp {
                                 theme.primary,
                             ))
                         }),
-                )
-                .child(
+                );
+            let drag = SessionDrag {
+                session_id: snapshot.session.id.clone(),
+                title: session_title.clone(),
+            };
+            let target_id = snapshot.session.id.clone();
+            let preview_background = theme.popover;
+            let preview_foreground = theme.foreground;
+            let preview_border = theme.border;
+            row = row
+                .on_drag(drag, move |drag, _, _, cx| {
+                    cx.new(|_| DragPreview {
+                        label: drag.title.clone(),
+                        background: preview_background,
+                        foreground: preview_foreground,
+                        border: preview_border,
+                    })
+                })
+                .on_drop(cx.listener(move |app, drag: &SessionDrag, _, cx| {
+                    app.reorder_sessions(&drag.session_id, &target_id, cx);
+                }));
+            let editing = matches!(
+                self.rename.as_ref().map(|rename| &rename.target),
+                Some(RenameTarget::Session(id)) if id == &snapshot.session.id,
+            );
+            if editing {
+                if let Some(rename) = self.rename.as_ref() {
+                    row = row.child(self.render_rename_field(
+                        SharedString::from(format!("rename-session-{}", snapshot.session.id)),
+                        rename.value.clone(),
+                        cx,
+                    ));
+                }
+            } else {
+                row = row.child(
                     div()
                         .min_w_0()
                         .flex_1()
                         .truncate()
                         .text_size(px(12.0))
                         .font_weight(FontWeight::MEDIUM)
-                        .child(snapshot.session.title),
-                )
-                .when(terminal_count > 0, |row| {
-                    row.child(
-                        div()
-                            .font_family(MONO_FONT)
-                            .text_size(px(11.0))
-                            .text_color(theme.muted_foreground)
-                            .child(terminal_count.to_string()),
-                    )
-                });
+                        .child(session_title.clone()),
+                );
+                let rename_id = snapshot.session.id.clone();
+                let rename_title = session_title.clone();
+                row = row.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "rename-session-{}",
+                            snapshot.session.id
+                        )))
+                        .size(px(20.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(999.0))
+                        .cursor_pointer()
+                        .text_color(theme.muted_foreground)
+                        .hover(|style| style.bg(theme.accent))
+                        .on_click(cx.listener(move |app, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            app.begin_rename(
+                                RenameTarget::Session(rename_id.clone()),
+                                rename_title.clone(),
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(Self::render_icon(
+                            "icons/pencil.svg",
+                            12.0,
+                            theme.muted_foreground,
+                        )),
+                );
+                let close_id = snapshot.session.id.clone();
+                row = row.child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "close-session-{}",
+                            snapshot.session.id
+                        )))
+                        .size(px(20.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(999.0))
+                        .cursor_pointer()
+                        .text_color(theme.muted_foreground)
+                        .hover(|style| style.bg(theme.accent))
+                        .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
+                            cx.stop_propagation();
+                            app.request_close_session(&close_id, cx);
+                        }))
+                        .child(Self::render_icon(
+                            "icons/x.svg",
+                            12.0,
+                            theme.muted_foreground,
+                        )),
+                );
+            }
+            if terminal_count > 0 {
+                row = row.child(
+                    div()
+                        .font_family(MONO_FONT)
+                        .text_size(px(11.0))
+                        .text_color(theme.muted_foreground)
+                        .child(terminal_count.to_string()),
+                );
+            }
             list = list.child(row);
         }
 
@@ -1610,6 +2512,411 @@ impl DesktopApp {
                         }
                     }
                 },
+            ))
+    }
+
+    fn render_rename_overlay(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        let Some(rename) = self.rename.as_ref() else {
+            return div();
+        };
+        let show_overlay = match &rename.target {
+            RenameTarget::Terminal(id) => self.terminal_workspace.panel_for_terminal(id).is_none(),
+            RenameTarget::Session(_) | RenameTarget::Tab(_) => false,
+        };
+        if !show_overlay {
+            return div();
+        }
+        let theme = self.theme.clone();
+        let field =
+            self.render_rename_field("rename-overlay-input".into(), rename.value.clone(), cx);
+        let dialog = div()
+            .w(px(420.0))
+            .max_w(gpui::relative(0.90))
+            .p_4()
+            .rounded(px(theme.metrics.menu_radius_px))
+            .border_1()
+            .border_color(theme.light_edge)
+            .bg(theme.floating)
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(px(14.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Rename"),
+            )
+            .child(field)
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("cancel-rename")
+                            .h(px(32.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .rounded(px(theme.metrics.control_radius_px))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(theme.accent))
+                            .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
+                                app.cancel_rename(cx);
+                            }))
+                            .child("Cancel"),
+                    )
+                    .child(
+                        div()
+                            .id("commit-rename")
+                            .h(px(32.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .rounded(px(theme.metrics.control_radius_px))
+                            .bg(theme.primary)
+                            .text_color(theme.primary_foreground)
+                            .cursor_pointer()
+                            .hover(|style| style.opacity(0.90))
+                            .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
+                                app.commit_rename(cx);
+                            }))
+                            .child("Save"),
+                    ),
+            );
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0a10207a))
+            .child(dialog.with_animation(
+                SharedString::from(format!("rename-overlay-{}", self.motion_revision)),
+                self.motion(theme.motion.overlay_ms),
+                |element, delta| element.opacity(delta).mt(px(8.0 * (1.0 - delta))),
+            ))
+    }
+
+    fn render_terminal_switcher(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        let theme = self.theme.clone();
+        let metrics = &theme.metrics;
+        let active_terminal_id = self.selection.terminal_id.clone();
+        let mut entries = self
+            .snapshots
+            .iter()
+            .filter(|snapshot| snapshot.session.archived_at.is_none())
+            .flat_map(|snapshot| {
+                let session_title = snapshot.session.title.clone();
+                let session_position = snapshot.session.position;
+                snapshot
+                    .mux_terminals
+                    .iter()
+                    .filter(|terminal| terminal.archived_at.is_none())
+                    .map(move |terminal| {
+                        (
+                            session_position,
+                            terminal.position,
+                            session_title.clone(),
+                            terminal.clone(),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            left.0
+                .total_cmp(&right.0)
+                .then(left.2.cmp(&right.2))
+                .then(left.1.total_cmp(&right.1))
+        });
+        let mut list = div()
+            .id("terminal-switcher-list")
+            .max_h(px(420.0))
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap(px(2.0));
+        if entries.is_empty() {
+            list = list.child(
+                div()
+                    .px_2()
+                    .py_4()
+                    .text_size(px(12.0))
+                    .text_color(theme.muted_foreground)
+                    .child("No current terminals."),
+            );
+        }
+        for (_, _, session_title, terminal) in entries {
+            let active = active_terminal_id.as_deref() == Some(terminal.id.as_str());
+            let terminal_id = terminal.id.clone();
+            let rename_id = terminal.id.clone();
+            let rename_title = terminal.title.clone();
+            let status = terminal_status_label(&terminal);
+            let row = div()
+                .id(SharedString::from(format!(
+                    "terminal-option-{}",
+                    terminal.id
+                )))
+                .min_h(px(48.0))
+                .px_2()
+                .flex()
+                .items_center()
+                .gap_2()
+                .rounded(px(metrics.control_radius_px))
+                .cursor_pointer()
+                .when(active, |row| {
+                    row.bg(theme.accent).text_color(theme.accent_foreground)
+                })
+                .hover(|style| style.bg(theme.accent.opacity(0.78)))
+                .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
+                    app.select_terminal(&terminal_id, cx);
+                }))
+                .child(Self::render_icon(
+                    "icons/terminal.svg",
+                    14.0,
+                    if active {
+                        theme.primary
+                    } else {
+                        theme.muted_foreground
+                    },
+                ))
+                .child(
+                    div()
+                        .min_w_0()
+                        .flex_1()
+                        .flex()
+                        .flex_col()
+                        .gap(px(2.0))
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(12.0))
+                                .font_weight(FontWeight::MEDIUM)
+                                .child(terminal.title.clone()),
+                        )
+                        .child(
+                            div()
+                                .truncate()
+                                .text_size(px(11.0))
+                                .text_color(theme.muted_foreground)
+                                .child(format!("{session_title} · {status}")),
+                        ),
+                )
+                .child(
+                    div()
+                        .id(SharedString::from(format!(
+                            "rename-terminal-{}",
+                            terminal.id
+                        )))
+                        .size(px(20.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(999.0))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme.accent))
+                        .on_click(cx.listener(move |app, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            app.begin_rename(
+                                RenameTarget::Terminal(rename_id.clone()),
+                                rename_title.clone(),
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(Self::render_icon(
+                            "icons/pencil.svg",
+                            12.0,
+                            theme.muted_foreground,
+                        )),
+                );
+            let close_id = terminal.id.clone();
+            let close_button = div()
+                .id(SharedString::from(format!(
+                    "close-terminal-option-{}",
+                    terminal.id
+                )))
+                .size(px(20.0))
+                .flex_none()
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(px(999.0))
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.accent))
+                .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
+                    cx.stop_propagation();
+                    app.run_terminal_action("close", &close_id, cx);
+                }))
+                .child(Self::render_icon(
+                    "icons/x.svg",
+                    12.0,
+                    theme.muted_foreground,
+                ));
+            list = list.child(row.child(close_button));
+        }
+        let popup = div()
+            .w(px(360.0))
+            .max_w(gpui::relative(0.90))
+            .p(px(6.0))
+            .rounded(px(metrics.menu_radius_px))
+            .border_1()
+            .border_color(theme.light_edge)
+            .bg(theme.floating)
+            .shadow(vec![BoxShadow {
+                color: theme.foreground.opacity(0.28),
+                blur_radius: px(54.0),
+                spread_radius: px(-24.0),
+                offset: point(px(0.0), px(24.0)),
+            }])
+            .child(
+                div()
+                    .px_2()
+                    .pb_2()
+                    .text_size(px(11.0))
+                    .text_color(theme.muted_foreground)
+                    .child("Terminals across all Sessions"),
+            )
+            .child(list);
+        div()
+            .absolute()
+            .top(px(metrics.tab_bar_height_px + 8.0))
+            .right(px(44.0))
+            .child(popup.with_animation(
+                SharedString::from(format!(
+                    "terminal-switcher-transition-{}",
+                    self.motion_revision
+                )),
+                self.motion(if self.terminal_switcher_closing {
+                    theme.motion.hot_ms
+                } else {
+                    theme.motion.menu_ms
+                }),
+                {
+                    let closing = self.terminal_switcher_closing;
+                    move |element, delta| {
+                        if closing {
+                            element.opacity(1.0 - delta).mt(px(-5.0 * delta))
+                        } else {
+                            element.opacity(delta).mt(px(-5.0 * (1.0 - delta)))
+                        }
+                    }
+                },
+            ))
+    }
+
+    fn render_close_session_dialog(&mut self, cx: &mut Context<Self>) -> gpui::Div {
+        let Some(session_id) = self.close_session_id.clone() else {
+            return div();
+        };
+        let theme = self.theme.clone();
+        let title = self
+            .snapshots
+            .iter()
+            .find(|snapshot| snapshot.session.id == session_id)
+            .map(|snapshot| snapshot.session.title.clone())
+            .unwrap_or_else(|| "Session".to_string());
+        let session_id_for_cancel = session_id.clone();
+        let dialog = div()
+            .w(px(430.0))
+            .max_w(gpui::relative(0.90))
+            .p_4()
+            .rounded(px(theme.metrics.menu_radius_px))
+            .border_1()
+            .border_color(theme.light_edge)
+            .bg(theme.floating)
+            .shadow_lg()
+            .flex()
+            .flex_col()
+            .gap_3()
+            .child(
+                div()
+                    .text_size(px(14.0))
+                    .font_weight(FontWeight::SEMIBOLD)
+                    .child("Close session?"),
+            )
+            .child(
+                div()
+                    .text_size(px(12.0))
+                    .text_color(theme.muted_foreground)
+                    .child(format!(
+                        "Live terminals in {title} can keep running after this Session is archived."
+                    )),
+            )
+            .child(
+                div()
+                    .flex()
+                    .justify_end()
+                    .gap_2()
+                    .child(
+                        div()
+                            .id("cancel-close-session")
+                            .h(px(32.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .rounded(px(theme.metrics.control_radius_px))
+                            .cursor_pointer()
+                            .hover(|style| style.bg(theme.accent))
+                            .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
+                                if app.close_session_id.as_deref()
+                                    == Some(session_id_for_cancel.as_str())
+                                {
+                                    app.close_session_id = None;
+                                    app.bump_motion();
+                                    cx.notify();
+                                }
+                            }))
+                            .child("Cancel"),
+                    )
+                    .child(
+                        div()
+                            .id("keep-running-close-session")
+                            .h(px(32.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .rounded(px(theme.metrics.control_radius_px))
+                            .bg(theme.secondary)
+                            .cursor_pointer()
+                            .hover(|style| style.bg(theme.accent))
+                            .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
+                                app.close_session_with_mode("keep-running", cx);
+                            }))
+                            .child("Keep running and archive"),
+                    )
+                    .child(
+                        div()
+                            .id("stop-close-session")
+                            .h(px(32.0))
+                            .px_3()
+                            .flex()
+                            .items_center()
+                            .rounded(px(theme.metrics.control_radius_px))
+                            .bg(theme.destructive)
+                            .text_color(theme.primary_foreground)
+                            .cursor_pointer()
+                            .hover(|style| style.opacity(0.90))
+                            .on_click(cx.listener(|app, _: &ClickEvent, _, cx| {
+                                app.close_session_with_mode("stop-terminals", cx);
+                            }))
+                            .child("Stop and archive"),
+                    ),
+            );
+        div()
+            .absolute()
+            .inset_0()
+            .flex()
+            .items_center()
+            .justify_center()
+            .bg(gpui::rgba(0x0a10207a))
+            .child(dialog.with_animation(
+                SharedString::from(format!("close-session-dialog-{}", self.motion_revision)),
+                self.motion(theme.motion.overlay_ms),
+                |element, delta| element.opacity(delta).mt(px(8.0 * (1.0 - delta))),
             ))
     }
 
@@ -1957,7 +3264,12 @@ impl DesktopApp {
         let terminal_id = view.terminal_id().map(str::to_string);
         let terminal = terminal_id.as_deref().and_then(|terminal_id| {
             active_snapshot(&self.snapshots, &self.selection)
-                .and_then(|snapshot| snapshot.mux_terminals.iter().find(|item| item.id == terminal_id))
+                .and_then(|snapshot| {
+                    snapshot
+                        .mux_terminals
+                        .iter()
+                        .find(|item| item.id == terminal_id)
+                })
                 .cloned()
         });
         let title = terminal_id
@@ -1990,8 +3302,23 @@ impl DesktopApp {
                 } else {
                     theme.muted_foreground.opacity(0.68)
                 },
-            ))
-            .child(
+            ));
+        let editing_terminal = terminal_id.as_deref().is_some_and(|id| {
+            matches!(
+                self.rename.as_ref().map(|rename| &rename.target),
+                Some(RenameTarget::Terminal(target)) if target == id,
+            )
+        });
+        if editing_terminal {
+            if let Some(rename) = self.rename.as_ref() {
+                title_area = title_area.child(self.render_rename_field(
+                    SharedString::from(format!("rename-pane-{}", panel_id.id)),
+                    rename.value.clone(),
+                    cx,
+                ));
+            }
+        } else {
+            title_area = title_area.child(
                 div()
                     .min_w_0()
                     .truncate()
@@ -2004,20 +3331,51 @@ impl DesktopApp {
                     })
                     .child(title.clone()),
             );
+            if let Some(rename_id) = terminal_id.clone() {
+                let rename_title = title.clone();
+                title_area = title_area.child(
+                    div()
+                        .id(SharedString::from(format!("rename-pane-{}", panel_id.id)))
+                        .size(px(20.0))
+                        .flex_none()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .rounded(px(999.0))
+                        .cursor_pointer()
+                        .hover(|style| style.bg(theme.accent))
+                        .on_click(cx.listener(move |app, _: &ClickEvent, window, cx| {
+                            cx.stop_propagation();
+                            app.begin_rename(
+                                RenameTarget::Terminal(rename_id.clone()),
+                                rename_title.clone(),
+                                window,
+                                cx,
+                            );
+                        }))
+                        .child(Self::render_icon(
+                            "icons/pencil.svg",
+                            12.0,
+                            theme.muted_foreground,
+                        )),
+                );
+            }
+        }
         if let Some(drag) = title_drag {
             let preview_background = theme.popover;
             let preview_foreground = theme.foreground;
             let preview_border = theme.border;
-            title_area = title_area
-                .cursor(CursorStyle::OpenHand)
-                .on_drag(drag, move |drag, _, _, cx| {
-                    cx.new(|_| DragPreview {
-                        label: drag.title.clone(),
-                        background: preview_background,
-                        foreground: preview_foreground,
-                        border: preview_border,
-                    })
-                });
+            title_area =
+                title_area
+                    .cursor(CursorStyle::OpenHand)
+                    .on_drag(drag, move |drag, _, _, cx| {
+                        cx.new(|_| DragPreview {
+                            label: drag.title.clone(),
+                            background: preview_background,
+                            foreground: preview_foreground,
+                            border: preview_border,
+                        })
+                    });
         }
 
         let split_right = div()
@@ -2153,11 +3511,7 @@ impl DesktopApp {
         leaf.into_any_element()
     }
 
-    fn render_empty_terminal_pane(
-        &self,
-        panel_id: PanelId,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_empty_terminal_pane(&self, panel_id: PanelId, cx: &mut Context<Self>) -> AnyElement {
         let theme = self.theme.clone();
         div()
             .min_h_0()
@@ -2167,7 +3521,10 @@ impl DesktopApp {
             .justify_center()
             .child(
                 div()
-                    .id(SharedString::from(format!("create-terminal-{}", panel_id.id)))
+                    .id(SharedString::from(format!(
+                        "create-terminal-{}",
+                        panel_id.id
+                    )))
                     .h(px(32.0))
                     .px_3()
                     .flex()
@@ -2189,7 +3546,7 @@ impl DesktopApp {
     }
 
     fn render_terminal_pane(
-        &self,
+        &mut self,
         mux_terminal_id: &str,
         terminal: Option<&MuxTerminal>,
         focused: bool,
@@ -2197,10 +3554,15 @@ impl DesktopApp {
     ) -> AnyElement {
         let theme = self.theme.clone();
         let state = self.terminal_views.get(mux_terminal_id);
-        let snapshot = state
-            .and_then(|state| state.semantic.snapshot())
-            .cloned();
-        let content = if let Some(snapshot) = snapshot {
+        let snapshot = state.and_then(|state| state.semantic.snapshot()).cloned();
+        let can_restart = terminal.as_ref().is_some_and(|terminal| {
+            matches!(
+                terminal.output.process_state.as_str(),
+                "exited" | "failed" | "interrupted" | "orphaned" | "disconnected"
+            )
+        });
+        let restart_id = can_restart.then(|| mux_terminal_id.to_string());
+        let mut content = if let Some(snapshot) = snapshot {
             self.render_terminal_snapshot(&snapshot, focused)
                 .into_any_element()
         } else {
@@ -2252,6 +3614,45 @@ impl DesktopApp {
                 )
                 .into_any_element()
         };
+        if let Some(restart_id) = restart_id {
+            let restart_button = div()
+                .id(SharedString::from(format!(
+                    "restart-terminal-{}",
+                    restart_id
+                )))
+                .h(px(32.0))
+                .px_3()
+                .flex()
+                .items_center()
+                .gap_2()
+                .rounded(px(theme.metrics.control_radius_px))
+                .bg(theme.secondary)
+                .cursor_pointer()
+                .hover(|style| style.bg(theme.accent))
+                .on_click(cx.listener(move |app, _: &ClickEvent, _, cx| {
+                    app.run_terminal_action("restart", &restart_id, cx);
+                }))
+                .child(Self::render_icon(
+                    "icons/refresh-cw.svg",
+                    13.0,
+                    theme.foreground,
+                ))
+                .child("Restart terminal");
+            content = div()
+                .relative()
+                .size_full()
+                .child(content)
+                .child(
+                    div()
+                        .absolute()
+                        .inset_0()
+                        .flex()
+                        .items_center()
+                        .justify_center()
+                        .child(restart_button),
+                )
+                .into_any_element();
+        }
         let entity = cx.entity();
         let input_entity = entity.clone();
         let terminal_id = mux_terminal_id.to_string();
@@ -2294,17 +3695,31 @@ impl DesktopApp {
         let theme = self.theme.clone();
         let mut zone = div()
             .absolute()
-            .drag_over::<PaneDrag>(move |style, _, _, _| {
-                style.bg(theme.primary.opacity(0.16))
-            })
+            .drag_over::<PaneDrag>(move |style, _, _, _| style.bg(theme.primary.opacity(0.16)))
             .on_drop(cx.listener(move |app, drag: &PaneDrag, _, cx| {
                 app.dock_terminal(&drag.terminal_id, panel_id, edge, cx);
             }));
         zone = match edge {
-            Some(Edge::Left) => zone.left_0().top(relative(0.22)).bottom(relative(0.22)).w(relative(0.22)),
-            Some(Edge::Right) => zone.right_0().top(relative(0.22)).bottom(relative(0.22)).w(relative(0.22)),
-            Some(Edge::Top) => zone.top_0().left(relative(0.22)).right(relative(0.22)).h(relative(0.22)),
-            Some(Edge::Bottom) => zone.bottom_0().left(relative(0.22)).right(relative(0.22)).h(relative(0.22)),
+            Some(Edge::Left) => zone
+                .left_0()
+                .top(relative(0.22))
+                .bottom(relative(0.22))
+                .w(relative(0.22)),
+            Some(Edge::Right) => zone
+                .right_0()
+                .top(relative(0.22))
+                .bottom(relative(0.22))
+                .w(relative(0.22)),
+            Some(Edge::Top) => zone
+                .top_0()
+                .left(relative(0.22))
+                .right(relative(0.22))
+                .h(relative(0.22)),
+            Some(Edge::Bottom) => zone
+                .bottom_0()
+                .left(relative(0.22))
+                .right(relative(0.22))
+                .h(relative(0.22)),
             None => zone
                 .top(relative(0.22))
                 .right(relative(0.22))
@@ -2378,11 +3793,7 @@ impl DesktopApp {
                     .child(self.ime_composition.clone()),
             );
         }
-        div()
-            .min_h_0()
-            .flex_1()
-            .bg(theme.background)
-            .child(screen)
+        div().min_h_0().flex_1().bg(theme.background).child(screen)
     }
 
     fn render_settings(&mut self, cx: &mut Context<Self>) -> gpui::Div {
@@ -2617,6 +4028,100 @@ impl DesktopApp {
                             .child(
                                 div()
                                     .mt_2()
+                                    .flex()
+                                    .flex_col()
+                                    .gap_2()
+                                    .child(
+                                        div()
+                                            .text_size(px(12.0))
+                                            .font_weight(FontWeight::MEDIUM)
+                                            .child("Terminal font size"),
+                                    )
+                                    .child(
+                                        div()
+                                            .flex()
+                                            .items_center()
+                                            .gap_2()
+                                            .child(
+                                                div()
+                                                    .id("font-size-decrease")
+                                                    .size(px(30.0))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded(px(metrics.control_radius_px))
+                                                    .bg(theme.secondary)
+                                                    .cursor_pointer()
+                                                    .hover(|style| style.bg(theme.accent))
+                                                    .on_click(cx.listener(
+                                                        |app, _: &ClickEvent, _, cx| {
+                                                            app.terminal_font_size =
+                                                                stepped_terminal_font_size(
+                                                                    app.terminal_font_size,
+                                                                    -1.0,
+                                                                );
+                                                            app.bump_motion();
+                                                            cx.notify();
+                                                        },
+                                                    ))
+                                                    .child(Self::render_icon(
+                                                        "icons/minus.svg",
+                                                        13.0,
+                                                        theme.foreground,
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .min_w(px(54.0))
+                                                    .text_center()
+                                                    .font_family(MONO_FONT)
+                                                    .text_size(px(12.0))
+                                                    .child(format!(
+                                                        "{:.0}px",
+                                                        self.terminal_font_size
+                                                    )),
+                                            )
+                                            .child(
+                                                div()
+                                                    .id("font-size-increase")
+                                                    .size(px(30.0))
+                                                    .flex()
+                                                    .items_center()
+                                                    .justify_center()
+                                                    .rounded(px(metrics.control_radius_px))
+                                                    .bg(theme.secondary)
+                                                    .cursor_pointer()
+                                                    .hover(|style| style.bg(theme.accent))
+                                                    .on_click(cx.listener(
+                                                        |app, _: &ClickEvent, _, cx| {
+                                                            app.terminal_font_size =
+                                                                stepped_terminal_font_size(
+                                                                    app.terminal_font_size,
+                                                                    1.0,
+                                                                );
+                                                            app.bump_motion();
+                                                            cx.notify();
+                                                        },
+                                                    ))
+                                                    .child(Self::render_icon(
+                                                        "icons/plus.svg",
+                                                        13.0,
+                                                        theme.foreground,
+                                                    )),
+                                            ),
+                                    )
+                                    .child(
+                                        div()
+                                            .text_size(px(11.0))
+                                            .text_color(theme.muted_foreground)
+                                            .child(
+                                                "Use ⌘/Ctrl + 0 to reset the terminal text size.",
+                                            ),
+                                    ),
+                            )
+                            .child(
+                                div()
+                                    .mt_2()
                                     .p_3()
                                     .rounded(px(metrics.control_radius_px))
                                     .border_1()
@@ -2715,6 +4220,52 @@ impl Render for DesktopApp {
             .relative()
             .track_focus(&self.focus_handle)
             .on_key_down(cx.listener(Self::handle_terminal_key_down))
+            .on_action(cx.listener(|app, _: &OpenTerminalSwitcher, _, cx| {
+                if !app.settings_open && !app.session_switcher_open {
+                    app.set_terminal_switcher_open(true, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &NewSession, _, cx| {
+                if !app.settings_open && !app.session_switcher_open {
+                    app.run_mutation(Mutation::CreateSession, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &NewWindow, _, cx| {
+                if !app.settings_open && !app.session_switcher_open {
+                    app.run_mutation(Mutation::CreateTab, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &NewTerminal, _, cx| {
+                if !app.settings_open && !app.session_switcher_open {
+                    app.create_terminal_in_panel(app.terminal_workspace.focused_panel_id, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &CloseTerminal, _, cx| {
+                if !app.settings_open
+                    && !app.session_switcher_open
+                    && let Some(terminal_id) = app.focused_terminal_id().map(str::to_string)
+                {
+                    app.run_terminal_action("close", &terminal_id, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &CloseSession, _, cx| {
+                if !app.settings_open
+                    && !app.session_switcher_open
+                    && let Some(session_id) = app.selection.session_id.clone()
+                {
+                    app.request_close_session(&session_id, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &NextTerminal, _, cx| {
+                if !app.settings_open && !app.session_switcher_open {
+                    app.cycle_terminal(1, cx);
+                }
+            }))
+            .on_action(cx.listener(|app, _: &PreviousTerminal, _, cx| {
+                if !app.settings_open && !app.session_switcher_open {
+                    app.cycle_terminal(-1, cx);
+                }
+            }))
             .on_action(cx.listener(|app, _: &ZoomIn, _, cx| {
                 app.terminal_font_size = stepped_terminal_font_size(app.terminal_font_size, 1.0);
                 app.bump_motion();
@@ -2768,6 +4319,15 @@ impl Render for DesktopApp {
         if self.session_switcher_open {
             root = root.child(self.render_session_switcher(cx));
         }
+        if self.terminal_switcher_open {
+            root = root.child(self.render_terminal_switcher(cx));
+        }
+        if self.close_session_id.is_some() {
+            root = root.child(self.render_close_session_dialog(cx));
+        }
+        if self.rename.is_some() {
+            root = root.child(self.render_rename_overlay(cx));
+        }
         if self.settings_open {
             root = root.child(self.render_settings(cx));
         }
@@ -2787,6 +4347,13 @@ impl EntityInputHandler for DesktopApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<String> {
+        if let Some(rename) = self.rename.as_ref() {
+            let utf16_len = rename.value.encode_utf16().count();
+            let start = range_utf16.start.min(utf16_len);
+            let end = range_utf16.end.min(utf16_len).max(start);
+            actual_range.replace(start..end);
+            return Some(utf16_slice(&rename.value, start..end));
+        }
         let utf16_len = self.ime_composition.encode_utf16().count();
         let start = range_utf16.start.min(utf16_len);
         let end = range_utf16.end.min(utf16_len).max(start);
@@ -2800,6 +4367,12 @@ impl EntityInputHandler for DesktopApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<UTF16Selection> {
+        if let Some(rename) = self.rename.as_ref() {
+            return Some(UTF16Selection {
+                range: rename.selection.clone(),
+                reversed: false,
+            });
+        }
         let cursor = self.ime_composition.encode_utf16().count();
         Some(UTF16Selection {
             range: cursor..cursor,
@@ -2812,10 +4385,18 @@ impl EntityInputHandler for DesktopApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Range<usize>> {
-        self.ime_marked_range.clone()
+        self.rename
+            .as_ref()
+            .map(|rename| rename.marked_range.clone())
+            .unwrap_or_else(|| self.ime_marked_range.clone())
     }
 
     fn unmark_text(&mut self, _window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(rename) = self.rename.as_mut() {
+            rename.marked_range = None;
+            cx.notify();
+            return;
+        }
         let committed = std::mem::take(&mut self.ime_composition);
         self.ime_marked_range = None;
         if !committed.is_empty() {
@@ -2826,11 +4407,22 @@ impl EntityInputHandler for DesktopApp {
 
     fn replace_text_in_range(
         &mut self,
-        _range: Option<Range<usize>>,
+        range: Option<Range<usize>>,
         text: &str,
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(rename) = self.rename.as_mut() {
+            let selected = range.unwrap_or_else(|| rename.selection.clone());
+            let start = selected.start.min(selected.end);
+            let end = selected.end.max(selected.start);
+            replace_utf16_range(&mut rename.value, start..end, text);
+            let cursor = start + text.encode_utf16().count();
+            rename.selection = cursor..cursor;
+            rename.marked_range = None;
+            cx.notify();
+            return;
+        }
         self.ime_composition.clear();
         self.ime_marked_range = None;
         if !text.is_empty() {
@@ -2847,10 +4439,20 @@ impl EntityInputHandler for DesktopApp {
         _window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        if let Some(rename) = self.rename.as_mut() {
+            let selected = rename.selection.clone();
+            let start = selected.start.min(selected.end);
+            let end = selected.end.max(selected.start);
+            replace_utf16_range(&mut rename.value, start..end, new_text);
+            let cursor = start + new_text.encode_utf16().count();
+            rename.selection = cursor..cursor;
+            rename.marked_range = (!new_text.is_empty()).then_some(start..cursor);
+            cx.notify();
+            return;
+        }
         self.ime_composition.clear();
         self.ime_composition.push_str(new_text);
-        self.ime_marked_range = (!new_text.is_empty())
-            .then(|| 0..new_text.encode_utf16().count());
+        self.ime_marked_range = (!new_text.is_empty()).then(|| 0..new_text.encode_utf16().count());
         cx.notify();
     }
 
@@ -2861,6 +4463,9 @@ impl EntityInputHandler for DesktopApp {
         _window: &mut Window,
         _cx: &mut Context<Self>,
     ) -> Option<Bounds<Pixels>> {
+        if self.rename.is_some() {
+            return Some(element_bounds);
+        }
         let cursor = self
             .focused_terminal_id()
             .and_then(|terminal_id| self.terminal_views.get(terminal_id))
@@ -2911,6 +4516,80 @@ impl Drop for DesktopApp {
     fn drop(&mut self) {
         self.realtime.shutdown();
     }
+}
+
+fn utf16_char_ranges(value: &str) -> Vec<(usize, usize, char)> {
+    let mut start = 0;
+    value
+        .chars()
+        .map(|character| {
+            let end = start + character.len_utf16();
+            let item = (start, end, character);
+            start = end;
+            item
+        })
+        .collect()
+}
+
+fn previous_utf16_boundary(value: &str, offset: usize) -> usize {
+    utf16_char_ranges(value)
+        .into_iter()
+        .rev()
+        .find(|(_, end, _)| *end <= offset)
+        .map_or(0, |(start, _, _)| start)
+}
+
+fn next_utf16_boundary(value: &str, offset: usize) -> usize {
+    utf16_char_ranges(value)
+        .into_iter()
+        .find(|(_, end, _)| *end > offset)
+        .map_or_else(|| value.encode_utf16().count(), |(_, end, _)| end)
+}
+
+fn previous_word_boundary(value: &str, offset: usize) -> usize {
+    let chars = utf16_char_ranges(value);
+    let mut index = chars.partition_point(|(start, _, _)| *start < offset);
+    while index > 0 && chars[index - 1].2.is_whitespace() {
+        index -= 1;
+    }
+    while index > 0 && !chars[index - 1].2.is_whitespace() {
+        index -= 1;
+    }
+    chars.get(index).map_or(0, |(start, _, _)| *start)
+}
+
+fn next_word_boundary(value: &str, offset: usize) -> usize {
+    let chars = utf16_char_ranges(value);
+    let mut index = chars.partition_point(|(start, _, _)| *start < offset);
+    while index < chars.len() && chars[index].2.is_whitespace() {
+        index += 1;
+    }
+    while index < chars.len() && !chars[index].2.is_whitespace() {
+        index += 1;
+    }
+    chars
+        .get(index)
+        .map_or_else(|| value.encode_utf16().count(), |(start, _, _)| *start)
+}
+
+fn replace_utf16_range(value: &mut String, range: Range<usize>, replacement: &str) {
+    let start = utf16_to_byte_offset(value, range.start);
+    let end = utf16_to_byte_offset(value, range.end).max(start);
+    value.replace_range(start..end, replacement);
+}
+
+fn utf16_to_byte_offset(value: &str, offset: usize) -> usize {
+    let mut utf16 = 0;
+    for (byte, character) in value.char_indices() {
+        if utf16 >= offset {
+            return byte;
+        }
+        utf16 += character.len_utf16();
+        if utf16 >= offset {
+            return byte + character.len_utf8();
+        }
+    }
+    value.len()
 }
 
 fn utf16_slice(value: &str, range: Range<usize>) -> String {
@@ -3082,6 +4761,39 @@ fn stepped_terminal_font_size(current: f32, direction: f32) -> f32 {
         .clamp(MIN_TERMINAL_FONT_SIZE, MAX_TERMINAL_FONT_SIZE)
 }
 
+fn terminal_status_label(terminal: &MuxTerminal) -> String {
+    match terminal.output.activity_state.as_str() {
+        "waiting_for_input" => "Waiting for input".to_string(),
+        "running_command" | "working" => "Working".to_string(),
+        "starting" => "Starting".to_string(),
+        "failed" => "Failed".to_string(),
+        _ => match terminal.status.as_str() {
+            "created" => "Created".to_string(),
+            "starting" => "Starting".to_string(),
+            "running" => "Running".to_string(),
+            "waiting" => "Waiting".to_string(),
+            "succeeded" => "Finished".to_string(),
+            "failed" => "Failed".to_string(),
+            "cancelled" => "Cancelled".to_string(),
+            "disconnected" => "Disconnected".to_string(),
+            _ => terminal.status.clone(),
+        },
+    }
+}
+
+fn next_window_title(tabs: &[crate::model::SessionTab]) -> String {
+    let used = tabs
+        .iter()
+        .filter(|tab| tab.archived_at.is_none())
+        .map(|tab| tab.title.as_str())
+        .collect::<HashSet<_>>();
+    let mut index = 1;
+    while used.contains(format!("Window {index}").as_str()) {
+        index += 1;
+    }
+    format!("Window {index}")
+}
+
 fn status_message(terminal: &MuxTerminal) -> String {
     match terminal.output.process_state.as_str() {
         "starting" => "The terminal is still starting.".to_string(),
@@ -3187,6 +4899,15 @@ fn ansi_replay_snapshot(
     let rows = attached.rows.unwrap_or(24).clamp(1, u16::MAX as usize) as u16;
     let cols = attached.cols.unwrap_or(80).clamp(1, u16::MAX as usize) as u16;
     let mut parser = vt100::Parser::new(rows, cols, 0);
+    if attached
+        .replay_quality
+        .as_deref()
+        .is_some_and(|quality| matches!(quality, "checkpoint" | "degraded"))
+        && let Some(checkpoint) = &attached.checkpoint
+        && checkpoint.checkpoint_version == 1
+    {
+        parser.process(checkpoint.synthetic_ansi.as_bytes());
+    }
     for chunk in &attached.output_chunks {
         parser.process(chunk.as_bytes());
     }
@@ -3392,6 +5113,16 @@ mod tests {
             stepped_terminal_font_size(MIN_TERMINAL_FONT_SIZE, -1.0),
             8.0
         );
+    }
+
+    #[test]
+    fn rename_editing_preserves_utf16_boundaries() {
+        let value = "a🦀b";
+        assert_eq!(next_utf16_boundary(value, 1), 3);
+        assert_eq!(previous_utf16_boundary(value, 3), 1);
+        let mut edited = value.to_string();
+        replace_utf16_range(&mut edited, 1..3, "x");
+        assert_eq!(edited, "axb");
     }
 
     #[test]

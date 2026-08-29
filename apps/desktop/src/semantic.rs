@@ -216,9 +216,14 @@ mod tests {
 
     fn attached_snapshot() -> TerminalSemanticSnapshot {
         let response: crate::model::HostRpcResponse<Option<crate::model::TerminalAttachResult>> =
-            serde_json::from_str(include_str!("../tests/fixtures/terminal-attach-success.json"))
-                .expect("fixture");
-        let crate::model::HostRpcResponse::Success { value: Some(result) } = response else {
+            serde_json::from_str(include_str!(
+                "../tests/fixtures/terminal-attach-success.json"
+            ))
+            .expect("fixture");
+        let crate::model::HostRpcResponse::Success {
+            value: Some(result),
+        } = response
+        else {
             panic!("attached terminal fixture");
         };
         result.semantic_snapshot.expect("semantic snapshot")

@@ -58,6 +58,18 @@ pub struct TerminalOutput {
     pub activity_state: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalCheckpoint {
+    pub checkpoint_version: u32,
+    pub terminal_epoch: String,
+    pub sequence: u64,
+    pub cols: usize,
+    pub rows: usize,
+    pub created_at: String,
+    pub synthetic_ansi: String,
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalAttachResult {
@@ -67,6 +79,8 @@ pub struct TerminalAttachResult {
     pub owner_id: Option<String>,
     pub owner_epoch: Option<String>,
     pub protocol_version: Option<u32>,
+    pub checkpoint: Option<TerminalCheckpoint>,
+    pub replay_quality: Option<String>,
     #[serde(default)]
     pub output_chunks: Vec<String>,
     #[serde(default)]
@@ -309,15 +323,17 @@ impl WorkspaceSelection {
             .and_then(|id| tabs.iter().copied().find(|tab| tab.id == id))
             .or_else(|| tabs.first().copied());
         let tab_id = tab.map(|value| value.id.clone());
+        let legacy_terminal_tab_id = tabs.first().map(|value| value.id.as_str());
 
         let mut terminals = snapshot
             .mux_terminals
             .iter()
             .filter(|terminal| {
                 terminal.archived_at.is_none()
-                    && tab_id
-                        .as_deref()
-                        .is_none_or(|id| terminal.tab_id.as_deref() == Some(id))
+                    && tab_id.as_deref().is_none_or(|id| {
+                        terminal.tab_id.as_deref() == Some(id)
+                            || (terminal.tab_id.is_none() && legacy_terminal_tab_id == Some(id))
+                    })
             })
             .collect::<Vec<_>>();
         terminals.sort_by(|left, right| left.position.total_cmp(&right.position));
