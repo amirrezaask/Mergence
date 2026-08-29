@@ -39,6 +39,28 @@ export {
   type GhosttyWrappedTerminalLinkLineSegment,
 } from "./links.js"
 export {
+  Canvas2dTerminalRenderer,
+} from "./renderers/canvas2d-renderer.js"
+export {
+  AUTO_WEBGL2_ENABLED,
+  createTerminalRenderer,
+  RendererInitializationError,
+  parseTerminalRendererPreference,
+  terminalRendererPreferenceFromSearch,
+  type CreatedTerminalRenderer,
+  type TerminalRendererPreference,
+} from "./renderers/create-renderer.js"
+export {
+  WebGl2TerminalRenderer,
+  type WebGlTerminalDebugCounters,
+} from "./renderers/webgl2/webgl2-renderer.js"
+export type {
+  TerminalRenderer,
+  TerminalRenderFont,
+  TerminalRenderOverlays,
+  TerminalRenderViewport,
+} from "./renderers/terminal-renderer.js"
+export {
   ghosttyTextRunEnd,
   measureGhosttyCell,
   renderGhosttySnapshot,

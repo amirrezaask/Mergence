@@ -13,6 +13,18 @@ export {
 } from "./core.js"
 export { GHOSTTY_CELL_WIDE, ghosttyColorsEqual } from "./render-model.js"
 export {
+  GHOSTTY_RENDER_ROW,
+  GHOSTTY_RENDER_STYLE,
+  GHOSTTY_RENDER_UPDATE_VERSION,
+  GhosttyRenderUpdateBuilder,
+  packGhosttyCellStyle,
+  packGhosttyColor,
+  unpackGhosttyColor,
+  validateGhosttyRenderUpdate,
+  type GhosttyRenderUpdate,
+} from "./render-update.js"
+export { GhosttyViewportModel } from "./viewport-model.js"
+export {
   GhosttyRuntime,
   loadGhosttyRuntime,
   type GhosttyWasmAsset,

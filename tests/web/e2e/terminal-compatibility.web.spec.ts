@@ -118,6 +118,93 @@ test.describe("terminal compatibility", () => {
     expect(await terminalText()).not.toContain("�")
   })
 
+  test("forced WebGL2 and Canvas backends render the same retained text", async ({
+    launchApp,
+  }) => {
+    const backends: readonly ("webgl2" | "canvas2d")[] = ["webgl2", "canvas2d"]
+    for (const backend of backends) {
+      const { page } = await launchApp()
+      await page.evaluate(value => localStorage.setItem("yaade:terminal-renderer", value), backend)
+      await page.reload({ waitUntil: "domcontentloaded" })
+      await focusTerminal(page)
+      const panel = page.locator(
+        '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+      ).filter({ visible: true }).first()
+      await expect(panel).toHaveAttribute("data-yaade-terminal-renderer", "ghostty")
+      await expect(panel).toHaveAttribute("data-yaade-terminal-render-backend", backend)
+      await page.keyboard.type("printf '\\033cASCII wide:界 combining:é emoji:🙂 underline'")
+      await page.keyboard.press("Enter")
+      await expect.poll(
+        () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
+        { timeout: 15_000 },
+      ).toContain("ASCII wide:界 combining:é emoji:🙂 underline")
+      const differingPixels = await panel.locator("[data-ghostty-terminal-canvas]").evaluate(
+        (element, renderer) => {
+          if (!(element instanceof HTMLCanvasElement)) return 0
+          let pixels: Uint8Array | Uint8ClampedArray
+          if (renderer === "webgl2") {
+            const gl = element.getContext("webgl2")
+            if (gl === null) return 0
+            pixels = new Uint8Array(element.width * element.height * 4)
+            gl.readPixels(0, 0, element.width, element.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
+          } else {
+            const context = element.getContext("2d")
+            if (context === null) return 0
+            pixels = context.getImageData(0, 0, element.width, element.height).data
+          }
+          const red = pixels[0] ?? 0
+          const green = pixels[1] ?? 0
+          const blue = pixels[2] ?? 0
+          let count = 0
+          for (let index = 0; index < pixels.length; index += 4) {
+            if (
+              pixels[index] !== red ||
+              pixels[index + 1] !== green ||
+              pixels[index + 2] !== blue
+            ) count += 1
+          }
+          return count
+        },
+        backend,
+      )
+      expect(differingPixels).toBeGreaterThan(100)
+    }
+  })
+
+  test("renderer context loss recovers without replacing the PTY or retained text", async ({
+    launchApp,
+  }) => {
+    const { page } = await launchApp()
+    await page.evaluate(() => localStorage.setItem("yaade:terminal-renderer", "webgl2"))
+    await page.reload({ waitUntil: "domcontentloaded" })
+    await focusTerminal(page)
+    const panel = page.locator(
+      '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+    ).filter({ visible: true }).first()
+    await expect(panel).toHaveAttribute("data-yaade-terminal-render-backend", "webgl2")
+    const ptyId = await panel.getAttribute("data-yaade-terminal-pty-id")
+    await page.keyboard.type("printf 'before-loss\\n'")
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
+    ).toContain("before-loss")
+    await panel.locator("[data-ghostty-terminal-canvas]").evaluate(element => {
+      element.dispatchEvent(new Event("webglcontextlost", { cancelable: true }))
+    })
+    await expect(panel.locator("[data-ghostty-terminal]")).toHaveAttribute(
+      "data-ghostty-terminal-renderer-generation",
+      "2",
+    )
+    await page.keyboard.type("printf 'after-loss\\n'")
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
+      { timeout: 15_000 },
+    ).toContain("after-loss")
+    await expect(panel).toHaveAttribute("data-yaade-terminal-pty-id", ptyId ?? "")
+    await expect(page.locator("[data-yaade-connection]")).toHaveCount(0)
+  })
+
   test("flow control replays from the last parsed frame after a renderer stall", async ({
     launchApp,
   }) => {

@@ -7,6 +7,8 @@ import {
 } from "./links.js";
 import {
   GhosttyTerminalCore,
+  GhosttyViewportModel,
+  type GhosttyRenderUpdate,
   type GhosttyResponsePolicy,
   type GhosttyScrollbar,
   type GhosttySnapshot,
@@ -14,7 +16,6 @@ import {
 } from "./core.js";
 import {
   measureGhosttyCell,
-  renderGhosttySnapshot,
   terminalGridSize,
   terminalMouseCoordinate,
   type GhosttyCellRange,
@@ -23,6 +24,17 @@ import {
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
 import { browserGhosttyWasmSource } from "@yaade/ghostty-core/loaders/browser";
 import { isBrowserZoomShortcut, isBrowserZoomWheel } from "./browser-zoom.js";
+import {
+  createTerminalRenderer,
+  parseTerminalRendererPreference,
+  terminalRendererPreferenceFromSearch,
+  type TerminalRendererPreference,
+} from "./renderers/create-renderer.js";
+import {
+  RendererController,
+  type ControlledTerminalRenderer,
+} from "./renderers/renderer-controller.js";
+import type { TerminalRenderer } from "./renderers/terminal-renderer.js";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -563,10 +575,12 @@ export interface GhosttyTerminalSurfaceOptions {
   /** Whether this parser or the server-side owner answers terminal queries. */
   readonly responsePolicy?: GhosttyResponsePolicy;
   readonly onTitleChange?: (title: string) => void;
+  /** Renderer selection for tests/operators; auto prefers a validated WebGL2 context. */
+  readonly renderer?: TerminalRendererPreference;
 }
 
 export class GhosttyTerminalSurface {
-  readonly canvas: HTMLCanvasElement;
+  canvas: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   readonly scrollbar: HTMLDivElement;
   cols = DEFAULT_TERMINAL_COLS;
@@ -575,6 +589,15 @@ export class GhosttyTerminalSurface {
   private readonly mount: HTMLElement;
   private readonly context: CanvasRenderingContext2D;
   private readonly core: GhosttyTerminalCore;
+  private readonly viewportModel = new GhosttyViewportModel();
+  private readonly rendererController: RendererController;
+  private readonly renderViewport = {
+    cssWidth: 0,
+    cssHeight: 0,
+    pixelRatio: 1,
+    padding: CONTENT_PADDING,
+    originY: CONTENT_PADDING,
+  };
   private readonly options: GhosttyTerminalSurfaceOptions;
   private lastTitle = "";
   private metrics: GhosttyCellMetrics;
@@ -666,6 +689,7 @@ export class GhosttyTerminalSurface {
     scrollbar: HTMLDivElement,
     scrollbarThumb: HTMLDivElement,
     context: CanvasRenderingContext2D,
+    renderer: TerminalRenderer,
     core: GhosttyTerminalCore,
     metrics: GhosttyCellMetrics,
     fontFamily: string,
@@ -685,6 +709,30 @@ export class GhosttyTerminalSurface {
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
+    mount.dataset.ghosttyTerminalRenderBackend = renderer.kind;
+    canvas.dataset.ghosttyTerminalRenderBackend = renderer.kind;
+    this.rendererController = new RendererController(
+      { canvas, renderer },
+      async (backend) => {
+        const created = createTerminalRenderer({
+          preference: backend,
+          font: { family: this.fontFamily, size: this.fontSize },
+          viewport: this.renderViewport,
+          background: this.theme.background,
+        });
+        if (created.renderer.kind !== backend) {
+          created.renderer.dispose();
+          throw new Error(`${backend} recovery initialization failed`);
+        }
+        return { canvas: created.canvas, renderer: created.renderer };
+      },
+      (next, previous) => this.activateRenderer(next, previous),
+      () => {
+        this.forceFullRender = true;
+        this.requestRender();
+      },
+    );
+    this.updateRendererDiagnostics();
     this.resizeObserver = new ResizeObserver(() => this.ensureFitted());
     this.installEvents();
     this.watchDevicePixelRatio();
@@ -695,18 +743,17 @@ export class GhosttyTerminalSurface {
     if (mount.parentElement) this.resizeObserver.observe(mount.parentElement);
   }
 
+  get renderBackend(): TerminalRenderer["kind"] {
+    const backend = this.rendererController.backend;
+    return backend === "unavailable" ? "canvas2d" : backend;
+  }
+
   static async create(
     mount: HTMLElement,
     options: GhosttyTerminalSurfaceOptions,
   ): Promise<GhosttyTerminalSurface> {
     mount.classList.add("ghostty-terminal");
     mount.setAttribute("data-ghostty-terminal", "");
-    const canvas = document.createElement("canvas");
-    canvas.className = "ghostty-terminal__canvas";
-    canvas.setAttribute("data-ghostty-terminal-canvas", "");
-    canvas.dataset.ghosttyTerminalPadding = String(CONTENT_PADDING);
-    canvas.setAttribute("aria-hidden", "true");
-
     const input = document.createElement("textarea");
     input.className = "ghostty-terminal__input";
     input.setAttribute("data-ghostty-terminal-input", "");
@@ -727,15 +774,10 @@ export class GhosttyTerminalSurface {
     const scrollbarThumb = document.createElement("div");
     scrollbarThumb.className = "ghostty-terminal__scrollbar-thumb";
     scrollbar.append(scrollbarThumb);
-    mount.replaceChildren(canvas, input, scrollbar);
 
-    const context = canvas.getContext("2d", { alpha: false });
-    if (!context) throw new Error("Canvas 2D is unavailable");
-    // An opaque canvas backing store initializes to solid black, and the font
-    // and WASM loads below leave it on screen for the whole setup window; paint
-    // the theme background first so the mount never flashes a black box.
-    context.fillStyle = `rgb(${options.theme.background.r}, ${options.theme.background.g}, ${options.theme.background.b})`;
-    context.fillRect(0, 0, canvas.width, canvas.height);
+    const measurementCanvas = document.createElement("canvas");
+    const context = measurementCanvas.getContext("2d");
+    if (!context) throw new Error("Canvas text measurement is unavailable");
     const fontSize = terminalFontSize(options.font?.size);
     try {
       // Cell metrics must come from the faces that will render; measuring before
@@ -746,6 +788,29 @@ export class GhosttyTerminalSurface {
     }
     const fontFamily = await loadTerminalFontFamily(options.font?.family, fontSize);
     const metrics = measureGhosttyCell(context, fontSize, fontFamily);
+    const ratio = window.devicePixelRatio || 1;
+    const searchPreference = terminalRendererPreferenceFromSearch(window.location.search);
+    const storedPreference = parseTerminalRendererPreference(
+      window.localStorage.getItem("yaade:terminal-renderer"),
+    );
+    const createdRenderer = createTerminalRenderer({
+      preference: options.renderer ?? (searchPreference === "auto" ? storedPreference : searchPreference),
+      font: { family: fontFamily, size: fontSize },
+      viewport: {
+        cssWidth: mount.clientWidth,
+        cssHeight: mount.clientHeight,
+        pixelRatio: ratio,
+        padding: CONTENT_PADDING,
+        originY: CONTENT_PADDING,
+      },
+      background: options.theme.background,
+    });
+    const { canvas, renderer } = createdRenderer;
+    canvas.dataset.ghosttyTerminalPadding = String(CONTENT_PADDING);
+    mount.replaceChildren(canvas, input, scrollbar);
+    if (createdRenderer.fallbackReason !== null) {
+      mount.dataset.ghosttyTerminalRenderFallback = createdRenderer.fallbackReason.reason;
+    }
     const measuredGrid = terminalMeasuredGrid(
       mount.clientWidth,
       mount.clientHeight,
@@ -772,6 +837,7 @@ export class GhosttyTerminalSurface {
       scrollbar,
       scrollbarThumb,
       context,
+      renderer,
       core,
       metrics,
       fontFamily,
@@ -909,6 +975,7 @@ export class GhosttyTerminalSurface {
 
   private applyFontMetrics(): void {
     this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
+    void this.rendererController.setFont({ family: this.fontFamily, size: this.fontSize });
     this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
     this.terminalStateDirty = true;
     // Cached IME textarea coordinates are stale in the new cell geometry.
@@ -987,7 +1054,6 @@ export class GhosttyTerminalSurface {
     ) {
       this.canvas.width = pixelWidth;
       this.canvas.height = pixelHeight;
-      this.context.setTransform(ratio, 0, 0, ratio, 0, 0);
       this.canvasConfigured = true;
       this.forceFullRender = true;
       this.scrollbarDirty = true;
@@ -995,6 +1061,10 @@ export class GhosttyTerminalSurface {
     }
     this.measuredSize = true;
     this.mountHeight = height;
+    this.renderViewport.cssWidth = width;
+    this.renderViewport.cssHeight = height;
+    this.renderViewport.pixelRatio = ratio;
+    this.rendererController.resize(this.renderViewport);
     // onResize is the only PTY resize channel, so the first successful fit must
     // notify even when the measured grid equals the 1x1 construction sentinel.
     if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
@@ -1108,10 +1178,8 @@ export class GhosttyTerminalSurface {
   }
 
   getSnapshot(): GhosttySnapshot | null {
-    if (this.disposed) return this.snapshot;
-    // Inspection must never acknowledge dirty rows; renderFrame owns that
-    // transition and will still paint the pending update afterward.
-    this.snapshot = this.core.snapshot(false);
+    // Inspection is a synchronous read of the retained packed viewport. It
+    // never traverses Ghostty state or acknowledges pending dirty rows.
     return this.snapshot;
   }
 
@@ -1225,6 +1293,7 @@ export class GhosttyTerminalSurface {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
     this.removeEvents();
+    this.rendererController.dispose();
     this.core.dispose();
     if (
       this.canvas.parentElement === this.mount ||
@@ -1912,6 +1981,60 @@ export class GhosttyTerminalSurface {
     this.scrollViewport(delta);
   };
 
+  private activateRenderer(
+    next: ControlledTerminalRenderer,
+    previous: ControlledTerminalRenderer | null,
+  ): void {
+    const oldCanvas = previous?.canvas ?? this.canvas;
+    this.removeCanvasEvents(oldCanvas);
+    next.canvas.dataset.ghosttyTerminalPadding = String(CONTENT_PADDING);
+    next.canvas.dataset.ghosttyTerminalRenderBackend = next.renderer.kind;
+    next.canvas.width = oldCanvas.width;
+    next.canvas.height = oldCanvas.height;
+    oldCanvas.replaceWith(next.canvas);
+    this.canvas = next.canvas;
+    this.installCanvasEvents(next.canvas);
+    next.renderer.resize(this.renderViewport);
+    this.mount.dataset.ghosttyTerminalRenderBackend = next.renderer.kind;
+    const panel = this.mount.closest<HTMLElement>("[data-yaade-terminal-panel]");
+    if (panel !== null) panel.dataset.yaadeTerminalRenderBackend = next.renderer.kind;
+    this.updateRendererDiagnostics();
+  }
+
+  private updateRendererDiagnostics(): void {
+    const diagnostics = this.rendererController.diagnostics;
+    this.mount.dataset.ghosttyTerminalRendererState = diagnostics.state;
+    this.mount.dataset.ghosttyTerminalRendererGeneration = String(diagnostics.generation);
+    this.mount.dataset.ghosttyTerminalRendererRecoveries = String(diagnostics.recoveryCount);
+    if (diagnostics.fallbackReason === null) {
+      delete this.mount.dataset.ghosttyTerminalRendererFallback;
+    } else {
+      this.mount.dataset.ghosttyTerminalRendererFallback = diagnostics.fallbackReason;
+    }
+  }
+
+  private installCanvasEvents(canvas: HTMLCanvasElement): void {
+    canvas.addEventListener("pointerdown", this.onPointerDown);
+    canvas.addEventListener("pointermove", this.onPointerMove);
+    canvas.addEventListener("pointerleave", this.onPointerLeave);
+    canvas.addEventListener("pointerup", this.onPointerUp);
+    canvas.addEventListener("pointercancel", this.onPointerUp);
+    canvas.addEventListener("wheel", this.onWheel, { passive: false });
+    canvas.addEventListener("mousedown", this.onMouseDown);
+    canvas.addEventListener("contextmenu", this.onContextMenu);
+  }
+
+  private removeCanvasEvents(canvas: HTMLCanvasElement): void {
+    canvas.removeEventListener("pointerdown", this.onPointerDown);
+    canvas.removeEventListener("pointermove", this.onPointerMove);
+    canvas.removeEventListener("pointerleave", this.onPointerLeave);
+    canvas.removeEventListener("pointerup", this.onPointerUp);
+    canvas.removeEventListener("pointercancel", this.onPointerUp);
+    canvas.removeEventListener("wheel", this.onWheel);
+    canvas.removeEventListener("mousedown", this.onMouseDown);
+    canvas.removeEventListener("contextmenu", this.onContextMenu);
+  }
+
   private installEvents(): void {
     this.input.addEventListener("keydown", this.onKeyDown);
     this.input.addEventListener("keyup", this.onKeyUp);
@@ -1922,14 +2045,7 @@ export class GhosttyTerminalSurface {
     this.input.addEventListener("copy", this.onCopyEvent);
     this.input.addEventListener("compositionstart", this.onCompositionStart);
     this.input.addEventListener("compositionend", this.onCompositionEnd);
-    this.canvas.addEventListener("pointerdown", this.onPointerDown);
-    this.canvas.addEventListener("pointermove", this.onPointerMove);
-    this.canvas.addEventListener("pointerleave", this.onPointerLeave);
-    this.canvas.addEventListener("pointerup", this.onPointerUp);
-    this.canvas.addEventListener("pointercancel", this.onPointerUp);
-    this.canvas.addEventListener("wheel", this.onWheel, { passive: false });
-    this.canvas.addEventListener("mousedown", this.onMouseDown);
-    this.canvas.addEventListener("contextmenu", this.onContextMenu);
+    this.installCanvasEvents(this.canvas);
     this.scrollbar.addEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.addEventListener("pointermove", this.onScrollbarPointerMove);
     this.scrollbar.addEventListener("pointerup", this.onScrollbarPointerUp);
@@ -1947,14 +2063,7 @@ export class GhosttyTerminalSurface {
     this.input.removeEventListener("copy", this.onCopyEvent);
     this.input.removeEventListener("compositionstart", this.onCompositionStart);
     this.input.removeEventListener("compositionend", this.onCompositionEnd);
-    this.canvas.removeEventListener("pointerdown", this.onPointerDown);
-    this.canvas.removeEventListener("pointermove", this.onPointerMove);
-    this.canvas.removeEventListener("pointerleave", this.onPointerLeave);
-    this.canvas.removeEventListener("pointerup", this.onPointerUp);
-    this.canvas.removeEventListener("pointercancel", this.onPointerUp);
-    this.canvas.removeEventListener("wheel", this.onWheel);
-    this.canvas.removeEventListener("mousedown", this.onMouseDown);
-    this.canvas.removeEventListener("contextmenu", this.onContextMenu);
+    this.removeCanvasEvents(this.canvas);
     this.scrollbar.removeEventListener("pointerdown", this.onScrollbarPointerDown);
     this.scrollbar.removeEventListener("pointermove", this.onScrollbarPointerMove);
     this.scrollbar.removeEventListener("pointerup", this.onScrollbarPointerUp);
@@ -2038,8 +2147,14 @@ export class GhosttyTerminalSurface {
       this.frame = 0;
     }
     const terminalUpdated = this.terminalStateDirty || this.snapshot === null;
+    let update: GhosttyRenderUpdate | null = null;
     if (terminalUpdated) {
-      this.snapshot = this.core.snapshot();
+      update = this.core.renderUpdate();
+      if (!this.viewportModel.apply(update)) {
+        this.core.releaseRenderUpdate(update);
+        throw new Error("Ghostty packed render update was rejected");
+      }
+      this.snapshot = this.viewportModel.snapshot();
       this.terminalStateDirty = false;
     }
     if (this.snapshot === null) return;
@@ -2064,28 +2179,28 @@ export class GhosttyTerminalSurface {
     );
     if (nextOriginY !== this.originY) {
       this.originY = nextOriginY;
+      this.renderViewport.originY = nextOriginY;
       this.forceFullRender = true;
     }
     this.refreshHoveredLink();
-    renderGhosttySnapshot({
-      context: this.context,
-      snapshot: this.snapshot,
-      metrics: this.metrics,
-      fontSize: this.fontSize,
-      fontFamily: this.fontFamily,
-      padding: CONTENT_PADDING,
-      originY: this.originY,
-      pixelRatio: window.devicePixelRatio || 1,
-      forceFull: this.forceFullRender,
-      cursorOn: this.cursorOn,
-      previousCursorY: this.renderedCursorY,
-      focused: this.focused,
-      hoveredLinkRange: this.hoveredLink?.range ?? null,
-      dirtyRows: terminalUpdated ? this.snapshot.dirtyRows : NO_DIRTY_ROWS,
-      ...(this.theme.selectionBackground !== undefined
-        ? { selectionBackground: this.theme.selectionBackground }
-        : {}),
-    });
+    try {
+      this.rendererController.render(this.viewportModel, update, {
+        metrics: this.metrics,
+        font: { family: this.fontFamily, size: this.fontSize },
+        viewport: this.renderViewport,
+        forceFull: this.forceFullRender,
+        cursorOn: this.cursorOn,
+        previousCursorY: this.renderedCursorY,
+        focused: this.focused,
+        hoveredLinkRange: this.hoveredLink?.range ?? null,
+        dirtyRows: terminalUpdated ? this.snapshot.dirtyRows : NO_DIRTY_ROWS,
+        ...(this.theme.selectionBackground !== undefined
+          ? { selectionBackground: this.theme.selectionBackground }
+          : {}),
+      });
+    } finally {
+      if (update !== null) this.core.releaseRenderUpdate(update);
+    }
     this.positionInput();
     this.renderedCursorY =
       this.cursorOn && this.snapshot.cursorVisible && this.snapshot.cursorY >= 0

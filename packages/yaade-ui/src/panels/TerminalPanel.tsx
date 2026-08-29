@@ -690,7 +690,10 @@ export function TerminalPanel({
         }
         surfaceRef.current = surface
         const panel = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
-        if (panel) panel.dataset.yaadeTerminalRenderer = "ghostty"
+        if (panel) {
+          panel.dataset.yaadeTerminalRenderer = "ghostty"
+          panel.dataset.yaadeTerminalRenderBackend = surface.renderBackend
+        }
         session = {
           surface,
           ptyId: null,
@@ -826,6 +829,7 @@ export function TerminalPanel({
       data-yaade-terminal-tab-id={tabId}
       data-yaade-terminal-pty-id={connectedPtyId ?? ""}
       data-yaade-terminal-status={displayStatus}
+      data-yaade-terminal-renderer="ghostty"
       onMouseDown={() => focusTerminalInput(tabId)}
     >
       <div className="yaade-terminal-surface relative min-h-0 flex-1 overflow-hidden">

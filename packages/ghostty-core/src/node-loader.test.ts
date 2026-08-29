@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "vite-plus/test"
 import { GhosttyTerminalCore } from "./core.js"
 import { nodeGhosttyWasmSource } from "./loaders/node.js"
+import { GhosttyViewportModel } from "./viewport-model.js"
 
 test("Node loader instantiates the pinned Ghostty core without browser globals", async () => {
   const source = await nodeGhosttyWasmSource()
@@ -52,6 +53,47 @@ test("Node loader instantiates the pinned Ghostty core without browser globals",
   renderOnly.write("\u001b[0c")
   renderOnly.dispose()
   assert.equal(responses, 0)
+})
+
+test("packed render updates retain the same Ghostty viewport semantics", async () => {
+  const source = await nodeGhosttyWasmSource()
+  const core = await GhosttyTerminalCore.create(
+    12,
+    4,
+    8,
+    16,
+    {
+      foreground: { r: 229, g: 231, b: 235 },
+      background: { r: 0, g: 0, b: 0 },
+      cursor: { r: 240, g: 240, b: 240 },
+    },
+    () => undefined,
+    source,
+    "render-only",
+  )
+  try {
+    core.write("A\u001b[1;3;4;9mB\u001b[0m界e\u0301🙂\r\nnext")
+    const expected = core.snapshot(false)
+    const model = new GhosttyViewportModel()
+    const update = core.renderUpdate(false)
+    try {
+      assert.equal(model.apply(update), true)
+    } finally {
+      core.releaseRenderUpdate(update)
+    }
+    const actual = model.snapshot()
+    assert.equal(actual.cols, expected.cols)
+    assert.equal(actual.rows, expected.rows)
+    assert.deepEqual(actual.foreground, expected.foreground)
+    assert.deepEqual(actual.background, expected.background)
+    assert.deepEqual(actual.cursor, expected.cursor)
+    assert.equal(actual.cursorX, expected.cursorX)
+    assert.equal(actual.cursorY, expected.cursorY)
+    assert.equal(actual.cursorVisible, expected.cursorVisible)
+    assert.deepEqual(actual.rowData, expected.rowData)
+  } finally {
+    core.dispose()
+  }
 })
 
 test("snapshot matches Ghostty's default faint opacity", async () => {

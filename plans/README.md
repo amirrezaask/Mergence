@@ -9,15 +9,22 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 
 | Plan | Title | Maps to proposal item | Priority | Effort | Depends on | Status |
 |---|---|---:|---|---|---|---|
-| [001](001-terminal-render-frame-seam.md) | Introduce a packed render-frame seam | 3 | P1 | L | — | TODO |
-| [002](002-webgl2-terminal-renderer.md) | Add WebGL2 as the preferred renderer | 1 | P1 | L | 001 | TODO |
-| [003](003-terminal-renderer-recovery.md) | Make renderer failure and recovery explicit | 6 | P1 | M | 002 | TODO |
+| [001](001-terminal-render-frame-seam.md) | Introduce a packed render-frame seam | 3 | P1 | L | — | DONE |
+| [002](002-webgl2-terminal-renderer.md) | Add WebGL2 as the preferred renderer | 1 | P1 | L | 001 | DONE |
+| [003](003-terminal-renderer-recovery.md) | Make renderer failure and recovery explicit | 6 | P1 | M | 002 | DONE |
 | [004](004-worker-terminal-runtime.md) | Move Ghostty parsing off the main thread | 2 | P2 | L | 001, 003 | TODO |
 | [005](005-terminal-frame-scheduler.md) | Unify scheduling and end-to-end backpressure | 5 | P2 | L | 004 | TODO |
 | [006](006-webgpu-terminal-experiment.md) | Add a gated experimental WebGPU adapter | 4 | P3 | L | 002, 003, 005 | TODO |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
+
+Plan 002 result: WebGL2 is the `auto` default after a capability self-test,
+with Canvas fallback and recovery. After batching same-style text into atlas
+runs, three Apple M4 runs measured stream medians of 271.5/283.0/266.5 ms,
+flood medians of 77.6/76.4/76.6 ms, idle typing medians of 11.7 ms, and
+under-flood typing medians of 8.7/8.4/11.9 ms. WebGL is the default by explicit
+operator direction; no benchmark budget was loosened.
 
 ## Dependency notes
 

@@ -12,6 +12,10 @@ import {
   loadGhosttyRuntime,
   type GhosttyWasmSource,
 } from "./runtime.js";
+import {
+  GhosttyRenderUpdateBuilder,
+  type GhosttyRenderUpdate,
+} from "./render-update.js";
 
 const GHOSTTY_SUCCESS = 0;
 const GHOSTTY_OUT_OF_SPACE = -3;
@@ -239,6 +243,11 @@ export class GhosttyTerminalCore {
   private snapshotBackground: GhosttyColor | null = null;
   private snapshotCursor: GhosttyColor | null = null;
   private readonly dirtyRows = new Set<number>();
+  private readonly renderUpdateBuilder = new GhosttyRenderUpdateBuilder();
+  private renderUpdateFrameId = 0;
+  private renderUpdateGeneration = 0;
+  private renderUpdateCols = 0;
+  private renderUpdateRows = 0;
   private disposed = false;
   private keyboardLayoutMap: GhosttyKeyboardLayoutMap | undefined;
 
@@ -879,6 +888,36 @@ export class GhosttyTerminalCore {
       dirtyRows,
       rowData: this.rows,
     };
+  }
+
+  /**
+   * Emit one packed renderer update from the same retained row traversal used
+   * by the compatibility snapshot. The caller must release the update after
+   * copying it into its retained viewport model.
+   */
+  renderUpdate(consumeDirty = true): GhosttyRenderUpdate {
+    const snapshot = this.snapshot(consumeDirty);
+    const dimensionsChanged =
+      snapshot.cols !== this.renderUpdateCols || snapshot.rows !== this.renderUpdateRows;
+    if (this.renderUpdateGeneration === 0 || dimensionsChanged) {
+      this.renderUpdateGeneration += 1;
+      this.renderUpdateCols = snapshot.cols;
+      this.renderUpdateRows = snapshot.rows;
+    }
+    this.renderUpdateFrameId += 1;
+    return this.renderUpdateBuilder.build({
+      snapshot,
+      frameId: this.renderUpdateFrameId,
+      generation: this.renderUpdateGeneration,
+      full:
+        dimensionsChanged ||
+        this.renderUpdateFrameId === 1 ||
+        snapshot.dirtyRows.size === snapshot.rows,
+    });
+  }
+
+  releaseRenderUpdate(update: GhosttyRenderUpdate): void {
+    this.renderUpdateBuilder.release(update);
   }
 
   selectionText(): string {
