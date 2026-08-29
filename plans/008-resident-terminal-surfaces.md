@@ -176,7 +176,7 @@ no post-dispose callback, and no renderer context loss caused by DOM reparenting
 ### Step 7: Benchmark the supplied interaction class
 
 Run Plan 007's pane zoom and responsive breakpoint workloads three times for
-WebGL, Canvas, and retained WebGPU if available. Require zero surface recreation,
+WebGL and forced Canvas. Require zero surface recreation,
 zero attach/replay, zero PTY ID/title reset, and zero renderer recovery. Record
 transition→next-painted-frame p50/p95/p99 and long tasks.
 

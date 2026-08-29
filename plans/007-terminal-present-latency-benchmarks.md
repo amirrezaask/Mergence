@@ -85,7 +85,7 @@ generation, and timestamps for parsed, model-applied, render-start, submitted,
 and next-paint-observed. Keep fixed-size rings and aggregate counters; never
 retain terminal strings or ANSI bytes.
 
-For WebGL/WebGPU, submission means the draw call was issued. GPU timer queries
+For accelerated backends, submission means the draw call was issued. GPU timer queries
 may be diagnostic when available but must not block with `finish`, synchronous
 readback, or polling in normal frames. “Next paint observed” should use the same
 bounded post-submission mechanism for every backend and be named honestly; the
@@ -160,8 +160,8 @@ a budget.
 
 - Unit-test ring bounds, stage order, stale generations, and no payload retention.
 - Use the real PTY and real keyboard in benchmarks.
-- Run geometry cases with WebGL and forced Canvas; include WebGPU only when Plan
-  006 retains it.
+- Run geometry cases with WebGL and forced Canvas. The removed WebGPU experiment
+  is out of scope.
 - Model E2E setup on `terminal-compatibility.web.spec.ts` and benchmark reporting
   on `tests/bench/_bench.ts`.
 

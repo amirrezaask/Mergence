@@ -184,7 +184,7 @@ transfer bytes, and presentation percentiles.
 - Packed ownership, detachment, malformed input, resize, and generation tests.
 - Direct-emission vs compatibility-snapshot differential corpus.
 - Lazy decode/cache invalidation and synchronous inspection tests.
-- Canvas/WebGL/WebGPU Plan 009 conformance.
+- Canvas/WebGL Plan 009 conformance.
 - Real PTY replay, flow control, selection, links, six panes, and worker recovery.
 - Memory plateau through repeated resize/font/open/close cycles.
 

@@ -204,7 +204,7 @@ or delayed final-size delivery.
 
 - Fake ResizeObserver/rAF/DPR coordinator unit tests.
 - Runtime and host delayed-response latest-wins tests.
-- Canvas/WebGL/WebGPU viewport generation and cache-barrier tests.
+- Canvas/WebGL viewport generation and cache-barrier tests.
 - Real PTY pane drag, pane zoom, responsive breakpoint, browser zoom/DPR,
   hidden/show, synchronized output, fallback, and six-pane resize E2E.
 - Scoped DOM and screenshot assertions plus final PTY output/dimensions.

@@ -19,8 +19,8 @@ conditions, and update its status.
 | [006](006-webgpu-terminal-experiment.md) | Add a gated experimental WebGPU adapter | 4 | P3 | L | 002, 003, 005 | REJECTED (removed after blank WKWebView output) |
 | [007](007-terminal-present-latency-benchmarks.md) | Measure resize, zoom, TUI, and presented-frame latency | — | P1 | M | 004, 005 | TODO |
 | [008](008-resident-terminal-surfaces.md) | Keep terminal runtimes resident across layout changes | — | P1 | L | 004, 005, 007 | TODO |
-| [009](009-complex-tui-renderer-conformance.md) | Enforce complex-TUI renderer conformance | — | P1 | L | 003, 006 | TODO |
-| [010](010-retained-gpu-scene-and-glyph-cache.md) | Add a retained GPU scene and stable glyph cache | — | P1 | L | 006, 007, 009 | TODO |
+| [009](009-complex-tui-renderer-conformance.md) | Enforce complex-TUI renderer conformance | — | P1 | L | 003 | TODO |
+| [010](010-retained-gpu-scene-and-glyph-cache.md) | Add a retained GPU scene and stable glyph cache | — | P1 | L | 007, 009 | TODO |
 | [011](011-packed-viewport-hot-path.md) | Keep viewport data packed through rendering | — | P2 | L | 004, 005, 010 | TODO |
 | [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | TODO |
 
@@ -51,9 +51,9 @@ See `docs/terminal-renderers.md` for measurements and compatibility details.
   worker introduces another failure domain.
 - **004 before 005:** scheduling ownership can only be finalized after the
   parser's thread and message acknowledgement points are known.
-- **006 before 009/010:** WebGPU is capability-gated and must join the same
-  conformance and retained-scene contracts as WebGL; unavailable platforms
-  continue through WebGL/Canvas.
+- **006 result:** WebGPU was removed after blank WKWebView output. Plans 009 and
+  010 target the shipped WebGL/Canvas ladder; any future adapter must first pass
+  its own browser/Tauri compatibility gate and then join these contracts.
 - **007 before performance fixes:** current benchmarks can complete before GPU
   presentation; later plans need a trustworthy presented-frame endpoint.
 - **008 after 007:** terminal residency needs lifecycle IDs/counters that prove a
@@ -68,7 +68,7 @@ See `docs/terminal-renderers.md` for measurements and compatibility details.
 ## Recommended execution waves
 
 1. Run Plans 007 and 009; they can proceed in parallel after the completed
-   worker/scheduler/WebGPU work settles in the working tree.
+   worker/scheduler work and removed WebGPU experiment settle in the working tree.
 2. Run Plans 008 and 010; they touch different ownership layers but coordinate
    through Plan 007 lifecycle/frame IDs.
 3. Run Plan 011.
