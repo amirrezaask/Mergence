@@ -40,6 +40,8 @@ const CONTENT_PADDING = 4;
 const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
+/** DEC mode 2026 must not freeze a viewport forever when a producer crashes mid-update. */
+const SYNCHRONIZED_OUTPUT_TIMEOUT_MS = 1_000;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
@@ -562,6 +564,8 @@ export class GhosttyTerminalSurface {
   private visible: boolean;
   private frame = 0;
   private cursorTimer: number | null = null;
+  private synchronizedOutputTimer: number | null = null;
+  private synchronizedOutputActive = false;
   private compositionInputToSuppress: string | null = null;
   private compositionSuppressionTimer: number | null = null;
   private cursorOn = true;
@@ -778,33 +782,54 @@ export class GhosttyTerminalSurface {
   write(data: string): void {
     if (this.disposed) return;
     this.core.write(data);
-    this.syncTitle();
-    // Restart the blink cycle from the visible phase so the cursor never sits
-    // invisible through a stream of output or a burst of typing echo.
-    this.cursorOn = true;
-    this.scrollbarDirty = true;
-    this.requestRender();
+    this.afterTerminalWrite();
   }
 
   /** Feed attach/reconnect output with Ghostty's PTY callback detached. */
   writeReplay(chunks: readonly string[]): void {
     if (this.disposed || chunks.length === 0) return;
     this.core.writeReplay(chunks);
-    this.syncTitle();
-    this.cursorOn = true;
-    this.scrollbarDirty = true;
-    this.requestRender();
+    this.afterTerminalWrite();
   }
 
   resetAndWrite(data: string): void {
     if (this.disposed) return;
     this.core.resetAndWrite(data);
+    this.afterTerminalWrite(true);
+  }
+
+  private afterTerminalWrite(forceFullRender = false): void {
     this.syncTitle();
-    // A replayed session starts from the visible phase like any other write:
-    // reattaching mid-blink must not open on an invisible cursor.
+    // Restart the blink cycle from the visible phase so the cursor never sits
+    // invisible through a stream of output or a burst of typing echo.
     this.cursorOn = true;
-    this.forceFullRender = true;
     this.scrollbarDirty = true;
+    if (forceFullRender) this.forceFullRender = true;
+
+    // TUI redraws such as Pi bracket a multi-write update with DEC mode 2026.
+    // Parsing must continue, but painting a fragment exposes cleared and moved
+    // rows as corruption. Paint once the producer closes the transaction.
+    if (this.core.isModeEnabled(2026)) {
+      this.synchronizedOutputActive = true;
+      if (this.frame !== 0) {
+        window.cancelAnimationFrame(this.frame);
+        this.frame = 0;
+      }
+      if (this.synchronizedOutputTimer === null) {
+        this.synchronizedOutputTimer = window.setTimeout(() => {
+          this.synchronizedOutputTimer = null;
+          // Bypass synchronized-output suppression for the safety timeout.
+          if (!this.disposed && this.visible) this.renderFrame();
+        }, SYNCHRONIZED_OUTPUT_TIMEOUT_MS);
+      }
+      return;
+    }
+
+    this.synchronizedOutputActive = false;
+    if (this.synchronizedOutputTimer !== null) {
+      window.clearTimeout(this.synchronizedOutputTimer);
+      this.synchronizedOutputTimer = null;
+    }
     this.requestRender();
   }
 
@@ -1151,6 +1176,10 @@ export class GhosttyTerminalSurface {
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.fitRetryFrame !== 0) window.cancelAnimationFrame(this.fitRetryFrame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
+    if (this.synchronizedOutputTimer !== null) {
+      window.clearTimeout(this.synchronizedOutputTimer);
+      this.synchronizedOutputTimer = null;
+    }
     if (this.compositionSuppressionTimer !== null) {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
@@ -1945,7 +1974,12 @@ export class GhosttyTerminalSurface {
   }
 
   private requestRender(): void {
-    if (this.disposed || !this.visible || this.frame !== 0) return;
+    if (
+      this.disposed ||
+      !this.visible ||
+      this.synchronizedOutputActive ||
+      this.frame !== 0
+    ) return;
     this.frame = window.requestAnimationFrame(() => {
       this.frame = 0;
       this.renderFrame();

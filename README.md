@@ -86,9 +86,12 @@ Open the web client, create a terminal, and launch your favorite agent CLI.
 Want the native client instead?
 
 ```bash
-vp run dev:server
 vp run dev:desktop
 ```
+
+The desktop app starts the bundled server as a background user service on the
+default port. Closing the desktop window leaves the server and its terminals
+running.
 
 ## Release
 

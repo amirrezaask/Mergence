@@ -3,15 +3,17 @@
 A thin [Tauri 2](https://v2.tauri.app/) shell around YAADE's React client.
 The browser and desktop applications use the same `@yaade/app` implementation,
 terminal renderer, typed host client, settings, and Session → Window → terminal
-interaction model. The Rust side only creates the native window.
+interaction model. The Rust side creates the native window and ensures the
+local YAADE server is running.
 
-The desktop client connects to `http://127.0.0.1:7774` as its built-in local
-host. Add authenticated or remote hosts through **Settings → Servers**, just as
-in the browser client. It never starts a host or owns PTYs and agent processes.
+On startup, the desktop client checks `http://127.0.0.1:7774`. If no YAADE
+server is available, it installs and starts the bundled server as an OS user
+service. The service owns the PTYs and agent processes independently, so closing
+or killing the desktop app does not stop them. Add authenticated or remote hosts
+through **Settings → Servers**, just as in the browser client.
 
 ```bash
 vp install
-vp run dev:server   # separate terminal
 vp run dev:desktop
 ```
 

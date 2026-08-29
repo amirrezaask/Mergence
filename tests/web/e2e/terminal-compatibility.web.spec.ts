@@ -101,6 +101,23 @@ test.describe("terminal compatibility", () => {
     )
   })
 
+  test("renders UTF-8 code points split across PTY reads", async ({ launchApp }) => {
+    const { page } = await launchApp()
+    await focusTerminal(page)
+    await page.keyboard.type(
+      `node -e "const b=Buffer.from([0xe2,0x94,0x80]);let i=0;const t=setInterval(()=>{process.stdout.write(b.subarray(i,i+1));if(++i===b.length){clearInterval(t);console.log(' YAADE_UTF8_OK')}},50)"`,
+    )
+    await page.keyboard.press("Enter")
+
+    const terminalText = () =>
+      page.evaluate(() => {
+        const id = window.__yaadeTest?.getState().activeMuxTerminalId
+        return id ? window.__yaadeTest?.getTerminalText?.(id) ?? "" : ""
+      })
+    await expect.poll(terminalText, { timeout: 15_000 }).toContain("─ YAADE_UTF8_OK")
+    expect(await terminalText()).not.toContain("�")
+  })
+
   test("flow control replays from the last parsed frame after a renderer stall", async ({
     launchApp,
   }) => {

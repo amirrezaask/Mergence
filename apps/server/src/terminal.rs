@@ -813,12 +813,45 @@ impl TerminalHost {
     }
 }
 
+fn decode_pty_utf8(pending: &mut Vec<u8>, bytes: &[u8]) -> String {
+    pending.extend_from_slice(bytes);
+    let mut decoded = String::new();
+    let mut offset = 0;
+
+    while offset < pending.len() {
+        match std::str::from_utf8(&pending[offset..]) {
+            Ok(valid) => {
+                decoded.push_str(valid);
+                offset = pending.len();
+            }
+            Err(error) => {
+                let valid_end = offset + error.valid_up_to();
+                // SAFETY: `valid_up_to` identifies a UTF-8 boundary and a valid prefix.
+                decoded.push_str(
+                    std::str::from_utf8(&pending[offset..valid_end])
+                        .expect("validated UTF-8 prefix"),
+                );
+                offset = valid_end;
+                let Some(invalid_len) = error.error_len() else {
+                    break;
+                };
+                decoded.push('\u{fffd}');
+                offset += invalid_len;
+            }
+        }
+    }
+
+    pending.drain(..offset);
+    decoded
+}
+
 fn output_loop(
     host: Weak<TerminalHost>,
     entry: Arc<TerminalEntry>,
     reader: &mut Box<dyn Read + Send>,
 ) {
     let mut buffer = vec![0_u8; 64 * 1024];
+    let mut pending_utf8 = Vec::with_capacity(4);
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
@@ -826,7 +859,12 @@ fn output_loop(
                 let Some(host) = host.upgrade() else {
                     return;
                 };
-                let data = String::from_utf8_lossy(&buffer[..read]).into_owned();
+                // PTY reads have arbitrary boundaries. Keep an incomplete UTF-8
+                // code point for the next read instead of replacing each fragment.
+                let data = decode_pty_utf8(&mut pending_utf8, &buffer[..read]);
+                if data.is_empty() {
+                    continue;
+                }
                 let mut state = entry
                     .state
                     .lock()
@@ -1203,6 +1241,26 @@ mod tests {
         assert_eq!(leftover, "\u{1b}[");
         assert_eq!(feed_da1_queries(&mut leftover, "0cafter\u{1b}[c"), 2);
         assert!(leftover.is_empty());
+    }
+
+    #[test]
+    fn pty_utf8_decoder_preserves_code_points_split_across_reads() {
+        let mut pending = Vec::new();
+        let line = "─".as_bytes();
+
+        assert_eq!(decode_pty_utf8(&mut pending, &line[..1]), "");
+        assert_eq!(decode_pty_utf8(&mut pending, &line[1..2]), "");
+        assert_eq!(decode_pty_utf8(&mut pending, &line[2..]), "─");
+        assert!(pending.is_empty());
+    }
+
+    #[test]
+    fn pty_utf8_decoder_replaces_only_malformed_input() {
+        let mut pending = Vec::new();
+
+        assert_eq!(decode_pty_utf8(&mut pending, b"ok\xffdone\xe2"), "ok�done");
+        assert_eq!(decode_pty_utf8(&mut pending, b"\x94\x80"), "─");
+        assert!(pending.is_empty());
     }
 
     #[test]

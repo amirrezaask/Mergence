@@ -38,9 +38,11 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         let service_name = take_option(&mut args, "--service-name")?;
         let service_args = args.clone();
         let config = HostConfig::load(args)?;
-        let executable = std::env::var_os("YAADE_SERVER_EXECUTABLE")
-            .map(PathBuf::from)
-            .map_or_else(std::env::current_exe, Ok)?;
+        let executable = match std::env::var_os("YAADE_SERVER_EXECUTABLE") {
+            Some(executable) => PathBuf::from(executable),
+            None if command == "install" => install_executable(&config.data_dir)?,
+            None => std::env::current_exe()?,
+        };
         let mut options = UserServiceOptions::new(executable, config.data_dir);
         options.args = std::iter::once("serve".to_owned())
             .chain(
@@ -68,6 +70,21 @@ async fn run() -> Result<(), Box<dyn std::error::Error>> {
         return inspect_runtime(&command, args);
     }
     run_server(args).await
+}
+
+fn install_executable(data_dir: &std::path::Path) -> std::io::Result<PathBuf> {
+    let source = std::env::current_exe()?;
+    let install_dir = data_dir.join("bin");
+    std::fs::create_dir_all(&install_dir)?;
+    let destination = install_dir.join(if cfg!(windows) {
+        "yaade-server.exe"
+    } else {
+        "yaade-server"
+    });
+    if source != destination {
+        std::fs::copy(source, &destination)?;
+    }
+    Ok(destination)
 }
 
 async fn run_server(args: Vec<OsString>) -> Result<(), Box<dyn std::error::Error>> {

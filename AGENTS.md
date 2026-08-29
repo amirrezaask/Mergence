@@ -56,9 +56,10 @@ desktop Session, Window, terminal, transport, or state behavior. Native Rust in
 concrete platform feature requires more. Applications may depend on packages or
 wire contracts, but they must not import another application's source. The root build and
 development commands are intentionally independent: `build:server`,
-`build:web`, `build:desktop`, `dev:server`, `dev:web`, and `dev:desktop`. Web and
-desktop development do not start a host process; start `dev:server` separately.
-Never add a separate agent server or provider-specific process boundary: launch
+`build:web`, `build:desktop`, `dev:server`, `dev:web`, and `dev:desktop`. Web
+development does not start a host process. Desktop startup ensures the bundled
+host is running on the default port as an OS user service, independently of the
+desktop process. Never add a separate agent server or provider-specific process boundary: launch
 agent CLIs through the existing server terminal runtime.
 
 ## Architecture invariants

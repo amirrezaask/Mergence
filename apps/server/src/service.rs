@@ -179,7 +179,7 @@ pub fn install_user_service(options: &UserServiceOptions) -> std::io::Result<Use
                 "/XML",
                 &target.display().to_string(),
             ],
-        )
+        ) && run("schtasks.exe", &["/Run", "/TN", &options.service_name])
     };
     Ok(status(
         options,
