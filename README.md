@@ -43,8 +43,8 @@ FEATURES
     • reconnect and replay after refreshes or network hiccups
     • drag, split, dock, swap, and retile without stopping processes
     • keyboard-first desktop use and mobile-friendly controls
-    • browser client plus a native Rust/GPUI desktop client
-    • libghostty-vt terminal parsing, rendered through React on the web
+    • one React client shared by the browser and a lightweight Tauri desktop shell
+    • libghostty-vt terminal parsing, rendered through React everywhere
 ```
 
 ## The topology

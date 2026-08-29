@@ -2,6 +2,7 @@ import assert from "node:assert/strict"
 import { test } from "vite-plus/test"
 import {
   isAllowedCorsOrigin,
+  isAllowedHttpRequestOrigin,
   isAllowedWebSocketOrigin,
   isAuthorizedRequest,
   isLoopbackHostname,
@@ -49,6 +50,9 @@ test("websocket origin permits local browser clients and non-browser clients", (
   assert.equal(isAllowedWebSocketOrigin("http://localhost:4747"), true)
   assert.equal(isAllowedWebSocketOrigin("http://ide.local:5174"), true)
   assert.equal(isAllowedWebSocketOrigin("https://[::1]:4747"), true)
+  assert.equal(isAllowedWebSocketOrigin("tauri://localhost"), true)
+  assert.equal(isAllowedWebSocketOrigin("http://tauri.localhost"), true)
+  assert.equal(isAllowedWebSocketOrigin("tauri://attacker.example"), false)
   assert.equal(isAllowedWebSocketOrigin("https://example.com"), false)
   assert.equal(isAllowedWebSocketOrigin("file:///tmp/index.html"), false)
   assert.equal(isAllowedWebSocketOrigin("not a url"), false)
@@ -56,9 +60,24 @@ test("websocket origin permits local browser clients and non-browser clients", (
 
 test("CORS origin matching keeps local clients and explicit origins available", () => {
   assert.equal(isAllowedCorsOrigin("http://127.0.0.1:5174"), true)
+  assert.equal(isAllowedCorsOrigin("tauri://localhost"), true)
+  assert.equal(isAllowedCorsOrigin("https://tauri.localhost"), true)
+  assert.equal(isAllowedCorsOrigin("tauri://attacker.example"), false)
   assert.equal(isAllowedCorsOrigin("https://client.example", ["https://client.example"]), true)
   assert.equal(isAllowedCorsOrigin("https://client.example", ["https://other.example"]), false)
   assert.equal(isAllowedCorsOrigin("https://client.example", ["*"]), true)
+})
+
+test("desktop origins remain trusted when the host binds remotely", () => {
+  assert.equal(isAllowedHttpRequestOrigin("tauri://localhost", "0.0.0.0"), true)
+  assert.equal(isAllowedHttpRequestOrigin("http://tauri.localhost", "0.0.0.0"), true)
+  assert.equal(isAllowedHttpRequestOrigin("http://client.example", "0.0.0.0", ["*"]), false)
+  assert.equal(
+    isAllowedHttpRequestOrigin("https://client.example", "0.0.0.0", [
+      "https://client.example",
+    ]),
+    true,
+  )
 })
 
 test("websocket origin permits an exact remote same-origin deployment", () => {

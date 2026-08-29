@@ -12,6 +12,7 @@ import {
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
 import { registerPwa } from "./pwa.js"
 import { ServerConnectionsProvider } from "./server-connections.js"
+import { resolveCurrentHostUrl } from "./client-environment.js"
 
 const startupWindow = window as Window & { __yaadeStartupBootstrapAt?: number }
 startupWindow.__yaadeStartupBootstrapAt ??= performance.now()
@@ -21,7 +22,7 @@ applyInitialAppearance()
 const currentServer = {
   id: "current-host",
   name: "This client",
-  url: window.location.origin,
+  url: resolveCurrentHostUrl(window.location),
 }
 const serverConnections = createMultiServerHostClient({
   currentServer,

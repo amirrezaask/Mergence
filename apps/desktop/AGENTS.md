@@ -1,14 +1,10 @@
 # YAADE Desktop
 
-- This crate is a GPUI client for the existing TypeScript host. Do not spawn or own PTYs here.
-- Keep Session → Window → terminal terminology and wire behavior aligned with `@yaade/rpc`.
-- Store semantic terminal snapshots/patches in view state; never put raw PTY byte streams in general application state.
-- Network and decoding work runs off the GPUI render thread. UI callbacks only update bounded state and request repaint.
-- `design-contract.json` is generated from the web theme/CSS sources. Never hand-edit it; run `node scripts/export-desktop-design-contract.mjs`.
-- Use bundled Geist/Geist Mono and embedded Lucide SVGs. Do not substitute Unicode glyphs for icons.
-- Actions update state immediately; motion is visual feedback and must not block input.
+- This application is a thin Tauri shell around the production React client from `@yaade/app`.
+- Do not add desktop-only Session, Window, terminal, transport, or state implementations. Shared client behavior belongs in `packages/` and must remain usable by the browser.
+- The shell never starts or owns the YAADE host, PTYs, or agent processes. Start `dev:server` separately.
+- Keep Tauri permissions minimal. Add commands, plugins, or capabilities only for a concrete native requirement.
 - First-party verification commands:
-  - `cargo fmt --manifest-path apps/desktop/Cargo.toml -- --check`
-  - `cargo test --manifest-path apps/desktop/Cargo.toml`
-  - `cargo clippy --manifest-path apps/desktop/Cargo.toml --all-targets -- -D warnings`
-  - `node scripts/export-desktop-design-contract.mjs --check`
+  - `vp run test:desktop`
+  - `vp run build:desktop`
+  - `vp run test:web`

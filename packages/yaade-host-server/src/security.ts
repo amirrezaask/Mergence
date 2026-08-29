@@ -47,6 +47,14 @@ function isLocalBrowserHostname(hostname: string): boolean {
   return isLoopbackHostname(normalized) || normalized === "ide.local"
 }
 
+export function isDesktopAppOrigin(url: URL): boolean {
+  if (url.protocol === "tauri:") return url.hostname === "localhost"
+  return (
+    (url.protocol === "http:" || url.protocol === "https:") &&
+    url.hostname === "tauri.localhost"
+  )
+}
+
 export function isAllowedWebSocketOrigin(
   origin: string | undefined,
   requestHost?: string,
@@ -55,6 +63,7 @@ export function isAllowedWebSocketOrigin(
   if (!origin) return true
   try {
     const url = new URL(origin)
+    if (isDesktopAppOrigin(url)) return true
     if (url.protocol !== "http:" && url.protocol !== "https:") return false
     if (isLocalBrowserHostname(url.hostname)) return true
     if (allowedOrigins.includes("*")) return true
@@ -72,6 +81,7 @@ export function isAllowedCorsOrigin(
   if (!origin) return false
   try {
     const url = new URL(origin)
+    if (isDesktopAppOrigin(url)) return true
     if (url.protocol !== "http:" && url.protocol !== "https:") return false
     if (isLocalBrowserHostname(url.hostname)) return true
   } catch {
@@ -79,4 +89,21 @@ export function isAllowedCorsOrigin(
   }
   if (allowedOrigins.includes("*")) return true
   return allowedOrigins.includes(origin)
+}
+
+export function isAllowedHttpRequestOrigin(
+  origin: string | undefined,
+  bindHost: string,
+  allowedOrigins: readonly string[] = [],
+): boolean {
+  if (!origin) return true
+  if (!isAllowedCorsOrigin(origin, allowedOrigins)) return false
+  if (isLoopbackHostname(bindHost)) return true
+  try {
+    const url = new URL(origin)
+    if (isDesktopAppOrigin(url)) return true
+    return url.protocol !== "http:" || isLoopbackHostname(url.hostname)
+  } catch {
+    return false
+  }
 }

@@ -73,8 +73,8 @@ export default defineConfig(({ command }) => ({
   },
   server: {
     port: Number(process.env.YAADE_WEB_PORT ?? 5174),
-    // Prefer the configured port; if busy, Vite picks the next free one.
-    strictPort: false,
+    // Tauri's dev shell targets this exact URL, so never silently move ports.
+    strictPort: true,
     host: viteHost,
     allowedHosts,
     proxy: {

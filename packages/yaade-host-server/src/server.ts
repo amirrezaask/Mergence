@@ -40,6 +40,7 @@ import {
 import { pathAllowed } from "./sandbox.js";
 import {
   isAllowedCorsOrigin,
+  isAllowedHttpRequestOrigin,
   isAllowedWebSocketOrigin,
   isAuthorizedRequest,
   isLoopbackHostname,
@@ -247,18 +248,6 @@ function closeDeviceEventSockets(deviceId: string): void {
     if (DEVICE_EVENT_SOCKETS.get(socket)?.deviceId === deviceId && socket.readyState === WebSocket.OPEN) {
       socket.close(4003, "access revoked");
     }
-  }
-}
-
-function originDenied(origin: string | undefined, bindHost: string, corsOrigins: readonly string[]): boolean {
-  if (!origin) return false;
-  if (!isAllowedCorsOrigin(origin, corsOrigins)) return true;
-  if (isLoopbackHostname(bindHost)) return false;
-  try {
-    const url = new URL(origin);
-    return url.protocol === "http:" && !isLoopbackHostname(url.hostname);
-  } catch {
-    return true;
   }
 }
 
@@ -642,7 +631,7 @@ async function handleHttp(
 
   if (
     pathname.startsWith("/api") &&
-    originDenied(origin, runtime.config.host, runtime.config.corsOrigins ?? [])
+    !isAllowedHttpRequestOrigin(origin, runtime.config.host, runtime.config.corsOrigins ?? [])
   ) {
     sendJson(res, 403, {
       error: {

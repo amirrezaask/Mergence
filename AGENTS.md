@@ -35,7 +35,6 @@ vp run build:server
 vp run build:web
 vp run build:desktop
 vp run test:desktop
-vp run check:desktop-design
 vp run test:web:e2e
 vp exec playwright test --project=platform-e2e
 ```
@@ -51,12 +50,13 @@ The repository has exactly three executable applications:
 
 - `apps/server` owns the server process entrypoint and the server-side execution boundary.
 - `apps/web` owns only Vite configuration and browser packaging.
-- `apps/desktop` is the Rust + GPUI native client. It consumes the same typed host RPC/WebSocket boundaries as the browser and never owns PTYs or agent processes.
+- `apps/desktop` is a thin Tauri shell that embeds the same `@yaade/app` React client as the browser. It never owns PTYs or agent processes.
 
-Reusable TypeScript implementation belongs in `packages/`; reusable native
-implementation should be split from `apps/desktop` only when a second Rust
-consumer exists. Applications may depend on packages or wire contracts, but
-they must not import another application's source. The root build and
+Reusable client implementation belongs in `packages/`; do not fork browser and
+desktop Session, Window, terminal, transport, or state behavior. Native Rust in
+`apps/desktop` must remain limited to the Tauri application boundary unless a
+concrete platform feature requires more. Applications may depend on packages or
+wire contracts, but they must not import another application's source. The root build and
 development commands are intentionally independent: `build:server`,
 `build:web`, `build:desktop`, `dev:server`, `dev:web`, and `dev:desktop`. Web and
 desktop development do not start a host process; start `dev:server` separately.
