@@ -1,6 +1,9 @@
 import assert from "node:assert/strict"
 import { test } from "vite-plus/test"
-import { createTerminalOutputWriter } from "./terminal-output-writer.js"
+import {
+  createTerminalOutputWriter,
+  GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH,
+} from "./terminal-output-writer.js"
 
 test("coalesces multiple enqueues into one write per flush", () => {
   const writes: string[] = []
@@ -77,6 +80,29 @@ test("optional maxCharsPerFlush still slices across frames for tests", () => {
   assert.equal(scheduled.length, 2)
   scheduled[1]!()
   assert.deepEqual(writes, ["abcd", "efgh"])
+})
+
+test("Ghostty parses a full maximum-sized host frame in one visual frame", () => {
+  const writes: string[] = []
+  const scheduled: Array<() => void> = []
+  const writer = createTerminalOutputWriter({
+    write: (data, onPainted) => {
+      writes.push(data)
+      onPainted?.()
+    },
+    schedule: cb => {
+      scheduled.push(cb)
+      return scheduled.length
+    },
+    cancel: () => {},
+    maxCharsPerFlush: GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH,
+    interactiveMaxChars: 0,
+  })
+
+  writer.enqueue("x".repeat(64 * 1024))
+  scheduled[0]!()
+  assert.deepEqual(writes.map(data => data.length), [64 * 1024])
+  assert.equal(scheduled.length, 1)
 })
 
 test("acknowledges a frame only after its final parser slice", () => {

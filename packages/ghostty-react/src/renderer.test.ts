@@ -105,7 +105,7 @@ test("measureGhosttyCell uses descender-aware metrics", () => {
   })
 })
 
-test("ghosttyTextRunEnd includes wide spacer tails without drawing them", () => {
+test("ghosttyTextRunEnd ends after each wide glyph spacer", () => {
   const cells = [
     cell("界", GHOSTTY_CELL_WIDE.wide),
     cell("", GHOSTTY_CELL_WIDE.spacerTail),
@@ -113,7 +113,8 @@ test("ghosttyTextRunEnd includes wide spacer tails without drawing them", () => 
     cell("", GHOSTTY_CELL_WIDE.spacerTail),
     cell(""),
   ]
-  assert.equal(ghosttyTextRunEnd(cells, 0, () => true), 4)
+  assert.equal(ghosttyTextRunEnd(cells, 0, () => true), 2)
+  assert.equal(ghosttyTextRunEnd(cells, 2, () => true), 4)
 })
 
 test("renderGhosttySnapshot underlines every cell in a wrapped hovered link", () => {
@@ -174,8 +175,35 @@ test("renderGhosttySnapshot clips text and cursor glyphs to their cells", () => 
   })
 
   assert.deepEqual(fillTextCalls, [
-    ["abx", 4, 15, 21.6],
-    ["x", 18.4, 15, 7.2],
+    ["abx", 4, 15],
+    ["x", 18.4, 15],
+  ])
+})
+
+test("renderGhosttySnapshot keeps text after a wide glyph on its grid column", () => {
+  const fillTextCalls: unknown[][] = []
+  const context = contextWith({
+    fillText: (...args: unknown[]) => fillTextCalls.push(args),
+  })
+
+  renderGhosttySnapshot({
+    context,
+    snapshot: snapshot([
+      cell("界", GHOSTTY_CELL_WIDE.wide),
+      cell("", GHOSTTY_CELL_WIDE.spacerTail),
+      cell("x"),
+    ]),
+    metrics: { width: 7.2, height: 16, baseline: 11 },
+    fontSize: 12,
+    fontFamily: "monospace",
+    padding: 4,
+    forceFull: false,
+    cursorOn: false,
+  })
+
+  assert.deepEqual(fillTextCalls, [
+    ["界", 4, 15],
+    ["x", 18.4, 15],
   ])
 })
 

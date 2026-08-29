@@ -40,8 +40,11 @@ export function ghosttyTextRunEnd(
     const next = cells[end];
     if (!next) break;
     if (next.wide === GHOSTTY_CELL_WIDE.spacerTail) {
+      // A wide glyph owns this spacer cell. End the run here so the next
+      // grapheme starts at its authoritative grid column; concatenating past
+      // the spacer lets Canvas shape it immediately after the glyph instead.
       end += 1;
-      continue;
+      break;
     }
     if (next.text.length === 0 || !sameStyle(next)) break;
     end += 1;
@@ -152,6 +155,8 @@ export function renderGhosttySnapshot(options: {
   readonly focused?: boolean;
   readonly selectionBackground?: string;
   readonly hoveredLinkRange?: GhosttyCellRange | null;
+  /** Override dirty rows when repainting only local overlays such as a cursor. */
+  readonly dirtyRows?: ReadonlySet<number>;
   /** Vertical origin of row 0; defaults to the horizontal padding. */
   readonly originY?: number;
   /** CSS-to-device-pixel ratio used to keep row edges on exact raster lines. */
@@ -176,7 +181,7 @@ export function renderGhosttySnapshot(options: {
   const snap = (value: number) => Math.round(value * pixelRatio) / pixelRatio;
   const rowsToDraw = forceFull
     ? Array.from({ length: snapshot.rows }, (_, index) => index)
-    : [...snapshot.dirtyRows];
+    : [...(options.dirtyRows ?? snapshot.dirtyRows)];
   if (
     previousCursorY !== null &&
     previousCursorY !== undefined &&
@@ -252,11 +257,14 @@ export function renderGhosttySnapshot(options: {
         continue;
       }
       const runEnd = ghosttyTextRunEnd(row.cells, runStart, (cell) => sameTextStyle(cell, first));
-      const text = row.cells
-        .slice(runStart, runEnd)
-        .map((cell) => cell.text)
-        .join("");
-      if (!first.invisible && text.trim().length > 0) {
+      let text = "";
+      let hasVisibleText = false;
+      for (let column = runStart; column < runEnd; column += 1) {
+        const cellText = row.cells[column]?.text ?? "";
+        text += cellText;
+        if (cellText !== "" && cellText !== " ") hasVisibleText = true;
+      }
+      if (!first.invisible && hasVisibleText) {
         context.save();
         context.beginPath();
         context.rect(
@@ -268,12 +276,10 @@ export function renderGhosttySnapshot(options: {
         context.clip();
         context.font = fontForCell(first, fontSize, fontFamily);
         context.fillStyle = cssColor(first.foreground);
-        context.fillText(
-          text,
-          padding + runStart * metrics.width,
-          top + metrics.baseline,
-          (runEnd - runStart) * metrics.width,
-        );
+        // The clip enforces the cell span. Passing Canvas maxWidth would
+        // horizontally condense fallback glyphs and make YAADE diverge from
+        // Ghostty's metrics and cursor grid.
+        context.fillText(text, padding + runStart * metrics.width, top + metrics.baseline);
         context.restore();
       }
       runStart = runEnd;
@@ -330,9 +336,14 @@ export function renderGhosttySnapshot(options: {
       context.fillRect(left, top, metrics.width, paintHeight);
       const cell = snapshot.rowData[snapshot.cursorY]?.cells[snapshot.cursorX];
       if (cell?.text) {
+        context.save();
+        context.beginPath();
+        context.rect(left, top, metrics.width, paintHeight);
+        context.clip();
         context.font = fontForCell(cell, fontSize, fontFamily);
         context.fillStyle = cssColor(snapshot.background);
-        context.fillText(cell.text, left, top + metrics.baseline, metrics.width);
+        context.fillText(cell.text, left, top + metrics.baseline);
+        context.restore();
       }
     }
   }

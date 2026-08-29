@@ -70,6 +70,13 @@ export const TERMINAL_OUTPUT_MAX_PENDING_CHARS = 512 * 1024
 /** Idle / echo path — keep key→paint off the rAF clock. */
 export const TERMINAL_OUTPUT_INTERACTIVE_MAX_CHARS = 256
 
+/**
+ * Four maximum-sized 64 KiB host PTY reads per frame. The old 32 KiB slice
+ * capped sustained rendering near 2 MiB/s and split every normal host frame
+ * across paints; 256 KiB remains bounded while keeping up with terminal floods.
+ */
+export const GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH = 256 * 1024
+
 export function createTerminalOutputWriter(
   options: TerminalOutputWriterOptions,
 ): TerminalOutputWriter {

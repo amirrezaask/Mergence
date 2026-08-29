@@ -53,6 +53,7 @@ const TERMINAL_FONT_LOAD_VARIANTS = [
   "italic 400",
   "italic 700",
 ] as const;
+const NO_DIRTY_ROWS: ReadonlySet<number> = new Set();
 
 /** Requested terminal font; omitted fields fall back to the defaults. */
 export interface GhosttyTerminalFont {
@@ -61,6 +62,30 @@ export interface GhosttyTerminalFont {
 }
 
 let symbolsFontLoad: Promise<void> | null = null;
+
+function colorsEqual(left: GhosttyTheme["background"], right: GhosttyTheme["background"]): boolean {
+  return left.r === right.r && left.g === right.g && left.b === right.b;
+}
+
+function themesEqual(left: GhosttyTheme, right: GhosttyTheme): boolean {
+  if (left === right) return true;
+  if (
+    !colorsEqual(left.background, right.background) ||
+    !colorsEqual(left.foreground, right.foreground) ||
+    !colorsEqual(left.cursor, right.cursor) ||
+    left.selectionBackground !== right.selectionBackground
+  ) {
+    return false;
+  }
+  if (left.palette === right.palette) return true;
+  if (!left.palette || !right.palette || left.palette.length !== right.palette.length) return false;
+  for (let index = 0; index < left.palette.length; index += 1) {
+    const leftColor = left.palette[index];
+    const rightColor = right.palette[index];
+    if (!leftColor || !rightColor || !colorsEqual(leftColor, rightColor)) return false;
+  }
+  return true;
+}
 
 function isMacPlatform(platform: string): boolean {
   return /mac|iphone|ipad|ipod/i.test(platform);
@@ -558,9 +583,12 @@ export class GhosttyTerminalSurface {
   private fontSize: number;
   private fontEpoch = 0;
   private pendingFontEpoch: number | null = null;
+  private pendingFontFamily: string | undefined;
+  private pendingFontSize = 0;
   private readonly resizeObserver: ResizeObserver;
   private readonly scrollbarThumb: HTMLDivElement;
   private snapshot: GhosttySnapshot | null = null;
+  private terminalStateDirty = true;
   private visible: boolean;
   private frame = 0;
   private cursorTimer: number | null = null;
@@ -573,10 +601,10 @@ export class GhosttyTerminalSurface {
   private forceFullRender = true;
   private scrollbarDirty = true;
   private scrollbarState: GhosttyScrollbar | null = null;
+  private scrollbarStateKnown = false;
   private scrollbarPointerId: number | null = null;
   private scrollbarPointerOffset = 0;
   private disposed = false;
-  private resizeNotifyTimer: number | null = null;
   private originY = CONTENT_PADDING;
   private mountHeight = 0;
   private selectionEnd: { x: number; y: number } | null = null;
@@ -799,6 +827,7 @@ export class GhosttyTerminalSurface {
   }
 
   private afterTerminalWrite(forceFullRender = false): void {
+    this.terminalStateDirty = true;
     this.syncTitle();
     // Restart the blink cycle from the visible phase so the cursor never sits
     // invisible through a stream of output or a burst of typing echo.
@@ -834,9 +863,10 @@ export class GhosttyTerminalSurface {
   }
 
   setTheme(theme: GhosttyTheme): void {
-    if (this.disposed) return;
+    if (this.disposed || themesEqual(this.theme, theme)) return;
     this.theme = theme;
     this.core.setTheme(theme);
+    this.terminalStateDirty = true;
     this.forceFullRender = true;
     this.requestRender();
   }
@@ -844,13 +874,33 @@ export class GhosttyTerminalSurface {
   async setFont(font: GhosttyTerminalFont): Promise<void> {
     if (this.disposed) return;
     const fontSize = terminalFontSize(font.size);
+    if (
+      this.pendingFontEpoch !== null &&
+      this.pendingFontFamily === font.family &&
+      this.pendingFontSize === fontSize
+    ) {
+      return;
+    }
+    if (this.requestedFontFamily === font.family && this.fontSize === fontSize) {
+      if (this.pendingFontEpoch !== null) {
+        this.fontEpoch += 1;
+        this.pendingFontEpoch = null;
+        this.pendingFontFamily = undefined;
+        this.pendingFontSize = 0;
+      }
+      return;
+    }
     // The fields only change together with their metrics after the load, and
     // the epoch lets the newest overlapping call win regardless of load order.
     const epoch = ++this.fontEpoch;
     this.pendingFontEpoch = epoch;
+    this.pendingFontFamily = font.family;
+    this.pendingFontSize = fontSize;
     const fontFamily = await loadTerminalFontFamily(font.family, fontSize);
     if (this.disposed || epoch !== this.fontEpoch) return;
     this.pendingFontEpoch = null;
+    this.pendingFontFamily = undefined;
+    this.pendingFontSize = 0;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = font.family;
     this.fontSize = fontSize;
@@ -860,6 +910,7 @@ export class GhosttyTerminalSurface {
   private applyFontMetrics(): void {
     this.metrics = measureGhosttyCell(this.context, this.fontSize, this.fontFamily);
     this.core.resize(this.cols, this.rows, this.metrics.width, this.metrics.height);
+    this.terminalStateDirty = true;
     // Cached IME textarea coordinates are stale in the new cell geometry.
     this.inputLeft = -1;
     this.inputTop = -1;
@@ -950,6 +1001,7 @@ export class GhosttyTerminalSurface {
       this.cols = grid.cols;
       this.rows = grid.rows;
       this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
+      this.terminalStateDirty = true;
       this.notifyResize();
       this.forceFullRender = true;
       this.scrollbarDirty = true;
@@ -984,18 +1036,12 @@ export class GhosttyTerminalSurface {
     });
   }
 
-  /**
-   * The local grid reflows immediately, but the PTY only hears about settled
-   * dimensions: notifying on every drag step makes the shell reprint its
-   * prompt mid-drag, which reads as jitter.
-   */
+  /** Keep the PTY and parser grids in lockstep. The host adapter already
+   * coalesces resize RPCs while one is in flight, so delaying here only exposes
+   * users to stale TUI geometry and visibly incorrect wrapping. */
   private notifyResize(): void {
     this.resizeNotified = true;
-    if (this.resizeNotifyTimer !== null) window.clearTimeout(this.resizeNotifyTimer);
-    this.resizeNotifyTimer = window.setTimeout(() => {
-      this.resizeNotifyTimer = null;
-      if (!this.disposed) this.options.onResize?.(this.cols, this.rows);
-    }, 150);
+    this.options.onResize?.(this.cols, this.rows);
   }
 
   focus(): void {
@@ -1036,6 +1082,7 @@ export class GhosttyTerminalSurface {
 
   clearSelection(): void {
     this.core.clearSelection();
+    this.terminalStateDirty = true;
     this.selectionEnd = null;
     this.selectionAnchorScreen = null;
     this.selectionEndScreen = null;
@@ -1050,6 +1097,7 @@ export class GhosttyTerminalSurface {
 
   scrollToBottom(): void {
     this.core.scrollToBottom();
+    this.terminalStateDirty = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
@@ -1166,13 +1214,6 @@ export class GhosttyTerminalSurface {
     document.removeEventListener("visibilitychange", this.onVisibilityChange);
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
     if (this.touchHoldTimer !== null) window.clearTimeout(this.touchHoldTimer);
-    if (this.resizeNotifyTimer !== null) {
-      window.clearTimeout(this.resizeNotifyTimer);
-      this.resizeNotifyTimer = null;
-      // Flush the settled dimensions so the PTY keeps the final size even when
-      // the surface unmounts inside the debounce window.
-      this.options.onResize?.(this.cols, this.rows);
-    }
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
     if (this.fitRetryFrame !== 0) window.cancelAnimationFrame(this.fitRetryFrame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
@@ -1464,6 +1505,7 @@ export class GhosttyTerminalSurface {
       this.selectionEndScreen = screen;
       if (screen) this.core.setSelection({ ...screen, tag: 2 }, { ...screen, tag: 2 });
     }
+    this.terminalStateDirty = true;
     navigator.vibrate?.(8);
     this.options.onSelectionChange?.();
     this.forceFullRender = true;
@@ -1556,6 +1598,7 @@ export class GhosttyTerminalSurface {
         this.core.setSelection(cell, cell);
       }
     }
+    this.terminalStateDirty = true;
     this.forceFullRender = true;
     this.canvas.setPointerCapture(event.pointerId);
     this.requestRender();
@@ -1639,6 +1682,7 @@ export class GhosttyTerminalSurface {
     this.selectionAnchorScreen = anchor;
     this.selectionEndScreen = end;
     this.core.setSelection({ ...anchor, tag: 2 }, { ...end, tag: 2 });
+    this.terminalStateDirty = true;
     this.options.onSelectionChange?.();
     this.forceFullRender = true;
     this.requestRender();
@@ -1929,6 +1973,7 @@ export class GhosttyTerminalSurface {
     }
     if (delta === 0) return;
     this.core.scroll(delta);
+    this.terminalStateDirty = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
@@ -1946,8 +1991,7 @@ export class GhosttyTerminalSurface {
     this.scrollViewport(offset - state.offset);
   }
 
-  private updateScrollbar(): void {
-    const state = this.readScrollbarState();
+  private updateScrollbar(state: GhosttyScrollbar | null): void {
     const geometry =
       state === null
         ? null
@@ -1970,6 +2014,7 @@ export class GhosttyTerminalSurface {
   private readScrollbarState(): GhosttyScrollbar | null {
     const state = this.core.scrollbarState();
     this.scrollbarState = state;
+    this.scrollbarStateKnown = true;
     return state;
   }
 
@@ -1992,7 +2037,12 @@ export class GhosttyTerminalSurface {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
     }
-    this.snapshot = this.core.snapshot();
+    const terminalUpdated = this.terminalStateDirty || this.snapshot === null;
+    if (terminalUpdated) {
+      this.snapshot = this.core.snapshot();
+      this.terminalStateDirty = false;
+    }
+    if (this.snapshot === null) return;
     // A cursor that is not blinking right now must be drawn, never caught in an
     // off phase left behind by a blink that has since been turned off.
     if (!this.blinkEnabled()) this.cursorOn = true;
@@ -2000,7 +2050,10 @@ export class GhosttyTerminalSurface {
     // dirty-row redraws must never composite rows at a shifted origin over
     // rows painted at the previous one. Bottom anchoring starts once
     // scrollback exists, i.e. when the prompt actually lives at the bottom.
-    const scrollState = this.readScrollbarState();
+    const scrollState =
+      terminalUpdated || this.scrollbarDirty || !this.scrollbarStateKnown
+        ? this.readScrollbarState()
+        : this.scrollbarState;
     const anchorBottom = scrollState !== null && scrollState.total > scrollState.len;
     const nextOriginY = terminalContentOriginY(
       this.mountHeight,
@@ -2028,6 +2081,7 @@ export class GhosttyTerminalSurface {
       previousCursorY: this.renderedCursorY,
       focused: this.focused,
       hoveredLinkRange: this.hoveredLink?.range ?? null,
+      dirtyRows: terminalUpdated ? this.snapshot.dirtyRows : NO_DIRTY_ROWS,
       ...(this.theme.selectionBackground !== undefined
         ? { selectionBackground: this.theme.selectionBackground }
         : {}),
@@ -2039,7 +2093,7 @@ export class GhosttyTerminalSurface {
         : null;
     if (this.scrollbarDirty) {
       this.scrollbarDirty = false;
-      this.updateScrollbar();
+      this.updateScrollbar(scrollState);
     }
     this.forceFullRender = false;
     this.scheduleCursorBlink();

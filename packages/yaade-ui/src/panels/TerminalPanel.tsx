@@ -12,7 +12,10 @@ import { Spinner } from "../components/ui/spinner.js"
 import { shouldWaitForExistingPty } from "./terminal-attach.js"
 import { stripDa1Responses } from "./terminal-da.js"
 import { createTerminalInputWriter } from "./terminal-input-writer.js"
-import { createTerminalOutputWriter } from "./terminal-output-writer.js"
+import {
+  createTerminalOutputWriter,
+  GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH,
+} from "./terminal-output-writer.js"
 import { terminalKeybindingData } from "./terminal-keybindings.js"
 import {
   getRegisteredTerminal,
@@ -704,7 +707,7 @@ export function TerminalPanel({
           // Ghostty parses synchronously on the UI thread. Keep each frame's
           // parser slice bounded; the Canvas adapter has no internal async
           // write queue to yield for us.
-          maxCharsPerFlush: 32 * 1024,
+          maxCharsPerFlush: GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH,
           // The server allows at most 8 MiB of unacknowledged output per PTY.
           // Keep the local queue above that ceiling so server-side resync wins
           // before the writer's last-resort shedding path can drop a frame.
