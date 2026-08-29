@@ -1,6 +1,5 @@
 import {
   GhosttyTerminalCore,
-  type GhosttyKeyInput,
   type GhosttyMouseInput,
   type GhosttyPointInput,
   type GhosttyRenderUpdate,
@@ -25,6 +24,7 @@ export type ParsedCallback = () => void;
 
 export interface TerminalCoreRuntime {
   readonly kind: TerminalRuntimeKind;
+  readonly runtimeGeneration: number;
   write(data: string, parsed?: ParsedCallback): void;
   writeReplay(chunks: readonly string[], parsed?: ParsedCallback): void;
   resetAndWrite(data: string, parsed?: ParsedCallback): void;
@@ -61,6 +61,7 @@ export interface TerminalCoreRuntime {
 
 export class MainThreadTerminalCore implements TerminalCoreRuntime {
   readonly kind = "main" as const;
+  readonly runtimeGeneration = 1;
   private constructor(private readonly core: GhosttyTerminalCore) {}
 
   static async create(options: RuntimeCreateOptions): Promise<MainThreadTerminalCore> {
@@ -129,6 +130,7 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
   private readonly channel: TerminalWorkerChannel;
   private sequence = 0;
   private generation = 1;
+  get runtimeGeneration(): number { return this.generation; }
   private lastEventSequence = 0;
   private state: TerminalRuntimeState = EMPTY_STATE;
   private readonly updates: GhosttyRenderUpdate[] = [];

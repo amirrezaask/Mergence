@@ -37,6 +37,33 @@ test("retains bounded payload-free metrics", () => {
   assert.equal("data" in snapshot, false)
 })
 
+test("records monotonic generation-aware presentation stages", () => {
+  let time = 10
+  const scheduler = new TerminalFrameScheduler(() => time)
+  const token = scheduler.received(8)
+  time = 12
+  scheduler.posted(8)
+  time = 14
+  scheduler.parsed(token)
+  scheduler.presented({
+    surfaceInstanceId: 3,
+    runtimeGeneration: 2,
+    rendererGeneration: 4,
+    modelFrameId: 9,
+    geometryGeneration: 5,
+    modelAppliedAt: 15,
+    renderStartedAt: 16,
+    submittedAt: 17,
+    nextPaintObservedAt: 18,
+  })
+  const snapshot = scheduler.snapshot()
+  assert.equal(snapshot.parsedToSubmittedP95, 3)
+  assert.equal(snapshot.receivedToPresentedP95, 8)
+  assert.equal(snapshot.frameDelayP95, 1)
+  assert.equal(snapshot.lastSubmittedModelFrame, 9)
+  assert.equal(snapshot.lastNextPaintObservedFrame, 9)
+})
+
 test("does not present or release pending bytes before parse", () => {
   const scheduler = new TerminalFrameScheduler(() => 1)
   scheduler.received(12)

@@ -131,7 +131,7 @@ export const GhosttyTerminal = forwardRef<
       linkMatcher: (line) =>
         callbacksRef.current.linkMatcher?.(line) ?? matchTerminalUrls(line),
       onTitleChange: (title) => callbacksRef.current.onTitleChange?.(title),
-      onPresented: () => callbacksRef.current.onPresented?.(),
+      onPresented: sample => callbacksRef.current.onPresented?.(sample),
       onRuntimeError: error => callbacksRef.current.onError?.(error),
     }).then(
       (next) => {

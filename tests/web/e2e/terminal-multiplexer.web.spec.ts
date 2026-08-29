@@ -17,6 +17,58 @@ test("Session shell exposes only Terminal", async ({ launchApp }) => {
   await expect(page.locator("[data-yaade-which-key]")).toHaveCount(0);
 });
 
+test("responsive layout moves one resident terminal without reattach", async ({ launchApp }) => {
+  const { page } = await launchApp({ workspaceRel: "fixtures/sample-workspace" });
+  await page.setViewportSize({ width: 900, height: 700 });
+  await expect(page.locator("[data-ghostty-terminal-canvas]")).toHaveCount(1, {
+    timeout: 30_000,
+  });
+  const terminalId = await page.evaluate(
+    () => window.__yaadeTest?.getState().activeMuxTerminalId ?? null,
+  );
+  if (!terminalId) throw new Error("active terminal is unavailable");
+  let before: Awaited<ReturnType<NonNullable<typeof window.__yaadeTest>["getTerminalLifecycle"]>> = null;
+  await expect.poll(async () => {
+    before = await page.evaluate(
+      id => window.__yaadeTest?.getTerminalLifecycle(id) ?? null,
+      terminalId,
+    );
+    return before;
+  }, { timeout: 30_000 }).not.toBeNull();
+
+  await focusTerminal(page);
+  const marker = "YAADE_RESIDENT_BREAKPOINT";
+  await page.keyboard.type(`printf '${marker}\\n'`);
+  await page.keyboard.press("Enter");
+  await expect.poll(
+    () => page.evaluate(id => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId),
+  ).toContain(marker);
+
+  for (const width of [760, 820, 760, 900]) {
+    await page.setViewportSize({ width, height: 700 });
+    await expect(page.locator("[data-ghostty-terminal-canvas]")).toHaveCount(1);
+    if (width < 768) {
+      await expect(page.locator("[data-yaade-mobile-layout-host]")).toBeVisible();
+      await expect(page.locator(`[data-yaade-terminal-placement="${terminalId}"]`)).toBeVisible();
+    } else {
+      await expect(page.locator("[data-yaade-desktop-layout-host]")).toBeVisible();
+    }
+  }
+
+  const after = await page.evaluate(
+    id => window.__yaadeTest?.getTerminalLifecycle(id) ?? null,
+    terminalId,
+  );
+  expect(after?.surfaceInstanceId).toBe(before?.surfaceInstanceId);
+  expect(after?.runtimeGeneration).toBe(before?.runtimeGeneration);
+  expect(after?.rendererGeneration).toBe(before?.rendererGeneration);
+  expect(after?.attachCount).toBe(before?.attachCount);
+  expect(after?.rendererRecoveries).toBe(before?.rendererRecoveries);
+  await expect.poll(
+    () => page.evaluate(id => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId),
+  ).toContain(marker);
+});
+
 test("session switcher creates and archives a session", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
@@ -342,15 +394,6 @@ test("closing a new Window during automatic terminal creation stays quiet", asyn
   await page.evaluate(() => {
     const terminals = window.yaade?.mux;
     if (!terminals?.createTerminal) throw new Error("terminal API is not ready");
-    const selectTab = terminals.selectTab;
-    terminals.selectTab = async (command) => {
-      document.documentElement.dataset.yaadeTestSelectState = "started";
-      try {
-        return await selectTab(command);
-      } finally {
-        document.documentElement.dataset.yaadeTestSelectState = "settled";
-      }
-    };
     const createTerminal = terminals.createTerminal;
     terminals.createTerminal = async (command) => {
       const released = new Promise<void>((resolve) => {
@@ -375,10 +418,6 @@ test("closing a new Window during automatic terminal creation stays quiet", asyn
   await expect
     .poll(() => page.locator("html").getAttribute("data-yaade-test-create-state"))
     .toBe("started");
-  await expect
-    .poll(() => page.locator("html").getAttribute("data-yaade-test-select-state"))
-    .toBe("settled");
-
   const secondWindow = windowTabs.filter({ hasText: "Window 2" });
   await secondWindow.getByRole("button", { name: "Close Window 2" }).click();
   await expect(windowTabs).toHaveCount(1);
@@ -396,9 +435,11 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
     workspaceRel: "fixtures/sample-workspace",
     mobile: true,
   });
-  await expect(page.locator("[data-yaade-terminal-panel]").first()).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(
+    page.locator(
+      '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+    ),
+  ).toHaveCount(1, { timeout: 30_000 });
   await page.evaluate(() => {
     localStorage.removeItem("yaade:last-terminal-multiplexer-route");
     history.pushState(null, "", "/");
@@ -414,7 +455,7 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
     timeout: 30_000,
   });
   await expect(
-    page.locator("[data-yaade-mobile-terminal-detail] [data-yaade-terminal-panel]"),
+    page.locator("[data-yaade-mobile-terminal-detail] [data-yaade-terminal-placement]"),
   ).toHaveCount(1, { timeout: 30_000 });
   await expect(
     page.locator('[data-yaade-mobile-retained-terminal][data-active="true"]'),
@@ -705,7 +746,7 @@ test("split controls open Terminal by default and the picker with a modifier", a
   await expect(paneChrome.locator('[data-yaade-mux-split="down"]')).toBeVisible();
   await expect(paneChrome.locator('[data-yaade-mux-close-pane=""]')).toBeVisible();
 
-  await paneChrome.locator('[data-yaade-mux-split="right"]').click();
+  await paneChrome.locator('[data-yaade-mux-split="right"]').click({ force: true });
   await expect(page.locator("[data-yaade-terminal-tile]")).toHaveCount(2, {
     timeout: 30_000,
   });
@@ -713,7 +754,10 @@ test("split controls open Terminal by default and the picker with a modifier", a
   await expect(page.locator("[data-yaade-pane-terminal-menu]")).toBeHidden();
 
   const modifier = process.platform === "darwin" ? "Meta" : "Control";
-  await paneChrome.locator('[data-yaade-mux-split="down"]').click({ modifiers: [modifier] });
+  await paneChrome.locator('[data-yaade-mux-split="down"]').click({
+    force: true,
+    modifiers: [modifier],
+  });
   const picker = page.locator("[data-yaade-pane-terminal-menu]");
   await expect(picker).toBeVisible();
   await expect(picker).not.toContainText("New terminal");

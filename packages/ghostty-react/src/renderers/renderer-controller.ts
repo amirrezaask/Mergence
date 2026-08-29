@@ -90,6 +90,17 @@ export class RendererController {
     }
   }
 
+  capturePixels(): Promise<ImageData | null> {
+    const active = this.active;
+    if (active === null || this.stateValue === "disposed" || !active.renderer.capturePixels) {
+      return Promise.resolve(null);
+    }
+    return active.renderer.capturePixels().catch(error => {
+      this.handleFailure("capture", error);
+      return null;
+    });
+  }
+
   render(
     model: GhosttyViewportModel,
     update: GhosttyRenderUpdate | null,

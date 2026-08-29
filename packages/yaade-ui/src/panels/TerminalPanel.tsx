@@ -28,6 +28,7 @@ import {
   scanTerminalPathLinks,
 } from "./terminal-links.js"
 import { DEFAULT_MONO_FONT_FAMILY } from "../theme/appearance-defaults.js"
+import { registerResidentTerminalSurface } from "./terminal-surface-placement.js"
 
 export type TerminalPanelProps = {
   cwdRootUri: string
@@ -72,6 +73,8 @@ type TerminalSession = {
   wantedRows: number
   resizeInFlight: boolean
   resizeQueued: boolean
+  wantedGeometryGeneration: number
+  acknowledgedGeometryGeneration: number
   live: boolean
 }
 
@@ -332,6 +335,7 @@ export function TerminalPanel({
     let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
     const pendingTerminalInput: string[] = []
     let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
+    let unregisterResidentSurface: (() => void) | null = null
     const frameScheduler = new TerminalFrameScheduler()
     const updateSchedulerDiagnostics = () => {
       const panel = containerRef.current?.closest<HTMLElement>("[data-yaade-terminal-panel]")
@@ -340,7 +344,11 @@ export function TerminalPanel({
       panel.dataset.yaadeTerminalPipelinePendingBytes = String(metrics.pendingBytes)
       panel.dataset.yaadeTerminalPipelineMaxPendingBytes = String(metrics.maxPendingBytes)
       panel.dataset.yaadeTerminalPipelineParsedP95 = metrics.receivedToParsedP95.toFixed(1)
+      panel.dataset.yaadeTerminalPipelineSubmittedP95 = metrics.parsedToSubmittedP95.toFixed(1)
       panel.dataset.yaadeTerminalPipelinePresentedP95 = metrics.receivedToPresentedP95.toFixed(1)
+      panel.dataset.yaadeTerminalPipelineFrameDelayP95 = metrics.frameDelayP95.toFixed(1)
+      panel.dataset.yaadeTerminalLastSubmittedFrame = String(metrics.lastSubmittedModelFrame)
+      panel.dataset.yaadeTerminalLastPresentedFrame = String(metrics.lastNextPaintObservedFrame)
     }
 
     const enqueueTerminalInput = (data: string) => {
@@ -352,6 +360,10 @@ export function TerminalPanel({
       else pendingTerminalInput.push(payload)
     }
     const container = containerRef.current
+    const surfaceMount = document.createElement("div")
+    surfaceMount.className = "relative h-full min-h-0 w-full overflow-hidden"
+    surfaceMount.dataset.yaadeResidentTerminalSurface = tabId
+    container.replaceChildren(surfaceMount)
     const launchCommandAtStart = launchCommandRef.current
     const launchArgsAtStart = launchArgsRef.current
     const launchEnvAtStart = launchEnvRef.current
@@ -396,12 +408,28 @@ export function TerminalPanel({
       const id = next.ptyId
       const cols = next.wantedCols
       const rows = next.wantedRows
+      const geometryGeneration = next.wantedGeometryGeneration
       next.resizeInFlight = true
       next.resizeQueued = false
       const settle = () => {
         if (!next.live) return
         next.resizeInFlight = false
-        if (next.resizeQueued || next.wantedCols !== cols || next.wantedRows !== rows) {
+        next.acknowledgedGeometryGeneration = Math.max(
+          next.acknowledgedGeometryGeneration,
+          geometryGeneration,
+        )
+        const panel = containerRef.current?.closest<HTMLElement>("[data-yaade-terminal-panel]")
+        if (panel) {
+          panel.dataset.yaadeTerminalHostResizeAcknowledgedGeneration = String(
+            next.acknowledgedGeometryGeneration,
+          )
+        }
+        if (
+          next.resizeQueued ||
+          next.wantedCols !== cols ||
+          next.wantedRows !== rows ||
+          next.wantedGeometryGeneration !== geometryGeneration
+        ) {
           resizePty(next)
         }
       }
@@ -439,11 +467,13 @@ export function TerminalPanel({
       // or one unbounded client-side queue.
       outputWriter.flush()
     }
-    const attachToNewSurface = (id: string) =>
-      terminalApi.attach(id, {
+    const attachToNewSurface = (id: string) => {
+      surface?.recordAttach()
+      return terminalApi.attach(id, {
         replay: "full",
         onReplay: consumeAttachReplay,
       })
+    }
 
     let receivingReplay = false
     const connectPty = (id: string, replayMayNeedQueryResponses = false) => {
@@ -663,7 +693,7 @@ export function TerminalPanel({
 
     const setup = async () => {
       try {
-        surface = await GhosttyTerminalSurface.create(container, {
+        surface = await GhosttyTerminalSurface.create(surfaceMount, {
           theme: terminalTheme(themeRef.current),
           font: { family: readTerminalFontFamily(), size: readRootFontSize() },
           visible: visibleRef.current,
@@ -679,6 +709,13 @@ export function TerminalPanel({
             if (!session?.live) return
             session.wantedCols = cols
             session.wantedRows = rows
+            session.wantedGeometryGeneration = surface?.lifecycleSnapshot().geometryGeneration ?? 0
+            const panel = containerRef.current?.closest<HTMLElement>("[data-yaade-terminal-panel]")
+            if (panel) {
+              panel.dataset.yaadeTerminalHostResizeRequestedGeneration = String(
+                session.wantedGeometryGeneration,
+              )
+            }
             resizePty(session)
           },
           onSelectionChange: () => undefined,
@@ -693,8 +730,8 @@ export function TerminalPanel({
             return false
           },
           onLinkActivate: handleLink,
-          onPresented: () => {
-            frameScheduler.presented()
+          onPresented: sample => {
+            frameScheduler.presented(sample)
             updateSchedulerDiagnostics()
           },
           onRuntimeRecoveryRequired: () => {
@@ -726,11 +763,18 @@ export function TerminalPanel({
           return
         }
         surfaceRef.current = surface
+        unregisterResidentSurface = registerResidentTerminalSurface({
+          terminalId: tabId,
+          mount: surfaceMount,
+          home: container,
+          surface,
+        })
         const panel = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
         if (panel) {
           panel.dataset.yaadeTerminalRenderer = "ghostty"
           panel.dataset.yaadeTerminalRenderBackend = surface.renderBackend
           panel.dataset.yaadeTerminalRuntime = surface.runtimeKind
+          panel.dataset.yaadeTerminalSurfaceInstance = String(surface.surfaceInstanceId)
         }
         session = {
           surface,
@@ -739,6 +783,8 @@ export function TerminalPanel({
           wantedRows: surface.rows,
           resizeInFlight: false,
           resizeQueued: false,
+          wantedGeometryGeneration: surface.lifecycleSnapshot().geometryGeneration,
+          acknowledgedGeometryGeneration: 0,
           live: true,
         }
         sessionRef.current = session
@@ -800,10 +846,13 @@ export function TerminalPanel({
       pendingTerminalInput.length = 0
       outputWriter?.dispose()
       unsub?.()
+      unregisterResidentSurface?.()
+      unregisterResidentSurface = null
       if (surface) {
         unregisterTerminalInstance(tabId, surface)
         surface.dispose()
       }
+      surfaceMount.remove()
     }
   }, [
     cwdRootUri,

@@ -5,6 +5,8 @@ export {
   readTerminalCellSize,
   readTerminalCursor,
   readTerminalDims,
+  readTerminalLifecycle,
+  readTerminalPixelStats,
   readTerminalViewportY,
   registerTerminalInstance,
   scrollTerminalLines,

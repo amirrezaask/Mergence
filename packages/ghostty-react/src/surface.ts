@@ -6,7 +6,6 @@ import {
   type GhosttyTerminalLinkMatcher,
 } from "./links.js";
 import {
-  GHOSTTY_CELL_WIDE,
   GhosttyViewportModel,
   type GhosttyRenderUpdate,
   type GhosttyResponsePolicy,
@@ -30,7 +29,14 @@ import {
   type TerminalRuntimeKind,
 } from "./worker/worker-terminal-core.js";
 import { isBrowserZoomShortcut, isBrowserZoomWheel } from "./browser-zoom.js";
-import { TERMINAL_SCHEDULER_BUDGETS } from "./scheduler/terminal-frame-scheduler.js";
+import {
+  TERMINAL_SCHEDULER_BUDGETS,
+  type TerminalPresentationSample,
+} from "./scheduler/terminal-frame-scheduler.js";
+import {
+  TerminalGeometryCoordinator,
+  type TerminalGeometryCommit,
+} from "./geometry/terminal-geometry-coordinator.js";
 import {
   createTerminalRenderer,
   parseTerminalRendererPreference,
@@ -584,7 +590,7 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly responsePolicy?: GhosttyResponsePolicy;
   readonly onTitleChange?: (title: string) => void;
   /** Presentation telemetry only; transport ACK must not depend on this callback. */
-  readonly onPresented?: () => void;
+  readonly onPresented?: (sample: TerminalPresentationSample) => void;
   /** Renderer selection for tests/operators; auto prefers a validated WebGL2 context. */
   readonly renderer?: TerminalRendererPreference;
   /** Parser placement. Worker is default with automatic main-thread initialization fallback. */
@@ -595,7 +601,26 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onRuntimeRecoveryRequired?: () => void;
 }
 
+export interface GhosttyTerminalLifecycleSnapshot {
+  readonly surfaceInstanceId: number;
+  readonly runtimeKind: TerminalRuntimeKind;
+  readonly runtimeGeneration: number;
+  readonly rendererBackend: TerminalRenderer["kind"];
+  readonly rendererGeneration: number;
+  readonly rendererRecoveries: number;
+  readonly attachCount: number;
+  readonly resizeCount: number;
+  readonly geometryGeneration: number;
+  readonly lastSubmittedModelFrame: number;
+  readonly lastNextPaintObservedFrame: number;
+  readonly compatibilitySnapshotBuilds: number;
+  readonly decodedGraphemes: number;
+}
+
+let nextSurfaceInstanceId = 1;
+
 export class GhosttyTerminalSurface {
+  readonly surfaceInstanceId = nextSurfaceInstanceId++;
   canvas: HTMLCanvasElement;
   readonly input: HTMLTextAreaElement;
   readonly scrollbar: HTMLDivElement;
@@ -625,6 +650,7 @@ export class GhosttyTerminalSurface {
   private pendingFontFamily: string | undefined;
   private pendingFontSize = 0;
   private readonly resizeObserver: ResizeObserver;
+  private readonly geometryCoordinator: TerminalGeometryCoordinator;
   private readonly scrollbarThumb: HTMLDivElement;
   private snapshot: GhosttySnapshot | null = null;
   private terminalStateDirty = true;
@@ -697,6 +723,12 @@ export class GhosttyTerminalSurface {
   private readonly reducedMotionMedia = window.matchMedia?.("(prefers-reduced-motion: reduce)");
   private inputLeft = -1;
   private inputTop = -1;
+  private attachCount = 0;
+  private resizeCount = 0;
+  private geometryGeneration = 0;
+  private lastSubmittedModelFrame = 0;
+  private lastNextPaintObservedFrame = 0;
+  private pendingPresentationFrame = 0;
 
   private constructor(
     mount: HTMLElement,
@@ -750,14 +782,23 @@ export class GhosttyTerminalSurface {
       },
     );
     this.updateRendererDiagnostics();
-    this.resizeObserver = new ResizeObserver(() => this.ensureFitted());
+    this.geometryCoordinator = new TerminalGeometryCoordinator({
+      padding: CONTENT_PADDING,
+      onCommit: commit => this.commitGeometry(commit),
+    });
+    this.resizeObserver = new ResizeObserver(entries => {
+      const entry = entries.find(candidate => candidate.target === this.mount);
+      const width = entry?.contentRect.width ?? this.mount.clientWidth;
+      const height = entry?.contentRect.height ?? this.mount.clientHeight;
+      this.observeGeometry(width, height);
+    });
     this.installEvents();
     this.watchDevicePixelRatio();
     this.reducedMotionMedia?.addEventListener("change", this.onReducedMotionChange);
     document.addEventListener("visibilitychange", this.onVisibilityChange);
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
     this.resizeObserver.observe(mount);
-    if (mount.parentElement) this.resizeObserver.observe(mount.parentElement);
+    mount.dataset.ghosttyTerminalSurfaceInstance = String(this.surfaceInstanceId);
   }
 
   get runtimeKind(): TerminalRuntimeKind {
@@ -767,6 +808,31 @@ export class GhosttyTerminalSurface {
   get renderBackend(): TerminalRenderer["kind"] {
     const backend = this.rendererController.backend;
     return backend === "unavailable" ? "canvas2d" : backend;
+  }
+
+  lifecycleSnapshot(): GhosttyTerminalLifecycleSnapshot {
+    const renderer = this.rendererController.diagnostics;
+    return {
+      surfaceInstanceId: this.surfaceInstanceId,
+      runtimeKind: this.core.kind,
+      runtimeGeneration: this.core.runtimeGeneration,
+      rendererBackend: this.renderBackend,
+      rendererGeneration: renderer.generation,
+      rendererRecoveries: renderer.recoveryCount,
+      attachCount: this.attachCount,
+      resizeCount: this.resizeCount,
+      geometryGeneration: this.geometryGeneration,
+      lastSubmittedModelFrame: this.lastSubmittedModelFrame,
+      lastNextPaintObservedFrame: this.lastNextPaintObservedFrame,
+      compatibilitySnapshotBuilds: this.viewportModel.compatibilitySnapshotBuilds,
+      decodedGraphemes: this.viewportModel.decodedGraphemes,
+    };
+  }
+
+  recordAttach(): void {
+    if (this.disposed) return;
+    this.attachCount += 1;
+    this.mount.dataset.ghosttyTerminalAttachCount = String(this.attachCount);
   }
 
   static async create(
@@ -1091,51 +1157,64 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return false;
     const width = this.mount.clientWidth;
     const height = this.mount.clientHeight;
-    const grid = terminalMeasuredGrid(width, height, this.metrics);
-    if (grid === null) return false;
-    const ratio = window.devicePixelRatio || 1;
-    const pixelWidth = Math.max(1, Math.round(width * ratio));
-    const pixelHeight = Math.max(1, Math.round(height * ratio));
-    let shouldRender = false;
-    // The DPR transform must be installed even when the target size happens to
-    // equal the canvas default 300x150 backing store, so the first fit always
-    // schedules a canvas configuration.
-    if (
+    if (terminalMeasuredGrid(width, height, this.metrics) === null) return false;
+    this.geometryCoordinator.commitNow({
+      cssWidth: width,
+      cssHeight: height,
+      pixelRatio: window.devicePixelRatio || 1,
+      cellWidth: this.metrics.width,
+      cellHeight: this.metrics.height,
+    });
+    return true;
+  }
+
+  private observeGeometry(width = this.mount.clientWidth, height = this.mount.clientHeight): boolean {
+    if (this.disposed || terminalMeasuredGrid(width, height, this.metrics) === null) return false;
+    return this.geometryCoordinator.observe({
+      cssWidth: width,
+      cssHeight: height,
+      pixelRatio: window.devicePixelRatio || 1,
+      cellWidth: this.metrics.width,
+      cellHeight: this.metrics.height,
+    });
+  }
+
+  private commitGeometry(commit: TerminalGeometryCommit): void {
+    if (this.disposed || commit.generation < this.geometryGeneration) return;
+    const pixelWidth = Math.max(1, Math.round(commit.cssWidth * commit.pixelRatio));
+    const pixelHeight = Math.max(1, Math.round(commit.cssHeight * commit.pixelRatio));
+    const backingChanged =
       this.canvas.width !== pixelWidth ||
       this.canvas.height !== pixelHeight ||
-      !this.canvasConfigured
-    ) {
+      !this.canvasConfigured;
+    const gridChanged =
+      commit.cols !== this.cols || commit.rows !== this.rows || !this.resizeNotified;
+    this.geometryGeneration = commit.generation;
+    this.measuredSize = true;
+    this.mountHeight = commit.cssHeight;
+    this.renderViewport.cssWidth = commit.cssWidth;
+    this.renderViewport.cssHeight = commit.cssHeight;
+    this.renderViewport.pixelRatio = commit.pixelRatio;
+    if (backingChanged) {
       this.canvas.width = pixelWidth;
       this.canvas.height = pixelHeight;
       this.canvasConfigured = true;
-      this.forceFullRender = true;
-      this.scrollbarDirty = true;
-      shouldRender = true;
     }
-    this.measuredSize = true;
-    this.mountHeight = height;
-    this.renderViewport.cssWidth = width;
-    this.renderViewport.cssHeight = height;
-    this.renderViewport.pixelRatio = ratio;
+    // Local viewport commits first. The retained renderer immediately clears
+    // and composites into the destination while runtime/host geometry catches up.
     this.rendererController.resize(this.renderViewport);
-    // onResize is the only PTY resize channel, so the first successful fit must
-    // notify even when the measured grid equals the 1x1 construction sentinel.
-    if (grid.cols !== this.cols || grid.rows !== this.rows || !this.resizeNotified) {
-      this.cols = grid.cols;
-      this.rows = grid.rows;
-      this.core.resize(grid.cols, grid.rows, this.metrics.width, this.metrics.height);
+    this.forceFullRender = this.forceFullRender || backingChanged || gridChanged;
+    this.scrollbarDirty = this.scrollbarDirty || backingChanged || gridChanged;
+    if (gridChanged) {
+      this.cols = commit.cols;
+      this.rows = commit.rows;
+      this.core.resize(commit.cols, commit.rows, this.metrics.width, this.metrics.height);
       this.terminalStateDirty = true;
       this.notifyResize();
-      this.forceFullRender = true;
-      this.scrollbarDirty = true;
-      shouldRender = true;
     }
-    // Rendering synchronously keeps the repaint inside the same frame as the
-    // layout change: ResizeObserver fires before paint, so the browser never
-    // composites the old backing store stretched into the new element box.
-    if (shouldRender) this.renderFrame();
+    if (backingChanged || gridChanged) this.requestRender();
     this.fitRetries = 0;
-    return true;
+    this.mount.dataset.ghosttyTerminalGeometryGeneration = String(this.geometryGeneration);
   }
 
   /**
@@ -1164,6 +1243,8 @@ export class GhosttyTerminalSurface {
    * users to stale TUI geometry and visibly incorrect wrapping. */
   private notifyResize(): void {
     this.resizeNotified = true;
+    this.resizeCount += 1;
+    this.mount.dataset.ghosttyTerminalResizeCount = String(this.resizeCount);
     this.options.onResize?.(this.cols, this.rows);
   }
 
@@ -1231,34 +1312,36 @@ export class GhosttyTerminalSurface {
   }
 
   getSnapshot(): GhosttySnapshot | null {
-    // Inspection is a synchronous read of the retained packed viewport. It
-    // never traverses Ghostty state or acknowledges pending dirty rows.
+    // Inspection is a synchronous cold adapter over the retained packed
+    // viewport. It never traverses Ghostty state or acknowledges dirty rows.
+    if (this.viewportModel.currentFrameId === 0) return null;
+    this.snapshot ??= this.viewportModel.snapshot();
     return this.snapshot;
   }
 
   getBufferText(): string {
     if (this.disposed) return "";
-    try {
-      this.core.selectAll();
-      const selected = this.core.selectionText();
-      if (selected.trim().length > 0) return selected;
-    } catch {
-      /* Fall through to the visible viewport snapshot. */
-    } finally {
-      try {
-        this.clearSelection();
-      } catch {
-        /* Disposed during the inspection read. */
+    return this.viewportModel.bufferText();
+  }
+
+  async capturePixelStats(): Promise<{
+    readonly width: number;
+    readonly height: number;
+    readonly nonBackgroundPixels: number;
+  } | null> {
+    const pixels = await this.rendererController.capturePixels();
+    if (pixels === null) return null;
+    const data = pixels.data;
+    const red = data[0] ?? 0;
+    const green = data[1] ?? 0;
+    const blue = data[2] ?? 0;
+    let nonBackgroundPixels = 0;
+    for (let index = 0; index < data.length; index += 4) {
+      if (data[index] !== red || data[index + 1] !== green || data[index + 2] !== blue) {
+        nonBackgroundPixels += 1;
       }
     }
-    const snapshot = this.getSnapshot();
-    if (!snapshot) return "";
-    return snapshot.rowData
-      .map((row) => row.cells
-        .map((cell) => cell.wide === GHOSTTY_CELL_WIDE.spacerTail ? "" : cell.text || " ")
-        .join("")
-        .trimEnd())
-      .join("\n");
+    return { width: pixels.width, height: pixels.height, nonBackgroundPixels };
   }
 
   getCellSize(): { width: number; height: number } {
@@ -1336,6 +1419,7 @@ export class GhosttyTerminalSurface {
     if (this.disposed) return;
     this.disposed = true;
     this.resizeObserver.disconnect();
+    this.geometryCoordinator.dispose();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
     this.dprMedia?.removeEventListener("change", this.onDevicePixelRatioChange);
     this.dprMedia = null;
@@ -1344,6 +1428,10 @@ export class GhosttyTerminalSurface {
     if (this.selectionScrollTimer !== null) window.clearInterval(this.selectionScrollTimer);
     if (this.touchHoldTimer !== null) window.clearTimeout(this.touchHoldTimer);
     if (this.frame !== 0) window.cancelAnimationFrame(this.frame);
+    if (this.pendingPresentationFrame !== 0) {
+      window.cancelAnimationFrame(this.pendingPresentationFrame);
+      this.pendingPresentationFrame = 0;
+    }
     if (this.fitRetryFrame !== 0) window.cancelAnimationFrame(this.fitRetryFrame);
     if (this.cursorTimer !== null) window.clearTimeout(this.cursorTimer);
     if (this.synchronizedOutputTimer !== null) {
@@ -1531,7 +1619,7 @@ export class GhosttyTerminalSurface {
 
   private readonly onDevicePixelRatioChange = () => {
     this.watchDevicePixelRatio();
-    this.fit();
+    this.observeGeometry();
   };
 
   private watchDevicePixelRatio(): void {
@@ -2207,7 +2295,8 @@ export class GhosttyTerminalSurface {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
     }
-    const terminalUpdated = this.terminalStateDirty || this.snapshot === null;
+    const terminalUpdated = this.terminalStateDirty || this.viewportModel.currentFrameId === 0;
+    let modelAppliedAt = performance.now();
     let update: GhosttyRenderUpdate | null = null;
     const consumedUpdates: GhosttyRenderUpdate[] = [];
     if (terminalUpdated) {
@@ -2222,10 +2311,11 @@ export class GhosttyTerminalSurface {
         }
         update = next;
       }
-      this.snapshot = this.viewportModel.snapshot();
+      this.snapshot = null;
       this.terminalStateDirty = false;
+      modelAppliedAt = performance.now();
     }
-    if (this.snapshot === null) return;
+    if (this.viewportModel.currentFrameId === 0) return;
     // A cursor that is not blinking right now must be drawn, never caught in an
     // off phase left behind by a blink that has since been turned off.
     if (!this.blinkEnabled()) this.cursorOn = true;
@@ -2251,6 +2341,7 @@ export class GhosttyTerminalSurface {
       this.forceFullRender = true;
     }
     this.refreshHoveredLink();
+    const renderStartedAt = performance.now();
     try {
       this.rendererController.render(this.viewportModel, update, {
         metrics: this.metrics,
@@ -2261,7 +2352,7 @@ export class GhosttyTerminalSurface {
         previousCursorY: this.renderedCursorY,
         focused: this.focused,
         hoveredLinkRange: this.hoveredLink?.range ?? null,
-        dirtyRows: terminalUpdated ? this.snapshot.dirtyRows : NO_DIRTY_ROWS,
+        dirtyRows: terminalUpdated ? this.viewportModel.dirtyRows : NO_DIRTY_ROWS,
         ...(this.theme.selectionBackground !== undefined
           ? { selectionBackground: this.theme.selectionBackground }
           : {}),
@@ -2269,11 +2360,23 @@ export class GhosttyTerminalSurface {
     } finally {
       for (const consumed of consumedUpdates) this.core.releaseRenderUpdate(consumed);
     }
-    this.options.onPresented?.();
+    const submittedAt = performance.now();
+    const modelFrameId = this.viewportModel.currentFrameId;
+    this.lastSubmittedModelFrame = Math.max(this.lastSubmittedModelFrame, modelFrameId);
+    this.observeNextPaint({
+      surfaceInstanceId: this.surfaceInstanceId,
+      runtimeGeneration: this.core.runtimeGeneration,
+      rendererGeneration: this.rendererController.generation,
+      modelFrameId,
+      geometryGeneration: this.geometryGeneration,
+      modelAppliedAt,
+      renderStartedAt,
+      submittedAt,
+    });
     this.positionInput();
     this.renderedCursorY =
-      this.cursorOn && this.snapshot.cursorVisible && this.snapshot.cursorY >= 0
-        ? this.snapshot.cursorY
+      this.cursorOn && this.viewportModel.cursorVisible && this.viewportModel.cursorY >= 0
+        ? this.viewportModel.cursorY
         : null;
     if (this.scrollbarDirty) {
       this.scrollbarDirty = false;
@@ -2281,6 +2384,29 @@ export class GhosttyTerminalSurface {
     }
     this.forceFullRender = false;
     this.scheduleCursorBlink();
+  }
+
+  private observeNextPaint(
+    sample: Omit<TerminalPresentationSample, "nextPaintObservedAt">,
+  ): void {
+    if (this.pendingPresentationFrame !== 0) {
+      window.cancelAnimationFrame(this.pendingPresentationFrame);
+    }
+    this.pendingPresentationFrame = window.requestAnimationFrame(timestamp => {
+      this.pendingPresentationFrame = 0;
+      if (this.disposed) return;
+      this.lastNextPaintObservedFrame = Math.max(
+        this.lastNextPaintObservedFrame,
+        sample.modelFrameId,
+      );
+      this.mount.dataset.ghosttyTerminalLastSubmittedFrame = String(
+        this.lastSubmittedModelFrame,
+      );
+      this.mount.dataset.ghosttyTerminalLastPresentedFrame = String(
+        this.lastNextPaintObservedFrame,
+      );
+      this.options.onPresented?.({ ...sample, nextPaintObservedAt: timestamp });
+    });
   }
 
   private scheduleCursorBlink(): void {
@@ -2295,25 +2421,26 @@ export class GhosttyTerminalSurface {
   }
 
   private blinkEnabled(): boolean {
-    const snapshot = this.snapshot;
-    if (!snapshot) return false;
+    if (this.viewportModel.currentFrameId === 0) return false;
     return shouldBlinkTerminalCursor({
       focused: this.focused,
-      cursorBlinking: snapshot.cursorBlinking,
-      cursorVisible: snapshot.cursorVisible,
+      cursorBlinking: this.viewportModel.cursorBlinking,
+      cursorVisible: this.viewportModel.cursorVisible,
       reducedMotion: this.reducedMotionMedia?.matches ?? false,
     });
   }
 
   private positionInput(): void {
-    const snapshot = this.snapshot;
-    if (!snapshot || !snapshot.cursorVisible || snapshot.cursorX < 0 || snapshot.cursorY < 0) {
-      return;
-    }
+    if (
+      this.viewportModel.currentFrameId === 0 ||
+      !this.viewportModel.cursorVisible ||
+      this.viewportModel.cursorX < 0 ||
+      this.viewportModel.cursorY < 0
+    ) return;
     // The IME candidate window anchors to the textarea, so it must follow the
     // terminal cursor for composition to appear where the user is typing.
-    const left = CONTENT_PADDING + snapshot.cursorX * this.metrics.width;
-    const top = this.originY + snapshot.cursorY * this.metrics.height;
+    const left = CONTENT_PADDING + this.viewportModel.cursorX * this.metrics.width;
+    const top = this.originY + this.viewportModel.cursorY * this.metrics.height;
     if (left === this.inputLeft && top === this.inputTop) return;
     this.inputLeft = left;
     this.inputTop = top;
@@ -2343,7 +2470,8 @@ export class GhosttyTerminalSurface {
   }
 
   private linkAt(clientX: number, clientY: number): TerminalLinkWithRange | null {
-    if (!this.snapshot) return null;
+    const snapshot = this.getSnapshot();
+    if (!snapshot) return null;
     const cell = terminalGridCellAt({
       bounds: this.canvas.getBoundingClientRect(),
       clientX,
@@ -2363,7 +2491,7 @@ export class GhosttyTerminalSurface {
         const previous =
           start.x > 0
             ? { x: start.x - 1, y: start.y }
-            : start.y > 0 && this.snapshot.rowData[start.y]?.isWrapContinuation
+            : start.y > 0 && snapshot.rowData[start.y]?.isWrapContinuation
               ? { x: this.cols - 1, y: start.y - 1 }
               : null;
         if (!previous || this.core.hyperlinkAt(previous.x, previous.y) !== explicitHyperlink) break;
@@ -2374,7 +2502,7 @@ export class GhosttyTerminalSurface {
         const next =
           end.x + 1 < this.cols
             ? { x: end.x + 1, y: end.y }
-            : end.y + 1 < this.rows && this.snapshot.rowData[end.y]?.wrapsToNext
+            : end.y + 1 < this.rows && snapshot.rowData[end.y]?.wrapsToNext
               ? { x: 0, y: end.y + 1 }
               : null;
         if (!next || this.core.hyperlinkAt(next.x, next.y) !== explicitHyperlink) break;
@@ -2387,7 +2515,7 @@ export class GhosttyTerminalSurface {
       };
     }
     return terminalLinkAtPositionWithRange(
-      this.snapshot.rowData,
+      snapshot.rowData,
       cell.y,
       cell.x,
       this.options.linkMatcher,

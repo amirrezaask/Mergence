@@ -13,9 +13,25 @@ export type TerminalPipelineStage =
   | "received"
   | "posted"
   | "parsed"
-  | "presented";
+  | "model-applied"
+  | "render-start"
+  | "submitted"
+  | "next-paint-observed";
 
 export type TerminalPipelineToken = { readonly sequence: number };
+
+export interface TerminalPresentationSample {
+  readonly terminalId?: string;
+  readonly surfaceInstanceId: number;
+  readonly runtimeGeneration: number;
+  readonly rendererGeneration: number;
+  readonly modelFrameId: number;
+  readonly geometryGeneration: number;
+  readonly modelAppliedAt: number;
+  readonly renderStartedAt: number;
+  readonly submittedAt: number;
+  readonly nextPaintObservedAt: number;
+}
 
 type PipelineRecord = {
   sequence: number;
@@ -24,7 +40,15 @@ type PipelineRecord = {
   receivedAt: number;
   postedAt: number;
   parsedAt: number;
-  presentedAt: number;
+  modelAppliedAt: number;
+  renderStartedAt: number;
+  submittedAt: number;
+  nextPaintObservedAt: number;
+  surfaceInstanceId: number;
+  runtimeGeneration: number;
+  rendererGeneration: number;
+  modelFrameId: number;
+  geometryGeneration: number;
 };
 
 export type TerminalSchedulerSnapshot = {
@@ -39,9 +63,17 @@ export type TerminalSchedulerSnapshot = {
   readonly receivedToParsedP50: number;
   readonly receivedToParsedP95: number;
   readonly receivedToParsedP99: number;
+  readonly parsedToSubmittedP50: number;
+  readonly parsedToSubmittedP95: number;
+  readonly parsedToSubmittedP99: number;
   readonly receivedToPresentedP50: number;
   readonly receivedToPresentedP95: number;
   readonly receivedToPresentedP99: number;
+  readonly frameDelayP50: number;
+  readonly frameDelayP95: number;
+  readonly frameDelayP99: number;
+  readonly lastSubmittedModelFrame: number;
+  readonly lastNextPaintObservedFrame: number;
 };
 
 function percentile(values: readonly number[], fraction: number): number {
@@ -51,8 +83,8 @@ function percentile(values: readonly number[], fraction: number): number {
 }
 
 /**
- * Payload-free, bounded accounting for the terminal transport pipeline. The
- * scheduler records correctness stages without making presentation part of ACK.
+ * Payload-free, bounded accounting for the terminal transport and presentation
+ * pipeline. Parse acknowledgement stays independent from presentation.
  */
 export class TerminalFrameScheduler {
   private readonly records: PipelineRecord[] = [];
@@ -63,6 +95,8 @@ export class TerminalFrameScheduler {
   private presentedBytes = 0;
   private pendingBytes = 0;
   private maxPendingBytes = 0;
+  private lastSubmittedModelFrame = 0;
+  private lastNextPaintObservedFrame = 0;
 
   constructor(
     private readonly now: () => number = () => performance.now(),
@@ -76,9 +110,17 @@ export class TerminalFrameScheduler {
       bytes: size,
       postedBytes: 0,
       receivedAt: this.now(),
-      postedAt: 0,
-      parsedAt: 0,
-      presentedAt: 0,
+      postedAt: -1,
+      parsedAt: -1,
+      modelAppliedAt: -1,
+      renderStartedAt: -1,
+      submittedAt: -1,
+      nextPaintObservedAt: -1,
+      surfaceInstanceId: 0,
+      runtimeGeneration: 0,
+      rendererGeneration: 0,
+      modelFrameId: 0,
+      geometryGeneration: 0,
     };
     this.records.push(record);
     this.receivedBytes += size;
@@ -97,7 +139,7 @@ export class TerminalFrameScheduler {
       if (available <= 0) continue;
       const amount = Math.min(available, remaining);
       record.postedBytes += amount;
-      if (record.postedAt === 0) record.postedAt = timestamp;
+      if (record.postedAt < 0) record.postedAt = Math.max(record.receivedAt, timestamp);
       this.postedBytes += amount;
       remaining -= amount;
     }
@@ -105,18 +147,41 @@ export class TerminalFrameScheduler {
 
   parsed(token: TerminalPipelineToken): void {
     const record = this.records.find(candidate => candidate.sequence === token.sequence);
-    if (!record || record.parsedAt !== 0) return;
-    record.parsedAt = this.now();
+    if (record === undefined || record.parsedAt >= 0) return;
+    record.parsedAt = Math.max(record.receivedAt, this.now());
     this.parsedBytes += record.bytes;
     this.pendingBytes = Math.max(0, this.pendingBytes - record.bytes);
   }
 
-  presented(): void {
-    const timestamp = this.now();
+  presented(sample?: TerminalPresentationSample): void {
+    const fallback = this.now();
+    const observedAt = sample?.nextPaintObservedAt ?? fallback;
     for (const record of this.records) {
-      if (record.parsedAt === 0 || record.presentedAt !== 0) continue;
-      record.presentedAt = timestamp;
+      if (record.parsedAt < 0 || record.nextPaintObservedAt >= 0) continue;
+      // A recovered/new runtime may not present records parsed by a stale
+      // generation. They remain bounded diagnostics and are dropped on reset.
+      if (
+        sample !== undefined &&
+        record.runtimeGeneration !== 0 &&
+        record.runtimeGeneration !== sample.runtimeGeneration
+      ) continue;
+      record.surfaceInstanceId = sample?.surfaceInstanceId ?? record.surfaceInstanceId;
+      record.runtimeGeneration = sample?.runtimeGeneration ?? record.runtimeGeneration;
+      record.rendererGeneration = sample?.rendererGeneration ?? record.rendererGeneration;
+      record.modelFrameId = sample?.modelFrameId ?? record.modelFrameId;
+      record.geometryGeneration = sample?.geometryGeneration ?? record.geometryGeneration;
+      record.modelAppliedAt = Math.max(record.parsedAt, sample?.modelAppliedAt ?? fallback);
+      record.renderStartedAt = Math.max(record.modelAppliedAt, sample?.renderStartedAt ?? fallback);
+      record.submittedAt = Math.max(record.renderStartedAt, sample?.submittedAt ?? fallback);
+      record.nextPaintObservedAt = Math.max(record.submittedAt, observedAt);
       this.presentedBytes += record.bytes;
+    }
+    if (sample !== undefined) {
+      this.lastSubmittedModelFrame = Math.max(this.lastSubmittedModelFrame, sample.modelFrameId);
+      this.lastNextPaintObservedFrame = Math.max(
+        this.lastNextPaintObservedFrame,
+        sample.modelFrameId,
+      );
     }
   }
 
@@ -127,13 +192,20 @@ export class TerminalFrameScheduler {
 
   snapshot(): TerminalSchedulerSnapshot {
     const now = this.now();
-    const parsed = this.records
-      .filter(record => record.parsedAt !== 0)
-      .map(record => record.parsedAt - record.receivedAt);
-    const presented = this.records
-      .filter(record => record.presentedAt !== 0)
-      .map(record => record.presentedAt - record.receivedAt);
-    const oldest = this.records.find(record => record.parsedAt === 0);
+    const parsed: number[] = [];
+    const parsedToSubmitted: number[] = [];
+    const presented: number[] = [];
+    const frameDelay: number[] = [];
+    let oldest: PipelineRecord | undefined;
+    for (const record of this.records) {
+      if (record.parsedAt >= 0) parsed.push(record.parsedAt - record.receivedAt);
+      else if (oldest === undefined) oldest = record;
+      if (record.submittedAt >= 0) parsedToSubmitted.push(record.submittedAt - record.parsedAt);
+      if (record.nextPaintObservedAt >= 0) {
+        presented.push(record.nextPaintObservedAt - record.receivedAt);
+        frameDelay.push(record.nextPaintObservedAt - record.submittedAt);
+      }
+    }
     return {
       retainedSamples: this.records.length,
       receivedBytes: this.receivedBytes,
@@ -146,15 +218,23 @@ export class TerminalFrameScheduler {
       receivedToParsedP50: percentile(parsed, 0.5),
       receivedToParsedP95: percentile(parsed, 0.95),
       receivedToParsedP99: percentile(parsed, 0.99),
+      parsedToSubmittedP50: percentile(parsedToSubmitted, 0.5),
+      parsedToSubmittedP95: percentile(parsedToSubmitted, 0.95),
+      parsedToSubmittedP99: percentile(parsedToSubmitted, 0.99),
       receivedToPresentedP50: percentile(presented, 0.5),
       receivedToPresentedP95: percentile(presented, 0.95),
       receivedToPresentedP99: percentile(presented, 0.99),
+      frameDelayP50: percentile(frameDelay, 0.5),
+      frameDelayP95: percentile(frameDelay, 0.95),
+      frameDelayP99: percentile(frameDelay, 0.99),
+      lastSubmittedModelFrame: this.lastSubmittedModelFrame,
+      lastNextPaintObservedFrame: this.lastNextPaintObservedFrame,
     };
   }
 
   private trim(): void {
     while (this.records.length > this.capacity) {
-      const index = this.records.findIndex(record => record.parsedAt !== 0);
+      const index = this.records.findIndex(record => record.parsedAt >= 0);
       if (index < 0) this.records.shift();
       else this.records.splice(index, 1);
     }

@@ -12,6 +12,7 @@ export {
   terminalFontSize,
   type GhosttySelectionPosition,
   type GhosttyTerminalFont,
+  type GhosttyTerminalLifecycleSnapshot,
   type GhosttyTerminalSurfaceOptions,
   type TerminalLinkWithRange,
   type TerminalScrollbarGeometry,
@@ -59,12 +60,27 @@ export {
   TerminalFrameScheduler,
   type TerminalPipelineStage,
   type TerminalPipelineToken,
+  type TerminalPresentationSample,
   type TerminalSchedulerSnapshot,
 } from "./scheduler/terminal-frame-scheduler.js"
 export type {
   TerminalCoreRuntime,
   TerminalRuntimeKind,
 } from "./worker/worker-terminal-core.js"
+export {
+  TerminalGeometryCoordinator,
+  type TerminalGeometryClock,
+  type TerminalGeometryCommit,
+  type TerminalGeometryCoordinatorOptions,
+  type TerminalGeometrySample,
+} from "./geometry/terminal-geometry-coordinator.js"
+export {
+  snapTerminalEdge,
+  terminalRowEdges,
+  terminalUnderlineRects,
+  type TerminalPrimitiveRect,
+  type TerminalRowEdges,
+} from "./renderers/render-semantics.js"
 export type {
   TerminalRenderer,
   TerminalRenderFont,

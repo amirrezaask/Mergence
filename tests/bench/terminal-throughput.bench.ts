@@ -23,6 +23,7 @@ import {
   runBench,
   type BenchResult,
 } from "./_bench.js"
+import { terminalDashboardCommand } from "./terminal-tui-fixture.js"
 import {
   focusTerminal,
   hasPtySpawn,
@@ -144,8 +145,11 @@ test("bench terminal-stream-throughput", async () => {
           const terminal = window.yaade?.terminal
           if (!ptyId || !terminal) throw new Error("running terminal unavailable")
 
+          const baselineFrame =
+            window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0
           let tail = ""
           let unsubscribe = () => {}
+          let transportArrivedAt = 0
           const markerArrived = new Promise<void>((resolve, reject) => {
             const timeout = window.setTimeout(() => {
               unsubscribe()
@@ -157,6 +161,7 @@ test("bench terminal-stream-throughput", async () => {
                 tail = combined.slice(-currentMarker.length * 2)
                 return
               }
+              transportArrivedAt = performance.now()
               window.clearTimeout(timeout)
               unsubscribe()
               resolve()
@@ -171,9 +176,30 @@ test("bench terminal-stream-throughput", async () => {
           const startedAt = performance.now()
           await terminal.write(
             ptyId,
-            `head -c 1048576 /dev/zero | tr '\\0' x; printf '\\n%s\\n' ${markerExpression}\n`,
+            `head -c 393216 /dev/zero | tr '\\0' x; printf '\\n%s\\n' ${markerExpression}\n`,
           )
           await markerArrived
+          await new Promise<void>((resolve, reject) => {
+            const timeout = window.setTimeout(
+              () => reject(new Error(`terminal marker did not present: ${currentMarker}`)),
+              30_000,
+            )
+            const poll = () => {
+              const text = window.__yaadeTest?.getTerminalText?.() ?? ""
+              const frame =
+                window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0
+              if (text.includes(currentMarker) && frame > baselineFrame) {
+                window.clearTimeout(timeout)
+                panel.dataset.yaadeTerminalBenchTransportMs = String(
+                  transportArrivedAt - startedAt,
+                )
+                resolve()
+                return
+              }
+              requestAnimationFrame(poll)
+            }
+            poll()
+          })
           return performance.now() - startedAt
         }, marker)
       },
@@ -223,6 +249,8 @@ test("bench terminal-output-flood-throughput", async () => {
             `import sys; [sys.stdout.write(("\\x1b[?25l" if i % 2 == 0 else "\\x1b[?25h") + f"\\rprogress {i}/2000   ") or (sys.stdout.flush() if i % 16 == 0 else None) for i in range(2000)]; sys.stdout.write("\\r\\n" + ${markerExpression} + "\\n"); sys.stdout.flush()`
           const script = `python3 -c ${JSON.stringify(pythonCode)}\n`
 
+          const baselineFrame =
+            window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0
           const startedAt = performance.now()
           await terminal.write(ptyId, script)
           await new Promise<void>((resolve, reject) => {
@@ -232,9 +260,11 @@ test("bench terminal-output-flood-throughput", async () => {
             )
             const poll = () => {
               const text = window.__yaadeTest?.getTerminalText?.() ?? ""
-              if (text.includes(currentMarker)) {
+              const frame =
+                window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0
+              if (text.includes(currentMarker) && frame > baselineFrame) {
                 window.clearTimeout(timeout)
-                requestAnimationFrame(() => resolve())
+                resolve()
                 return
               }
               requestAnimationFrame(poll)
@@ -247,6 +277,57 @@ test("bench terminal-output-flood-throughput", async () => {
     })
     logBenchResult(result)
     assertBudget(result)
+  } finally {
+    await app.close()
+  }
+})
+
+test("bench terminal-dashboard-present-latency", async () => {
+  test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
+
+  const { app, page } = await launchYaade()
+  try {
+    await showTerminal(page)
+    await waitForRunningTerminal(page)
+    const marker = `YAADE-TUI-${Date.now().toString(36)}`
+    const command = terminalDashboardCommand({
+      marker,
+      hz: 30,
+      seconds: 10,
+      synchronized: true,
+    })
+    const started = await page.evaluate(() => ({
+      time: performance.now(),
+      frame:
+        window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0,
+    }))
+    await page.evaluate(async script => {
+      const panel = document.querySelector<HTMLElement>(
+        '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+      )
+      const ptyId = panel?.dataset.yaadeTerminalPtyId
+      if (!ptyId || !window.yaade?.terminal) throw new Error("running terminal unavailable")
+      await window.yaade.terminal.write(ptyId, script)
+    }, command)
+    await page.waitForFunction(
+      ({ marker: needle, frame }) => {
+        const text = window.__yaadeTest?.getTerminalText?.() ?? ""
+        const lifecycle = window.__yaadeTest?.getTerminalLifecycle?.()
+        return text.includes(needle) &&
+          (lifecycle?.lastNextPaintObservedFrame ?? 0) > frame
+      },
+      { marker, frame: started.frame },
+      { timeout: 30_000 },
+    )
+    const duration = await page.evaluate(start => performance.now() - start, started.time)
+    const lifecycle = await page.evaluate(() => window.__yaadeTest?.getTerminalLifecycle?.())
+    console.log(
+      `[bench] terminal-dashboard-present-latency duration=${duration.toFixed(1)}ms ` +
+      `surface=${lifecycle?.surfaceInstanceId ?? 0} runtimeGeneration=${lifecycle?.runtimeGeneration ?? 0} ` +
+      `rendererGeneration=${lifecycle?.rendererGeneration ?? 0} geometryGeneration=${lifecycle?.geometryGeneration ?? 0}`,
+    )
+    expect(lifecycle?.rendererRecoveries).toBe(0)
+    expect(lifecycle?.lastNextPaintObservedFrame).toBeGreaterThan(started.frame)
   } finally {
     await app.close()
   }
@@ -274,20 +355,24 @@ test("bench terminal-typing-idle", async () => {
         await focusTerminal(page)
         // Unique needle — shell redraw can keep total string length stable.
         const marker = `Id${idleRound++}z`
-        const t0 = await page.evaluate(() => performance.now())
+        const started = await page.evaluate(() => ({
+          time: performance.now(),
+          frame:
+            window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0,
+        }))
         await page.keyboard.type(marker, { delay: 0 })
         await page.waitForFunction(
-          needle =>
-            (window.__yaadeTest?.getTerminalText?.() ?? "").includes(needle),
-          marker,
+          ({ needle, frame }) => {
+            const text = window.__yaadeTest?.getTerminalText?.() ?? ""
+            const lifecycle = window.__yaadeTest?.getTerminalLifecycle?.()
+            return text.includes(needle) &&
+              (lifecycle?.lastNextPaintObservedFrame ?? 0) > frame
+          },
+          { needle: marker, frame: started.frame },
           { timeout: 10_000 },
         )
-        const t1 = await page.evaluate(
-          () =>
-            new Promise<number>(resolve => {
-              requestAnimationFrame(() => resolve(performance.now()))
-            }),
-        )
+        const t1 = await page.evaluate(() => performance.now())
+        const t0 = started.time
         // Per-key estimate: total / chars typed (marker length).
         return (t1 - t0) / marker.length
       },
@@ -316,66 +401,64 @@ test("bench terminal-typing-under-flood", async () => {
     logTerminalRenderInfo("terminal-under-flood", renderInfo)
     expect(renderInfo.provider).toBe("ghostty")
 
-    const samples = await page.evaluate(async () => {
-          const panel = document.querySelector<HTMLElement>(
-            '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
-          )
-          const ptyId = panel?.dataset.yaadeTerminalPtyId
-          const terminal = window.yaade?.terminal
-          const textarea = panel?.querySelector<HTMLTextAreaElement>(
-            "[data-ghostty-terminal-input]",
-          )
-          if (!ptyId || !terminal || !textarea) {
-            throw new Error("running terminal input unavailable")
-          }
-
-          // One continuous flood keeps every sample under one workload.
-          const flood = [
-            "python3 - <<'PY'",
-            "import sys, time",
-            "end = time.time() + 2.5",
-            "i = 0",
-            "while time.time() < end:",
-            "    hide = i % 2 == 0",
-            "    sys.stdout.write(('\\x1b[?25l' if hide else '\\x1b[?25h') + f'\\rprogress {i}   ')",
-            "    if i % 8 == 0:",
-            "        sys.stdout.flush()",
-            "    i += 1",
-            "sys.stdout.write('\\r\\n')",
-            "sys.stdout.flush()",
-            "PY",
-            "",
-          ].join("\n")
-          await terminal.write(ptyId, flood)
-
-          // Let flood hit the renderer before measuring key latency.
-          await new Promise<void>(r => setTimeout(r, 80))
-
-          textarea.focus()
-          const samples: number[] = []
-          for (let n = 0; n < 40; n++) {
-            const t0 = performance.now()
-            textarea.dispatchEvent(
-              new InputEvent("beforeinput", {
-                bubbles: true,
-                cancelable: true,
-                inputType: "insertText",
-                data: "x",
-              }),
-            )
-            // Hidden IME input path used for synthetic browser input events.
-            textarea.value = "x"
-            textarea.dispatchEvent(
-              new InputEvent("input", { bubbles: true, data: "x" }),
-            )
-            await new Promise<void>(resolve => {
-              requestAnimationFrame(() => resolve())
-            })
-            samples.push(performance.now() - t0)
-            await new Promise<void>(r => setTimeout(r, 16))
-          }
-          return samples
-        })
+    await page.evaluate(async () => {
+      const panel = document.querySelector<HTMLElement>(
+        '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+      )
+      const ptyId = panel?.dataset.yaadeTerminalPtyId
+      const terminal = window.yaade?.terminal
+      if (!ptyId || !terminal) throw new Error("running terminal input unavailable")
+      // Keep a real PTY flood active while Playwright drives the keyboard.
+      const flood = [
+        "python3 - <<'PY'",
+        "import sys, time",
+        "end = time.time() + 4",
+        "i = 0",
+        "while time.time() < end:",
+        "    hide = i % 2 == 0",
+        "    sys.stdout.write(('\\x1b[?25l' if hide else '\\x1b[?25h') + f'\\rprogress {i}   ')",
+        "    sys.stdout.flush()",
+        "    i += 1",
+        "    time.sleep(1 / 60)",
+        "sys.stdout.write('\\r\\n')",
+        "sys.stdout.flush()",
+        "PY",
+        "",
+      ].join("\n")
+      await terminal.write(ptyId, flood)
+    })
+    await focusTerminal(page)
+    const samples: number[] = []
+    let echoed = `Uf${Date.now().toString(36)}`
+    for (const character of echoed) {
+      await page.keyboard.type(character)
+    }
+    await page.waitForFunction(
+      needle => (window.__yaadeTest?.getTerminalText?.() ?? "").includes(needle),
+      echoed,
+    )
+    for (let n = 0; n < 24; n += 1) {
+      const character = String.fromCharCode(97 + (n % 26))
+      const started = await page.evaluate(() => ({
+        time: performance.now(),
+        frame:
+          window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0,
+      }))
+      await page.keyboard.type(character)
+      echoed += character
+      await page.waitForFunction(
+        ({ needle, frame }) => {
+          const text = window.__yaadeTest?.getTerminalText?.() ?? ""
+          const lifecycle = window.__yaadeTest?.getTerminalLifecycle?.()
+          return text.includes(needle) &&
+            (lifecycle?.lastNextPaintObservedFrame ?? 0) > frame
+        },
+        { needle: echoed, frame: started.frame },
+        { timeout: 10_000 },
+      )
+      const ended = await page.evaluate(() => performance.now())
+      samples.push(ended - started.time)
+    }
     const result: BenchResult = {
       name: "terminal-typing-under-flood",
       median: median(samples),

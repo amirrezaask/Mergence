@@ -17,12 +17,12 @@ conditions, and update its status.
 | [004](004-worker-terminal-runtime.md) | Move Ghostty parsing off the main thread | 2 | P2 | L | 001, 003 | DONE |
 | [005](005-terminal-frame-scheduler.md) | Unify scheduling and end-to-end backpressure | 5 | P2 | L | 004 | DONE |
 | [006](006-webgpu-terminal-experiment.md) | Add a gated experimental WebGPU adapter | 4 | P3 | L | 002, 003, 005 | REJECTED (removed after blank WKWebView output) |
-| [007](007-terminal-present-latency-benchmarks.md) | Measure resize, zoom, TUI, and presented-frame latency | — | P1 | M | 004, 005 | TODO |
-| [008](008-resident-terminal-surfaces.md) | Keep terminal runtimes resident across layout changes | — | P1 | L | 004, 005, 007 | TODO |
-| [009](009-complex-tui-renderer-conformance.md) | Enforce complex-TUI renderer conformance | — | P1 | L | 003 | TODO |
-| [010](010-retained-gpu-scene-and-glyph-cache.md) | Add a retained GPU scene and stable glyph cache | — | P1 | L | 007, 009 | TODO |
-| [011](011-packed-viewport-hot-path.md) | Keep viewport data packed through rendering | — | P2 | L | 004, 005, 010 | TODO |
-| [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | TODO |
+| [007](007-terminal-present-latency-benchmarks.md) | Measure resize, zoom, TUI, and presented-frame latency | — | P1 | M | 004, 005 | DONE |
+| [008](008-resident-terminal-surfaces.md) | Keep terminal runtimes resident across layout changes | — | P1 | L | 004, 005, 007 | DONE |
+| [009](009-complex-tui-renderer-conformance.md) | Enforce complex-TUI renderer conformance | — | P1 | L | 003 | DONE |
+| [010](010-retained-gpu-scene-and-glyph-cache.md) | Add a retained GPU scene and stable glyph cache | — | P1 | L | 007, 009 | DONE |
+| [011](011-packed-viewport-hot-path.md) | Keep viewport data packed through rendering | — | P2 | L | 004, 005, 010 | DONE |
+| [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | DONE |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
@@ -42,6 +42,14 @@ Plan 006 was removed after a real WKWebView run produced a blank terminal despit
 successful capability initialization. WebGL2 and Canvas remain the complete
 renderer ladder until WebGPU has reliable cross-WebView presentation tests.
 See `docs/terminal-renderers.md` for measurements and compatibility details.
+
+Plans 007–012 now share one presented-frame clock, resident terminal placement,
+backend-neutral decoration/cursor geometry, a retained WebGL row scene with
+stable cluster caching, a packed lazy viewport, and one generation-aware
+geometry coordinator. WebGL capture uses a test-only framebuffer while the
+production context keeps `preserveDrawingBuffer` disabled. Responsive and pane
+layout changes move the existing surface without PTY/runtime/renderer reattach;
+local and host geometry commits are coalesced latest-wins.
 
 ## Dependency notes
 

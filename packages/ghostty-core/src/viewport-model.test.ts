@@ -89,6 +89,25 @@ test("two partial updates reconstruct the same model as one full update", () => 
   assert.equal(partialModel.bufferText(), "BA\nu界");
 });
 
+test("keeps packed cells lazy until text or compatibility inspection", () => {
+  const builder = new GhosttyRenderUpdateBuilder();
+  const model = new GhosttyViewportModel();
+  const update = builder.build({
+    snapshot: snapshot(["ab", "cd"], [0, 1]),
+    frameId: 1,
+    generation: 1,
+    full: true,
+  });
+  assert.equal(model.apply(update), true);
+  builder.release(update);
+  assert.equal(model.decodedGraphemes, 0);
+  assert.equal(model.compatibilitySnapshotBuilds, 0);
+  assert.equal(model.textAt(1, 0), "c");
+  assert.equal(model.decodedGraphemes, 1);
+  assert.equal(model.snapshot().rowData[0]?.text, "ab");
+  assert.equal(model.compatibilitySnapshotBuilds, 1);
+});
+
 test("rejects stale frames and generation changes without a full frame", () => {
   const builder = new GhosttyRenderUpdateBuilder();
   const model = new GhosttyViewportModel();

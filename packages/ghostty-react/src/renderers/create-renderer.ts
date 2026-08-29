@@ -69,27 +69,37 @@ function createCanvasRenderer(
   };
 }
 
+const webGlSupportByDocument = new WeakMap<Document, RendererInitializationError | null>();
+
 function webGlSupported(): RendererInitializationError | null {
+  if (webGlSupportByDocument.has(document)) {
+    return webGlSupportByDocument.get(document) ?? null;
+  }
   const probe = document.createElement("canvas");
   const gl = probe.getContext("webgl2");
   if (gl === null) {
-    return new RendererInitializationError(
+    const failure = new RendererInitializationError(
       "webgl2",
       "context-unavailable",
       "WebGL2 context creation returned null",
     );
+    webGlSupportByDocument.set(document, failure);
+    return failure;
   }
   try {
     assertWebGlSelfTest(gl);
     gl.getExtension("WEBGL_lose_context")?.loseContext();
+    webGlSupportByDocument.set(document, null);
     return null;
   } catch (error) {
     gl.getExtension("WEBGL_lose_context")?.loseContext();
-    return new RendererInitializationError(
+    const failure = new RendererInitializationError(
       "webgl2",
       "self-test-failed",
       error instanceof Error ? error.message : "WebGL2 self-test failed",
     );
+    webGlSupportByDocument.set(document, failure);
+    return failure;
   }
 }
 
@@ -109,7 +119,7 @@ export function createTerminalRenderer(options: {
         antialias: false,
         depth: false,
         stencil: false,
-        preserveDrawingBuffer: true,
+        preserveDrawingBuffer: false,
         premultipliedAlpha: true,
       });
       if (gl !== null) {

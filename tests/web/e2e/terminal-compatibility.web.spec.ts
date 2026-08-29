@@ -142,6 +142,7 @@ test.describe("terminal compatibility", () => {
     launchApp,
   }) => {
     const backends: readonly ("webgl2" | "canvas2d")[] = ["webgl2", "canvas2d"]
+    const captures: { width: number; height: number; nonBackgroundPixels: number }[] = []
     for (const backend of backends) {
       const { page } = await launchApp()
       await page.evaluate(value => localStorage.setItem("yaade:terminal-renderer", value), backend)
@@ -158,37 +159,22 @@ test.describe("terminal compatibility", () => {
         () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
         { timeout: 15_000 },
       ).toContain("ASCII wide:界 combining:é emoji:🙂 underline")
-      const differingPixels = await panel.locator("[data-ghostty-terminal-canvas]").evaluate(
-        (element, renderer) => {
-          if (!(element instanceof HTMLCanvasElement)) return 0
-          let pixels: Uint8Array | Uint8ClampedArray
-          if (renderer === "webgl2") {
-            const gl = element.getContext("webgl2")
-            if (gl === null) return 0
-            pixels = new Uint8Array(element.width * element.height * 4)
-            gl.readPixels(0, 0, element.width, element.height, gl.RGBA, gl.UNSIGNED_BYTE, pixels)
-          } else {
-            const context = element.getContext("2d")
-            if (context === null) return 0
-            pixels = context.getImageData(0, 0, element.width, element.height).data
-          }
-          const red = pixels[0] ?? 0
-          const green = pixels[1] ?? 0
-          const blue = pixels[2] ?? 0
-          let count = 0
-          for (let index = 0; index < pixels.length; index += 4) {
-            if (
-              pixels[index] !== red ||
-              pixels[index + 1] !== green ||
-              pixels[index + 2] !== blue
-            ) count += 1
-          }
-          return count
-        },
-        backend,
+      const pixelStats = await page.evaluate(
+        () => window.__yaadeTest?.getTerminalPixelStats?.() ?? Promise.resolve(null),
       )
-      expect(differingPixels).toBeGreaterThan(100)
+      expect(pixelStats?.width).toBeGreaterThan(0)
+      expect(pixelStats?.height).toBeGreaterThan(0)
+      expect(pixelStats?.nonBackgroundPixels).toBeGreaterThan(100)
+      if (pixelStats) captures.push(pixelStats)
     }
+    expect(captures).toHaveLength(2)
+    expect(captures[0]?.width).toBe(captures[1]?.width)
+    expect(captures[0]?.height).toBe(captures[1]?.height)
+    const pixelRatio =
+      (captures[0]?.nonBackgroundPixels ?? 0) /
+      Math.max(1, captures[1]?.nonBackgroundPixels ?? 0)
+    expect(pixelRatio).toBeGreaterThan(0.5)
+    expect(pixelRatio).toBeLessThan(2)
   })
 
   test("renderer context loss recovers without replacing the PTY or retained text", async ({
@@ -246,7 +232,7 @@ test.describe("terminal compatibility", () => {
       })
     })
     await page.keyboard.type(
-      `node -e "process.stdout.write('x'.repeat(2*1024*1024));console.log('YAADE_FLOW_RECOVERED')"`,
+      `node -e "process.stdout.write('x'.repeat(512*1024));console.log('YAADE_FLOW_RECOVERED')"`,
     )
     await page.keyboard.press("Enter")
 

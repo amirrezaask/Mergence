@@ -7,6 +7,7 @@ import type {
   MuxTerminalId,
 } from "@yaade/rpc";
 import type { PanelId } from "@yaade/shared";
+import { TerminalSurfacePlacement } from "@yaade/ui/terminal";
 import {
   KeyBindingKbd,
   MuxPaneChrome,
@@ -295,32 +296,18 @@ export default function TerminalTilingWorkspace({
 
   return (
     <div
-      className="h-full min-h-0 w-full"
+      className="relative h-full min-h-0 w-full"
       data-yaade-terminal-workspace=""
       data-yaade-viewport-count={openTerminalIds.length}
       data-yaade-pane-count={paneCount}
       data-yaade-pane-zoomed={zoomedPanelId?.id}
     >
-      {zoomedPanelId && zoomedView ? (
-        <div
-          className="relative flex h-full min-h-0 w-full flex-1 flex-col overflow-hidden bg-background"
-          data-yaade-panel-leaf={zoomedPanelId.id}
-          data-yaade-session-window=""
-          data-focused=""
-          data-yaade-pane-zoomed-leaf=""
-        >
-          {renderHeader(zoomedView, zoomedPanelId, {
-            focused: true,
-            onClose: () => onCloseView(zoomedPanelId),
-          })}
-          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
-            {renderContent(zoomedView, zoomedPanelId, {
-              focused: true,
-              onClose: () => onCloseView(zoomedPanelId),
-            })}
-          </div>
-        </div>
-      ) : (
+      <div
+        className={zoomedPanelId ? "pointer-events-none invisible absolute inset-0" : "h-full min-h-0"}
+        aria-hidden={zoomedPanelId ? true : undefined}
+        inert={zoomedPanelId ? true : undefined}
+        data-yaade-unzoomed-dock=""
+      >
         <PanelDockInDnd
           tree={workspace.tree}
           focusedPanelId={workspace.focusedPanelId}
@@ -337,7 +324,29 @@ export default function TerminalTilingWorkspace({
           renderHeader={renderHeader}
           renderContent={renderContent}
         />
-      )}
+      </div>
+      {zoomedPanelId && zoomedView ? (
+        <div
+          className="absolute inset-0 z-10 flex min-h-0 flex-col overflow-hidden bg-background"
+          data-yaade-panel-leaf={zoomedPanelId.id}
+          data-yaade-session-window=""
+          data-focused=""
+          data-yaade-pane-zoomed-leaf=""
+        >
+          {renderHeader(zoomedView, zoomedPanelId, {
+            focused: true,
+            onClose: () => onCloseView(zoomedPanelId),
+          })}
+          <div className="relative min-h-0 min-w-0 flex-1 overflow-hidden">
+            {zoomedView.kind === "terminal" ? (
+              <TerminalSurfacePlacement
+                terminalId={zoomedView.muxTerminalId}
+                focused
+              />
+            ) : null}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

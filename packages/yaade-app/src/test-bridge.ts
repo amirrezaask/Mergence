@@ -9,6 +9,22 @@ export type TestState = {
   connection?: string
 }
 
+export type TerminalLifecycleState = {
+  surfaceInstanceId: number
+  runtimeKind: "worker" | "main"
+  runtimeGeneration: number
+  rendererBackend: "canvas2d" | "webgl2"
+  rendererGeneration: number
+  rendererRecoveries: number
+  attachCount: number
+  resizeCount: number
+  geometryGeneration: number
+  lastSubmittedModelFrame: number
+  lastNextPaintObservedFrame: number
+  compatibilitySnapshotBuilds: number
+  decodedGraphemes: number
+}
+
 export type YaadeTestAPI = {
   getState(): TestState
   waitForReady(): Promise<void>
@@ -26,6 +42,12 @@ export type YaadeTestAPI = {
   getTerminalCellHeight(tabId?: string): number
   getTerminalCellSize(tabId?: string): { width: number; height: number } | null
   getTerminalDims(tabId?: string): { cols: number; rows: number } | null
+  getTerminalLifecycle(tabId?: string): TerminalLifecycleState | null
+  getTerminalPixelStats(tabId?: string): Promise<{
+    width: number
+    height: number
+    nonBackgroundPixels: number
+  } | null>
   getTerminalCursor(tabId?: string): { x: number; y: number; hidden: boolean } | null
   getTerminalViewportY(tabId?: string): number | null
   scrollTerminalLines(amount: number, tabId?: string): boolean

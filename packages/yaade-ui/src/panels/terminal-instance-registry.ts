@@ -1,4 +1,7 @@
-import type { GhosttyTerminalSurface } from "@yaade/ghostty-react"
+import type {
+  GhosttyTerminalLifecycleSnapshot,
+  GhosttyTerminalSurface,
+} from "@yaade/ghostty-react"
 
 const instances = new Map<string, GhosttyTerminalSurface>()
 
@@ -56,6 +59,16 @@ export function readTerminalBufferText(tabId?: string): string {
       )
     : document.querySelector("[data-yaade-terminal-semantic]")
   return root?.textContent ?? ghostty
+}
+
+export function readTerminalLifecycle(
+  tabId?: string,
+): GhosttyTerminalLifecycleSnapshot | null {
+  return resolveTerminal(tabId)?.lifecycleSnapshot() ?? null
+}
+
+export function readTerminalPixelStats(tabId?: string) {
+  return resolveTerminal(tabId)?.capturePixelStats() ?? Promise.resolve(null)
 }
 
 export function readTerminalDims(

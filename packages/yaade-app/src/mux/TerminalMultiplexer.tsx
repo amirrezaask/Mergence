@@ -54,6 +54,7 @@ import {
 	type TabDndHandlers,
 } from "@yaade/ui/session";
 import { focusRegisteredTerminal } from "@yaade/ui/terminal-registry";
+import { TerminalSurfacePlacement } from "@yaade/ui/terminal";
 import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import type { ProcessTerminalViewProps } from "./renderers/TerminalView.js";
@@ -1757,18 +1758,32 @@ export function TerminalMultiplexer() {
 		[activeTabId, updateTerminalWorkspace],
 	);
 
+	const routedMobileTerminalId = isMobile
+		? parseMuxSessionRoute(location.href).muxTerminalId
+		: undefined;
 	const renderTerminal = useCallback(
 		(terminal: MuxTerminal, focused: boolean, visible = true) => (
 			<SelectedMuxTerminal
 				key={terminal.id}
 				terminal={terminal}
 				theme={activeTheme}
-				visible={visible}
-				focused={focused}
+				visible={visible && (!isMobile || terminal.id === routedMobileTerminalId)}
+				focused={focused && (!isMobile || terminal.id === routedMobileTerminalId)}
 				onTitleChange={(title) => updateRuntimeTitle(terminal, title, "terminal")}
 			/>
 		),
-		[activeTheme, updateRuntimeTitle],
+		[activeTheme, isMobile, routedMobileTerminalId, updateRuntimeTitle],
+	);
+	const renderMobileTerminal = useCallback(
+		(terminal: MuxTerminal, focused: boolean, visible = true) => (
+			<TerminalSurfacePlacement
+				key={terminal.id}
+				terminalId={terminal.id}
+				focused={focused}
+				visible={visible}
+			/>
+		),
+		[],
 	);
 
 	const showMobileTerminalList = (terminal: MuxTerminal) => {
@@ -1811,10 +1826,15 @@ export function TerminalMultiplexer() {
 								data-yaade-session-layout={appearanceSettings.sessionLayout}
 								data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
 							>
-								<div className="flex min-h-0 min-w-0 flex-1 flex-col">
+								<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 									<Suspense fallback={<SessionLoadingState />}>
 										<TerminalDndRoot handlers={terminalTabDnd}>
-											{isMobile ? (
+											<>
+												<div
+													className={isMobile ? "absolute inset-0 min-h-0" : "hidden"}
+													data-yaade-mobile-layout-host=""
+												>
+												{isMobile ? (
 												<MobileTerminalView
 													sessions={visibleSessions}
 													terminalsById={snapshot.terminalsById}
@@ -1828,10 +1848,19 @@ export function TerminalMultiplexer() {
 													onCloseSession={requestCloseSession}
 													actionError={actionError}
 													onCloseTerminal={(terminal) => runTerminalAction("archive", terminal)}
-													renderTerminal={renderTerminal}
+													renderTerminal={renderMobileTerminal}
 												/>
-											) : (
-												<>
+												) : null}
+												</div>
+												<div
+													className={cn(
+														"relative flex min-h-0 flex-1 flex-col",
+														isMobile && "pointer-events-none invisible absolute inset-0",
+													)}
+													aria-hidden={isMobile ? true : undefined}
+													inert={isMobile ? true : undefined}
+													data-yaade-desktop-layout-host=""
+												>
 													{!sidebarLayout ? (
 														<header
 															className="group/titlebar flex shrink-0 items-center"
@@ -2122,8 +2151,8 @@ export function TerminalMultiplexer() {
 															/>
 														) : null}
 													</div>
-												</>
-											)}
+												</div>
+											</>
 										</TerminalDndRoot>
 									</Suspense>
 									{muxTerminalSwitcherOpen ? (
