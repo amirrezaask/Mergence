@@ -1,5 +1,4 @@
 import type {
-  GhosttyCell,
   GhosttyColor,
   GhosttyRow,
   GhosttySnapshot,

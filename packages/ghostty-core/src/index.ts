@@ -2,6 +2,7 @@ export {
   GhosttyTerminalCore,
   type GhosttyCell,
   type GhosttyColor,
+  type GhosttyKeyInput,
   type GhosttyMouseInput,
   type GhosttyPointInput,
   type GhosttyRow,

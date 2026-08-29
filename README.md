@@ -1,10 +1,10 @@
-# YAADE 🤓
+# Mergence
 
-> **Multi-Client, Remote-First Terminal Multiplexer Built on libghostty and React.**
+> **A multi-client, remote-first terminal multiplexer built on libghostty-vt and React.**
 
 Run coding agents on the machine with the horsepower. Watch them from the machine with the keyboard. Reconnect from your phone when curiosity wins.
 
-![YAADE terminal multiplexer](assets/yaade-terminal.png)
+![Mergence terminal multiplexer with three tiled terminals](assets/mergence-terminal.png)
 
 ```text
 ┌──────────────────── your screens ────────────────────┐
@@ -13,7 +13,7 @@ Run coding agents on the machine with the horsepower. Watch them from the machin
            └───────────────┼────────────────┘
                            ▼
                   ┌─────────────────┐
-                  │   YAADE host    │
+                  │ Mergence host   │
                   │                 │
                   │  session        │
                   │  ├─ window      │
@@ -23,15 +23,15 @@ Run coding agents on the machine with the horsepower. Watch them from the machin
                   └─────────────────┘
 ```
 
-YAADE keeps terminals on the server and turns your browser or desktop app into a window onto them. Close the laptop, switch clients, lose Wi-Fi, come back later. Your process keeps running as long as the YAADE host does.
+Mergence keeps terminals on the server and turns your browser or desktop app into a window onto them. Close the laptop, switch clients, lose Wi-Fi, come back later. Your process keeps running as long as the Mergence host does.
 
 No agent dashboard. No browser-side runtime. No mysterious chat abstraction. Your agents are CLI programs in real terminals, exactly where they belong.
 
-## `man yaade`
+## `man mergence`
 
 ```text
 NAME
-    yaade: a terminal habitat for humans and coding agents
+    mergence: a terminal habitat for humans and coding agents
 
 SYNOPSIS
     one host, many clients, an unreasonable number of terminals
@@ -71,6 +71,14 @@ The URL points straight at the current location:
 
 Bookmark it. Send it to another trusted client. Resume staring at the same blinking cursor.
 
+### The same terminal from your phone
+
+Mergence keeps the PTY on the host and gives mobile clients focused terminal controls.
+
+<p align="center">
+  <img src="assets/mergence-mobile.png" width="360" alt="Mergence mobile terminal with connection status and accessory keys">
+</p>
+
 ## Boot sequence
 
 You need Node.js 22.18+ and [Vite+](https://viteplus.dev/).
@@ -82,6 +90,9 @@ vp run dev
 ```
 
 Open the web client, create a terminal, and launch your favorite agent CLI.
+
+> [!NOTE]
+> The CLI, package namespace, and environment variables still use `yaade` and `YAADE_*` while the rebrand lands.
 
 Want the native client instead?
 
@@ -113,7 +124,7 @@ YAADE_HOST_TOKEN=replace-me \
   vp run dev:server -- --host 0.0.0.0 --token replace-me
 ```
 
-Add that server from **Settings → Servers**. YAADE can keep multiple remote hosts in the same switcher.
+Add that server from **Settings → Servers**. Mergence can keep multiple remote hosts in the same switcher.
 
 > [!CAUTION]
 > Binding outside loopback requires a token. Please do not put an unauthenticated shell portal on the public internet. The robots already have enough opportunities.
@@ -121,13 +132,13 @@ Add that server from **Settings → Servers**. YAADE can keep multiple remote ho
 ## Laws of the terminal universe
 
 1. **The host owns the process.** Closing or refreshing a client does not stop the terminal.
-2. **Closing a terminal means closing it.** YAADE stops its PTY and anything running inside.
+2. **Closing a terminal means closing it.** Mergence stops its PTY and anything running inside.
 3. **Restarting the host resets the universe.** Running terminals do not survive a host restart.
 4. **Clients observe and control.** Agents execute on the server, never in the browser.
 
 ## Enter the engine room
 
-Want to hack on YAADE? Read [AGENTS.md](AGENTS.md) before rearranging the spaceship. It has the development commands and the few rules keeping the warp core attached.
+Want to hack on Mergence? Read [AGENTS.md](AGENTS.md) before rearranging the spaceship. It has the development commands and the few rules keeping the warp core attached.
 
 ---
 

@@ -31,7 +31,7 @@ export interface TerminalRenderOverlays {
 }
 
 export interface TerminalRenderer {
-  readonly kind: "canvas2d" | "webgl2" | "webgpu";
+  readonly kind: "canvas2d" | "webgl2";
   resize(viewport: TerminalRenderViewport): void;
   setFont(font: TerminalRenderFont): Promise<GhosttyCellMetrics>;
   render(

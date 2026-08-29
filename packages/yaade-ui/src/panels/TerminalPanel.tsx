@@ -3,6 +3,8 @@ import { RotateCcw, Terminal as TerminalIcon, X } from "lucide-react"
 import type { YaadeTheme } from "@yaade/shared"
 import {
   GhosttyTerminalSurface,
+  TERMINAL_SCHEDULER_BUDGETS,
+  TerminalFrameScheduler,
   type GhosttyColor,
   type GhosttyTheme,
 } from "@yaade/ghostty-react"
@@ -12,10 +14,7 @@ import { Spinner } from "../components/ui/spinner.js"
 import { shouldWaitForExistingPty } from "./terminal-attach.js"
 import { stripDa1Responses } from "./terminal-da.js"
 import { createTerminalInputWriter } from "./terminal-input-writer.js"
-import {
-  createTerminalOutputWriter,
-  GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH,
-} from "./terminal-output-writer.js"
+import { createTerminalOutputWriter } from "./terminal-output-writer.js"
 import { terminalKeybindingData } from "./terminal-keybindings.js"
 import {
   getRegisteredTerminal,
@@ -333,6 +332,16 @@ export function TerminalPanel({
     let inputWriter: ReturnType<typeof createTerminalInputWriter> | null = null
     const pendingTerminalInput: string[] = []
     let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
+    const frameScheduler = new TerminalFrameScheduler()
+    const updateSchedulerDiagnostics = () => {
+      const panel = containerRef.current?.closest<HTMLElement>("[data-yaade-terminal-panel]")
+      if (!panel) return
+      const metrics = frameScheduler.snapshot()
+      panel.dataset.yaadeTerminalPipelinePendingBytes = String(metrics.pendingBytes)
+      panel.dataset.yaadeTerminalPipelineMaxPendingBytes = String(metrics.maxPendingBytes)
+      panel.dataset.yaadeTerminalPipelineParsedP95 = metrics.receivedToParsedP95.toFixed(1)
+      panel.dataset.yaadeTerminalPipelinePresentedP95 = metrics.receivedToPresentedP95.toFixed(1)
+    }
 
     const enqueueTerminalInput = (data: string) => {
       // Host already answered DA1 on the PTY. Drop Ghostty's copy so fish
@@ -456,8 +465,15 @@ export function TerminalPanel({
           if (replay && !receivingReplay) {
             receivingReplay = true
             outputWriter?.discardPending()
+            frameScheduler.resetGeneration()
           } else if (!replay) {
             receivingReplay = false
+          }
+          const pipelineToken = frameScheduler.received(data.length)
+          const parsedAndAcknowledge = () => {
+            frameScheduler.parsed(pipelineToken)
+            updateSchedulerDiagnostics()
+            acknowledgeConsumed?.()
           }
           if (replay && replayTruncated) {
             // A reconnect gap means the ring starts after the current parser
@@ -470,10 +486,10 @@ export function TerminalPanel({
             !replayMayNeedQueryResponses &&
             !replayNeedsQueryResponses
           ) {
-            outputWriter?.enqueueReplay(data, acknowledgeConsumed)
+            outputWriter?.enqueueReplay(data, parsedAndAcknowledge)
             outputWriter?.flush()
           } else {
-            outputWriter?.enqueue(data, acknowledgeConsumed)
+            outputWriter?.enqueue(data, parsedAndAcknowledge)
             if (replay && replayNeedsQueryResponses) {
               outputWriter?.flush()
               // Query replies are queued on a microtask by the input writer;
@@ -677,6 +693,27 @@ export function TerminalPanel({
             return false
           },
           onLinkActivate: handleLink,
+          onPresented: () => {
+            frameScheduler.presented()
+            updateSchedulerDiagnostics()
+          },
+          onRuntimeRecoveryRequired: () => {
+            const id = session?.ptyId
+            if (!id || !surface || !outputWriter) return
+            outputWriter.discardPending()
+            frameScheduler.resetGeneration()
+            surface.resetAndWrite("")
+            void attachToNewSurface(id).then(attached => {
+              if (!attached || cancelled || !outputWriter) return
+              applyAttachReplay(
+                attached,
+                tabId,
+                onOutputRef.current,
+                outputWriter,
+                !readOnly && attached.replayNeedsQueryResponses === true,
+              )
+            })
+          },
           onTitleChange: title => {
             onTitleChangeRef.current?.(
               tabId,
@@ -693,6 +730,7 @@ export function TerminalPanel({
         if (panel) {
           panel.dataset.yaadeTerminalRenderer = "ghostty"
           panel.dataset.yaadeTerminalRenderBackend = surface.renderBackend
+          panel.dataset.yaadeTerminalRuntime = surface.runtimeKind
         }
         session = {
           surface,
@@ -707,21 +745,19 @@ export function TerminalPanel({
         registerTerminalInstance(tabId, surface)
 
         outputWriter = createTerminalOutputWriter({
-          // Ghostty parses synchronously on the UI thread. Keep each frame's
-          // parser slice bounded; the Canvas adapter has no internal async
-          // write queue to yield for us.
-          maxCharsPerFlush: GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH,
+          // Bound each command so a pooled worker yields between terminals;
+          // the same quantum keeps forced-main fallback tasks finite.
+          maxCharsPerFlush: TERMINAL_SCHEDULER_BUDGETS.workerSliceBytes,
           // The server allows at most 8 MiB of unacknowledged output per PTY.
           // Keep the local queue above that ceiling so server-side resync wins
           // before the writer's last-resort shedding path can drop a frame.
-          maxPendingChars: 16 * 1024 * 1024,
-          write: (data, onPainted) => {
-            surface?.write(data)
-            onPainted?.()
+          maxPendingChars: TERMINAL_SCHEDULER_BUDGETS.livePendingBytes,
+          onPosted: bytes => frameScheduler.posted(bytes),
+          write: (data, onParsed) => {
+            surface?.write(data, onParsed)
           },
-          writeReplay: (chunks, onPainted) => {
-            surface?.writeReplay(chunks)
-            onPainted?.()
+          writeReplay: (chunks, onParsed) => {
+            surface?.writeReplay(chunks, onParsed)
           },
         })
 

@@ -159,6 +159,18 @@ export interface GhosttyPointInput {
 
 export type GhosttyResponsePolicy = "authoritative" | "render-only"
 
+export interface GhosttyKeyInput {
+  readonly key: string;
+  readonly code: string;
+  readonly repeat: boolean;
+  readonly shiftKey: boolean;
+  readonly ctrlKey: boolean;
+  readonly altKey: boolean;
+  readonly metaKey: boolean;
+  readonly isComposing: boolean;
+  getModifierState(key: string): boolean;
+}
+
 export interface GhosttyMouseInput {
   readonly action: "press" | "release" | "motion";
   readonly button: number | null;
@@ -560,7 +572,7 @@ export class GhosttyTerminalCore {
     return this.readMode(mode);
   }
 
-  encodeKey(event: KeyboardEvent, action: "press" | "release" = "press"): string {
+  encodeKey(event: GhosttyKeyInput, action: "press" | "release" = "press"): string {
     this.ensureActive();
     this.runtime.call("ghostty_key_encoder_setopt_from_terminal", this.keyEncoder, this.terminal);
     this.runtime.call(
@@ -895,7 +907,7 @@ export class GhosttyTerminalCore {
    * by the compatibility snapshot. The caller must release the update after
    * copying it into its retained viewport model.
    */
-  renderUpdate(consumeDirty = true): GhosttyRenderUpdate {
+  renderUpdate(consumeDirty = true, forceFull = false): GhosttyRenderUpdate {
     const snapshot = this.snapshot(consumeDirty);
     const dimensionsChanged =
       snapshot.cols !== this.renderUpdateCols || snapshot.rows !== this.renderUpdateRows;
@@ -910,6 +922,7 @@ export class GhosttyTerminalCore {
       frameId: this.renderUpdateFrameId,
       generation: this.renderUpdateGeneration,
       full:
+        forceFull ||
         dimensionsChanged ||
         this.renderUpdateFrameId === 1 ||
         snapshot.dirtyRows.size === snapshot.rows,

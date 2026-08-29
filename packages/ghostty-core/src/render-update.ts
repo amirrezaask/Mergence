@@ -103,15 +103,21 @@ function nextCapacity(required: number): number {
 }
 
 function ensureU8(value: Uint8Array, required: number): Uint8Array {
-  return value.length >= required ? value : new Uint8Array(nextCapacity(required));
+  return value.buffer.byteLength > 0 && value.length >= required
+    ? value
+    : new Uint8Array(nextCapacity(required));
 }
 
 function ensureU16(value: Uint16Array, required: number): Uint16Array {
-  return value.length >= required ? value : new Uint16Array(nextCapacity(required));
+  return value.buffer.byteLength > 0 && value.length >= required
+    ? value
+    : new Uint16Array(nextCapacity(required));
 }
 
 function ensureU32(value: Uint32Array, required: number): Uint32Array {
-  return value.length >= required ? value : new Uint32Array(nextCapacity(required));
+  return value.buffer.byteLength > 0 && value.length >= required
+    ? value
+    : new Uint32Array(nextCapacity(required));
 }
 
 function createSlot(): BuilderSlot {

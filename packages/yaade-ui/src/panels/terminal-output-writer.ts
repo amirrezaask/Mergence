@@ -28,7 +28,9 @@ export type TerminalOutputWriterOptions = {
    * The callback is invoked once after the whole replay has been parsed.
    */
   writeReplay?: (data: readonly string[], onPainted?: () => void) => void
-  /** Called after a coalesced write paints (once per flush). */
+  /** Called when bytes cross from the local queue into the parser runtime. */
+  onPosted?: (bytes: number) => void
+  /** Called after a coalesced write completes its parser callback. */
   onPainted?: () => void
   /**
    * When true, after paint run a single viewport refresh. Callers should only
@@ -222,13 +224,17 @@ export function createTerminalOutputWriter(
       options.onPainted?.()
     }
     if (options.writeReplay) {
+      options.onPosted?.(parts.reduce((total, part) => total + part.data.length, 0))
       options.writeReplay(parts.map(part => part.data), onPainted)
       return
     }
     // Keep the writer usable for simple renderers that do not need a special
     // replay hook. Production Ghostty supplies writeReplay so its callback is
     // detached for the complete batch.
-    for (const part of parts) options.write(part.data)
+    for (const part of parts) {
+      options.onPosted?.(part.data.length)
+      options.write(part.data)
+    }
     onPainted()
   }
 
@@ -254,6 +260,7 @@ export function createTerminalOutputWriter(
     }
     // Terminal writes are non-blocking — do NOT gate the next flush on this
     // callback. The parser owns its throughput scheduling.
+    options.onPosted?.(data.length)
     options.write(data, () => {
       if (disposed) return
       for (const acknowledge of consumed) acknowledge()

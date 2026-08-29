@@ -54,6 +54,17 @@ export {
   WebGl2TerminalRenderer,
   type WebGlTerminalDebugCounters,
 } from "./renderers/webgl2/webgl2-renderer.js"
+export {
+  TERMINAL_SCHEDULER_BUDGETS,
+  TerminalFrameScheduler,
+  type TerminalPipelineStage,
+  type TerminalPipelineToken,
+  type TerminalSchedulerSnapshot,
+} from "./scheduler/terminal-frame-scheduler.js"
+export type {
+  TerminalCoreRuntime,
+  TerminalRuntimeKind,
+} from "./worker/worker-terminal-core.js"
 export type {
   TerminalRenderer,
   TerminalRenderFont,

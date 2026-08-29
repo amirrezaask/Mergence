@@ -40,13 +40,14 @@ async function waitForRunningTerminal(page: ShellDriver): Promise<void> {
   await expect(panel).toHaveAttribute("data-yaade-terminal-renderer", "ghostty")
   await expect(panel).toHaveAttribute(
     "data-yaade-terminal-render-backend",
-    /^(canvas2d|webgl2|webgpu)$/,
+    /^(canvas2d|webgl2)$/,
   )
 }
 
 async function terminalRenderInfo(page: ShellDriver): Promise<{
   provider: string
   backend: string
+  runtime: string
   visiblePanes: number
 }> {
   return page.evaluate(() => {
@@ -61,6 +62,7 @@ async function terminalRenderInfo(page: ShellDriver): Promise<{
     return {
       provider: panel?.dataset.yaadeTerminalRenderer ?? "unknown",
       backend: panel?.dataset.yaadeTerminalRenderBackend ?? "unknown",
+      runtime: panel?.dataset.yaadeTerminalRuntime ?? "unknown",
       visiblePanes: visible.length,
     }
   })
@@ -68,7 +70,7 @@ async function terminalRenderInfo(page: ShellDriver): Promise<{
 
 function logTerminalRenderInfo(name: string, info: Awaited<ReturnType<typeof terminalRenderInfo>>): void {
   console.log(
-    `[bench] ${name} provider=${info.provider} backend=${info.backend} visiblePanes=${info.visiblePanes}`,
+    `[bench] ${name} provider=${info.provider} backend=${info.backend} runtime=${info.runtime} visiblePanes=${info.visiblePanes}`,
   )
 }
 

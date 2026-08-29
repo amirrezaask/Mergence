@@ -118,6 +118,26 @@ test.describe("terminal compatibility", () => {
     expect(await terminalText()).not.toContain("�")
   })
 
+  test("default worker runtime preserves key and Unicode input order", async ({
+    launchApp,
+  }) => {
+    const { page } = await launchApp()
+    await focusTerminal(page)
+    const panel = page.locator(
+      '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
+    ).filter({ visible: true }).first()
+    await expect(panel).toHaveAttribute("data-yaade-terminal-runtime", "worker")
+    await page.keyboard.type("printf 'ordered-界-é-🙂\\n'")
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
+      { timeout: 15_000 },
+    ).toContain("ordered-界-é-🙂")
+    await expect(panel).toHaveAttribute("data-yaade-terminal-pipeline-pending-bytes", "0")
+    await expect(panel).toHaveAttribute("data-yaade-terminal-pipeline-parsed-p95", /\d+\.\d/)
+    await expect(panel).toHaveAttribute("data-yaade-terminal-pipeline-presented-p95", /\d+\.\d/)
+  })
+
   test("forced WebGL2 and Canvas backends render the same retained text", async ({
     launchApp,
   }) => {

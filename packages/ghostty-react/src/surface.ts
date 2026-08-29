@@ -6,7 +6,7 @@ import {
   type GhosttyTerminalLinkMatcher,
 } from "./links.js";
 import {
-  GhosttyTerminalCore,
+  GHOSTTY_CELL_WIDE,
   GhosttyViewportModel,
   type GhosttyRenderUpdate,
   type GhosttyResponsePolicy,
@@ -22,8 +22,15 @@ import {
   type GhosttyCellMetrics,
 } from "./renderer.js";
 import symbolsFontUrl from "./fonts/SymbolsNerdFontMono-Regular.woff2?url";
-import { browserGhosttyWasmSource } from "@yaade/ghostty-core/loaders/browser";
+import {
+  MainThreadTerminalCore,
+  WorkerTerminalCore,
+  type ParsedCallback,
+  type TerminalCoreRuntime,
+  type TerminalRuntimeKind,
+} from "./worker/worker-terminal-core.js";
 import { isBrowserZoomShortcut, isBrowserZoomWheel } from "./browser-zoom.js";
+import { TERMINAL_SCHEDULER_BUDGETS } from "./scheduler/terminal-frame-scheduler.js";
 import {
   createTerminalRenderer,
   parseTerminalRendererPreference,
@@ -53,7 +60,8 @@ const MIN_SCROLLBAR_THUMB_HEIGHT = 18;
 /** Half a blink cycle: the visible and hidden phases are equally long. */
 const CURSOR_BLINK_INTERVAL_MS = 500;
 /** DEC mode 2026 must not freeze a viewport forever when a producer crashes mid-update. */
-const SYNCHRONIZED_OUTPUT_TIMEOUT_MS = 1_000;
+const SYNCHRONIZED_OUTPUT_TIMEOUT_MS =
+  TERMINAL_SCHEDULER_BUDGETS.synchronizedOutputTimeoutMs;
 const TERMINAL_FONT_LOAD_TEXT = "iMW0@# .";
 const DEFAULT_TERMINAL_COLS = 80;
 const DEFAULT_TERMINAL_ROWS = 24;
@@ -575,8 +583,16 @@ export interface GhosttyTerminalSurfaceOptions {
   /** Whether this parser or the server-side owner answers terminal queries. */
   readonly responsePolicy?: GhosttyResponsePolicy;
   readonly onTitleChange?: (title: string) => void;
+  /** Presentation telemetry only; transport ACK must not depend on this callback. */
+  readonly onPresented?: () => void;
   /** Renderer selection for tests/operators; auto prefers a validated WebGL2 context. */
   readonly renderer?: TerminalRendererPreference;
+  /** Parser placement. Worker is default with automatic main-thread initialization fallback. */
+  readonly runtime?: TerminalRuntimeKind;
+  /** Worker failures require the host to replay into a fresh runtime generation. */
+  readonly onRuntimeError?: (error: Error) => void;
+  /** Request an authoritative host replay after worker generation recovery. */
+  readonly onRuntimeRecoveryRequired?: () => void;
 }
 
 export class GhosttyTerminalSurface {
@@ -588,7 +604,7 @@ export class GhosttyTerminalSurface {
 
   private readonly mount: HTMLElement;
   private readonly context: CanvasRenderingContext2D;
-  private readonly core: GhosttyTerminalCore;
+  private readonly core: TerminalCoreRuntime;
   private readonly viewportModel = new GhosttyViewportModel();
   private readonly rendererController: RendererController;
   private readonly renderViewport = {
@@ -690,7 +706,7 @@ export class GhosttyTerminalSurface {
     scrollbarThumb: HTMLDivElement,
     context: CanvasRenderingContext2D,
     renderer: TerminalRenderer,
-    core: GhosttyTerminalCore,
+    core: TerminalCoreRuntime,
     metrics: GhosttyCellMetrics,
     fontFamily: string,
     options: GhosttyTerminalSurfaceOptions,
@@ -706,6 +722,7 @@ export class GhosttyTerminalSurface {
     this.options = options;
     this.theme = options.theme;
     this.visible = options.visible ?? true;
+    mount.dataset.ghosttyTerminalRuntime = core.kind;
     this.fontFamily = fontFamily;
     this.requestedFontFamily = options.font?.family;
     this.fontSize = terminalFontSize(options.font?.size);
@@ -741,6 +758,10 @@ export class GhosttyTerminalSurface {
     document.fonts.addEventListener("loadingdone", this.onFontsLoaded);
     this.resizeObserver.observe(mount);
     if (mount.parentElement) this.resizeObserver.observe(mount.parentElement);
+  }
+
+  get runtimeKind(): TerminalRuntimeKind {
+    return this.core.kind;
   }
 
   get renderBackend(): TerminalRenderer["kind"] {
@@ -820,17 +841,43 @@ export class GhosttyTerminalSurface {
       cols: DEFAULT_TERMINAL_COLS,
       rows: DEFAULT_TERMINAL_ROWS,
     };
-    const core = await GhosttyTerminalCore.create(
-      grid.cols,
-      grid.rows,
-      metrics.width,
-      metrics.height,
-      options.theme,
-      options.onData ?? (() => undefined),
-      browserGhosttyWasmSource(),
-      options.responsePolicy,
-    );
-    const surface = new GhosttyTerminalSurface(
+    const runtimeFromSearch = new URLSearchParams(window.location.search).get("runtime");
+    const runtimeFromStorage = window.localStorage.getItem("yaade:terminal-runtime");
+    const runtimePreference = options.runtime ??
+      (runtimeFromSearch === "main" || runtimeFromSearch === "worker" ? runtimeFromSearch : null) ??
+      (runtimeFromStorage === "main" || runtimeFromStorage === "worker" ? runtimeFromStorage : "worker");
+    let surface: GhosttyTerminalSurface | null = null;
+    const runtimeOptions = {
+      cols: grid.cols,
+      rows: grid.rows,
+      cellWidth: metrics.width,
+      cellHeight: metrics.height,
+      theme: options.theme,
+      responsePolicy: options.responsePolicy,
+      onData: options.onData ?? (() => undefined),
+      onUpdate: () => surface?.afterRuntimeUpdate(),
+      onError: (error: Error) => {
+        mount.dataset.ghosttyTerminalRuntimeState = "recovering";
+        options.onRuntimeError?.(error);
+      },
+      onRecoveryRequired: () => {
+        mount.dataset.ghosttyTerminalRuntimeState = "replay-required";
+        options.onRuntimeRecoveryRequired?.();
+      },
+    };
+    let core: TerminalCoreRuntime;
+    if (runtimePreference === "worker" && typeof Worker === "function") {
+      try {
+        core = await WorkerTerminalCore.create(runtimeOptions);
+      } catch (error) {
+        mount.dataset.ghosttyTerminalRuntimeFallback =
+          error instanceof Error ? error.message : String(error);
+        core = await MainThreadTerminalCore.create(runtimeOptions);
+      }
+    } else {
+      core = await MainThreadTerminalCore.create(runtimeOptions);
+    }
+    surface = new GhosttyTerminalSurface(
       mount,
       canvas,
       input,
@@ -869,27 +916,33 @@ export class GhosttyTerminalSurface {
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.cursorOn = true;
+    this.core.requestFullFrame();
     this.ensureFitted();
     this.requestRender();
   }
 
-  write(data: string): void {
+  write(data: string, onParsed?: ParsedCallback): void {
     if (this.disposed) return;
-    this.core.write(data);
-    this.afterTerminalWrite();
+    this.core.write(data, onParsed);
+    if (this.core.kind === "main") this.afterTerminalWrite();
   }
 
   /** Feed attach/reconnect output with Ghostty's PTY callback detached. */
-  writeReplay(chunks: readonly string[]): void {
+  writeReplay(chunks: readonly string[], onParsed?: ParsedCallback): void {
     if (this.disposed || chunks.length === 0) return;
-    this.core.writeReplay(chunks);
-    this.afterTerminalWrite();
+    this.core.writeReplay(chunks, onParsed);
+    if (this.core.kind === "main") this.afterTerminalWrite();
   }
 
-  resetAndWrite(data: string): void {
+  resetAndWrite(data: string, onParsed?: ParsedCallback): void {
     if (this.disposed) return;
-    this.core.resetAndWrite(data);
-    this.afterTerminalWrite(true);
+    this.core.resetAndWrite(data, onParsed);
+    if (this.core.kind === "main") this.afterTerminalWrite(true);
+  }
+
+  private afterRuntimeUpdate(): void {
+    if (this.disposed) return;
+    this.afterTerminalWrite();
   }
 
   private afterTerminalWrite(forceFullRender = false): void {
@@ -1201,7 +1254,10 @@ export class GhosttyTerminalSurface {
     const snapshot = this.getSnapshot();
     if (!snapshot) return "";
     return snapshot.rowData
-      .map((row) => row.cells.map((cell) => cell.text || " ").join("").trimEnd())
+      .map((row) => row.cells
+        .map((cell) => cell.wide === GHOSTTY_CELL_WIDE.spacerTail ? "" : cell.text || " ")
+        .join("")
+        .trimEnd())
       .join("\n");
   }
 
@@ -1250,6 +1306,11 @@ export class GhosttyTerminalSurface {
   private consumeVirtualModifiers(): void {
     this.virtualCtrl = false;
     this.virtualAlt = false;
+  }
+
+  private sendText(data: string): void {
+    const encoded = this.core.sendText(this.applyVirtualModifiers(data));
+    if (encoded.length > 0) this.options.onData?.(encoded);
   }
 
   private applyVirtualModifiers(data: string): string {
@@ -1426,12 +1487,12 @@ export class GhosttyTerminalSurface {
           })
         : event;
     const data = this.core.encodeKey(encodedEvent);
-    if (data.length === 0) return;
+    if (data.length === 0 && this.core.kind === "main") return;
     this.consumeVirtualModifiers();
     this.suppressedKeyCodes.delete(event.code);
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData?.(data);
+    if (data.length > 0) this.options.onData?.(data);
   };
 
   private readonly onKeyUp = (event: KeyboardEvent) => {
@@ -1443,10 +1504,10 @@ export class GhosttyTerminalSurface {
     // Ghostty's encoder only emits release codes when the terminal enabled the
     // Kitty report-event-types flag, so legacy sessions send nothing here.
     const data = this.core.encodeKey(event, "release");
-    if (data.length === 0) return;
+    if (data.length === 0 && this.core.kind === "main") return;
     event.preventDefault();
     event.stopPropagation();
-    this.options.onData?.(data);
+    if (data.length > 0) this.options.onData?.(data);
   };
 
   private readonly onFocus = () => {
@@ -1514,7 +1575,7 @@ export class GhosttyTerminalSurface {
   private readonly onCompositionEnd = (event: CompositionEvent) => {
     this.composing = false;
     const data = this.input.value || event.data;
-    if (data.length > 0) this.options.onData?.(this.applyVirtualModifiers(data));
+    if (data.length > 0) this.sendText(data);
     this.input.value = "";
     this.compositionInputToSuppress = data;
     this.compositionSuppressionTimer = window.setTimeout(() => {
@@ -1533,7 +1594,7 @@ export class GhosttyTerminalSurface {
       return;
     }
     this.clearCompositionInputSuppression();
-    if (data.length > 0) this.options.onData?.(this.applyVirtualModifiers(data));
+    if (data.length > 0) this.sendText(data);
     this.input.value = "";
   };
 
@@ -2148,11 +2209,18 @@ export class GhosttyTerminalSurface {
     }
     const terminalUpdated = this.terminalStateDirty || this.snapshot === null;
     let update: GhosttyRenderUpdate | null = null;
+    const consumedUpdates: GhosttyRenderUpdate[] = [];
     if (terminalUpdated) {
-      update = this.core.renderUpdate();
-      if (!this.viewportModel.apply(update)) {
-        this.core.releaseRenderUpdate(update);
-        throw new Error("Ghostty packed render update was rejected");
+      const updates = this.core.drainRenderUpdates();
+      if (updates.length === 0) return;
+      if (updates.length > 1) this.forceFullRender = true;
+      for (const next of updates) {
+        consumedUpdates.push(next);
+        if (!this.viewportModel.apply(next)) {
+          for (const consumed of consumedUpdates) this.core.releaseRenderUpdate(consumed);
+          throw new Error("Ghostty packed render update was rejected");
+        }
+        update = next;
       }
       this.snapshot = this.viewportModel.snapshot();
       this.terminalStateDirty = false;
@@ -2199,8 +2267,9 @@ export class GhosttyTerminalSurface {
           : {}),
       });
     } finally {
-      if (update !== null) this.core.releaseRenderUpdate(update);
+      for (const consumed of consumedUpdates) this.core.releaseRenderUpdate(consumed);
     }
+    this.options.onPresented?.();
     this.positionInput();
     this.renderedCursorY =
       this.cursorOn && this.snapshot.cursorVisible && this.snapshot.cursorY >= 0
