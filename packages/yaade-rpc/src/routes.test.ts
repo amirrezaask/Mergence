@@ -66,7 +66,7 @@ test("terminal theme routes preserve the colors used for protocol queries", () =
 })
 
 test("terminal attach preserves the owner identity used by binary snapshots", () => {
-  const decoded = decodeHostRouteResult("terminal:attach", {
+  const encoded = {
     id: "pty-1",
     title: "fish",
     terminalEpoch: "terminal-epoch",
@@ -86,10 +86,11 @@ test("terminal attach preserves the owner identity used by binary snapshots", ()
     exitCode: null,
     signal: null,
     semanticSnapshot: null,
-  })
+  }
+  const decoded = decodeHostRouteResult("terminal:attach", encoded)
   assert.equal(decoded?.ownerId, "server-1")
   assert.equal(decoded?.ownerEpoch, "server-epoch")
-  const control = terminalAttachControlResult(decoded)
+  const control = terminalAttachControlResult(encoded)
   assert.ok(control)
   assert.equal("semanticSnapshot" in control, false)
 })

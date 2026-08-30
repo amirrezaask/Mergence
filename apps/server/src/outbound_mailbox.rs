@@ -1,5 +1,7 @@
 use std::collections::{HashMap, HashSet, VecDeque};
 
+use bytes::Bytes;
+
 #[derive(Clone, Copy, Debug)]
 pub struct MailboxLimits {
     pub reliable_max_frames: usize,
@@ -38,26 +40,48 @@ pub struct EnqueueResult {
     pub overflow: Option<Overflow>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OutboundFrameKind {
+    Text,
+    Binary,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct OutboundFrame {
-    pub data: Vec<u8>,
+    pub data: Bytes,
+    pub kind: OutboundFrameKind,
     pub terminal_id: Option<String>,
+    pub terminal_sequence: Option<u64>,
 }
 
 impl OutboundFrame {
     #[must_use]
-    pub fn new(data: impl Into<Vec<u8>>) -> Self {
+    pub fn text(data: impl Into<Bytes>) -> Self {
         Self {
             data: data.into(),
+            kind: OutboundFrameKind::Text,
             terminal_id: None,
+            terminal_sequence: None,
         }
     }
 
     #[must_use]
-    pub fn terminal(terminal_id: &str, data: impl Into<Vec<u8>>) -> Self {
+    pub fn binary(data: impl Into<Bytes>) -> Self {
         Self {
             data: data.into(),
+            kind: OutboundFrameKind::Binary,
+            terminal_id: None,
+            terminal_sequence: None,
+        }
+    }
+
+    #[must_use]
+    pub fn terminal(terminal_id: &str, sequence: u64, data: impl Into<Bytes>) -> Self {
+        Self {
+            data: data.into(),
+            kind: OutboundFrameKind::Binary,
             terminal_id: Some(terminal_id.to_owned()),
+            terminal_sequence: Some(sequence),
         }
     }
 
@@ -76,6 +100,7 @@ struct QueuedFrame {
 /// semantic render state is replaceable by terminal.
 pub struct OutboundMailbox {
     limits: MailboxLimits,
+    priority: VecDeque<QueuedFrame>,
     reliable: VecDeque<QueuedFrame>,
     reliable_bytes: usize,
     legacy: VecDeque<QueuedFrame>,
@@ -91,6 +116,7 @@ impl OutboundMailbox {
     pub fn new(limits: MailboxLimits) -> Self {
         Self {
             limits,
+            priority: VecDeque::new(),
             reliable: VecDeque::new(),
             reliable_bytes: 0,
             legacy: VecDeque::new(),
@@ -102,10 +128,26 @@ impl OutboundMailbox {
         }
     }
 
+    pub fn enqueue_reliable_priority(&mut self, frame: OutboundFrame) -> EnqueueResult {
+        let bytes = frame.bytes();
+        if bytes > self.limits.reliable_max_bytes
+            || self.priority.len().saturating_add(self.reliable.len())
+                >= self.limits.reliable_max_frames
+            || self.reliable_bytes.saturating_add(bytes) > self.limits.reliable_max_bytes
+        {
+            return rejected(Overflow::Reliable, false);
+        }
+        let queued = self.queued(frame);
+        self.priority.push_back(queued);
+        self.reliable_bytes += bytes;
+        accepted(false, false)
+    }
+
     pub fn enqueue_reliable(&mut self, frame: OutboundFrame) -> EnqueueResult {
         let bytes = frame.bytes();
         if bytes > self.limits.reliable_max_bytes
-            || self.reliable.len() >= self.limits.reliable_max_frames
+            || self.priority.len().saturating_add(self.reliable.len())
+                >= self.limits.reliable_max_frames
             || self.reliable_bytes.saturating_add(bytes) > self.limits.reliable_max_bytes
         {
             return rejected(Overflow::Reliable, false);
@@ -167,6 +209,10 @@ impl OutboundMailbox {
     }
 
     pub fn pop_next(&mut self) -> Option<OutboundFrame> {
+        if let Some(queued) = self.priority.pop_front() {
+            self.reliable_bytes = self.reliable_bytes.saturating_sub(queued.frame.bytes());
+            return Some(queued.frame);
+        }
         enum Source {
             Reliable,
             Legacy,
@@ -212,12 +258,28 @@ impl OutboundMailbox {
 
     #[must_use]
     pub fn pending_frames(&self) -> usize {
-        self.reliable.len() + self.legacy.len() + self.semantic.len()
+        self.priority.len() + self.reliable.len() + self.legacy.len() + self.semantic.len()
     }
 
     #[must_use]
     pub fn pending_bytes(&self) -> usize {
         self.reliable_bytes + self.legacy_bytes + self.semantic_bytes
+    }
+
+    pub fn discard_terminal_through(&mut self, terminal_id: &str, sequence: u64) {
+        let mut removed_bytes = 0;
+        self.legacy.retain(|queued| {
+            let remove = queued.frame.terminal_id.as_deref() == Some(terminal_id)
+                && queued
+                    .frame
+                    .terminal_sequence
+                    .is_some_and(|value| value <= sequence);
+            if remove {
+                removed_bytes += queued.frame.bytes();
+            }
+            !remove
+        });
+        self.legacy_bytes = self.legacy_bytes.saturating_sub(removed_bytes);
     }
 
     pub fn consume_resync_required(&mut self) -> Vec<String> {
@@ -271,22 +333,22 @@ mod tests {
         let mut mailbox = OutboundMailbox::new(limits());
         assert!(
             mailbox
-                .enqueue_reliable(OutboundFrame::new(b"four".to_vec()))
+                .enqueue_reliable(OutboundFrame::text(b"four".to_vec()))
                 .accepted
         );
         assert!(
             mailbox
-                .enqueue_reliable(OutboundFrame::new(b"more".to_vec()))
+                .enqueue_reliable(OutboundFrame::text(b"more".to_vec()))
                 .accepted
         );
         assert_eq!(
             mailbox
-                .enqueue_reliable(OutboundFrame::new(b"nope".to_vec()))
+                .enqueue_reliable(OutboundFrame::text(b"nope".to_vec()))
                 .overflow,
             Some(Overflow::Reliable)
         );
-        assert_eq!(mailbox.pop_next().expect("first").data, b"four");
-        assert_eq!(mailbox.pop_next().expect("second").data, b"more");
+        assert_eq!(mailbox.pop_next().expect("first").data.as_ref(), b"four");
+        assert_eq!(mailbox.pop_next().expect("second").data.as_ref(), b"more");
         assert!(mailbox.pop_next().is_none());
     }
 
@@ -299,7 +361,7 @@ mod tests {
         for value in ["one", "two", "three"] {
             assert!(
                 mailbox
-                    .enqueue_legacy("a", OutboundFrame::new(value.as_bytes().to_vec()))
+                    .enqueue_legacy("a", OutboundFrame::text(value.as_bytes().to_vec()))
                     .accepted
             );
         }
@@ -314,12 +376,12 @@ mod tests {
         let mut mailbox = OutboundMailbox::new(MailboxLimits::default());
         assert!(
             mailbox
-                .enqueue_legacy("a", OutboundFrame::new(vec![0; 9 * 1024 * 1024]))
+                .enqueue_legacy("a", OutboundFrame::text(vec![0; 9 * 1024 * 1024]))
                 .accepted
         );
         assert!(
             !mailbox
-                .enqueue_legacy("a", OutboundFrame::new(vec![0; 24 * 1024 * 1024]))
+                .enqueue_legacy("a", OutboundFrame::text(vec![0; 24 * 1024 * 1024]))
                 .accepted
         );
     }
@@ -329,15 +391,15 @@ mod tests {
         let mut mailbox = OutboundMailbox::new(limits());
         assert!(
             mailbox
-                .enqueue_legacy("a", OutboundFrame::new(b"one".to_vec()))
+                .enqueue_legacy("a", OutboundFrame::text(b"one".to_vec()))
                 .accepted
         );
         assert!(
             mailbox
-                .enqueue_legacy("a", OutboundFrame::new(b"two".to_vec()))
+                .enqueue_legacy("a", OutboundFrame::text(b"two".to_vec()))
                 .accepted
         );
-        let overflow = mailbox.enqueue_legacy("a", OutboundFrame::new(b"bad".to_vec()));
+        let overflow = mailbox.enqueue_legacy("a", OutboundFrame::text(b"bad".to_vec()));
         assert_eq!(overflow.overflow, Some(Overflow::Legacy));
         assert_eq!(mailbox.pending_frames(), 2);
     }
@@ -347,19 +409,22 @@ mod tests {
         let mut mailbox = OutboundMailbox::new(limits());
         assert!(
             mailbox
-                .enqueue_semantic("a", OutboundFrame::new(b"snap".to_vec()))
+                .enqueue_semantic("a", OutboundFrame::text(b"snap".to_vec()))
                 .accepted
         );
-        let replacement = mailbox.enqueue_semantic("a", OutboundFrame::new(b"newer".to_vec()));
+        let replacement = mailbox.enqueue_semantic("a", OutboundFrame::text(b"newer".to_vec()));
         assert!(replacement.accepted && replacement.replaced && replacement.requires_resync);
-        assert_eq!(mailbox.pop_next().expect("snapshot").data, b"newer");
+        assert_eq!(
+            mailbox.pop_next().expect("snapshot").data.as_ref(),
+            b"newer"
+        );
         assert_eq!(mailbox.consume_resync_required(), vec!["a"]);
     }
 
     #[test]
     fn oversized_semantic_frame_is_rejected_without_using_memory() {
         let mut mailbox = OutboundMailbox::new(limits());
-        let result = mailbox.enqueue_semantic("a", OutboundFrame::new(vec![0; 11]));
+        let result = mailbox.enqueue_semantic("a", OutboundFrame::text(vec![0; 11]));
         assert_eq!(result.overflow, Some(Overflow::Semantic));
         assert!(result.requires_resync);
         assert_eq!(mailbox.pending_bytes(), 0);
@@ -368,11 +433,14 @@ mod tests {
     #[test]
     fn reliable_responses_keep_order_relative_to_terminal_output() {
         let mut mailbox = OutboundMailbox::new(MailboxLimits::default());
-        mailbox.enqueue_reliable(OutboundFrame::new(b"response".to_vec()));
-        mailbox.enqueue_legacy("a", OutboundFrame::new(b"output".to_vec()));
-        mailbox.enqueue_reliable(OutboundFrame::new(b"event".to_vec()));
-        assert_eq!(mailbox.pop_next().expect("response").data, b"response");
-        assert_eq!(mailbox.pop_next().expect("output").data, b"output");
-        assert_eq!(mailbox.pop_next().expect("event").data, b"event");
+        mailbox.enqueue_reliable(OutboundFrame::text(b"response".to_vec()));
+        mailbox.enqueue_legacy("a", OutboundFrame::text(b"output".to_vec()));
+        mailbox.enqueue_reliable(OutboundFrame::text(b"event".to_vec()));
+        assert_eq!(
+            mailbox.pop_next().expect("response").data.as_ref(),
+            b"response"
+        );
+        assert_eq!(mailbox.pop_next().expect("output").data.as_ref(), b"output");
+        assert_eq!(mailbox.pop_next().expect("event").data.as_ref(), b"event");
     }
 }

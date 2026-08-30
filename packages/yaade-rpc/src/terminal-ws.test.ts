@@ -9,13 +9,14 @@ import {
 } from "./terminal-ws.js";
 
 test("round-trips binary terminal:data frames", () => {
-  const encoded = encodeTerminalDataFrame(42, 7, "term-1", "hello✓");
+  const payload = new Uint8Array([0x68, 0x69, 0xff, 0xe2]);
+  const encoded = encodeTerminalDataFrame(42, 7, "term-1", payload);
   const decoded = decodeTerminalDataFrame(encoded);
   assert.deepEqual(decoded, {
     eventSequence: 42,
     terminalSequence: 7,
     id: "term-1",
-    data: "hello✓",
+    payload,
   });
 });
 
@@ -38,14 +39,14 @@ test("round-trips v2 frames with sequences above 2^32", () => {
     eventSequence,
     terminalSequence,
     "term-u64",
-    "payload",
+    new Uint8Array([1, 2, 3]),
   );
   assert.equal(encoded[0], 0x02);
   assert.deepEqual(decodeTerminalDataFrame(encoded), {
     eventSequence,
     terminalSequence,
     id: "term-u64",
-    data: "payload",
+    payload: new Uint8Array([1, 2, 3]),
   });
 });
 

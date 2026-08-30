@@ -15,7 +15,21 @@ import { TerminalV3Store } from "./terminal-v3-store.js";
 
 // Host owns the authoritative terminal replay. This buffer only bridges an
 // in-flight attach/resync; off-screen terminals are replayed from the host.
-const MAX_BUFFERED_TERMINAL_CHARS = 2 * 1024 * 1024;
+const MAX_BUFFERED_TERMINAL_BYTES = 2 * 1024 * 1024;
+
+function concatTerminalBytes(chunks: readonly Uint8Array[]): Uint8Array {
+  if (chunks.length === 0) return new Uint8Array()
+  if (chunks.length === 1) return chunks[0]!
+  let length = 0
+  for (const chunk of chunks) length += chunk.byteLength
+  const joined = new Uint8Array(length)
+  let offset = 0
+  for (const chunk of chunks) {
+    joined.set(chunk, offset)
+    offset += chunk.byteLength
+  }
+  return joined
+}
 
 type TerminalAttachResult = {
   id: string;
@@ -31,11 +45,11 @@ type TerminalAttachResult = {
     cols: number;
     rows: number;
     createdAt: string;
-    syntheticAnsi: string;
+    syntheticBytes: Uint8Array;
   };
   replayQuality?: "exact" | "checkpoint" | "degraded";
-  outputChunks?: string[];
-  output: string;
+  outputChunks?: Uint8Array[];
+  output: Uint8Array;
   replayTruncated?: boolean;
   replayNeedsQueryResponses?: boolean;
   archiveAvailable?: boolean;
@@ -59,7 +73,7 @@ function invokeTerminalHot(
 
 export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
   type TerminalDataListener = (
-    data: string,
+    data: Uint8Array,
     replay?: boolean,
     replayNeedsQueryResponses?: boolean,
     replayTruncated?: boolean,
@@ -74,7 +88,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     Set<TerminalDataRegistration>
   >();
   type BufferedTerminalData = {
-    data: string;
+    data: Uint8Array;
     sequence: number;
     replay?: boolean;
     replayNeedsQueryResponses?: boolean;
@@ -100,7 +114,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
 
   const bufferTerminalData = (
     id: string,
-    data: string,
+    data: Uint8Array,
     sequence: number,
     replay = false,
     replayNeedsQueryResponses = false,
@@ -114,19 +128,19 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     if (replayTruncated) buffered.replayTruncated = true
     if (acknowledge) buffered.acknowledge = acknowledge
     pending.push(buffered)
-    let size = (terminalDataBufferSizes.get(id) ?? 0) + data.length;
-    while (size > MAX_BUFFERED_TERMINAL_CHARS && pending.length > 1) {
-      size -= pending.shift()!.data.length;
+    let size = (terminalDataBufferSizes.get(id) ?? 0) + data.byteLength;
+    while (size > MAX_BUFFERED_TERMINAL_BYTES && pending.length > 1) {
+      size -= pending.shift()!.data.byteLength;
       terminalBufferGaps.add(id);
     }
-    if (size > MAX_BUFFERED_TERMINAL_CHARS) terminalBufferGaps.add(id);
+    if (size > MAX_BUFFERED_TERMINAL_BYTES) terminalBufferGaps.add(id);
     terminalDataBuffers.set(id, pending);
     terminalDataBufferSizes.set(id, size);
   };
 
   const deliverTerminalData = (
     id: string,
-    data: string,
+    data: Uint8Array,
     replay = false,
     replayNeedsQueryResponses = false,
     replayTruncated = false,
@@ -230,10 +244,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       if (!page || page.chunks.length === 0 || page.nextSequence <= cursor) break;
       const pageHasGap = page.firstSequence > cursor + 1;
       const replay: TerminalReplayChunk = {
-        data:
-          page.chunks.length === 1
-            ? page.chunks[0]!
-            : page.chunks.join(""),
+        data: concatTerminalBytes(page.chunks),
         replayNeedsQueryResponses:
           result.replayNeedsQueryResponses === true,
         replayTruncated:
@@ -294,7 +305,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       let chunks =
         result.outputChunks && result.outputChunks.length > 0
           ? result.outputChunks
-          : result.output
+          : result.output.byteLength > 0
             ? [result.output]
             : [];
       const archived = await streamArchivedReplay(
@@ -320,8 +331,8 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       }
       terminalResyncing.delete(id);
       let firstReplayChunk = true;
-      if (result.checkpoint?.syntheticAnsi) {
-        const checkpoint = result.checkpoint.syntheticAnsi;
+      if (result.checkpoint?.syntheticBytes.byteLength) {
+        const checkpoint = result.checkpoint.syntheticBytes;
         if (
           !deliverTerminalData(
             id,
@@ -344,7 +355,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
       for (const chunk of chunks) {
         const replayTruncated =
           firstReplayChunk && result.replayTruncated === true;
-        if (chunk) {
+        if (chunk.byteLength > 0) {
           if (
             !deliverTerminalData(
               id,
@@ -495,7 +506,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
 
   transport.on("terminal:data", (...args: unknown[]) => {
     const id = args[0] as string;
-    const data = args[1] as string;
+    const data = args[1] as Uint8Array;
     const sequence = (args[2] as number | undefined) ?? 0;
     const rawAcknowledge = args[3];
     const transportAcknowledge =
@@ -703,9 +714,9 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
           let replayedThrough = result.lastSequence;
           if (options?.onReplay) {
             let archiveCursor = replayAfterSequence;
-            if (result.checkpoint?.syntheticAnsi) {
+            if (result.checkpoint?.syntheticBytes.byteLength) {
               await options.onReplay({
-                data: result.checkpoint.syntheticAnsi,
+                data: result.checkpoint.syntheticBytes,
                 replayNeedsQueryResponses: false,
                 replayTruncated: false,
               });
@@ -731,12 +742,12 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
               const chunks =
                 result.outputChunks && result.outputChunks.length > 0
                   ? result.outputChunks
-                  : result.output
+                  : result.output.byteLength > 0
                     ? [result.output]
                     : [];
               let firstChunk = true;
               for (const data of chunks) {
-                if (!data) continue;
+                if (data.byteLength === 0) continue;
                 await options.onReplay({
                   data,
                   replayNeedsQueryResponses:
@@ -793,7 +804,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
               }
             } else if (kept.length > 0) {
               let size = 0;
-              for (const chunk of kept) size += chunk.data.length;
+              for (const chunk of kept) size += chunk.data.byteLength;
               terminalDataBuffers.set(id, kept);
               terminalDataBufferSizes.set(id, size);
             }
@@ -802,7 +813,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
           const replayedResult = {
             ...result,
             outputChunks: [],
-            output: "",
+            output: new Uint8Array(),
           };
           delete replayedResult.checkpoint;
           return replayedResult;

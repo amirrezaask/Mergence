@@ -225,6 +225,19 @@ pub struct TerminalWsAck {
     pub sequence: u64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalChunk {
+    pub sequence: u64,
+    pub data: Bytes,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalFrame {
+    pub event_sequence: u64,
+    pub terminal_id: Arc<str>,
+    pub chunk: TerminalChunk,
+}
+
 #[derive(Debug, Error, PartialEq, Eq)]
 pub enum TerminalFrameError {
     #[error("terminal id is too long for a binary frame")]
@@ -266,6 +279,13 @@ mod tests {
             runtime_version: "0.0.1".to_owned(),
             started_at: "2026-01-02T03:04:05.000Z".to_owned(),
         }
+    }
+
+    #[test]
+    fn terminal_frame_preserves_every_payload_byte() {
+        let payload = (0_u8..=u8::MAX).collect::<Vec<_>>();
+        let frame = encode_terminal_data_frame(7, 11, "term-1", &payload).expect("frame");
+        assert_eq!(&frame[25..], payload);
     }
 
     #[test]

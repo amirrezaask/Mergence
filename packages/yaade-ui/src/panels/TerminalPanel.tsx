@@ -227,9 +227,9 @@ function focusTerminalInput(tabId: string): void {
 
 function applyAttachReplay(
   attached: {
-    output?: string;
-    outputChunks?: string[];
-    checkpoint?: { syntheticAnsi: string };
+    output?: Uint8Array;
+    outputChunks?: Uint8Array[];
+    checkpoint?: { syntheticBytes: Uint8Array };
     replayTruncated?: boolean;
     replayNeedsQueryResponses?: boolean;
   },
@@ -241,22 +241,22 @@ function applyAttachReplay(
   const rawChunks =
     attached.outputChunks && attached.outputChunks.length > 0
       ? attached.outputChunks
-      : attached.output
+      : attached.output?.byteLength
         ? [attached.output]
         : []
-  const chunks = attached.checkpoint?.syntheticAnsi
-    ? [attached.checkpoint.syntheticAnsi, ...rawChunks]
+  const chunks = attached.checkpoint?.syntheticBytes.byteLength
+    ? [attached.checkpoint.syntheticBytes, ...rawChunks]
     : rawChunks
   if (chunks.length === 0) return
-  onOutput?.(tabId, chunks.find(chunk => chunk.length > 0))
+  onOutput?.(tabId)
   if (attached.replayTruncated) {
     // The ring may begin inside an escape sequence. Start the best-effort
     // transcript from a clean parser state instead of inheriting corruption.
     // Keep the reset detached even when the replay itself must answer queries.
-    outputWriter.enqueueReplay("\x1bc")
+    outputWriter.enqueueReplay(new Uint8Array([0x1b, 0x63]))
   }
   for (const chunk of chunks) {
-    if (!chunk) continue
+    if (chunk.byteLength === 0) continue
     if (respondToQueries) outputWriter.enqueue(chunk)
     else outputWriter.enqueueReplay(chunk)
   }
@@ -460,14 +460,14 @@ export function TerminalPanel({
     }
 
     const consumeAttachReplay = (replay: {
-      data: string
+      data: Uint8Array
       replayNeedsQueryResponses: boolean
       replayTruncated: boolean
     }): void => {
       if (cancelled) throw new Error("terminal replay cancelled")
-      if (!outputWriter || !replay.data) return
-      onOutputRef.current?.(tabId, replay.data)
-      if (replay.replayTruncated) outputWriter.enqueueReplay("\x1bc")
+      if (!outputWriter || replay.data.byteLength === 0) return
+      onOutputRef.current?.(tabId)
+      if (replay.replayTruncated) outputWriter.enqueueReplay(new Uint8Array([0x1b, 0x63]))
       if (replay.replayNeedsQueryResponses) {
         outputWriter.enqueue(replay.data)
       } else {
@@ -508,7 +508,7 @@ export function TerminalPanel({
           replayTruncated = false,
           acknowledgeConsumed,
         ) => {
-          onOutputRef.current?.(tabId, data)
+          onOutputRef.current?.(tabId)
           if (replay && !receivingReplay) {
             receivingReplay = true
             outputWriter?.discardPending()
@@ -516,7 +516,7 @@ export function TerminalPanel({
           } else if (!replay) {
             receivingReplay = false
           }
-          const pipelineToken = frameScheduler.received(data.length)
+          const pipelineToken = frameScheduler.received(data.byteLength)
           const parsedAndAcknowledge = () => {
             frameScheduler.parsed(pipelineToken)
             updateSchedulerDiagnostics()
@@ -810,11 +810,11 @@ export function TerminalPanel({
         outputWriter = createTerminalOutputWriter({
           // Bound each command so a pooled worker yields between terminals;
           // the same quantum keeps forced-main fallback tasks finite.
-          maxCharsPerFlush: TERMINAL_SCHEDULER_BUDGETS.workerSliceBytes,
+          maxBytesPerFlush: TERMINAL_SCHEDULER_BUDGETS.workerSliceBytes,
           // The server allows at most 8 MiB of unacknowledged output per PTY.
           // Keep the local queue above that ceiling so server-side resync wins
           // before the writer's last-resort shedding path can drop a frame.
-          maxPendingChars: TERMINAL_SCHEDULER_BUDGETS.livePendingBytes,
+          maxPendingBytes: TERMINAL_SCHEDULER_BUDGETS.livePendingBytes,
           onPosted: bytes => frameScheduler.posted(bytes),
           write: (data, onParsed) => {
             surface?.write(data, onParsed)

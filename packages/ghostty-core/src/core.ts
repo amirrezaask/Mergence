@@ -15,6 +15,9 @@ import {
 import {
   GhosttyRenderUpdateBuilder,
   type GhosttyRenderUpdate,
+  type GhosttyRenderUpdateBuffers,
+  type GhosttyRenderUpdateBuilderDiagnostics,
+  type GhosttyRenderUpdateLease,
 } from "./render-update.js";
 
 const GHOSTTY_SUCCESS = 0;
@@ -422,7 +425,7 @@ export class GhosttyTerminalCore {
     }
   }
 
-  resetAndWrite(data: string): void {
+  resetAndWrite(data: string | Uint8Array): void {
     this.ensureActive();
     this.runtime.call("ghostty_terminal_reset", this.terminal);
     // RIS returns the cursor to Ghostty's built-in steady default, so the
@@ -908,6 +911,14 @@ export class GhosttyTerminalCore {
    * copying it into its retained viewport model.
    */
   renderUpdate(consumeDirty = true, forceFull = false): GhosttyRenderUpdate {
+    const lease = this.tryRenderUpdate(consumeDirty, forceFull)
+    if (!lease) throw new Error("Ghostty render update ring is full")
+    return lease.update
+  }
+
+  tryRenderUpdate(consumeDirty = true, forceFull = false): GhosttyRenderUpdateLease | null {
+    // Reserve ownership before snapshot(true) consumes Ghostty dirty state.
+    if (!this.renderUpdateBuilder.hasFreeSlot) return null
     const snapshot = this.snapshot(consumeDirty);
     const dimensionsChanged =
       snapshot.cols !== this.renderUpdateCols || snapshot.rows !== this.renderUpdateRows;
@@ -917,7 +928,7 @@ export class GhosttyTerminalCore {
       this.renderUpdateRows = snapshot.rows;
     }
     this.renderUpdateFrameId += 1;
-    return this.renderUpdateBuilder.build({
+    return this.renderUpdateBuilder.tryBuild({
       snapshot,
       frameId: this.renderUpdateFrameId,
       generation: this.renderUpdateGeneration,
@@ -931,6 +942,14 @@ export class GhosttyTerminalCore {
 
   releaseRenderUpdate(update: GhosttyRenderUpdate): void {
     this.renderUpdateBuilder.release(update);
+  }
+
+  reclaimRenderUpdate(slotId: number, leaseToken: number, buffers: GhosttyRenderUpdateBuffers): boolean {
+    return this.renderUpdateBuilder.reclaim(slotId, leaseToken, buffers)
+  }
+
+  renderUpdateDiagnostics(): GhosttyRenderUpdateBuilderDiagnostics {
+    return this.renderUpdateBuilder.diagnostics()
   }
 
   selectionText(): string {

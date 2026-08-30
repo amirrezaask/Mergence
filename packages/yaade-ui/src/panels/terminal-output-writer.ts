@@ -1,83 +1,66 @@
 /**
- * Coalesce PTY writes onto animation frames for floods; flush interactive
- * echoes on a microtask (skip rAF) so key→paint stays near one frame.
- *
- * Design:
- * - rAF-batch WS chunks so we call the terminal parser ~once/frame under flood.
- * - Hand all pending bytes to the parser by default. Renderers that parse
- *   synchronously (Ghostty) may opt into a bounded per-frame slice.
- * - Use the write callback only for post-paint work, never to block the next
- *   flush.
+ * Coalesce opaque PTY bytes onto animation frames for floods; flush interactive
+ * echoes on a microtask so key-to-paint stays near one frame.
  */
 
 export type TerminalOutputWriter = {
-  enqueue: (data: string, onConsumed?: () => void) => void
-  /** Queue attach/reconnect replay without applying the live-output cap. */
-  enqueueReplay: (data: string, onConsumed?: () => void) => void
-  /** Discard unparsed live bytes before an authoritative delta replay. */
+  enqueue: (data: Uint8Array, onConsumed?: () => void) => void
+  enqueueReplay: (data: Uint8Array, onConsumed?: () => void) => void
   discardPending: () => void
-  /** Drain pending bytes immediately (attach replay / dispose). */
   flush: () => void
   dispose: () => void
 }
 
 export type TerminalOutputWriterOptions = {
-  write: (data: string, onPainted?: () => void) => void
-  /**
-   * Write replay chunks while the terminal parser's PTY callback is detached.
-   * The callback is invoked once after the whole replay has been parsed.
-   */
-  writeReplay?: (data: readonly string[], onPainted?: () => void) => void
-  /** Called when bytes cross from the local queue into the parser runtime. */
+  write: (data: Uint8Array, onPainted?: () => void) => void
+  writeReplay?: (data: readonly Uint8Array[], onPainted?: () => void) => void
   onPosted?: (bytes: number) => void
-  /** Called after a coalesced write completes its parser callback. */
   onPainted?: () => void
-  /**
-   * When true, after paint run a single viewport refresh. Callers should only
-   * request this for cursor-visibility toggles, and at most once per frame.
-   */
   refreshAfterPaint?: () => void
   schedule?: (cb: () => void) => number
   cancel?: (id: number) => void
-  /**
-   * Browser tabs may suspend animation frames. Keep parsing PTY output on a
-   * timer so terminal queries cannot block a shell while the tab is hidden.
-   */
   scheduleFrameFallback?: (cb: () => void, delayMs: number) => number
   cancelFrameFallback?: (id: number) => void
   maxFrameWaitMs?: number
   frameClockActive?: () => boolean
-  /**
-   * Safety parachute for live output only — with host PTY pause/resume, pending
-   * should stay near one frame. Oldest live chunks shed if something else is
-   * broken. Replay is never shed because it is the state reconstruction input.
-   */
-  maxPendingChars?: number
-  /**
-   * Optional parser slice. It affects flood flushes only; interactive chunks
-   * still use the microtask path.
-   */
-  maxCharsPerFlush?: number
-  /**
-   * Pending chars at or below this flush via microtask (skip rAF). Above this
-   * (or once a flood is in flight) use the animation-frame scheduler.
-   */
-  interactiveMaxChars?: number
+  maxPendingBytes?: number
+  maxBytesPerFlush?: number
+  interactiveMaxBytes?: number
 }
 
-/** Last-resort backlog before oldest pending output is dropped. Host PTY
- *  pause/resume should keep pending near one frame; this is a safety net. */
-export const TERMINAL_OUTPUT_MAX_PENDING_CHARS = 512 * 1024
+export const TERMINAL_OUTPUT_MAX_PENDING_BYTES = 512 * 1024
+export const TERMINAL_OUTPUT_INTERACTIVE_MAX_BYTES = 256
+export const GHOSTTY_OUTPUT_MAX_BYTES_PER_FLUSH = 256 * 1024
 
-/** Idle / echo path — keep key→paint off the rAF clock. */
-export const TERMINAL_OUTPUT_INTERACTIVE_MAX_CHARS = 256
+const CURSOR_HIDE = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x6c])
+const CURSOR_SHOW = new Uint8Array([0x1b, 0x5b, 0x3f, 0x32, 0x35, 0x68])
 
-/**
- * Four maximum-sized 64 KiB host PTY reads per frame. The old 32 KiB slice
- * capped sustained rendering near 2 MiB/s and split every normal host frame
- * across paints; 256 KiB remains bounded while keeping up with terminal floods.
- */
-export const GHOSTTY_OUTPUT_MAX_CHARS_PER_FLUSH = 256 * 1024
+function containsSequence(data: Uint8Array, needle: Uint8Array): boolean {
+  const last = data.byteLength - needle.byteLength
+  for (let offset = 0; offset <= last; offset += 1) {
+    let matches = true
+    for (let index = 0; index < needle.byteLength; index += 1) {
+      if (data[offset + index] !== needle[index]) {
+        matches = false
+        break
+      }
+    }
+    if (matches) return true
+  }
+  return false
+}
+
+function concatParts(parts: readonly Uint8Array[], byteLength: number): Uint8Array {
+  if (parts.length === 0) return new Uint8Array()
+  if (parts.length === 1 && parts[0]!.byteLength === byteLength) return parts[0]!
+  const joined = new Uint8Array(byteLength)
+  let offset = 0
+  for (const part of parts) {
+    joined.set(part, offset)
+    offset += part.byteLength
+  }
+  return joined
+}
 
 export function createTerminalOutputWriter(
   options: TerminalOutputWriterOptions,
@@ -102,110 +85,69 @@ export function createTerminalOutputWriter(
   const frameClockActive =
     options.frameClockActive ??
     (() => typeof document === "undefined" || document.visibilityState !== "hidden")
-  const maxPending = options.maxPendingChars ?? TERMINAL_OUTPUT_MAX_PENDING_CHARS
-  const maxPerFlush = options.maxCharsPerFlush ?? Number.POSITIVE_INFINITY
+  const maxPending = options.maxPendingBytes ?? TERMINAL_OUTPUT_MAX_PENDING_BYTES
+  const maxPerFlush = options.maxBytesPerFlush ?? Number.POSITIVE_INFINITY
   const interactiveMax =
-    options.interactiveMaxChars ?? TERMINAL_OUTPUT_INTERACTIVE_MAX_CHARS
+    options.interactiveMaxBytes ?? TERMINAL_OUTPUT_INTERACTIVE_MAX_BYTES
 
-  type PendingPart = { data: string; onConsumed?: () => void }
+  type PendingPart = { data: Uint8Array; offset: number; onConsumed?: () => void }
   const pendingParts: PendingPart[] = []
-  let pendingChars = 0
-  // Replay is kept separate so the live safety cap can never discard it. The
-  // attach path supplies PTY-sized chunks and flushes this queue synchronously.
   const replayParts: PendingPart[] = []
-  let replayChars = 0
+  let pendingBytes = 0
+  let replayBytes = 0
   let needsRefresh = false
   let raf = 0
   let frameFallback = 0
   let microScheduled = false
   let disposed = false
   let gapDetected = false
-  /** Once true, stay on rAF until the queue drains (flood mode). */
   let floodMode = false
 
   const shedOldest = () => {
-    while (pendingChars > maxPending && pendingParts.length > 1) {
+    while (pendingBytes > maxPending && pendingParts.length > 1) {
       const dropped = pendingParts.shift()!
-      pendingChars -= dropped.data.length
+      pendingBytes -= dropped.data.byteLength - dropped.offset
       gapDetected = true
     }
-    if (pendingChars > maxPending && pendingParts.length === 1) {
+    if (pendingBytes > maxPending && pendingParts.length === 1) {
       const only = pendingParts[0]!
-      only.data = only.data.slice(only.data.length - maxPending)
-      // The frame was only partially consumed, so a cumulative ACK for it
-      // would incorrectly acknowledge the discarded prefix.
+      const available = only.data.byteLength - only.offset
+      only.offset += available - maxPending
       delete only.onConsumed
       gapDetected = true
-      pendingChars = only.data.length
+      pendingBytes = maxPending
     }
   }
 
-  const safeChunkLength = (value: string, requested: number): number => {
-    if (requested >= value.length) return value.length
-    if (requested <= 0) return 0
-    // Never feed a lone UTF-16 surrogate to the UTF-8 terminal parser. Escape
-    // sequences may be split across frames, but code points may not.
-    const previous = value.charCodeAt(requested - 1)
-    if (previous >= 0xd800 && previous <= 0xdbff) return requested + 1
-    return requested
-  }
-
-  /** Take up to `limit` chars, leave the rest queued. */
   const takePending = (
     limit: number,
-  ): { data: string; consumed: Array<() => void> } => {
+  ): { data: Uint8Array; consumed: Array<() => void> } => {
     if (pendingParts.length === 0 || limit <= 0) {
-      return { data: "", consumed: [] }
+      return { data: new Uint8Array(), consumed: [] }
     }
-    if (pendingChars <= limit) {
-      const data =
-        pendingParts.length === 1
-          ? pendingParts[0]!.data
-          : pendingParts.map(part => part.data).join("")
-      const consumed = gapDetected
-        ? []
-        : pendingParts.flatMap(part =>
-            part.onConsumed ? [part.onConsumed] : [],
-          )
-      pendingParts.length = 0
-      pendingChars = 0
-      return { data, consumed }
-    }
-
-    const out: string[] = []
+    const views: Uint8Array[] = []
     const consumed: Array<() => void> = []
     let taken = 0
     while (pendingParts.length > 0 && taken < limit) {
       const head = pendingParts[0]!
-      const room = limit - taken
-      if (head.data.length <= room) {
+      const available = head.data.byteLength - head.offset
+      const count = Math.min(available, limit - taken)
+      views.push(head.data.subarray(head.offset, head.offset + count))
+      head.offset += count
+      pendingBytes -= count
+      taken += count
+      if (head.offset === head.data.byteLength) {
         pendingParts.shift()
-        out.push(head.data)
         if (!gapDetected && head.onConsumed) consumed.push(head.onConsumed)
-        taken += head.data.length
-        pendingChars -= head.data.length
-      } else {
-        const chunkLength = Math.min(
-          head.data.length,
-          safeChunkLength(head.data, room),
-        )
-        out.push(head.data.slice(0, chunkLength))
-        head.data = head.data.slice(chunkLength)
-        pendingChars -= chunkLength
-        taken += chunkLength
       }
     }
-    return {
-      data: out.length === 1 ? out[0]! : out.join(""),
-      consumed,
-    }
+    return { data: concatParts(views, taken), consumed }
   }
 
-  const markRefresh = (data: string): void => {
-    // Only scan for DECCTCEM when a refresh hook is wired (legacy fallback).
+  const markRefresh = (data: Uint8Array): void => {
     if (
       options.refreshAfterPaint != null &&
-      (data.includes("\x1b[?25l") || data.includes("\x1b[?25h"))
+      (containsSequence(data, CURSOR_HIDE) || containsSequence(data, CURSOR_SHOW))
     ) {
       needsRefresh = true
     }
@@ -214,8 +156,9 @@ export function createTerminalOutputWriter(
   const flushReplayNow = (): void => {
     if (disposed || replayParts.length === 0) return
     const parts = replayParts.splice(0)
-    replayChars = 0
-    const doRefresh = needsRefresh && pendingChars === 0
+    const bytes = replayBytes
+    replayBytes = 0
+    const doRefresh = needsRefresh && pendingBytes === 0
     if (doRefresh) needsRefresh = false
     const onPainted = () => {
       if (disposed) return
@@ -223,58 +166,52 @@ export function createTerminalOutputWriter(
       if (doRefresh) options.refreshAfterPaint?.()
       options.onPainted?.()
     }
+    const chunks = parts.map(part => part.data.subarray(part.offset))
     if (options.writeReplay) {
-      options.onPosted?.(parts.reduce((total, part) => total + part.data.length, 0))
-      options.writeReplay(parts.map(part => part.data), onPainted)
+      options.onPosted?.(bytes)
+      options.writeReplay(chunks, onPainted)
       return
     }
-    // Keep the writer usable for simple renderers that do not need a special
-    // replay hook. Production Ghostty supplies writeReplay so its callback is
-    // detached for the complete batch.
-    for (const part of parts) {
-      options.onPosted?.(part.data.length)
-      options.write(part.data)
+    for (const chunk of chunks) {
+      options.onPosted?.(chunk.byteLength)
+      options.write(chunk)
     }
     onPainted()
   }
 
   const flushNow = (unlimited = false) => {
-    if (replayChars > 0) flushReplayNow()
-    if (replayChars > 0) return
+    if (replayBytes > 0) flushReplayNow()
+    if (replayBytes > 0) return
     raf = 0
     microScheduled = false
-    if (disposed || (pendingChars === 0 && !needsRefresh)) {
-      if (pendingChars === 0) floodMode = false
+    if (disposed || (pendingBytes === 0 && !needsRefresh)) {
+      if (pendingBytes === 0) floodMode = false
       return
     }
     const { data, consumed } = takePending(
       unlimited ? Number.POSITIVE_INFINITY : maxPerFlush,
     )
-    const doRefresh = needsRefresh && pendingChars === 0
+    const doRefresh = needsRefresh && pendingBytes === 0
     if (doRefresh) needsRefresh = false
-    if (data.length === 0) {
+    if (data.byteLength === 0) {
       if (doRefresh) options.refreshAfterPaint?.()
       options.onPainted?.()
-      if (pendingChars === 0) floodMode = false
+      if (pendingBytes === 0) floodMode = false
       return
     }
-    // Terminal writes are non-blocking — do NOT gate the next flush on this
-    // callback. The parser owns its throughput scheduling.
-    options.onPosted?.(data.length)
+    options.onPosted?.(data.byteLength)
     options.write(data, () => {
       if (disposed) return
       for (const acknowledge of consumed) acknowledge()
       if (doRefresh) options.refreshAfterPaint?.()
       options.onPainted?.()
     })
-    // Leftover from an optional test cap — schedule next frame without waiting.
-    if (pendingChars > 0 || needsRefresh) scheduleNext()
+    if (pendingBytes > 0 || needsRefresh) scheduleNext()
     else floodMode = false
   }
 
   const scheduleRaf = () => {
     if (disposed || raf) return
-    // Cancel a pending interactive microtask — flood wins.
     microScheduled = false
     raf = schedule(() => {
       if (!raf) return
@@ -285,8 +222,6 @@ export function createTerminalOutputWriter(
       }
       flushNow(false)
     })
-    // requestAnimationFrame is suspended in background tabs. Parsing must not
-    // be: shells such as fish wait synchronously for DA/DSR query responses.
     frameFallback = scheduleFrameFallback(() => {
       frameFallback = 0
       if (!raf) return
@@ -302,7 +237,6 @@ export function createTerminalOutputWriter(
     queueMicrotask(() => {
       if (!microScheduled || disposed) return
       microScheduled = false
-      // Flood may have armed rAF between schedule and run.
       if (raf) return
       flushNow(false)
     })
@@ -321,7 +255,7 @@ export function createTerminalOutputWriter(
       scheduleMicro()
       return
     }
-    if (floodMode || pendingChars > interactiveMax) {
+    if (floodMode || pendingBytes > interactiveMax) {
       floodMode = true
       scheduleRaf()
     } else {
@@ -331,66 +265,51 @@ export function createTerminalOutputWriter(
 
   return {
     enqueue(data, onConsumed) {
-      if (disposed || data.length === 0) return
-      pendingParts.push(onConsumed ? { data, onConsumed } : { data })
-      pendingChars += data.length
+      if (disposed || data.byteLength === 0) return
+      pendingParts.push(onConsumed ? { data, offset: 0, onConsumed } : { data, offset: 0 })
+      pendingBytes += data.byteLength
       shedOldest()
       markRefresh(data)
       scheduleNext()
     },
     enqueueReplay(data, onConsumed) {
-      if (disposed || data.length === 0) return
-      replayParts.push(onConsumed ? { data, onConsumed } : { data })
-      replayChars += data.length
+      if (disposed || data.byteLength === 0) return
+      replayParts.push(onConsumed ? { data, offset: 0, onConsumed } : { data, offset: 0 })
+      replayBytes += data.byteLength
       markRefresh(data)
     },
     discardPending() {
-      if (raf) {
-        cancel(raf)
-        raf = 0
-      }
-      if (frameFallback) {
-        cancelFrameFallback(frameFallback)
-        frameFallback = 0
-      }
+      if (raf) cancel(raf)
+      if (frameFallback) cancelFrameFallback(frameFallback)
+      raf = 0
+      frameFallback = 0
       microScheduled = false
       pendingParts.length = 0
-      pendingChars = 0
+      pendingBytes = 0
       needsRefresh = false
       floodMode = false
       gapDetected = false
     },
     flush() {
-      if (raf) {
-        cancel(raf)
-        raf = 0
-      }
-      if (frameFallback) {
-        cancelFrameFallback(frameFallback)
-        frameFallback = 0
-      }
+      if (raf) cancel(raf)
+      if (frameFallback) cancelFrameFallback(frameFallback)
+      raf = 0
+      frameFallback = 0
       microScheduled = false
-      // Replay must land fully before connect. It bypasses the live queue cap,
-      // the per-frame slice.
       flushReplayNow()
-      // Drain any normal bytes that arrived around the attach handshake too.
-      while (pendingChars > 0 || needsRefresh) flushNow(true)
+      while (pendingBytes > 0 || needsRefresh) flushNow(true)
     },
     dispose() {
       disposed = true
-      if (raf) {
-        cancel(raf)
-        raf = 0
-      }
-      if (frameFallback) {
-        cancelFrameFallback(frameFallback)
-        frameFallback = 0
-      }
+      if (raf) cancel(raf)
+      if (frameFallback) cancelFrameFallback(frameFallback)
+      raf = 0
+      frameFallback = 0
       microScheduled = false
       pendingParts.length = 0
-      pendingChars = 0
       replayParts.length = 0
-      replayChars = 0
+      pendingBytes = 0
+      replayBytes = 0
       needsRefresh = false
       floodMode = false
     },

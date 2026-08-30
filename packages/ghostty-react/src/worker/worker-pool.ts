@@ -4,7 +4,7 @@ export type WorkerPoolMessageHandler = (value: unknown) => void;
 export type WorkerPoolErrorHandler = (error: Error) => void;
 
 export interface TerminalWorkerChannel {
-  post(command: TerminalWorkerCommand): void;
+  post(command: TerminalWorkerCommand, transfer?: readonly Transferable[]): void;
   release(): void;
 }
 
@@ -53,8 +53,8 @@ export class TerminalWorkerPool {
     slot.terminals.set(terminalId, { message: onMessage, error: onError });
     let released = false;
     return {
-      post: command => {
-        if (!released) slot.worker.postMessage(command);
+      post: (command, transfer = []) => {
+        if (!released) slot.worker.postMessage(command, [...transfer]);
       },
       release: () => {
         if (released) return;

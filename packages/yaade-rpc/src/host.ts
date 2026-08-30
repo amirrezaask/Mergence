@@ -170,7 +170,7 @@ export const TerminalCheckpoint = Schema.Struct({
   cols: Schema.Number,
   rows: Schema.Number,
   createdAt: Schema.String,
-  syntheticAnsi: Schema.String,
+  syntheticBytes: Schema.Uint8ArrayFromBase64,
 });
 export type TerminalCheckpoint = Schema.Schema.Type<typeof TerminalCheckpoint>;
 

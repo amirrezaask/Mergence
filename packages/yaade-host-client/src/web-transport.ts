@@ -750,13 +750,13 @@ export class WebHostTransport implements YaadeHostTransport {
           serverEpoch: this.serverEpoch,
           sequence: decoded.eventSequence,
           channel: "terminal:data",
-          args: [decoded.id, decoded.data, decoded.terminalSequence],
+          args: [decoded.id, decoded.payload, decoded.terminalSequence],
         }
       : {
           protocolVersion: 1,
           sequence: decoded.eventSequence,
           channel: "terminal:data",
-          args: [decoded.id, decoded.data, decoded.terminalSequence],
+          args: [decoded.id, decoded.payload, decoded.terminalSequence],
         };
     const identity =
       this.serverId && this.serverEpoch

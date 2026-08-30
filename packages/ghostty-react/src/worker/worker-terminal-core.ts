@@ -1,5 +1,6 @@
 import {
   GhosttyTerminalCore,
+  ghosttyRenderUpdateBuffers,
   type GhosttyMouseInput,
   type GhosttyPointInput,
   type GhosttyRenderUpdate,
@@ -11,6 +12,8 @@ import {
 import { browserGhosttyWasmSource } from "@yaade/ghostty-core/loaders/browser";
 import {
   serializeKeyboardEvent,
+  terminalByteCommandTransferList,
+  terminalRenderUpdateBufferTransferList,
   TERMINAL_WORKER_PROTOCOL_VERSION,
   validateTerminalWorkerCommand,
   validateTerminalWorkerEvent,
@@ -25,11 +28,12 @@ export type ParsedCallback = () => void;
 export interface TerminalCoreRuntime {
   readonly kind: TerminalRuntimeKind;
   readonly runtimeGeneration: number;
-  write(data: string, parsed?: ParsedCallback): void;
-  writeReplay(chunks: readonly string[], parsed?: ParsedCallback): void;
-  resetAndWrite(data: string, parsed?: ParsedCallback): void;
+  write(data: string | Uint8Array, parsed?: ParsedCallback): void;
+  writeReplay(chunks: readonly Uint8Array[], parsed?: ParsedCallback): void;
+  resetAndWrite(data: string | Uint8Array, parsed?: ParsedCallback): void;
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void;
   setTheme(theme: GhosttyTheme): void;
+  setPresentationState(visible: boolean, focused: boolean): void;
   scroll(delta: number): void;
   scrollToBottom(): void;
   isViewportActive(): boolean;
@@ -70,11 +74,12 @@ export class MainThreadTerminalCore implements TerminalCoreRuntime {
       options.onData, browserGhosttyWasmSource(), options.responsePolicy,
     ));
   }
-  write(data: string, parsed?: ParsedCallback): void { this.core.write(data); parsed?.(); }
-  writeReplay(chunks: readonly string[], parsed?: ParsedCallback): void { this.core.writeReplay(chunks); parsed?.(); }
-  resetAndWrite(data: string, parsed?: ParsedCallback): void { this.core.resetAndWrite(data); parsed?.(); }
+  write(data: string | Uint8Array, parsed?: ParsedCallback): void { this.core.write(data); parsed?.(); }
+  writeReplay(chunks: readonly Uint8Array[], parsed?: ParsedCallback): void { this.core.writeReplay(chunks); parsed?.(); }
+  resetAndWrite(data: string | Uint8Array, parsed?: ParsedCallback): void { this.core.resetAndWrite(data); parsed?.(); }
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void { this.core.resize(cols, rows, cellWidth, cellHeight); }
   setTheme(theme: GhosttyTheme): void { this.core.setTheme(theme); }
+  setPresentationState(): void {}
   scroll(delta: number): void { this.core.scroll(delta); }
   scrollToBottom(): void { this.core.scrollToBottom(); }
   isViewportActive(): boolean { return this.core.isViewportActive(); }
@@ -110,6 +115,8 @@ export type RuntimeCreateOptions = {
   readonly cellWidth: number;
   readonly cellHeight: number;
   readonly theme: GhosttyTheme;
+  readonly visible: boolean;
+  readonly focused: boolean;
   readonly responsePolicy?: GhosttyResponsePolicy;
   readonly onData: (data: string) => void;
   readonly onUpdate: () => void;
@@ -123,6 +130,14 @@ const EMPTY_STATE: TerminalRuntimeState = {
   applicationCursorKeys: false, synchronizedOutput: false,
 };
 let nextTerminalId = 1;
+const localTextEncoder = new TextEncoder()
+
+function ownedTerminalBytes(data: string | Uint8Array): Uint8Array<ArrayBuffer> {
+  const source = typeof data === "string" ? localTextEncoder.encode(data) : data
+  const owned = new Uint8Array(source.byteLength)
+  owned.set(source)
+  return owned
+}
 
 export class WorkerTerminalCore implements TerminalCoreRuntime {
   readonly kind = "worker" as const;
@@ -133,13 +148,20 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
   get runtimeGeneration(): number { return this.generation; }
   private lastEventSequence = 0;
   private state: TerminalRuntimeState = EMPTY_STATE;
+  private presentation: { visible: boolean; focused: boolean };
   private readonly updates: GhosttyRenderUpdate[] = [];
+  private readonly updateLeases = new WeakMap<GhosttyRenderUpdate, {
+    readonly slotId: number
+    readonly leaseToken: number
+    released: boolean
+  }>()
   private readonly parsed = new Map<number, ParsedCallback>();
   private disposed = false;
   private recovering = false;
   private initializationReject: ((error: Error) => void) | null = null;
 
   private constructor(private readonly options: RuntimeCreateOptions) {
+    this.presentation = { visible: options.visible, focused: options.focused };
     this.channel = terminalWorkerPool().acquire(
       this.terminalId,
       value => this.receive(value),
@@ -167,6 +189,7 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
       runtime.send({
         type: "create", cols: options.cols, rows: options.rows,
         cellWidth: options.cellWidth, cellHeight: options.cellHeight, theme: options.theme,
+        visible: options.visible, focused: options.focused,
       });
     });
   }
@@ -184,7 +207,13 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
     if (!validateTerminalWorkerCommand(command)) {
       throw new Error("Invalid terminal worker command");
     }
-    this.channel.post(command);
+    const transfer = command.type === "writeBytes" ||
+      command.type === "writeReplayBytes" || command.type === "resetAndWriteBytes"
+      ? terminalByteCommandTransferList(command)
+      : command.type === "recycleRenderUpdate"
+        ? terminalRenderUpdateBufferTransferList(command.buffers)
+        : []
+    this.channel.post(command, transfer);
     return sequence;
   }
 
@@ -196,8 +225,16 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
     switch (value.type) {
       case "packedUpdate":
         this.state = value.state;
+        this.updateLeases.set(value.update, {
+          slotId: value.slotId,
+          leaseToken: value.leaseToken,
+          released: false,
+        })
         this.updates.push(value.update);
-        if (this.updates.length > 8) this.updates.shift();
+        if (this.updates.length > 3) {
+          const discarded = this.updates.shift()
+          if (discarded) this.releaseRenderUpdate(discarded)
+        }
         this.options.onUpdate();
         return;
       case "encodedInput": if (value.data.length > 0) this.options.onData(value.data); return;
@@ -240,6 +277,8 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
       cellWidth: this.options.cellWidth,
       cellHeight: this.options.cellHeight,
       theme: this.options.theme,
+      visible: this.presentation.visible,
+      focused: this.presentation.focused,
     });
   }
 
@@ -249,11 +288,26 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
     if (parsed) this.parsed.set(sequence, parsed);
   }
 
-  write(data: string, parsed?: ParsedCallback): void { this.command({ type: "write", data }, parsed); }
-  writeReplay(chunks: readonly string[], parsed?: ParsedCallback): void { this.command({ type: "writeReplay", chunks }, parsed); }
-  resetAndWrite(data: string, parsed?: ParsedCallback): void { this.command({ type: "resetAndWrite", data }, parsed); }
+  write(data: string | Uint8Array, parsed?: ParsedCallback): void {
+    const owned = ownedTerminalBytes(data)
+    this.command({ type: "writeBytes", data: owned }, parsed)
+  }
+  writeReplay(chunks: readonly Uint8Array[], parsed?: ParsedCallback): void {
+    const owned = chunks.filter(chunk => chunk.byteLength > 0).map(ownedTerminalBytes)
+    if (owned.length === 0) { parsed?.(); return }
+    this.command({ type: "writeReplayBytes", chunks: owned }, parsed)
+  }
+  resetAndWrite(data: string | Uint8Array, parsed?: ParsedCallback): void {
+    const owned = ownedTerminalBytes(data)
+    this.command({ type: "resetAndWriteBytes", data: owned }, parsed)
+  }
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void { this.command({ type: "resize", cols, rows, cellWidth, cellHeight }); }
   setTheme(theme: GhosttyTheme): void { this.command({ type: "setTheme", theme }); }
+  setPresentationState(visible: boolean, focused: boolean): void {
+    if (this.presentation.visible === visible && this.presentation.focused === focused) return;
+    this.presentation = { visible, focused };
+    this.command({ type: "setPresentationState", visible, focused });
+  }
   scroll(delta: number): void { this.command({ type: "scroll", delta }); }
   scrollToBottom(): void { this.command({ type: "scrollToBottom" }); }
   isViewportActive(): boolean { return this.state.viewportActive; }
@@ -278,14 +332,25 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
   title(): string { return this.state.title; }
   hyperlinkAt(): string | null { return null; }
   drainRenderUpdates(): readonly GhosttyRenderUpdate[] { return this.updates.splice(0); }
-  releaseRenderUpdate(): void {}
+  releaseRenderUpdate(update: GhosttyRenderUpdate): void {
+    const lease = this.updateLeases.get(update)
+    if (!lease || lease.released || this.disposed || this.recovering) return
+    lease.released = true
+    const buffers = ghosttyRenderUpdateBuffers(update)
+    this.command({
+      type: "recycleRenderUpdate",
+      slotId: lease.slotId,
+      leaseToken: lease.leaseToken,
+      buffers,
+    })
+  }
   requestFullFrame(): void { this.command({ type: "requestFullFrame" }); }
   dispose(): void {
     if (this.disposed) return;
+    for (const update of this.updates.splice(0)) this.releaseRenderUpdate(update)
     this.command({ type: "dispose" });
     this.disposed = true;
     this.parsed.clear();
-    this.updates.length = 0;
     this.channel.release();
   }
 }

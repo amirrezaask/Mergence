@@ -23,9 +23,13 @@ recovery.
 
 ## Data path
 
-PTY output is consumed continuously into bounded in-memory replay, paged
-block-compressed history, and Ghostty semantic state. Output is batched to
-reduce framing overhead, while small interactive chunks flush immediately. A
+PTY output remains opaque ordered bytes from each host read through immutable
+`Bytes` replay/history/live frames, binary WebSocket payloads, browser
+`Uint8Array` replay coordination, and the Ghostty worker. Only terminal IDs and
+completed textual protocol metadata are UTF-8 decoded. Durable history stores a
+versioned big-endian binary record stream inside compressed blocks, so malformed
+or incomplete UTF-8 replays exactly. Output is batched by byte count to reduce
+framing overhead, while small interactive chunks flush immediately. A
 fresh browser renderer attaches behind a replay barrier: history pages are
 parsed in order, concurrent live bytes remain bounded, and only bytes newer
 than the replay cursor are released afterward. Each browser has an isolated

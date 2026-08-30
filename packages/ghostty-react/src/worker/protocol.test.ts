@@ -2,10 +2,12 @@ import assert from "node:assert/strict"
 import { test } from "vite-plus/test"
 import {
   GHOSTTY_RENDER_UPDATE_VERSION,
+  ghosttyRenderUpdateBuffers,
   type GhosttyRenderUpdate,
 } from "../core.js"
 import {
   TERMINAL_WORKER_PROTOCOL_VERSION,
+  terminalRenderUpdateBufferTransferList,
   terminalRenderUpdateTransferList,
   validateTerminalWorkerCommand,
   validateTerminalWorkerEvent,
@@ -47,12 +49,25 @@ function packedUpdate(): GhosttyRenderUpdate {
 
 test("validates every worker command family and rejects malformed envelopes", () => {
   const commands = [
-    { ...envelope, type: "create", cols: 80, rows: 24, cellWidth: 8, cellHeight: 16, theme: { foreground: { r: 1, g: 2, b: 3 }, background: { r: 0, g: 0, b: 0 }, cursor: { r: 1, g: 2, b: 3 } } },
-    { ...envelope, type: "write", data: "x" },
-    { ...envelope, type: "writeReplay", chunks: ["x"] },
-    { ...envelope, type: "resetAndWrite", data: "x" },
+    { ...envelope, type: "create", cols: 80, rows: 24, cellWidth: 8, cellHeight: 16, visible: true, focused: false, theme: { foreground: { r: 1, g: 2, b: 3 }, background: { r: 0, g: 0, b: 0 }, cursor: { r: 1, g: 2, b: 3 } } },
+    { ...envelope, type: "writeBytes", data: new Uint8Array([120]) },
+    { ...envelope, type: "writeReplayBytes", chunks: [new Uint8Array([120])] },
+    { ...envelope, type: "resetAndWriteBytes", data: new Uint8Array([120]) },
+    {
+      ...envelope,
+      type: "recycleRenderUpdate",
+      slotId: 0,
+      leaseToken: 1,
+      buffers: {
+        dirtyRows: new ArrayBuffer(4), rowFlags: new ArrayBuffer(1),
+        graphemeOffsets: new ArrayBuffer(4), graphemeLengths: new ArrayBuffer(4),
+        foregrounds: new ArrayBuffer(4), backgrounds: new ArrayBuffer(4),
+        styles: new ArrayBuffer(2), graphemes: new ArrayBuffer(1),
+      },
+    },
     { ...envelope, type: "resize", cols: 80, rows: 24, cellWidth: 8, cellHeight: 16 },
     { ...envelope, type: "setTheme", theme: {} },
+    { ...envelope, type: "setPresentationState", visible: false, focused: true },
     { ...envelope, type: "setFontMetrics", cellWidth: 8, cellHeight: 16 },
     { ...envelope, type: "key", action: "press", event: {} },
     { ...envelope, type: "paste", data: "x" },
@@ -73,7 +88,8 @@ test("validates every worker command family and rejects malformed envelopes", ()
   for (const command of commands) assert.equal(validateTerminalWorkerCommand(command), true)
   assert.equal(validateTerminalWorkerCommand({ ...envelope, version: 99, type: "dispose" }), false)
   assert.equal(validateTerminalWorkerCommand({ ...envelope, sequence: -1, type: "dispose" }), false)
-  assert.equal(validateTerminalWorkerCommand({ ...envelope, type: "write", data: 1 }), false)
+  assert.equal(validateTerminalWorkerCommand({ ...envelope, type: "writeBytes", data: "x" }), false)
+  assert.equal(validateTerminalWorkerCommand({ ...envelope, type: "writeBytes", data: new Uint8Array() }), false)
   assert.equal(validateTerminalWorkerCommand({ ...envelope, type: "unknown" }), false)
 })
 
@@ -82,6 +98,8 @@ test("validates packed events and transfers ownership of every packed buffer", (
   const event = {
     ...envelope,
     type: "packedUpdate",
+    slotId: 0,
+    leaseToken: 1,
     update,
     state: {
       title: "",
@@ -98,6 +116,10 @@ test("validates packed events and transfers ownership of every packed buffer", (
   assert.equal(validateTerminalWorkerEvent(event), true)
   const transfer = terminalRenderUpdateTransferList(update)
   assert.equal(transfer.length, 8)
+  assert.equal(
+    terminalRenderUpdateBufferTransferList(ghosttyRenderUpdateBuffers(update)).length,
+    8,
+  )
   structuredClone(event, { transfer })
   assert.equal(update.dirtyRows.buffer.byteLength, 0)
   assert.equal(validateTerminalWorkerEvent({ ...event, generation: 0 }), false)

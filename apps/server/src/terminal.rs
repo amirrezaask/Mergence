@@ -7,12 +7,14 @@ use std::{
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
+        mpsc,
     },
     thread,
     time::Instant,
 };
 
 use base64::Engine as _;
+use bytes::Bytes;
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -24,7 +26,7 @@ use crate::{
     terminal_control::{
         RuntimeTerminalLease, TerminalControlError, TerminalControlRegistry, TerminalLeaseRequest,
     },
-    terminal_history::{HistoryError, TerminalHistoryArchive, TerminalHistoryPage},
+    terminal_history::{Base64Bytes, HistoryError, TerminalHistoryArchive, TerminalHistoryPage},
     wire::{TerminalLeaseMode, TerminalMutationFence},
 };
 
@@ -143,8 +145,8 @@ pub struct TerminalCheckpoint {
     pub rows: u16,
     #[serde(rename = "createdAt")]
     pub created_at: String,
-    #[serde(rename = "syntheticAnsi")]
-    pub synthetic_ansi: String,
+    #[serde(rename = "syntheticBytes")]
+    pub synthetic_bytes: Base64Bytes,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -156,8 +158,8 @@ pub struct TerminalAttach {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub checkpoint: Option<TerminalCheckpoint>,
     pub replay_quality: &'static str,
-    pub output_chunks: Vec<String>,
-    pub output: String,
+    pub output_chunks: Vec<Base64Bytes>,
+    pub output: Base64Bytes,
     pub replay_truncated: bool,
     pub replay_needs_query_responses: bool,
     pub archive_available: bool,
@@ -201,8 +203,7 @@ impl TerminalError {
 #[derive(Clone)]
 struct ReplayChunk {
     sequence: u64,
-    data: String,
-    bytes: usize,
+    data: Bytes,
 }
 
 struct EntryState {
@@ -217,7 +218,8 @@ struct EntryState {
     rows: u16,
     disposed: bool,
     replay_ready_clients: HashSet<String>,
-    query_leftover: String,
+    query_leftover: Vec<u8>,
+    osc7_scanner: Osc7Scanner,
     terminal_theme: TerminalTheme,
     theme_updates_enabled: bool,
     live_cwd: Option<PathBuf>,
@@ -412,7 +414,8 @@ impl TerminalHost {
                 rows,
                 disposed: false,
                 replay_ready_clients: HashSet::new(),
-                query_leftover: String::new(),
+                query_leftover: Vec::new(),
+                osc7_scanner: Osc7Scanner::default(),
                 terminal_theme,
                 theme_updates_enabled: false,
                 live_cwd: None,
@@ -431,12 +434,18 @@ impl TerminalHost {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(id.clone(), Arc::clone(&entry));
 
+        let (output_tx, output_rx) = mpsc::sync_channel(64);
         let weak = Arc::downgrade(self);
-        let thread_name = format!("yaade-pty-{id}");
+        let owner_entry = Arc::clone(&entry);
         thread::Builder::new()
-            .name(thread_name)
+            .name(format!("yaade-terminal-owner-{id}"))
             .stack_size(1024 * 1024)
-            .spawn(move || output_loop(weak, entry, &mut reader))
+            .spawn(move || output_loop(weak, owner_entry, output_rx))
+            .map_err(|error| TerminalError::Runtime(error.to_string()))?;
+        thread::Builder::new()
+            .name(format!("yaade-pty-reader-{id}"))
+            .stack_size(256 * 1024)
+            .spawn(move || pty_reader_loop(output_tx, &mut reader))
             .map_err(|error| TerminalError::Runtime(error.to_string()))?;
 
         Ok(TerminalCreateResult {
@@ -583,7 +592,7 @@ impl TerminalHost {
             .replay
             .iter()
             .filter(|chunk| chunk.sequence > raw_after)
-            .map(|chunk| chunk.data.clone())
+            .map(|chunk| Base64Bytes(chunk.data.clone()))
             .collect::<Vec<_>>();
         if self.history.available(id) && raw_after < state.sequence {
             output_chunks = bounded_replay_tail(output_chunks, EXITED_REPLAY_BYTES);
@@ -601,7 +610,7 @@ impl TerminalHost {
             },
             checkpoint,
             output_chunks,
-            output: String::new(),
+            output: Base64Bytes(Bytes::new()),
             replay_truncated: state.replay_truncated && after_sequence + 1 < replay_floor,
             replay_needs_query_responses: !state.replay_ready_clients.contains(client_id),
             archive_available: true,
@@ -892,131 +901,94 @@ impl TerminalHost {
     }
 }
 
-fn decode_pty_utf8(pending: &mut Vec<u8>, bytes: &[u8]) -> String {
-    pending.extend_from_slice(bytes);
-    let mut decoded = String::new();
-    let mut offset = 0;
-
-    while offset < pending.len() {
-        match std::str::from_utf8(&pending[offset..]) {
-            Ok(valid) => {
-                decoded.push_str(valid);
-                offset = pending.len();
-            }
-            Err(error) => {
-                let valid_end = offset + error.valid_up_to();
-                // SAFETY: `valid_up_to` identifies a UTF-8 boundary and a valid prefix.
-                decoded.push_str(
-                    std::str::from_utf8(&pending[offset..valid_end])
-                        .expect("validated UTF-8 prefix"),
-                );
-                offset = valid_end;
-                let Some(invalid_len) = error.error_len() else {
-                    break;
-                };
-                decoded.push('\u{fffd}');
-                offset += invalid_len;
-            }
-        }
-    }
-
-    pending.drain(..offset);
-    decoded
-}
-
-fn output_loop(
-    host: Weak<TerminalHost>,
-    entry: Arc<TerminalEntry>,
-    reader: &mut Box<dyn Read + Send>,
-) {
+fn pty_reader_loop(output: mpsc::SyncSender<Bytes>, reader: &mut Box<dyn Read + Send>) {
     let mut buffer = vec![0_u8; 64 * 1024];
-    let mut pending_utf8 = Vec::with_capacity(4);
     loop {
         match reader.read(&mut buffer) {
             Ok(0) => break,
             Ok(read) => {
-                let Some(host) = host.upgrade() else {
-                    return;
-                };
-                // PTY reads have arbitrary boundaries. Keep an incomplete UTF-8
-                // code point for the next read instead of replacing each fragment.
-                let data = decode_pty_utf8(&mut pending_utf8, &buffer[..read]);
-                if data.is_empty() {
-                    continue;
-                }
-                let mut state = entry
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner());
-                if state.disposed {
-                    return;
-                }
-                state.sequence += 1;
-                let sequence = state.sequence;
-                let bytes = data.len();
-                state.replay.push_back(ReplayChunk {
-                    sequence,
-                    data: data.clone(),
-                    bytes,
-                });
-                state.replay_bytes += bytes;
-                while state.replay_bytes > MAX_REPLAY_BYTES && state.replay.len() > 1 {
-                    if let Some(dropped) = state.replay.pop_front() {
-                        state.replay_bytes = state.replay_bytes.saturating_sub(dropped.bytes);
-                        state.replay_truncated = true;
-                    }
-                }
-                let terminal_requests = feed_terminal_requests(&mut state.query_leftover, &data);
-                let terminal_theme = state.terminal_theme;
-                let mut terminal_queries = Vec::new();
-                for request in terminal_requests {
-                    match request {
-                        TerminalRequest::Query(query) => {
-                            terminal_queries.push((query, state.theme_updates_enabled));
-                        }
-                        TerminalRequest::SetThemeUpdates(enabled) => {
-                            state.theme_updates_enabled = enabled;
-                        }
-                    }
-                }
-                if !terminal_queries.is_empty()
-                    && let Ok(mut writer) = entry.writer.lock()
+                if output
+                    .send(Bytes::copy_from_slice(&buffer[..read]))
+                    .is_err()
                 {
-                    for (query, theme_updates_enabled) in terminal_queries {
-                        let _ = write_terminal_query_response(
-                            &mut **writer,
-                            query,
-                            terminal_theme,
-                            theme_updates_enabled,
-                        );
-                    }
-                    let _ = writer.flush();
+                    break;
                 }
-                if let Some(cwd) = parse_osc7_cwd(&data) {
-                    state.live_cwd = Some(cwd.canonicalize().unwrap_or(cwd));
-                }
-                if let Some(recorder) = state.recorder.as_mut() {
-                    recorder.process(data.as_bytes());
-                    state.bytes_since_checkpoint =
-                        state.bytes_since_checkpoint.saturating_add(bytes);
-                    if state.bytes_since_checkpoint >= CHECKPOINT_BYTES
-                        || state.last_checkpoint_at.elapsed() >= CHECKPOINT_INTERVAL
-                    {
-                        store_checkpoint(&entry.terminal_epoch, &mut state);
-                    }
-                }
-                drop(state);
-                if let Err(error) = host.history.append(&entry.id, sequence, &data) {
-                    eprintln!("[terminal-history] {error}");
-                }
-                host.events.emit(
-                    "terminal:data",
-                    vec![json!(entry.id), json!(data), json!(sequence)],
-                );
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
             Err(_) => break,
         }
+    }
+}
+
+fn output_loop(host: Weak<TerminalHost>, entry: Arc<TerminalEntry>, output: mpsc::Receiver<Bytes>) {
+    while let Ok(data) = output.recv() {
+        let Some(host) = host.upgrade() else {
+            return;
+        };
+        let mut state = entry
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if state.disposed {
+            return;
+        }
+        state.sequence += 1;
+        let sequence = state.sequence;
+        state.replay.push_back(ReplayChunk {
+            sequence,
+            data: data.clone(),
+        });
+        state.replay_bytes = state.replay_bytes.saturating_add(data.len());
+        while state.replay_bytes > MAX_REPLAY_BYTES && state.replay.len() > 1 {
+            if let Some(dropped) = state.replay.pop_front() {
+                state.replay_bytes = state.replay_bytes.saturating_sub(dropped.data.len());
+                state.replay_truncated = true;
+            }
+        }
+        let terminal_requests = feed_terminal_requests(&mut state.query_leftover, &data);
+        let terminal_theme = state.terminal_theme;
+        let mut terminal_queries = Vec::new();
+        for request in terminal_requests {
+            match request {
+                TerminalRequest::Query(query) => {
+                    terminal_queries.push((query, state.theme_updates_enabled));
+                }
+                TerminalRequest::SetThemeUpdates(enabled) => {
+                    state.theme_updates_enabled = enabled;
+                }
+            }
+        }
+        if !terminal_queries.is_empty()
+            && let Ok(mut writer) = entry.writer.lock()
+        {
+            for (query, theme_updates_enabled) in terminal_queries {
+                let _ = write_terminal_query_response(
+                    &mut **writer,
+                    query,
+                    terminal_theme,
+                    theme_updates_enabled,
+                );
+            }
+            let _ = writer.flush();
+        }
+        if let Some(cwd) = state.osc7_scanner.feed(&data) {
+            state.live_cwd = Some(cwd.canonicalize().unwrap_or(cwd));
+        }
+        if let Some(recorder) = state.recorder.as_mut() {
+            recorder.process(&data);
+            state.bytes_since_checkpoint = state.bytes_since_checkpoint.saturating_add(data.len());
+            if state.bytes_since_checkpoint >= CHECKPOINT_BYTES
+                || state.last_checkpoint_at.elapsed() >= CHECKPOINT_INTERVAL
+            {
+                store_checkpoint(&entry.terminal_epoch, &mut state);
+            }
+        }
+        drop(state);
+        if let Err(error) = host.history.append(&entry.id, sequence, data.clone()) {
+            eprintln!("[terminal-history] {error}");
+        }
+        host.events
+            .emit_terminal(Arc::<str>::from(entry.id.as_str()), sequence, data);
     }
     let Some(host) = host.upgrade() else {
         return;
@@ -1047,7 +1019,7 @@ fn output_loop(
     state.signal = signal;
     while state.replay_bytes > EXITED_REPLAY_BYTES && state.replay.len() > 1 {
         if let Some(dropped) = state.replay.pop_front() {
-            state.replay_bytes = state.replay_bytes.saturating_sub(dropped.bytes);
+            state.replay_bytes = state.replay_bytes.saturating_sub(dropped.data.len());
             state.replay_truncated = true;
         }
     }
@@ -1087,56 +1059,102 @@ fn store_checkpoint(terminal_epoch: &str, state: &mut EntryState) {
         cols: state.cols,
         rows: state.rows,
         created_at: crate::model::now_iso(),
-        synthetic_ansi: String::from_utf8_lossy(&ansi).into_owned(),
+        synthetic_bytes: Base64Bytes(Bytes::from(ansi)),
     });
     state.bytes_since_checkpoint = 0;
     state.last_checkpoint_at = Instant::now();
 }
 
-fn bounded_replay_tail(chunks: Vec<String>, max_bytes: usize) -> Vec<String> {
+fn bounded_replay_tail(chunks: Vec<Base64Bytes>, max_bytes: usize) -> Vec<Base64Bytes> {
     let mut total = 0_usize;
     let mut start = chunks.len();
     for (index, chunk) in chunks.iter().enumerate().rev() {
-        if start < chunks.len() && total.saturating_add(chunk.len()) > max_bytes {
+        if start < chunks.len() && total.saturating_add(chunk.0.len()) > max_bytes {
             break;
         }
         start = index;
-        total = total.saturating_add(chunk.len());
+        total = total.saturating_add(chunk.0.len());
     }
     chunks.into_iter().skip(start).collect()
 }
 
-fn parse_osc7_cwd(chunk: &str) -> Option<PathBuf> {
-    let mut remaining = chunk;
-    let mut last = None;
-    while let Some(start) = remaining.find("\u{1b}]7;") {
-        let payload = &remaining[start + 4..];
-        let bel = payload.find('\u{7}');
-        let st = payload.find("\u{1b}\\");
-        let end = match (bel, st) {
-            (Some(left), Some(right)) => left.min(right),
-            (Some(end), None) | (None, Some(end)) => end,
-            (None, None) => break,
-        };
-        let value = payload[..end].trim();
-        if let Some(without_scheme) = value.strip_prefix("file://") {
-            let pathname = if without_scheme.starts_with('/') {
-                Some(without_scheme)
+const OSC7_PREFIX: &[u8] = b"\x1b]7;";
+const MAX_OSC7_PAYLOAD_BYTES: usize = 4096;
+
+#[derive(Default)]
+struct Osc7Scanner {
+    prefix_len: usize,
+    payload: Vec<u8>,
+    in_payload: bool,
+    saw_escape: bool,
+}
+
+impl Osc7Scanner {
+    fn feed(&mut self, chunk: &[u8]) -> Option<PathBuf> {
+        let mut last = None;
+        for &byte in chunk {
+            if !self.in_payload {
+                if byte == OSC7_PREFIX[self.prefix_len] {
+                    self.prefix_len += 1;
+                    if self.prefix_len == OSC7_PREFIX.len() {
+                        self.prefix_len = 0;
+                        self.in_payload = true;
+                        self.payload.clear();
+                    }
+                } else {
+                    self.prefix_len = usize::from(byte == OSC7_PREFIX[0]);
+                }
+                continue;
+            }
+            if self.saw_escape {
+                self.saw_escape = false;
+                if byte == b'\\' {
+                    last = self.finish().or(last);
+                    continue;
+                }
+                if self.payload.len() < MAX_OSC7_PAYLOAD_BYTES {
+                    self.payload.push(0x1b);
+                }
+            }
+            if byte == 0x07 {
+                last = self.finish().or(last);
+            } else if byte == 0x1b {
+                self.saw_escape = true;
+            } else if self.payload.len() < MAX_OSC7_PAYLOAD_BYTES {
+                self.payload.push(byte);
             } else {
-                without_scheme
-                    .find('/')
-                    .map(|slash| &without_scheme[slash..])
-            };
-            if let Some(pathname) = pathname
-                && let Ok(decoded) = percent_encoding::percent_decode_str(pathname).decode_utf8()
-                && !decoded.is_empty()
-            {
-                last = Some(PathBuf::from(decoded.as_ref()));
+                self.reset();
             }
         }
-        remaining = &payload[end + if st == Some(end) { 2 } else { 1 }..];
+        last
     }
-    last
+
+    fn finish(&mut self) -> Option<PathBuf> {
+        let path = std::str::from_utf8(&self.payload).ok().and_then(osc7_path);
+        self.reset();
+        path
+    }
+
+    fn reset(&mut self) {
+        self.prefix_len = 0;
+        self.payload.clear();
+        self.in_payload = false;
+        self.saw_escape = false;
+    }
+}
+
+fn osc7_path(value: &str) -> Option<PathBuf> {
+    let without_scheme = value.trim().strip_prefix("file://")?;
+    let pathname = if without_scheme.starts_with('/') {
+        without_scheme
+    } else {
+        let slash = without_scheme.find('/')?;
+        &without_scheme[slash..]
+    };
+    let decoded = percent_encoding::percent_decode_str(pathname)
+        .decode_utf8()
+        .ok()?;
+    (!decoded.is_empty()).then(|| PathBuf::from(decoded.as_ref()))
 }
 
 fn signal_number(signal: &str) -> Option<i32> {
@@ -1173,76 +1191,74 @@ const fn terminal_query(query: TerminalQuery) -> TerminalRequest {
 
 // Neovim enables DEC mode 2031 after DECRQM reports support, then uses the
 // unsolicited 997 DSR to re-query OSC colors when the terminal palette changes.
-const TERMINAL_REQUEST_SEQUENCES: [(&str, TerminalRequest); 13] = [
+const TERMINAL_REQUEST_SEQUENCES: [(&[u8], TerminalRequest); 13] = [
     (
-        "\u{1b}[?2031$p",
+        b"\x1b[?2031$p",
         terminal_query(TerminalQuery::ThemeUpdatesMode),
     ),
     (
-        "\u{1b}[?996n",
+        b"\x1b[?996n",
         terminal_query(TerminalQuery::ThemePreference),
     ),
-    ("\u{1b}[?2031h", TerminalRequest::SetThemeUpdates(true)),
-    ("\u{1b}[?2031l", TerminalRequest::SetThemeUpdates(false)),
+    (b"\x1b[?2031h", TerminalRequest::SetThemeUpdates(true)),
+    (b"\x1b[?2031l", TerminalRequest::SetThemeUpdates(false)),
     (
-        "\u{1b}[0c",
+        b"\x1b[0c",
         terminal_query(TerminalQuery::PrimaryDeviceAttributes),
     ),
     (
-        "\u{1b}[c",
+        b"\x1b[c",
         terminal_query(TerminalQuery::PrimaryDeviceAttributes),
     ),
-    ("\u{1b}[5n", terminal_query(TerminalQuery::OperatingStatus)),
+    (b"\x1b[5n", terminal_query(TerminalQuery::OperatingStatus)),
     (
-        "\u{1b}]10;?\u{7}",
+        b"\x1b]10;?\x07",
         terminal_query(TerminalQuery::ForegroundColor),
     ),
     (
-        "\u{1b}]10;?\u{1b}\\",
+        b"\x1b]10;?\x1b\\",
         terminal_query(TerminalQuery::ForegroundColor),
     ),
     (
-        "\u{1b}]11;?\u{7}",
+        b"\x1b]11;?\x07",
         terminal_query(TerminalQuery::BackgroundColor),
     ),
     (
-        "\u{1b}]11;?\u{1b}\\",
+        b"\x1b]11;?\x1b\\",
         terminal_query(TerminalQuery::BackgroundColor),
     ),
+    (b"\x1b]12;?\x07", terminal_query(TerminalQuery::CursorColor)),
     (
-        "\u{1b}]12;?\u{7}",
-        terminal_query(TerminalQuery::CursorColor),
-    ),
-    (
-        "\u{1b}]12;?\u{1b}\\",
+        b"\x1b]12;?\x1b\\",
         terminal_query(TerminalQuery::CursorColor),
     ),
 ];
 
-fn feed_terminal_requests(leftover: &mut String, chunk: &str) -> Vec<TerminalRequest> {
-    let data = std::mem::take(leftover) + chunk;
+fn feed_terminal_requests(leftover: &mut Vec<u8>, chunk: &[u8]) -> Vec<TerminalRequest> {
     let mut requests = Vec::new();
-    let mut cursor = 0;
-    while let Some(offset) = data[cursor..].find('\u{1b}') {
-        let escape = cursor + offset;
-        let rest = &data[escape..];
-        if let Some((sequence, request)) = TERMINAL_REQUEST_SEQUENCES
+    for &byte in chunk {
+        if leftover.is_empty() {
+            if byte == 0x1b {
+                leftover.push(byte);
+            }
+            continue;
+        }
+        leftover.push(byte);
+        if let Some((_, request)) = TERMINAL_REQUEST_SEQUENCES
             .iter()
-            .find(|(sequence, _)| rest.starts_with(sequence))
+            .find(|(sequence, _)| *sequence == leftover.as_slice())
         {
             requests.push(*request);
-            cursor = escape + sequence.len();
-        } else if TERMINAL_REQUEST_SEQUENCES
+            leftover.clear();
+        } else if !TERMINAL_REQUEST_SEQUENCES
             .iter()
-            .any(|(sequence, _)| sequence.starts_with(rest))
+            .any(|(sequence, _)| sequence.starts_with(leftover))
         {
-            leftover.push_str(rest);
-            break;
-        } else {
-            cursor = escape + 1;
-        }
-        if cursor >= data.len() {
-            break;
+            let restart = byte == 0x1b;
+            leftover.clear();
+            if restart {
+                leftover.push(byte);
+            }
         }
     }
     requests
@@ -1458,11 +1474,11 @@ mod tests {
 
     #[test]
     fn terminal_query_scanner_handles_da1_queries_split_across_chunks() {
-        let mut leftover = String::new();
-        assert!(feed_terminal_requests(&mut leftover, "before\u{1b}[").is_empty());
-        assert_eq!(leftover, "\u{1b}[");
+        let mut leftover = Vec::new();
+        assert!(feed_terminal_requests(&mut leftover, b"before\x1b[").is_empty());
+        assert_eq!(leftover, b"\x1b[");
         assert_eq!(
-            feed_terminal_requests(&mut leftover, "0cafter\u{1b}[c"),
+            feed_terminal_requests(&mut leftover, b"0cafter\x1b[c"),
             vec![
                 terminal_query(TerminalQuery::PrimaryDeviceAttributes),
                 terminal_query(TerminalQuery::PrimaryDeviceAttributes),
@@ -1473,21 +1489,21 @@ mod tests {
 
     #[test]
     fn terminal_query_scanner_handles_color_and_status_queries() {
-        let mut leftover = String::new();
-        assert!(feed_terminal_requests(&mut leftover, "before\u{1b}]11;").is_empty());
-        assert_eq!(leftover, "\u{1b}]11;");
+        let mut leftover = Vec::new();
+        assert!(feed_terminal_requests(&mut leftover, b"before\x1b]11;").is_empty());
+        assert_eq!(leftover, b"\x1b]11;");
         assert_eq!(
-            feed_terminal_requests(&mut leftover, "?\u{7}\u{1b}[5"),
+            feed_terminal_requests(&mut leftover, b"?\x07\x1b[5"),
             vec![terminal_query(TerminalQuery::BackgroundColor)]
         );
-        assert_eq!(leftover, "\u{1b}[5");
+        assert_eq!(leftover, b"\x1b[5");
         assert_eq!(
-            feed_terminal_requests(&mut leftover, "n\u{1b}]10;?\u{1b}"),
+            feed_terminal_requests(&mut leftover, b"n\x1b]10;?\x1b"),
             vec![terminal_query(TerminalQuery::OperatingStatus)]
         );
-        assert_eq!(leftover, "\u{1b}]10;?\u{1b}");
+        assert_eq!(leftover, b"\x1b]10;?\x1b");
         assert_eq!(
-            feed_terminal_requests(&mut leftover, "\\\u{1b}]12;?\u{7}"),
+            feed_terminal_requests(&mut leftover, b"\\\x1b]12;?\x07"),
             vec![
                 terminal_query(TerminalQuery::ForegroundColor),
                 terminal_query(TerminalQuery::CursorColor),
@@ -1498,11 +1514,11 @@ mod tests {
 
     #[test]
     fn terminal_query_scanner_handles_theme_update_negotiation() {
-        let mut leftover = String::new();
-        assert!(feed_terminal_requests(&mut leftover, "\u{1b}[?2031").is_empty());
-        assert_eq!(leftover, "\u{1b}[?2031");
+        let mut leftover = Vec::new();
+        assert!(feed_terminal_requests(&mut leftover, b"\x1b[?2031").is_empty());
+        assert_eq!(leftover, b"\x1b[?2031");
         assert_eq!(
-            feed_terminal_requests(&mut leftover, "$p\u{1b}[?2031h\u{1b}[?996n\u{1b}[?2031l"),
+            feed_terminal_requests(&mut leftover, b"$p\x1b[?2031h\x1b[?996n\x1b[?2031l"),
             vec![
                 terminal_query(TerminalQuery::ThemeUpdatesMode),
                 TerminalRequest::SetThemeUpdates(true),
@@ -1544,28 +1560,21 @@ mod tests {
     }
 
     #[test]
-    fn pty_utf8_decoder_preserves_code_points_split_across_reads() {
-        let mut pending = Vec::new();
-        let line = "─".as_bytes();
-
-        assert_eq!(decode_pty_utf8(&mut pending, &line[..1]), "");
-        assert_eq!(decode_pty_utf8(&mut pending, &line[1..2]), "");
-        assert_eq!(decode_pty_utf8(&mut pending, &line[2..]), "─");
-        assert!(pending.is_empty());
+    fn terminal_bytes_are_not_decoded_or_joined_at_read_boundaries() {
+        let first = Bytes::copy_from_slice(b"ok\xffdone\xe2");
+        let second = Bytes::copy_from_slice(b"\x94\x80");
+        assert_eq!(first.as_ref(), b"ok\xffdone\xe2");
+        assert_eq!(second.as_ref(), b"\x94\x80");
     }
 
     #[test]
-    fn pty_utf8_decoder_replaces_only_malformed_input() {
-        let mut pending = Vec::new();
-
-        assert_eq!(decode_pty_utf8(&mut pending, b"ok\xffdone\xe2"), "ok�done");
-        assert_eq!(decode_pty_utf8(&mut pending, b"\x94\x80"), "─");
-        assert!(pending.is_empty());
-    }
-
-    #[test]
-    fn osc7_parser_uses_the_last_report_and_decodes_paths() {
-        let value = "\u{1b}]7;file://host/tmp/first\u{7}\u{1b}]7;file:///tmp/last%20dir\u{1b}\\";
-        assert_eq!(parse_osc7_cwd(value), Some(PathBuf::from("/tmp/last dir")));
+    fn osc7_scanner_uses_the_last_report_and_decodes_only_completed_payloads() {
+        let value = b"\x1b]7;file://host/tmp/first\x07\x1b]7;file:///tmp/last%20dir\x1b\\";
+        let mut scanner = Osc7Scanner::default();
+        let mut last = None;
+        for byte in value {
+            last = scanner.feed(std::slice::from_ref(byte)).or(last);
+        }
+        assert_eq!(last, Some(PathBuf::from("/tmp/last dir")));
     }
 }

@@ -4,6 +4,7 @@ import type { GhosttyCell, GhosttySnapshot } from "./core.js";
 import {
   GHOSTTY_RENDER_STYLE,
   GhosttyRenderUpdateBuilder,
+  ghosttyRenderUpdateBuffers,
   packGhosttyColor,
   unpackGhosttyColor,
   validateGhosttyRenderUpdate,
@@ -134,6 +135,36 @@ test("does not mutate a borrowed update and reuses a released buffer", () => {
   builder.release(second);
   builder.release(third);
 });
+
+test("recycles exactly three transferred slots without steady replacement", () => {
+  const builder = new GhosttyRenderUpdateBuilder()
+  const source = snapshot([[cell("recycle")]], [0])
+  const leases = [1, 2, 3].map(frameId => builder.tryBuild({
+    snapshot: source,
+    frameId,
+    generation: 1,
+    full: true,
+  }))
+  assert.ok(leases.every(lease => lease !== null))
+  assert.equal(builder.tryBuild({ snapshot: source, frameId: 4, generation: 1, full: true }), null)
+  const lease = leases[0]!
+  assert.ok(lease)
+  const transferred = structuredClone(lease.update, {
+    transfer: Object.values(ghosttyRenderUpdateBuffers(lease.update)),
+  })
+  assert.equal(lease.update.graphemes.buffer.byteLength, 0)
+  const returned = ghosttyRenderUpdateBuffers(transferred)
+  const mainReleased = structuredClone(returned, {
+    transfer: Object.values(returned),
+  })
+  assert.equal(returned.graphemes.byteLength, 0)
+  assert.equal(builder.reclaim(lease.slotId, lease.leaseToken, mainReleased), true)
+  assert.equal(builder.reclaim(lease.slotId, lease.leaseToken, mainReleased), false)
+  const before = builder.diagnostics().backingBuffersAllocated
+  const next = builder.tryBuild({ snapshot: source, frameId: 5, generation: 1, full: true })
+  assert.ok(next)
+  assert.equal(builder.diagnostics().backingBuffersAllocated, before)
+})
 
 test("rejects malformed versions, lengths, row order, and grapheme offsets", () => {
   const builder = new GhosttyRenderUpdateBuilder();

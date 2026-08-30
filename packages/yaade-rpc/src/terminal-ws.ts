@@ -36,7 +36,7 @@ function utf8Decode(bytes: Uint8Array): string {
  *   u64 terminalSequence
  *   u16 idLen
  *   id bytes (utf8)
- *   data bytes (utf8, remainder)
+ *   payload bytes (opaque remainder)
  *
  * v1 (u32 sequences) is still decoded for mixed-version clients.
  */
@@ -44,21 +44,20 @@ export function encodeTerminalDataFrame(
   eventSequence: number,
   terminalSequence: number,
   id: string,
-  data: string,
+  payload: Uint8Array,
 ): Uint8Array {
   const idBytes = utf8Encode(id);
-  const dataBytes = utf8Encode(data);
   if (idBytes.length > 0xffff) {
     throw new Error("terminal id too long for binary frame");
   }
-  const out = new Uint8Array(1 + 8 + 8 + 2 + idBytes.length + dataBytes.length);
+  const out = new Uint8Array(1 + 8 + 8 + 2 + idBytes.length + payload.byteLength);
   const view = new DataView(out.buffer, out.byteOffset, out.byteLength);
   out[0] = TERMINAL_DATA_FRAME_TYPE;
   view.setBigUint64(1, toU64(eventSequence));
   view.setBigUint64(9, toU64(terminalSequence));
   view.setUint16(17, idBytes.length);
   out.set(idBytes, 19);
-  out.set(dataBytes, 19 + idBytes.length);
+  out.set(payload, 19 + idBytes.length);
   return out;
 }
 
@@ -76,7 +75,7 @@ export type DecodedTerminalDataFrame = {
   eventSequence: number;
   terminalSequence: number;
   id: string;
-  data: string;
+  payload: Uint8Array;
 };
 
 export function decodeTerminalDataFrame(
@@ -95,8 +94,8 @@ export function decodeTerminalDataFrame(
     const idLen = view.getUint16(17);
     if (19 + idLen > buf.length) return null;
     const id = utf8Decode(buf.subarray(19, 19 + idLen));
-    const data = utf8Decode(buf.subarray(19 + idLen));
-    return { eventSequence, terminalSequence, id, data };
+    const payload = buf.subarray(19 + idLen);
+    return { eventSequence, terminalSequence, id, payload };
   }
   if (buf[0] !== TERMINAL_DATA_FRAME_TYPE_V1) return null;
   const eventSequence = view.getUint32(1);
@@ -104,8 +103,8 @@ export function decodeTerminalDataFrame(
   const idLen = view.getUint16(9);
   if (11 + idLen > buf.length) return null;
   const id = utf8Decode(buf.subarray(11, 11 + idLen));
-  const data = utf8Decode(buf.subarray(11 + idLen));
-  return { eventSequence, terminalSequence, id, data };
+  const payload = buf.subarray(11 + idLen);
+  return { eventSequence, terminalSequence, id, payload };
 }
 
 export type TerminalWsAck = {

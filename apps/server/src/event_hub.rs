@@ -1,12 +1,12 @@
 use std::{
-    collections::VecDeque,
-    sync::{Arc, Mutex},
+    collections::{HashMap, VecDeque},
+    sync::{Arc, Mutex, Weak},
 };
 
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use crate::wire::{HostEvent, ServerIdentity};
+use crate::wire::{HostEvent, ServerIdentity, TerminalChunk, TerminalFrame};
 
 const DEFAULT_EVENT_CAPACITY: usize = 1024;
 const DEFAULT_EVENT_BYTES: usize = 16 * 1024 * 1024;
@@ -25,6 +25,16 @@ struct EventState {
     history_dropped_through: u64,
 }
 
+pub trait TerminalSubscriber: Send + Sync {
+    fn enqueue_terminal(&self, frame: Arc<TerminalFrame>);
+}
+
+#[derive(Clone, Debug)]
+pub enum HubMessage {
+    Event(Arc<HostEvent>),
+    Terminal(Arc<TerminalFrame>),
+}
+
 /// Result of taking a reconnect replay snapshot.
 #[derive(Clone, Debug)]
 pub struct ReplayWindow {
@@ -39,12 +49,15 @@ pub struct ReplayWindow {
 /// The hub retains each event in one `Arc`; WebSocket clients clone the pointer
 /// instead of cloning event payload strings. PTY paint and semantic frames skip
 /// this history because terminals own their replay state.
+type TerminalSubscribers = HashMap<String, HashMap<String, Weak<dyn TerminalSubscriber>>>;
+
 pub struct EventHub {
     identity: ServerIdentity,
     capacity: usize,
     max_history_bytes: usize,
     state: Mutex<EventState>,
-    sender: broadcast::Sender<Arc<HostEvent>>,
+    sender: broadcast::Sender<Arc<HubMessage>>,
+    terminal_subscribers: Mutex<TerminalSubscribers>,
 }
 
 impl EventHub {
@@ -71,6 +84,7 @@ impl EventHub {
                 history_dropped_through: 0,
             }),
             sender,
+            terminal_subscribers: Mutex::new(HashMap::new()),
         }
     }
 
@@ -112,12 +126,95 @@ impl EventHub {
         }
         // Send while the sequence lock is held. Concurrent producers cannot
         // publish sequence N+1 before sequence N.
-        let _ = self.sender.send(Arc::clone(&event));
+        let _ = self
+            .sender
+            .send(Arc::new(HubMessage::Event(Arc::clone(&event))));
         event
     }
 
+    pub fn emit_terminal(
+        &self,
+        terminal_id: impl Into<Arc<str>>,
+        sequence: u64,
+        data: bytes::Bytes,
+    ) -> Arc<TerminalFrame> {
+        let mut state = self
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        state.sequence = state.sequence.saturating_add(1);
+        let frame = Arc::new(TerminalFrame {
+            event_sequence: state.sequence,
+            terminal_id: terminal_id.into(),
+            chunk: TerminalChunk { sequence, data },
+        });
+        // Allocate and dispatch under the same sequence lock used by metadata.
+        // Subscriber enqueue is nonblocking, so socket IO cannot enter this path.
+        let mut subscribers = self
+            .terminal_subscribers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(attached) = subscribers.get_mut(frame.terminal_id.as_ref()) {
+            attached.retain(|_, subscriber| {
+                let Some(subscriber) = subscriber.upgrade() else {
+                    return false;
+                };
+                subscriber.enqueue_terminal(Arc::clone(&frame));
+                true
+            });
+        }
+        frame
+    }
+
+    pub fn attach_terminal(
+        &self,
+        terminal_id: &str,
+        connection_id: &str,
+        subscriber: &Arc<dyn TerminalSubscriber>,
+    ) {
+        self.terminal_subscribers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .entry(terminal_id.to_owned())
+            .or_default()
+            .insert(connection_id.to_owned(), Arc::downgrade(subscriber));
+    }
+
+    pub fn detach_terminal(&self, terminal_id: &str, connection_id: &str) {
+        let mut subscribers = self
+            .terminal_subscribers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if let Some(attached) = subscribers.get_mut(terminal_id) {
+            attached.remove(connection_id);
+            if attached.is_empty() {
+                subscribers.remove(terminal_id);
+            }
+        }
+    }
+
+    pub fn detach_connection(&self, connection_id: &str) {
+        let mut subscribers = self
+            .terminal_subscribers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        subscribers.retain(|_, attached| {
+            attached.remove(connection_id);
+            !attached.is_empty()
+        });
+    }
+
     #[must_use]
-    pub fn subscribe(&self) -> broadcast::Receiver<Arc<HostEvent>> {
+    pub fn terminal_subscriber_count(&self, terminal_id: &str) -> usize {
+        self.terminal_subscribers
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(terminal_id)
+            .map_or(0, HashMap::len)
+    }
+
+    #[must_use]
+    pub fn subscribe(&self) -> broadcast::Receiver<Arc<HubMessage>> {
         self.sender.subscribe()
     }
 
@@ -165,9 +262,7 @@ impl EventHub {
 }
 
 fn is_ephemeral(channel: &str) -> bool {
-    channel == "terminal:data"
-        || channel == "terminal:semantic"
-        || channel == "security:device-revoked"
+    channel == "terminal:semantic" || channel == "security:device-revoked"
 }
 
 fn estimate_event_bytes(event: &HostEvent) -> usize {
@@ -210,18 +305,41 @@ mod tests {
     }
 
     #[test]
-    fn terminal_paint_is_live_only() {
+    fn terminal_bytes_are_live_only_and_globally_ordered() {
         let hub = EventHub::with_limits(identity(), 4, 4096);
-        hub.emit(
-            "terminal:data",
-            vec![serde_json::json!("term-1"), serde_json::json!("paint")],
-        );
+        let frame = hub.emit_terminal("term-1", 1, bytes::Bytes::from_static(b"paint\xff"));
         hub.emit("mux:event", vec![serde_json::json!("retained")]);
 
         let replay = hub.replay_window(0);
+        assert_eq!(frame.event_sequence, 1);
+        assert_eq!(frame.chunk.data.as_ref(), b"paint\xff");
         assert_eq!(replay.events.len(), 1);
         assert_eq!(replay.events[0].channel.as_ref(), "mux:event");
         assert_eq!(replay.events[0].sequence, 2);
+    }
+
+    #[test]
+    fn terminal_frames_only_visit_attached_subscribers() {
+        #[derive(Default)]
+        struct Subscriber(Mutex<Vec<Arc<TerminalFrame>>>);
+        impl TerminalSubscriber for Subscriber {
+            fn enqueue_terminal(&self, frame: Arc<TerminalFrame>) {
+                self.0.lock().expect("frames").push(frame);
+            }
+        }
+
+        let hub = EventHub::with_limits(identity(), 4, 4096);
+        let attached_impl = Arc::new(Subscriber::default());
+        let attached: Arc<dyn TerminalSubscriber> = attached_impl.clone();
+        let unrelated: Arc<dyn TerminalSubscriber> = Arc::new(Subscriber::default());
+        hub.attach_terminal("term-1", "connection-1", &attached);
+        hub.attach_terminal("term-2", "connection-2", &unrelated);
+        hub.emit_terminal("term-1", 1, bytes::Bytes::from_static(b"only attached"));
+
+        assert_eq!(hub.terminal_subscriber_count("term-1"), 1);
+        assert_eq!(attached_impl.0.lock().expect("frames").len(), 1);
+        hub.detach_connection("connection-1");
+        assert_eq!(hub.terminal_subscriber_count("term-1"), 0);
     }
 
     #[test]

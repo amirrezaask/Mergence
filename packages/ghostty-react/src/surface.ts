@@ -950,6 +950,8 @@ export class GhosttyTerminalSurface {
       cellWidth: metrics.width,
       cellHeight: metrics.height,
       theme: options.theme,
+      visible: options.visible ?? true,
+      focused: false,
       responsePolicy: options.responsePolicy,
       onData: options.onData ?? (() => undefined),
       onUpdate: () => surface?.afterRuntimeUpdate(),
@@ -999,6 +1001,7 @@ export class GhosttyTerminalSurface {
   setVisible(visible: boolean): void {
     if (this.disposed || this.visible === visible) return;
     this.visible = visible;
+    this.core.setPresentationState(visible, this.focused);
     if (!visible) {
       if (this.frame !== 0) {
         window.cancelAnimationFrame(this.frame);
@@ -1018,20 +1021,20 @@ export class GhosttyTerminalSurface {
     this.requestRender();
   }
 
-  write(data: string, onParsed?: ParsedCallback): void {
+  write(data: string | Uint8Array, onParsed?: ParsedCallback): void {
     if (this.disposed) return;
     this.core.write(data, onParsed);
     if (this.core.kind === "main") this.afterTerminalWrite();
   }
 
   /** Feed attach/reconnect output with Ghostty's PTY callback detached. */
-  writeReplay(chunks: readonly string[], onParsed?: ParsedCallback): void {
+  writeReplay(chunks: readonly Uint8Array[], onParsed?: ParsedCallback): void {
     if (this.disposed || chunks.length === 0) return;
     this.core.writeReplay(chunks, onParsed);
     if (this.core.kind === "main") this.afterTerminalWrite();
   }
 
-  resetAndWrite(data: string, onParsed?: ParsedCallback): void {
+  resetAndWrite(data: string | Uint8Array, onParsed?: ParsedCallback): void {
     if (this.disposed) return;
     this.core.resetAndWrite(data, onParsed);
     if (this.core.kind === "main") this.afterTerminalWrite(true);
@@ -1039,10 +1042,12 @@ export class GhosttyTerminalSurface {
 
   private afterRuntimeUpdate(): void {
     if (this.disposed) return;
-    this.afterTerminalWrite();
+    // Worker updates have already passed hidden/DEC-2026 suppression and its
+    // safety deadline. Do not suppress the authoritative catch-up a second time.
+    this.afterTerminalWrite(false, true);
   }
 
-  private afterTerminalWrite(forceFullRender = false): void {
+  private afterTerminalWrite(forceFullRender = false, workerPrepared = false): void {
     this.terminalStateDirty = true;
     this.syncTitle();
     // Restart the blink cycle from the visible phase so the cursor never sits
@@ -1054,7 +1059,7 @@ export class GhosttyTerminalSurface {
     // TUI redraws such as Pi bracket a multi-write update with DEC mode 2026.
     // Parsing must continue, but painting a fragment exposes cleared and moved
     // rows as corruption. Paint once the producer closes the transaction.
-    if (this.core.isModeEnabled(2026)) {
+    if (!workerPrepared && this.core.isModeEnabled(2026)) {
       this.synchronizedOutputActive = true;
       if (this.frame !== 0) {
         window.cancelAnimationFrame(this.frame);
@@ -1631,12 +1636,14 @@ export class GhosttyTerminalSurface {
 
   private readonly onFocus = () => {
     this.focused = true;
+    this.core.setPresentationState(this.visible, true);
     this.cursorOn = true;
     this.requestRender();
   };
 
   private readonly onBlur = () => {
     this.focused = false;
+    this.core.setPresentationState(this.visible, false);
     this.linkModifierActive = false;
     this.refreshHoveredLink();
     // Suppressions survive blur deliberately: a shortcut that moves focus (for

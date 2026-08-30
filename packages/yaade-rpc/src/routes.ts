@@ -137,8 +137,8 @@ const TerminalAttachResult = Schema.NullOr(
     protocolVersion: Schema.optional(Schema.Number),
     checkpoint: Schema.optional(TerminalCheckpoint),
     replayQuality: Schema.optional(Schema.Literal("exact", "checkpoint", "degraded")),
-    outputChunks: Schema.Array(Schema.String),
-    output: Schema.String,
+    outputChunks: Schema.Array(Schema.Uint8ArrayFromBase64),
+    output: Schema.Uint8ArrayFromBase64,
     replayTruncated: Schema.Boolean,
     replayNeedsQueryResponses: Schema.Boolean,
     archiveAvailable: Schema.optional(Schema.Boolean),
@@ -152,7 +152,7 @@ const TerminalAttachResult = Schema.NullOr(
   }),
 )
 const TerminalReplayPage = Schema.Struct({
-  chunks: Schema.Array(Schema.String),
+  chunks: Schema.Array(Schema.Uint8ArrayFromBase64),
   firstSequence: Schema.Number,
   lastSequence: Schema.Number,
   nextSequence: Schema.Number,
@@ -195,8 +195,8 @@ export type HostTerminalAttachResult = {
   protocolVersion?: number
   checkpoint?: Schema.Schema.Type<typeof TerminalCheckpoint>
   replayQuality?: "exact" | "checkpoint" | "degraded"
-  outputChunks?: string[]
-  output: string
+  outputChunks?: Uint8Array[]
+  output: Uint8Array
   replayTruncated?: boolean
   replayNeedsQueryResponses?: boolean
   lastSequence: number
@@ -328,7 +328,9 @@ export type HostRouteName = keyof typeof HOST_ROUTES
 export type HostRouteArgs<Name extends HostRouteName> = Schema.Schema.Type<
   (typeof HOST_ROUTES)[Name]["args"]
 >
-type MutableResult<Value> = Value extends
+type MutableResult<Value> = Value extends Uint8Array
+  ? Value
+  : Value extends
   | string
   | number
   | boolean

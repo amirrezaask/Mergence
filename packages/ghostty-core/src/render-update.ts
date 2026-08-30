@@ -82,16 +82,46 @@ export function packGhosttyCellStyle(cell: GhosttyCell): number {
   );
 }
 
+export type GhosttyRenderUpdateBuffers = {
+  readonly dirtyRows: ArrayBuffer;
+  readonly rowFlags: ArrayBuffer;
+  readonly graphemeOffsets: ArrayBuffer;
+  readonly graphemeLengths: ArrayBuffer;
+  readonly foregrounds: ArrayBuffer;
+  readonly backgrounds: ArrayBuffer;
+  readonly styles: ArrayBuffer;
+  readonly graphemes: ArrayBuffer;
+}
+
+export type GhosttyRenderUpdateLease = {
+  readonly slotId: number
+  readonly leaseToken: number
+  readonly update: GhosttyRenderUpdate
+}
+
+export type GhosttyRenderUpdateBuilderDiagnostics = {
+  readonly slotsCreated: number
+  readonly backingBuffersAllocated: number
+  readonly backingBytesAllocated: number
+  readonly leasesBuilt: number
+  readonly leasesReclaimed: number
+  readonly reclaimRejected: number
+  readonly noFreeSlot: number
+  readonly maxInFlight: number
+}
+
 interface BuilderSlot {
-  busy: boolean;
-  dirtyRows: Uint32Array;
-  rowFlags: Uint8Array;
-  graphemeOffsets: Uint32Array;
-  graphemeLengths: Uint32Array;
-  foregrounds: Uint32Array;
-  backgrounds: Uint32Array;
-  styles: Uint16Array;
-  graphemes: Uint8Array;
+  readonly id: number
+  inFlight: boolean
+  leaseToken: number
+  dirtyRows: Uint32Array
+  rowFlags: Uint8Array
+  graphemeOffsets: Uint32Array
+  graphemeLengths: Uint32Array
+  foregrounds: Uint32Array
+  backgrounds: Uint32Array
+  styles: Uint16Array
+  graphemes: Uint8Array
 }
 
 const textEncoder = new TextEncoder();
@@ -120,9 +150,11 @@ function ensureU32(value: Uint32Array, required: number): Uint32Array {
     : new Uint32Array(nextCapacity(required));
 }
 
-function createSlot(): BuilderSlot {
+function createSlot(id: number): BuilderSlot {
   return {
-    busy: false,
+    id,
+    inFlight: false,
+    leaseToken: 0,
     dirtyRows: new Uint32Array(1),
     rowFlags: new Uint8Array(1),
     graphemeOffsets: new Uint32Array(1),
@@ -134,21 +166,62 @@ function createSlot(): BuilderSlot {
   };
 }
 
-/**
- * Reuses backing buffers across frames. A returned update owns its views until
- * `release` is called; building while all slots are borrowed allocates another
- * slot rather than mutating an in-flight update.
- */
+/** Three fixed ownership slots. Transferred storage is reclaimed explicitly. */
 export class GhosttyRenderUpdateBuilder {
-  private readonly slots: BuilderSlot[] = [createSlot()];
-  private readonly owners = new WeakMap<GhosttyRenderUpdate, BuilderSlot>();
+  private readonly slots: BuilderSlot[]
+  private readonly owners = new WeakMap<GhosttyRenderUpdate, GhosttyRenderUpdateLease>()
+  private mutableDiagnostics = {
+    slotsCreated: 0,
+    backingBuffersAllocated: 0,
+    backingBytesAllocated: 0,
+    leasesBuilt: 0,
+    leasesReclaimed: 0,
+    reclaimRejected: 0,
+    noFreeSlot: 0,
+    maxInFlight: 0,
+  }
+
+  constructor(slotCount = 3) {
+    const count = Math.max(1, Math.min(3, Math.trunc(slotCount)))
+    this.slots = Array.from({ length: count }, (_, id) => createSlot(id))
+    this.mutableDiagnostics.slotsCreated = count
+    this.mutableDiagnostics.backingBuffersAllocated = count * 8
+    this.mutableDiagnostics.backingBytesAllocated = this.slots.reduce(
+      (total, slot) => total + slotBytes(slot),
+      0,
+    )
+  }
+
+  get hasFreeSlot(): boolean {
+    return this.slots.some(slot => !slot.inFlight)
+  }
+
+  diagnostics(): GhosttyRenderUpdateBuilderDiagnostics {
+    return { ...this.mutableDiagnostics }
+  }
 
   build(options: {
-    readonly snapshot: GhosttySnapshot;
-    readonly frameId: number;
-    readonly generation: number;
-    readonly full: boolean;
+    readonly snapshot: GhosttySnapshot
+    readonly frameId: number
+    readonly generation: number
+    readonly full: boolean
   }): GhosttyRenderUpdate {
+    const lease = this.tryBuild(options)
+    if (!lease) throw new Error("Ghostty render update ring is full")
+    return lease.update
+  }
+
+  tryBuild(options: {
+    readonly snapshot: GhosttySnapshot
+    readonly frameId: number
+    readonly generation: number
+    readonly full: boolean
+  }): GhosttyRenderUpdateLease | null {
+    const slot = this.slots.find(candidate => !candidate.inFlight)
+    if (!slot) {
+      this.mutableDiagnostics.noFreeSlot += 1
+      return null
+    }
     const { snapshot, frameId, generation, full } = options;
     const rows = full
       ? Array.from({ length: snapshot.rows }, (_, row) => row)
@@ -166,9 +239,10 @@ export class GhosttyRenderUpdateBuilder {
       }
     }
 
-    const slot = this.slots.find((candidate) => !candidate.busy) ?? createSlot();
-    if (!this.slots.includes(slot)) this.slots.push(slot);
-    slot.busy = true;
+    slot.inFlight = true
+    slot.leaseToken += 1
+    const beforeBytes = slotBytes(slot)
+    const beforeBuffers = slotBuffers(slot)
     slot.dirtyRows = ensureU32(slot.dirtyRows, rows.length);
     slot.rowFlags = ensureU8(slot.rowFlags, rows.length);
     slot.graphemeOffsets = ensureU32(slot.graphemeOffsets, cellCount);
@@ -177,6 +251,13 @@ export class GhosttyRenderUpdateBuilder {
     slot.backgrounds = ensureU32(slot.backgrounds, cellCount);
     slot.styles = ensureU16(slot.styles, cellCount);
     slot.graphemes = ensureU8(slot.graphemes, graphemeCapacity);
+    const afterBuffers = slotBuffers(slot)
+    for (let index = 0; index < afterBuffers.length; index += 1) {
+      if (afterBuffers[index] !== beforeBuffers[index]) {
+        this.mutableDiagnostics.backingBuffersAllocated += 1
+      }
+    }
+    this.mutableDiagnostics.backingBytesAllocated += slotBytes(slot) - beforeBytes
 
     let cellIndex = 0;
     let graphemeOffset = 0;
@@ -227,16 +308,79 @@ export class GhosttyRenderUpdateBuilder {
       styles: slot.styles.subarray(0, cellCount),
       graphemes: slot.graphemes.subarray(0, graphemeOffset),
     };
-    this.owners.set(update, slot);
-    return update;
+    const lease = { slotId: slot.id, leaseToken: slot.leaseToken, update }
+    this.owners.set(update, lease)
+    this.mutableDiagnostics.leasesBuilt += 1
+    const inFlight = this.slots.filter(candidate => candidate.inFlight).length
+    this.mutableDiagnostics.maxInFlight = Math.max(this.mutableDiagnostics.maxInFlight, inFlight)
+    return lease
   }
 
   release(update: GhosttyRenderUpdate): void {
-    const slot = this.owners.get(update);
-    if (!slot) return;
-    this.owners.delete(update);
-    slot.busy = false;
+    const lease = this.owners.get(update)
+    if (!lease) return
+    this.owners.delete(update)
+    this.reclaim(lease.slotId, lease.leaseToken, ghosttyRenderUpdateBuffers(update))
   }
+
+  reclaim(slotId: number, leaseToken: number, buffers: GhosttyRenderUpdateBuffers): boolean {
+    const slot = this.slots[slotId]
+    if (!slot || !slot.inFlight || slot.leaseToken !== leaseToken || !validReturnedBuffers(buffers)) {
+      this.mutableDiagnostics.reclaimRejected += 1
+      return false
+    }
+    slot.dirtyRows = new Uint32Array(buffers.dirtyRows)
+    slot.rowFlags = new Uint8Array(buffers.rowFlags)
+    slot.graphemeOffsets = new Uint32Array(buffers.graphemeOffsets)
+    slot.graphemeLengths = new Uint32Array(buffers.graphemeLengths)
+    slot.foregrounds = new Uint32Array(buffers.foregrounds)
+    slot.backgrounds = new Uint32Array(buffers.backgrounds)
+    slot.styles = new Uint16Array(buffers.styles)
+    slot.graphemes = new Uint8Array(buffers.graphemes)
+    slot.inFlight = false
+    this.mutableDiagnostics.leasesReclaimed += 1
+    return true
+  }
+}
+
+function slotBuffers(slot: BuilderSlot): readonly ArrayBufferLike[] {
+  return [
+    slot.dirtyRows.buffer, slot.rowFlags.buffer, slot.graphemeOffsets.buffer,
+    slot.graphemeLengths.buffer, slot.foregrounds.buffer, slot.backgrounds.buffer,
+    slot.styles.buffer, slot.graphemes.buffer,
+  ]
+}
+
+function slotBytes(slot: BuilderSlot): number {
+  return slotBuffers(slot).reduce((total, buffer) => total + buffer.byteLength, 0)
+}
+
+function transferableBuffer(view: ArrayBufferView): ArrayBuffer {
+  if (!(view.buffer instanceof ArrayBuffer)) {
+    throw new Error("Ghostty render updates require transferable ArrayBuffer storage")
+  }
+  return view.buffer
+}
+
+export function ghosttyRenderUpdateBuffers(update: GhosttyRenderUpdate): GhosttyRenderUpdateBuffers {
+  return {
+    dirtyRows: transferableBuffer(update.dirtyRows),
+    rowFlags: transferableBuffer(update.rowFlags),
+    graphemeOffsets: transferableBuffer(update.graphemeOffsets),
+    graphemeLengths: transferableBuffer(update.graphemeLengths),
+    foregrounds: transferableBuffer(update.foregrounds),
+    backgrounds: transferableBuffer(update.backgrounds),
+    styles: transferableBuffer(update.styles),
+    graphemes: transferableBuffer(update.graphemes),
+  }
+}
+
+function validReturnedBuffers(buffers: GhosttyRenderUpdateBuffers): boolean {
+  const entries = Object.values(buffers)
+  return entries.length === 8 && entries.every(buffer => buffer instanceof ArrayBuffer && buffer.byteLength > 0) &&
+    buffers.dirtyRows.byteLength % 4 === 0 && buffers.graphemeOffsets.byteLength % 4 === 0 &&
+    buffers.graphemeLengths.byteLength % 4 === 0 && buffers.foregrounds.byteLength % 4 === 0 &&
+    buffers.backgrounds.byteLength % 4 === 0 && buffers.styles.byteLength % 2 === 0
 }
 
 function isSafeInteger(value: unknown): value is number {

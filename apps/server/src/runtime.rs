@@ -7,7 +7,7 @@ use uuid::Uuid;
 use crate::{
     config::{HostConfig, path_allowed},
     device_auth::{DeviceAuthService, DeviceScope},
-    event_hub::EventHub,
+    event_hub::{EventHub, HubMessage},
     model::{
         ActivityState, AppSession, MuxTerminal, ProcessState, SessionTab, TerminalInput,
         TerminalOutput, TerminalStatus, now_iso,
@@ -183,7 +183,10 @@ impl HostRuntime {
         let weak = Arc::downgrade(runtime);
         let mut events = runtime.events.subscribe();
         tokio::spawn(async move {
-            while let Ok(event) = events.recv().await {
+            while let Ok(message) = events.recv().await {
+                let HubMessage::Event(event) = message.as_ref() else {
+                    continue;
+                };
                 if event.channel.as_ref() != "terminal:exit" {
                     continue;
                 }

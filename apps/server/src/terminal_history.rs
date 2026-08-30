@@ -3,14 +3,18 @@ use std::{
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, MutexGuard, mpsc},
+    sync::{Arc, Condvar, Mutex, MutexGuard, mpsc},
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+use base64::{
+    Engine as _,
+    engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+};
+use bytes::Bytes;
 use flate2::{Compression, read::GzDecoder, write::GzEncoder};
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Serialize, Serializer};
 use thiserror::Error;
 
 const DEFAULT_BLOCK_BYTES: usize = 512 * 1024;
@@ -18,12 +22,31 @@ const DEFAULT_PAGE_BYTES: usize = 256 * 1024;
 const MAX_TERMINAL_BYTES: u64 = 256 * 1024 * 1024;
 const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const CLOSED_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
+const ARCHIVE_VERSION: u8 = 2;
+const BLOCK_MAGIC: &[u8; 8] = b"YAADEH02";
+const BLOCK_HEADER_BYTES: usize = 16;
+const RECORD_HEADER_BYTES: usize = 12;
+const MAX_RECORD_BYTES: usize = 64 * 1024;
+const MAX_BLOCK_RECORDS: usize = 1_000_000;
+const INGEST_MAX_MESSAGES: usize = 1024;
+const INGEST_MAX_BYTES: usize = 32 * 1024 * 1024;
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Base64Bytes(pub Bytes);
+
+impl Serialize for Base64Bytes {
+    fn serialize<S>(&self, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        serializer.serialize_str(&STANDARD.encode(&self.0))
+    }
+}
+
+#[derive(Clone, Debug)]
 struct HistoryRecord {
     sequence: u64,
-    data: String,
+    data: Bytes,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,7 +81,7 @@ struct ArchiveState {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalHistoryPage {
-    pub chunks: Vec<String>,
+    pub chunks: Vec<Base64Bytes>,
     pub first_sequence: u64,
     pub last_sequence: u64,
     pub next_sequence: u64,
@@ -75,10 +98,29 @@ pub enum HistoryError {
     Corrupt(String),
 }
 
-enum FinalizeCommand {
-    Close(String),
+struct AppendCommand {
+    terminal_id: String,
+    sequence: u64,
+    data: Bytes,
+}
+
+enum IngestCommand {
+    Append(AppendCommand),
+    Snapshot(mpsc::Sender<Result<(), String>>),
     Barrier(mpsc::Sender<Result<(), String>>),
     Shutdown(mpsc::Sender<Result<(), String>>),
+}
+
+enum FinalizeCommand {
+    Close {
+        terminal_id: String,
+        through_sequence: u64,
+    },
+}
+
+struct IngestBudget {
+    bytes: Mutex<usize>,
+    available: Condvar,
 }
 
 struct HistoryShared {
@@ -88,6 +130,8 @@ struct HistoryShared {
     states: Mutex<HashMap<String, ArchiveState>>,
     pending_closes: Mutex<HashSet<String>>,
     background_errors: Mutex<Vec<String>>,
+    accepted_sequences: Mutex<HashMap<String, u64>>,
+    budget: IngestBudget,
 }
 
 /// Durable block-compressed PTY history. Live appends stay synchronous on PTY
@@ -95,6 +139,7 @@ struct HistoryShared {
 /// maintenance are serialized on a dedicated finalizer thread.
 pub struct TerminalHistoryArchive {
     shared: Arc<HistoryShared>,
+    ingest_tx: mpsc::SyncSender<IngestCommand>,
     finalize_tx: mpsc::Sender<FinalizeCommand>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
@@ -127,48 +172,76 @@ impl TerminalHistoryArchive {
             states: Mutex::new(HashMap::new()),
             pending_closes: Mutex::new(HashSet::new()),
             background_errors: Mutex::new(Vec::new()),
+            accepted_sequences: Mutex::new(HashMap::new()),
+            budget: IngestBudget {
+                bytes: Mutex::new(0),
+                available: Condvar::new(),
+            },
         });
         if cleanup {
             shared.cleanup_expired()?;
         }
+        let (ingest_tx, ingest_rx) = mpsc::sync_channel(INGEST_MAX_MESSAGES);
         let (finalize_tx, finalize_rx) = mpsc::channel();
         let worker_shared = Arc::clone(&shared);
         let worker = thread::Builder::new()
-            .name("yaade-history-finalizer".to_owned())
-            .spawn(move || run_finalizer(&worker_shared, finalize_rx))
+            .name("yaade-history-owner".to_owned())
+            .spawn(move || run_history_owner(&worker_shared, ingest_rx, finalize_rx))
             .map_err(HistoryError::Io)?;
         Ok(Self {
             shared,
+            ingest_tx,
             finalize_tx,
             worker: Mutex::new(Some(worker)),
         })
     }
 
-    pub fn append(&self, terminal_id: &str, sequence: u64, data: &str) -> Result<(), HistoryError> {
+    pub fn append(
+        &self,
+        terminal_id: &str,
+        sequence: u64,
+        data: Bytes,
+    ) -> Result<(), HistoryError> {
         if sequence == 0 || data.is_empty() {
             return Ok(());
         }
-        if self.shared.pending_closes().contains(terminal_id) {
+        if data.len() > MAX_RECORD_BYTES {
             return Err(HistoryError::Corrupt(format!(
-                "append after close for {terminal_id}"
+                "history record exceeds {MAX_RECORD_BYTES} bytes"
             )));
         }
-        let mut states = self.shared.states();
-        let state = self.shared.state_for(&mut states, terminal_id)?;
-        if state.manifest.closed_at.is_some() {
-            return Err(HistoryError::Corrupt(format!(
-                "append after completed close for {terminal_id}"
-            )));
+        {
+            let mut accepted = self
+                .shared
+                .accepted_sequences
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            if self.shared.pending_closes().contains(terminal_id) {
+                return Err(HistoryError::Corrupt(format!(
+                    "append after close for {terminal_id}"
+                )));
+            }
+            let previous = accepted.get(terminal_id).copied().unwrap_or(0);
+            if sequence <= previous {
+                return Err(HistoryError::Corrupt(format!(
+                    "history sequence {sequence} does not follow {previous}"
+                )));
+            }
+            accepted.insert(terminal_id.to_owned(), sequence);
         }
-        state.pending_bytes = state.pending_bytes.saturating_add(data.len());
-        state.pending.push(HistoryRecord {
-            sequence,
-            data: data.to_owned(),
-        });
-        state.manifest.updated_at = now_millis();
-        if state.pending_bytes >= self.shared.block_bytes {
-            flush_state(state)?;
-            enforce_terminal_quota(state)?;
+        self.shared.reserve_ingest_bytes(data.len());
+        let bytes = data.len();
+        if self
+            .ingest_tx
+            .send(IngestCommand::Append(AppendCommand {
+                terminal_id: terminal_id.to_owned(),
+                sequence,
+                data,
+            }))
+            .is_err()
+        {
+            self.shared.release_ingest_bytes(bytes);
+            return Err(HistoryError::Corrupt("history owner stopped".to_owned()));
         }
         Ok(())
     }
@@ -179,13 +252,41 @@ impl TerminalHistoryArchive {
         after_sequence: u64,
         max_bytes: Option<usize>,
     ) -> Result<Option<TerminalHistoryPage>, HistoryError> {
-        let mut states = self.shared.states();
-        let dir = self.shared.terminal_dir(terminal_id);
-        if !dir.exists() && !states.contains_key(terminal_id) {
-            return Ok(None);
+        let (snapshot_tx, snapshot_rx) = mpsc::channel();
+        self.ingest_tx
+            .send(IngestCommand::Snapshot(snapshot_tx))
+            .map_err(|_| HistoryError::Corrupt("history owner stopped".to_owned()))?;
+        match snapshot_rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(HistoryError::Corrupt(error)),
+            Err(_) => return Err(HistoryError::Corrupt("history owner stopped".to_owned())),
         }
-        let state = self.shared.state_for(&mut states, terminal_id)?;
-        flush_state(state)?;
+        let (dir, blocks, pending, newest) = {
+            let mut states = self.shared.states();
+            let dir = self.shared.terminal_dir(terminal_id);
+            if !dir.exists() && !states.contains_key(terminal_id) {
+                return Ok(None);
+            }
+            let state = self.shared.state_for(&mut states, terminal_id)?;
+            let newest = state
+                .pending
+                .last()
+                .map(|record| record.sequence)
+                .or_else(|| {
+                    state
+                        .manifest
+                        .blocks
+                        .last()
+                        .map(|block| block.last_sequence)
+                })
+                .unwrap_or(after_sequence);
+            (
+                state.dir.clone(),
+                state.manifest.blocks.clone(),
+                state.pending.clone(),
+                newest,
+            )
+        };
         let limit = max_bytes
             .unwrap_or(self.shared.page_bytes)
             .clamp(1, self.shared.page_bytes);
@@ -193,38 +294,34 @@ impl TerminalHistoryArchive {
         let mut bytes = 0_usize;
         let mut first_sequence = 0_u64;
         let mut last_sequence = after_sequence;
-        for block in &state.manifest.blocks {
-            if block.last_sequence <= after_sequence {
-                continue;
-            }
-            let records = read_block(&state.dir.join(&block.file))?;
-            for record in records {
-                if record.sequence <= after_sequence {
-                    continue;
-                }
-                let size = record.data.len();
-                if !chunks.is_empty() && bytes.saturating_add(size) > limit {
-                    return Ok(Some(TerminalHistoryPage {
-                        chunks,
-                        first_sequence,
-                        last_sequence,
-                        next_sequence: last_sequence,
-                        complete: false,
-                    }));
-                }
-                if first_sequence == 0 {
-                    first_sequence = record.sequence;
-                }
-                bytes = bytes.saturating_add(size);
-                last_sequence = record.sequence;
-                chunks.push(record.data);
+        let mut selected = Vec::new();
+        for block in &blocks {
+            if block.last_sequence > after_sequence {
+                selected.extend(read_block(&dir.join(&block.file))?);
             }
         }
-        let newest = state
-            .manifest
-            .blocks
-            .last()
-            .map_or(after_sequence, |block| block.last_sequence);
+        selected.extend(pending);
+        for record in selected {
+            if record.sequence <= after_sequence {
+                continue;
+            }
+            let size = record.data.len();
+            if !chunks.is_empty() && bytes.saturating_add(size) > limit {
+                return Ok(Some(TerminalHistoryPage {
+                    chunks,
+                    first_sequence,
+                    last_sequence,
+                    next_sequence: last_sequence,
+                    complete: false,
+                }));
+            }
+            if first_sequence == 0 {
+                first_sequence = record.sequence;
+            }
+            bytes = bytes.saturating_add(size);
+            last_sequence = record.sequence;
+            chunks.push(Base64Bytes(record.data));
+        }
         Ok(Some(TerminalHistoryPage {
             chunks,
             first_sequence,
@@ -243,9 +340,20 @@ impl TerminalHistoryArchive {
                 return Ok(());
             }
         }
+        let through_sequence = self
+            .shared
+            .accepted_sequences
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .get(terminal_id)
+            .copied()
+            .unwrap_or(0);
         if self
             .finalize_tx
-            .send(FinalizeCommand::Close(terminal_id.to_owned()))
+            .send(FinalizeCommand::Close {
+                terminal_id: terminal_id.to_owned(),
+                through_sequence,
+            })
             .is_err()
         {
             self.shared.pending_closes().remove(terminal_id);
@@ -270,9 +378,9 @@ impl TerminalHistoryArchive {
     /// are reported at this explicit shutdown/test barrier.
     pub fn flush_all(&self) -> Result<(), HistoryError> {
         let (tx, rx) = mpsc::channel();
-        self.finalize_tx
-            .send(FinalizeCommand::Barrier(tx))
-            .map_err(|_| HistoryError::Corrupt("history finalizer stopped".to_owned()))?;
+        self.ingest_tx
+            .send(IngestCommand::Barrier(tx))
+            .map_err(|_| HistoryError::Corrupt("history owner stopped".to_owned()))?;
         match rx.recv() {
             Ok(Ok(())) => {}
             Ok(Err(error)) => return Err(HistoryError::Corrupt(error)),
@@ -307,13 +415,97 @@ impl Drop for TerminalHistoryArchive {
             return;
         };
         let (tx, rx) = mpsc::channel();
-        let _ = self.finalize_tx.send(FinalizeCommand::Shutdown(tx));
+        let _ = self.ingest_tx.send(IngestCommand::Shutdown(tx));
         let _ = rx.recv();
         let _ = worker.join();
     }
 }
 
 impl HistoryShared {
+    fn reserve_ingest_bytes(&self, bytes: usize) {
+        let mut used = self
+            .budget
+            .bytes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        while used.saturating_add(bytes) > INGEST_MAX_BYTES {
+            used = self
+                .budget
+                .available
+                .wait(used)
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+        }
+        *used = used.saturating_add(bytes);
+    }
+
+    fn release_ingest_bytes(&self, bytes: usize) {
+        let mut used = self
+            .budget
+            .bytes
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        *used = used.saturating_sub(bytes);
+        drop(used);
+        self.budget.available.notify_all();
+    }
+
+    fn append_owned(&self, command: AppendCommand) -> Result<(), HistoryError> {
+        let mut states = self.states();
+        let state = self.state_for(&mut states, &command.terminal_id)?;
+        if state.manifest.closed_at.is_some() {
+            return Err(HistoryError::Corrupt(format!(
+                "append after completed close for {}",
+                command.terminal_id
+            )));
+        }
+        let last_sequence = state
+            .pending
+            .last()
+            .map(|record| record.sequence)
+            .or_else(|| {
+                state
+                    .manifest
+                    .blocks
+                    .last()
+                    .map(|block| block.last_sequence)
+            })
+            .unwrap_or(0);
+        if command.sequence <= last_sequence {
+            return Err(HistoryError::Corrupt(format!(
+                "history sequence {} does not follow {last_sequence}",
+                command.sequence
+            )));
+        }
+        state.pending_bytes = state.pending_bytes.saturating_add(command.data.len());
+        state.pending.push(HistoryRecord {
+            sequence: command.sequence,
+            data: command.data,
+        });
+        state.manifest.updated_at = now_millis();
+        if state.pending_bytes >= self.block_bytes {
+            flush_state(state)?;
+            enforce_terminal_quota(state)?;
+        }
+        Ok(())
+    }
+
+    fn written_sequence(&self, terminal_id: &str) -> u64 {
+        self.states().get(terminal_id).map_or(0, |state| {
+            state
+                .pending
+                .last()
+                .map(|record| record.sequence)
+                .or_else(|| {
+                    state
+                        .manifest
+                        .blocks
+                        .last()
+                        .map(|block| block.last_sequence)
+                })
+                .unwrap_or(0)
+        })
+    }
+
     fn states(&self) -> MutexGuard<'_, HashMap<String, ArchiveState>> {
         self.states
             .lock()
@@ -334,15 +526,19 @@ impl HistoryShared {
         if !states.contains_key(terminal_id) {
             let dir = self.terminal_dir(terminal_id);
             fs::create_dir_all(&dir)?;
-            let manifest = read_manifest(&dir)?.unwrap_or_else(|| ArchiveManifest {
-                version: 1,
-                terminal_id: terminal_id.to_owned(),
-                created_at: now_millis(),
-                updated_at: now_millis(),
-                closed_at: None,
-                blocks: Vec::new(),
-            });
-            if manifest.version != 1 || manifest.terminal_id != terminal_id {
+            let manifest = match read_manifest(&dir)? {
+                Some(manifest) if manifest.version == ARCHIVE_VERSION => manifest,
+                Some(_) => {
+                    // Development history has no compatibility promise yet. An
+                    // old lossy JSON archive is quarantined by resetting its
+                    // terminal directory instead of pretending it is exact.
+                    fs::remove_dir_all(&dir)?;
+                    fs::create_dir_all(&dir)?;
+                    new_manifest(terminal_id)
+                }
+                None => new_manifest(terminal_id),
+            };
+            if manifest.terminal_id != terminal_id {
                 return Err(HistoryError::Corrupt(terminal_id.to_owned()));
             }
             states.insert(
@@ -479,48 +675,90 @@ impl HistoryShared {
     }
 }
 
-fn run_finalizer(shared: &HistoryShared, receiver: mpsc::Receiver<FinalizeCommand>) {
-    while let Ok(command) = receiver.recv() {
-        let mut closes = Vec::new();
-        let mut barriers = Vec::new();
-        let mut shutdown = false;
+fn run_history_owner(
+    shared: &HistoryShared,
+    ingest: mpsc::Receiver<IngestCommand>,
+    finalize: mpsc::Receiver<FinalizeCommand>,
+) {
+    let mut closes = Vec::<(String, u64)>::new();
+    loop {
+        while let Ok(FinalizeCommand::Close {
+            terminal_id,
+            through_sequence,
+        }) = finalize.try_recv()
+        {
+            closes.push((terminal_id, through_sequence));
+        }
+        finalize_ready(shared, &mut closes);
+
+        let command = match ingest.recv_timeout(std::time::Duration::from_millis(5)) {
+            Ok(command) => command,
+            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Disconnected) => break,
+        };
         match command {
-            FinalizeCommand::Close(id) => closes.push(id),
-            FinalizeCommand::Barrier(sender) => barriers.push(sender),
-            FinalizeCommand::Shutdown(sender) => {
-                barriers.push(sender);
-                shutdown = true;
-            }
-        }
-        while let Ok(command) = receiver.try_recv() {
-            match command {
-                FinalizeCommand::Close(id) => closes.push(id),
-                FinalizeCommand::Barrier(sender) => barriers.push(sender),
-                FinalizeCommand::Shutdown(sender) => {
-                    barriers.push(sender);
-                    shutdown = true;
+            IngestCommand::Append(command) => {
+                let bytes = command.data.len();
+                if let Err(error) = shared.append_owned(command) {
+                    shared.record_error(&error);
                 }
+                shared.release_ingest_bytes(bytes);
             }
-        }
-        for id in closes {
-            if let Err(error) = shared.finalize_terminal(&id) {
-                shared.record_error(&error);
+            IngestCommand::Snapshot(sender) => {
+                let _ = sender.send(shared.take_errors());
             }
-            shared.pending_closes().remove(&id);
-        }
-        if let Err(error) = shared.enforce_total_quota() {
-            shared.record_error(&error);
-        }
-        if !barriers.is_empty() {
-            let result = shared.take_errors();
-            for sender in barriers {
-                let _ = sender.send(result.clone());
+            IngestCommand::Barrier(sender) => {
+                while let Ok(FinalizeCommand::Close {
+                    terminal_id,
+                    through_sequence,
+                }) = finalize.try_recv()
+                {
+                    closes.push((terminal_id, through_sequence));
+                }
+                finalize_ready(shared, &mut closes);
+                if let Err(error) = shared.flush_live() {
+                    shared.record_error(&error);
+                }
+                if let Err(error) = shared.enforce_total_quota() {
+                    shared.record_error(&error);
+                }
+                let _ = sender.send(shared.take_errors());
             }
-        }
-        if shutdown {
-            break;
+            IngestCommand::Shutdown(sender) => {
+                while let Ok(FinalizeCommand::Close {
+                    terminal_id,
+                    through_sequence,
+                }) = finalize.try_recv()
+                {
+                    closes.push((terminal_id, through_sequence));
+                }
+                finalize_ready(shared, &mut closes);
+                if let Err(error) = shared.flush_live() {
+                    shared.record_error(&error);
+                }
+                if let Err(error) = shared.enforce_total_quota() {
+                    shared.record_error(&error);
+                }
+                let _ = sender.send(shared.take_errors());
+                break;
+            }
         }
     }
+}
+
+fn finalize_ready(shared: &HistoryShared, closes: &mut Vec<(String, u64)>) {
+    let mut waiting = Vec::new();
+    for (terminal_id, through_sequence) in closes.drain(..) {
+        if shared.written_sequence(&terminal_id) < through_sequence {
+            waiting.push((terminal_id, through_sequence));
+            continue;
+        }
+        if let Err(error) = shared.finalize_terminal(&terminal_id) {
+            shared.record_error(&error);
+        }
+        shared.pending_closes().remove(&terminal_id);
+    }
+    *closes = waiting;
 }
 
 fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
@@ -533,8 +771,8 @@ fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
     let last_sequence = records
         .last()
         .map_or(first_sequence, |record| record.sequence);
-    let file = format!("{first_sequence:012}-{last_sequence:012}.json.gz");
-    let encoded = serde_json::to_vec(&records)?;
+    let file = format!("{first_sequence:012}-{last_sequence:012}.bin.gz");
+    let encoded = encode_records(&records)?;
     let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
     encoder.write_all(&encoded)?;
     let compressed = encoder.finish()?;
@@ -570,11 +808,129 @@ fn enforce_terminal_quota(state: &mut ArchiveState) -> Result<(), HistoryError> 
     write_manifest(state)
 }
 
+fn encode_records(records: &[HistoryRecord]) -> Result<Vec<u8>, HistoryError> {
+    if records.is_empty() || records.len() > MAX_BLOCK_RECORDS {
+        return Err(HistoryError::Corrupt(
+            "invalid history block record count".to_owned(),
+        ));
+    }
+    let count = u32::try_from(records.len())
+        .map_err(|_| HistoryError::Corrupt("history block record count overflow".to_owned()))?;
+    let capacity = BLOCK_HEADER_BYTES.saturating_add(
+        records
+            .iter()
+            .map(|record| RECORD_HEADER_BYTES.saturating_add(record.data.len()))
+            .sum::<usize>(),
+    );
+    let mut encoded = Vec::with_capacity(capacity);
+    encoded.extend_from_slice(BLOCK_MAGIC);
+    encoded.push(ARCHIVE_VERSION);
+    encoded.extend_from_slice(&[0_u8; 3]);
+    encoded.extend_from_slice(&count.to_be_bytes());
+    let mut previous = 0_u64;
+    for record in records {
+        if record.sequence == 0 || record.sequence <= previous {
+            return Err(HistoryError::Corrupt(
+                "non-increasing history sequence".to_owned(),
+            ));
+        }
+        if record.data.is_empty() || record.data.len() > MAX_RECORD_BYTES {
+            return Err(HistoryError::Corrupt(
+                "invalid history payload length".to_owned(),
+            ));
+        }
+        let length = u32::try_from(record.data.len())
+            .map_err(|_| HistoryError::Corrupt("history payload length overflow".to_owned()))?;
+        encoded.extend_from_slice(&record.sequence.to_be_bytes());
+        encoded.extend_from_slice(&length.to_be_bytes());
+        encoded.extend_from_slice(&record.data);
+        previous = record.sequence;
+    }
+    Ok(encoded)
+}
+
+fn decode_records(encoded: &[u8]) -> Result<Vec<HistoryRecord>, HistoryError> {
+    if encoded.len() < BLOCK_HEADER_BYTES || &encoded[..8] != BLOCK_MAGIC {
+        return Err(HistoryError::Corrupt(
+            "invalid history block header".to_owned(),
+        ));
+    }
+    if encoded[8] != ARCHIVE_VERSION || encoded[9..12] != [0_u8; 3] {
+        return Err(HistoryError::Corrupt(
+            "unsupported history block version".to_owned(),
+        ));
+    }
+    let count = u32::from_be_bytes(
+        encoded[12..16]
+            .try_into()
+            .map_err(|_| HistoryError::Corrupt("truncated history count".to_owned()))?,
+    ) as usize;
+    if count == 0 || count > MAX_BLOCK_RECORDS {
+        return Err(HistoryError::Corrupt(
+            "invalid history block record count".to_owned(),
+        ));
+    }
+    let mut cursor = BLOCK_HEADER_BYTES;
+    let mut previous = 0_u64;
+    let mut records = Vec::with_capacity(count);
+    for _ in 0..count {
+        let header_end = cursor.saturating_add(RECORD_HEADER_BYTES);
+        if header_end > encoded.len() {
+            return Err(HistoryError::Corrupt(
+                "truncated history record header".to_owned(),
+            ));
+        }
+        let sequence = u64::from_be_bytes(
+            encoded[cursor..cursor + 8]
+                .try_into()
+                .map_err(|_| HistoryError::Corrupt("truncated history sequence".to_owned()))?,
+        );
+        let length = u32::from_be_bytes(
+            encoded[cursor + 8..header_end]
+                .try_into()
+                .map_err(|_| HistoryError::Corrupt("truncated history length".to_owned()))?,
+        ) as usize;
+        if sequence == 0 || sequence <= previous || length == 0 || length > MAX_RECORD_BYTES {
+            return Err(HistoryError::Corrupt("invalid history record".to_owned()));
+        }
+        cursor = header_end;
+        let payload_end = cursor.saturating_add(length);
+        if payload_end > encoded.len() {
+            return Err(HistoryError::Corrupt(
+                "truncated history payload".to_owned(),
+            ));
+        }
+        records.push(HistoryRecord {
+            sequence,
+            data: Bytes::copy_from_slice(&encoded[cursor..payload_end]),
+        });
+        cursor = payload_end;
+        previous = sequence;
+    }
+    if cursor != encoded.len() {
+        return Err(HistoryError::Corrupt(
+            "trailing history block bytes".to_owned(),
+        ));
+    }
+    Ok(records)
+}
+
 fn read_block(path: &Path) -> Result<Vec<HistoryRecord>, HistoryError> {
     let mut decoder = GzDecoder::new(File::open(path)?);
     let mut encoded = Vec::new();
     decoder.read_to_end(&mut encoded)?;
-    Ok(serde_json::from_slice(&encoded)?)
+    decode_records(&encoded)
+}
+
+fn new_manifest(terminal_id: &str) -> ArchiveManifest {
+    ArchiveManifest {
+        version: ARCHIVE_VERSION,
+        terminal_id: terminal_id.to_owned(),
+        created_at: now_millis(),
+        updated_at: now_millis(),
+        closed_at: None,
+        blocks: Vec::new(),
+    }
 }
 
 fn read_manifest(dir: &Path) -> Result<Option<ArchiveManifest>, HistoryError> {
@@ -619,20 +975,26 @@ mod tests {
     fn durable_history_is_paged_by_sequence() {
         let root = temp_dir();
         let archive = TerminalHistoryArchive::with_limits(&root, 4, 5).expect("archive");
-        archive.append("term-1", 1, "one").expect("append");
-        archive.append("term-1", 2, "two").expect("append");
-        archive.append("term-1", 3, "three").expect("append");
+        archive
+            .append("term-1", 1, Bytes::from_static(b"one"))
+            .expect("append");
+        archive
+            .append("term-1", 2, Bytes::from_static(b"two"))
+            .expect("append");
+        archive
+            .append("term-1", 3, Bytes::from_static(b"three"))
+            .expect("append");
         let first = archive
             .read_page("term-1", 0, None)
             .expect("read")
             .expect("page");
-        assert_eq!(first.chunks, vec!["one"]);
+        assert_eq!(first.chunks, vec![Base64Bytes(Bytes::from_static(b"one"))]);
         assert!(!first.complete);
         let second = archive
             .read_page("term-1", first.next_sequence, None)
             .expect("read")
             .expect("page");
-        assert_eq!(second.chunks, vec!["two"]);
+        assert_eq!(second.chunks, vec![Base64Bytes(Bytes::from_static(b"two"))]);
         drop(archive);
 
         let reopened = TerminalHistoryArchive::with_limits(&root, 4, 5).expect("reopen");
@@ -640,7 +1002,10 @@ mod tests {
             .read_page("term-1", second.next_sequence, None)
             .expect("read")
             .expect("page");
-        assert_eq!(final_page.chunks, vec!["three"]);
+        assert_eq!(
+            final_page.chunks,
+            vec![Base64Bytes(Bytes::from_static(b"three"))]
+        );
         assert!(final_page.complete);
         fs::remove_dir_all(root).expect("cleanup");
     }
@@ -649,9 +1014,15 @@ mod tests {
     fn close_is_enqueued_and_barrier_drains_it() {
         let root = temp_dir();
         let archive = TerminalHistoryArchive::with_limits(&root, 1024, 1024).expect("archive");
-        archive.append("term-1", 1, "pending").expect("append");
+        archive
+            .append("term-1", 1, Bytes::from_static(b"pending"))
+            .expect("append");
         archive.close_terminal("term-1").expect("enqueue close");
-        assert!(archive.append("term-1", 2, "late").is_err());
+        assert!(
+            archive
+                .append("term-1", 2, Bytes::from_static(b"late"))
+                .is_err()
+        );
         archive.flush_all().expect("drain");
         let manifest = read_manifest(&archive.shared.terminal_dir("term-1"))
             .expect("manifest")
@@ -660,6 +1031,40 @@ mod tests {
         archive.close_terminal("term-1").expect("idempotent close");
         archive.flush_all().expect("second drain");
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn binary_codec_preserves_invalid_bytes_and_rejects_corruption() {
+        let records = vec![
+            HistoryRecord {
+                sequence: 1,
+                data: Bytes::from_static(b"ok\xff"),
+            },
+            HistoryRecord {
+                sequence: 2,
+                data: Bytes::from_static(b"\xe2"),
+            },
+        ];
+        let encoded = encode_records(&records).expect("encode");
+        assert_eq!(
+            decode_records(&encoded).expect("decode")[0].data.as_ref(),
+            b"ok\xff"
+        );
+        assert!(decode_records(&encoded[..encoded.len() - 1]).is_err());
+        let mut trailing = encoded.clone();
+        trailing.push(0);
+        assert!(decode_records(&trailing).is_err());
+        let duplicate = vec![
+            HistoryRecord {
+                sequence: 1,
+                data: Bytes::from_static(b"a"),
+            },
+            HistoryRecord {
+                sequence: 1,
+                data: Bytes::from_static(b"b"),
+            },
+        ];
+        assert!(encode_records(&duplicate).is_err());
     }
 
     #[test]

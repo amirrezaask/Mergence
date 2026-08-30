@@ -4,6 +4,7 @@ import {
   type GhosttyMouseInput,
   type GhosttyPointInput,
   type GhosttyRenderUpdate,
+  type GhosttyRenderUpdateBuffers,
   type GhosttyTheme,
 } from "../core.js";
 
@@ -31,12 +32,14 @@ type Envelope = {
 };
 
 export type TerminalWorkerCommandPayload =
-  | { readonly type: "create"; readonly cols: number; readonly rows: number; readonly cellWidth: number; readonly cellHeight: number; readonly theme: GhosttyTheme }
-  | { readonly type: "write"; readonly data: string }
-  | { readonly type: "writeReplay"; readonly chunks: readonly string[] }
-  | { readonly type: "resetAndWrite"; readonly data: string }
+  | { readonly type: "create"; readonly cols: number; readonly rows: number; readonly cellWidth: number; readonly cellHeight: number; readonly theme: GhosttyTheme; readonly visible: boolean; readonly focused: boolean }
+  | { readonly type: "writeBytes"; readonly data: Uint8Array<ArrayBuffer> }
+  | { readonly type: "writeReplayBytes"; readonly chunks: readonly Uint8Array<ArrayBuffer>[] }
+  | { readonly type: "resetAndWriteBytes"; readonly data: Uint8Array<ArrayBuffer> }
+  | { readonly type: "recycleRenderUpdate"; readonly slotId: number; readonly leaseToken: number; readonly buffers: GhosttyRenderUpdateBuffers }
   | { readonly type: "resize"; readonly cols: number; readonly rows: number; readonly cellWidth: number; readonly cellHeight: number }
   | { readonly type: "setTheme"; readonly theme: GhosttyTheme }
+  | { readonly type: "setPresentationState"; readonly visible: boolean; readonly focused: boolean }
   | { readonly type: "setFontMetrics"; readonly cellWidth: number; readonly cellHeight: number }
   | { readonly type: "key"; readonly event: SerializedKeyEvent; readonly action: "press" | "release" }
   | { readonly type: "paste"; readonly data: string }
@@ -63,7 +66,7 @@ export type TerminalRuntimeState = {
 
 export type TerminalWorkerEvent = Envelope & (
   | { readonly type: "ready" }
-  | { readonly type: "packedUpdate"; readonly update: GhosttyRenderUpdate; readonly state: TerminalRuntimeState }
+  | { readonly type: "packedUpdate"; readonly slotId: number; readonly leaseToken: number; readonly update: GhosttyRenderUpdate; readonly state: TerminalRuntimeState }
   | { readonly type: "encodedInput"; readonly data: string }
   | { readonly type: "parsed" }
   | { readonly type: "selectionResult"; readonly result: unknown }
@@ -83,7 +86,7 @@ function validEnvelope(value: Record<string, unknown>): boolean {
 }
 
 const COMMAND_TYPES = new Set([
-  "create", "write", "writeReplay", "resetAndWrite", "resize", "setTheme",
+  "create", "writeBytes", "writeReplayBytes", "resetAndWriteBytes", "recycleRenderUpdate", "resize", "setTheme", "setPresentationState",
   "setFontMetrics", "key", "paste", "text", "mouse", "setSelection", "clearSelection",
   "selectAll", "selectWord", "selectLine", "scroll", "scrollToBottom",
   "viewportPointToScreen", "screenPointToViewport", "requestFullFrame", "dispose",
@@ -92,10 +95,19 @@ const COMMAND_TYPES = new Set([
 export function validateTerminalWorkerCommand(value: unknown): value is TerminalWorkerCommand {
   if (!isRecord(value) || !validEnvelope(value) || !COMMAND_TYPES.has(String(value.type))) return false;
   switch (value.type) {
-    case "write": case "resetAndWrite": case "paste": case "text": return typeof value.data === "string";
-    case "writeReplay": return Array.isArray(value.chunks) && value.chunks.every(chunk => typeof chunk === "string");
-    case "create": case "resize": return Number.isFinite(value.cols) && Number.isFinite(value.rows) && Number.isFinite(value.cellWidth) && Number.isFinite(value.cellHeight) && (value.type !== "create" || isRecord(value.theme));
+    case "writeBytes": case "resetAndWriteBytes":
+      return value.data instanceof Uint8Array && value.data.byteLength > 0 && value.data.buffer.byteLength > 0;
+    case "writeReplayBytes":
+      return Array.isArray(value.chunks) && value.chunks.length > 0 &&
+        value.chunks.every(chunk => chunk instanceof Uint8Array && chunk.byteLength > 0 && chunk.buffer.byteLength > 0);
+    case "recycleRenderUpdate":
+      return Number.isSafeInteger(value.slotId) && Number(value.slotId) >= 0 &&
+        Number.isSafeInteger(value.leaseToken) && Number(value.leaseToken) >= 1 &&
+        validateRenderUpdateBuffers(value.buffers);
+    case "paste": case "text": return typeof value.data === "string";
+    case "create": case "resize": return Number.isFinite(value.cols) && Number.isFinite(value.rows) && Number.isFinite(value.cellWidth) && Number.isFinite(value.cellHeight) && (value.type !== "create" || (isRecord(value.theme) && typeof value.visible === "boolean" && typeof value.focused === "boolean"));
     case "setTheme": return isRecord(value.theme);
+    case "setPresentationState": return typeof value.visible === "boolean" && typeof value.focused === "boolean";
     case "setFontMetrics": return Number.isFinite(value.cellWidth) && Number.isFinite(value.cellHeight);
     case "key": return isRecord(value.event) && (value.action === "press" || value.action === "release");
     case "mouse": return isRecord(value.input);
@@ -120,11 +132,42 @@ export function validateTerminalWorkerEvent(value: unknown): value is TerminalWo
   switch (value.type) {
     case "ready": case "parsed": case "disposed": return true;
     case "encodedInput": return typeof value.data === "string";
-    case "packedUpdate": return validateGhosttyRenderUpdate(value.update) && validateState(value.state) && value.update.version === GHOSTTY_RENDER_UPDATE_VERSION;
+    case "packedUpdate": return Number.isSafeInteger(value.slotId) && Number(value.slotId) >= 0 &&
+      Number.isSafeInteger(value.leaseToken) && Number(value.leaseToken) >= 1 &&
+      validateGhosttyRenderUpdate(value.update) && validateState(value.state) &&
+      value.update.version === GHOSTTY_RENDER_UPDATE_VERSION;
     case "selectionResult": return "result" in value;
     case "recoverableError": case "fatalError": return typeof value.message === "string";
     default: return false;
   }
+}
+
+function validateRenderUpdateBuffers(value: unknown): value is GhosttyRenderUpdateBuffers {
+  if (!isRecord(value)) return false
+  const fields = ["dirtyRows", "rowFlags", "graphemeOffsets", "graphemeLengths", "foregrounds", "backgrounds", "styles", "graphemes"] as const
+  return fields.every(field => value[field] instanceof ArrayBuffer && value[field].byteLength > 0) &&
+    value.dirtyRows instanceof ArrayBuffer && value.dirtyRows.byteLength % 4 === 0 &&
+    value.graphemeOffsets instanceof ArrayBuffer && value.graphemeOffsets.byteLength % 4 === 0 &&
+    value.graphemeLengths instanceof ArrayBuffer && value.graphemeLengths.byteLength % 4 === 0 &&
+    value.foregrounds instanceof ArrayBuffer && value.foregrounds.byteLength % 4 === 0 &&
+    value.backgrounds instanceof ArrayBuffer && value.backgrounds.byteLength % 4 === 0 &&
+    value.styles instanceof ArrayBuffer && value.styles.byteLength % 2 === 0
+}
+
+export function terminalRenderUpdateBufferTransferList(buffers: GhosttyRenderUpdateBuffers): Transferable[] {
+  return [
+    buffers.dirtyRows, buffers.rowFlags, buffers.graphemeOffsets,
+    buffers.graphemeLengths, buffers.foregrounds, buffers.backgrounds,
+    buffers.styles, buffers.graphemes,
+  ]
+}
+
+export function terminalByteCommandTransferList(
+  command: Extract<TerminalWorkerCommand, { readonly type: "writeBytes" | "writeReplayBytes" | "resetAndWriteBytes" }>,
+): Transferable[] {
+  return command.type === "writeReplayBytes"
+    ? command.chunks.map(chunk => chunk.buffer)
+    : [command.data.buffer]
 }
 
 export function terminalRenderUpdateTransferList(update: GhosttyRenderUpdate): Transferable[] {

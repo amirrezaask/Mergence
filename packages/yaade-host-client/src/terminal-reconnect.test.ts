@@ -3,10 +3,13 @@ import { test } from "vite-plus/test"
 import type { YaadeHostTransport } from "./transport.js"
 import { createYaadeApi } from "./create-yaade-api.js"
 
+const encode = (value: string): Uint8Array => new TextEncoder().encode(value)
+const decode = (value: Uint8Array): string => new TextDecoder().decode(value)
+
 type AttachResult = {
   id: string
-  outputChunks: string[]
-  output: string
+  outputChunks: Uint8Array[]
+  output: Uint8Array
   lastSequence: number
   replayNeedsQueryResponses?: boolean
   replayTruncated?: boolean
@@ -19,7 +22,7 @@ class FakeTransport implements YaadeHostTransport {
   private readonly listeners = new Map<string, Set<(...args: unknown[]) => void>>()
   private readonly attachResults: AttachResult[] = []
   private readonly replayPages: Array<{
-    chunks: string[]
+    chunks: Uint8Array[]
     firstSequence: number
     lastSequence: number
     nextSequence: number
@@ -31,7 +34,7 @@ class FakeTransport implements YaadeHostTransport {
   }
 
   queueReplayPage(page: {
-    chunks: string[]
+    chunks: Uint8Array[]
     firstSequence: number
     lastSequence: number
     nextSequence: number
@@ -80,8 +83,8 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
   const transport = new FakeTransport()
   transport.queueAttach({
     id: "pty-1",
-    outputChunks: ["initial"],
-    output: "",
+    outputChunks: [encode("initial")],
+    output: new Uint8Array(),
     lastSequence: 2,
     status: "running",
   })
@@ -98,26 +101,26 @@ test("reconnect delta-replays mounted terminals before buffered live data", asyn
   terminal.onData(
     "pty-1",
     (data, replay, replayNeedsQueryResponses, replayTruncated) => {
-      output.push(data)
+      output.push(decode(data))
       replayFlags.push(replay === true)
       replayQueryFlags.push(replayNeedsQueryResponses === true)
       replayTruncatedFlags.push(replayTruncated === true)
     },
   )
-  transport.emit("terminal:data", "pty-1", "live-3", 3)
+  transport.emit("terminal:data", "pty-1", encode("live-3"), 3)
   transport.emit("connection:status", "disconnected")
 
   transport.queueAttach({
     id: "pty-1",
-    outputChunks: ["replay-4"],
-    output: "",
+    outputChunks: [encode("replay-4")],
+    output: new Uint8Array(),
     lastSequence: 4,
     replayNeedsQueryResponses: true,
     replayTruncated: true,
     status: "running",
   })
   transport.emit("connection:status", "connected")
-  transport.emit("terminal:data", "pty-1", "live-5", 5)
+  transport.emit("terminal:data", "pty-1", encode("live-5"), 5)
   await new Promise<void>(resolve => setImmediate(resolve))
 
   assert.deepEqual(output, ["live-3", "replay-4", "live-5"])
@@ -135,8 +138,8 @@ test("a new renderer receives full paged replay before buffered live output", as
   const transport = new FakeTransport()
   transport.queueAttach({
     id: "pty-remount",
-    outputChunks: ["old-tail"],
-    output: "",
+    outputChunks: [encode("old-tail")],
+    output: new Uint8Array(),
     lastSequence: 2,
     archiveAvailable: true,
     status: "running",
@@ -147,14 +150,14 @@ test("a new renderer receives full paged replay before buffered live output", as
 
   transport.queueAttach({
     id: "pty-remount",
-    outputChunks: ["bounded-tail"],
-    output: "",
+    outputChunks: [encode("bounded-tail")],
+    output: new Uint8Array(),
     lastSequence: 4,
     archiveAvailable: true,
     status: "running",
   })
   transport.queueReplayPage({
-    chunks: ["history-1", "history-2", "history-3", "history-4", "history-5"],
+    chunks: [encode("history-1"), encode("history-2"), encode("history-3"), encode("history-4"), encode("history-5")],
     firstSequence: 1,
     lastSequence: 5,
     nextSequence: 5,
@@ -165,20 +168,20 @@ test("a new renderer receives full paged replay before buffered live output", as
   const attached = await terminal.attach("pty-remount", {
     replay: "full",
     onReplay: chunk => {
-      replay.push(chunk.data)
-      transport.emit("terminal:data", "pty-remount", "duplicate-live-5", 5)
-      transport.emit("terminal:data", "pty-remount", "live-6", 6)
+      replay.push(decode(chunk.data))
+      transport.emit("terminal:data", "pty-remount", encode("duplicate-live-5"), 5)
+      transport.emit("terminal:data", "pty-remount", encode("live-6"), 6)
     },
   })
   const live: string[] = []
-  terminal.onData("pty-remount", data => live.push(data))
+  terminal.onData("pty-remount", data => live.push(decode(data)))
 
   assert.deepEqual(replay, [
     "history-1history-2history-3history-4history-5",
   ])
   assert.deepEqual(live, ["live-6"])
   assert.deepEqual(attached?.outputChunks, [])
-  assert.equal(attached?.output, "")
+  assert.equal(attached?.output.byteLength, 0)
   assert.deepEqual(
     transport.calls.filter(call => call.channel === "terminal:attach").at(-1),
     {
@@ -205,7 +208,7 @@ test("flow credit is acknowledged only after a consuming renderer parses data", 
   transport.emit(
     "terminal:data",
     "pty-consumed",
-    "payload",
+    encode("payload"),
     1,
     () => {
       transportAcknowledgements += 1
@@ -222,14 +225,14 @@ test("an incomplete archive resets to the bounded tail instead of exposing a gap
   const transport = new FakeTransport()
   transport.queueAttach({
     id: "pty-gap",
-    outputChunks: ["bounded-tail"],
-    output: "",
+    outputChunks: [encode("bounded-tail")],
+    output: new Uint8Array(),
     lastSequence: 4,
     archiveAvailable: true,
     status: "running",
   })
   transport.queueReplayPage({
-    chunks: ["archive-prefix"],
+    chunks: [encode("archive-prefix")],
     firstSequence: 1,
     lastSequence: 2,
     nextSequence: 2,
@@ -247,7 +250,7 @@ test("an incomplete archive resets to the bounded tail instead of exposing a gap
     replay: "full",
     onReplay: chunk => {
       replay.push({
-        data: chunk.data,
+        data: decode(chunk.data),
         truncated: chunk.replayTruncated,
       })
     },
@@ -276,7 +279,7 @@ test("archived reconnect history is delivered page by page", async () => {
   transport.queueAttach({
     id: "pty-archive",
     outputChunks: [],
-    output: "",
+    output: new Uint8Array(),
     lastSequence: 1,
     status: "running",
   })
@@ -284,26 +287,26 @@ test("archived reconnect history is delivered page by page", async () => {
   transport.emit("connection:status", "connected")
   await terminal.attach("pty-archive")
   const output: string[] = []
-  terminal.onData("pty-archive", data => output.push(data))
+  terminal.onData("pty-archive", data => output.push(decode(data)))
   transport.emit("connection:status", "disconnected")
   transport.queueAttach({
     id: "pty-archive",
-    outputChunks: ["bounded-ring-copy"],
-    output: "",
+    outputChunks: [encode("bounded-ring-copy")],
+    output: new Uint8Array(),
     lastSequence: 4,
     replayTruncated: true,
     archiveAvailable: true,
     status: "running",
   })
   transport.queueReplayPage({
-    chunks: ["archive-2"],
+    chunks: [encode("archive-2")],
     firstSequence: 2,
     lastSequence: 2,
     nextSequence: 2,
     complete: false,
   })
   transport.queueReplayPage({
-    chunks: ["archive-3", "archive-4"],
+    chunks: [encode("archive-3"), encode("archive-4")],
     firstSequence: 3,
     lastSequence: 4,
     nextSequence: 4,

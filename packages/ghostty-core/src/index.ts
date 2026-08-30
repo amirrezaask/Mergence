@@ -18,11 +18,15 @@ export {
   GHOSTTY_RENDER_STYLE,
   GHOSTTY_RENDER_UPDATE_VERSION,
   GhosttyRenderUpdateBuilder,
+  ghosttyRenderUpdateBuffers,
   packGhosttyCellStyle,
   packGhosttyColor,
   unpackGhosttyColor,
   validateGhosttyRenderUpdate,
   type GhosttyRenderUpdate,
+  type GhosttyRenderUpdateBuffers,
+  type GhosttyRenderUpdateBuilderDiagnostics,
+  type GhosttyRenderUpdateLease,
 } from "./render-update.js"
 export { GhosttyViewportModel } from "./viewport-model.js"
 export {

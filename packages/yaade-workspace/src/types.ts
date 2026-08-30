@@ -53,7 +53,7 @@ export type HostMux = {
 }
 
 export type TerminalReplayChunk = {
-  readonly data: string
+  readonly data: Uint8Array
   readonly replayNeedsQueryResponses: boolean
   readonly replayTruncated: boolean
 }
@@ -99,11 +99,11 @@ export type HostTerminal = {
       cols: number
       rows: number
       createdAt: string
-      syntheticAnsi: string
+      syntheticBytes: Uint8Array
     }
     replayQuality?: "exact" | "checkpoint" | "degraded"
-    outputChunks?: string[]
-    output: string
+    outputChunks?: Uint8Array[]
+    output: Uint8Array
     replayTruncated?: boolean
     replayNeedsQueryResponses?: boolean
     archiveAvailable?: boolean
@@ -123,7 +123,7 @@ export type HostTerminal = {
   onData(
     id: string,
     callback: (
-      data: string,
+      data: Uint8Array,
       replay?: boolean,
       replayNeedsQueryResponses?: boolean,
       replayTruncated?: boolean,

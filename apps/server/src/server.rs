@@ -1,10 +1,13 @@
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::HashSet,
     net::SocketAddr,
     path::{Path, PathBuf},
     sync::Arc,
     time::Duration,
 };
+
+#[cfg(test)]
+use std::collections::VecDeque;
 
 use axum::{
     Json, Router,
@@ -36,14 +39,14 @@ use uuid::Uuid;
 
 use crate::{
     config::{HostConfig, is_loopback_hostname},
+    connection_outbound::{ConnectionOutbound, NextOutbound},
     device_auth::{AuthenticateDevice, DeviceAuthError, PairDevice},
+    event_hub::{HubMessage, TerminalSubscriber},
     model::now_iso,
+    outbound_mailbox::OutboundFrameKind,
     runtime::{HostRuntime, Principal, RuntimeError},
     terminal::capture_process_identity,
-    wire::{
-        HostEvent, HostRpcRequest, MAX_WS_PAYLOAD_BYTES, TerminalWsAck, TerminalWsCommand,
-        encode_terminal_data_frame,
-    },
+    wire::{HostEvent, HostRpcRequest, MAX_WS_PAYLOAD_BYTES, TerminalWsAck, TerminalWsCommand},
 };
 
 const MAX_JSON_BODY_BYTES: usize = 2 * 1024 * 1024;
@@ -626,10 +629,14 @@ async fn handle_socket(
         }
     }
 
+    let outbound = ConnectionOutbound::new(protocol, terminal_flow_limit());
+    let terminal_subscriber: Arc<dyn TerminalSubscriber> = outbound.clone();
+    let writer_outbound = Arc::clone(&outbound);
+    let writer = tokio::spawn(async move {
+        socket_writer(sender, writer_outbound).await;
+    });
     let mut attached = HashSet::<String>::new();
     let mut raw = HashSet::<String>::new();
-    let flow_limit = terminal_flow_limit();
-    let mut flow = HashMap::<String, TerminalFlow>::new();
     let mut queued_commands = 0_usize;
 
     loop {
@@ -638,27 +645,25 @@ async fn handle_socket(
                 let Some(Ok(message)) = message else { break; };
                 match message {
                     Message::Text(text) if text.as_str() == "ping" => {
-                        if sender.send(Message::Text("pong".into())).await.is_err() { break; }
+                        if !outbound.enqueue_text("pong") { break; }
                     }
                     Message::Text(text) => {
                         let Ok(value) = serde_json::from_str::<Value>(text.as_str()) else { continue; };
                         if let Ok(ack) = serde_json::from_value::<TerminalWsAck>(value.clone())
                             && ack.kind == "terminal:ack"
                         {
-                            if let Some(state) = flow.get_mut(&ack.terminal_id) {
-                                state.acknowledge(ack.sequence);
-                            }
+                            outbound.acknowledge(&ack.terminal_id, ack.sequence);
                             continue;
                         }
                         let Ok(command) = serde_json::from_value::<TerminalWsCommand>(value) else { continue; };
                         if command.request_id.is_empty() || !is_realtime_op(&command.op) { continue; }
                         if queued_commands >= MAX_WS_COMMAND_QUEUE {
-                            if send_json(&mut sender, &json!({
+                            if !outbound.enqueue_reliable(&json!({
                                 "type": "terminal:result",
                                 "requestId": command.request_id,
                                 "ok": false,
                                 "error": { "code": "HOST_BUSY", "message": "too many in-flight terminal commands" },
-                            })).await.is_err() { break; }
+                            })) { break; }
                             continue;
                         }
                         queued_commands += 1;
@@ -668,30 +673,49 @@ async fn handle_socket(
                             attached.insert(id.to_owned());
                             let mode = command.args.get(2).and_then(Value::as_str).unwrap_or("both");
                             if mode == "raw" || mode == "both" { raw.insert(id.to_owned()); }
-                            flow.insert(id.to_owned(), TerminalFlow::new(command.args.get(1).and_then(Value::as_u64).unwrap_or(0)));
+                            let acknowledged = command.args.get(1).and_then(Value::as_u64).unwrap_or(0);
+                            outbound.attach(id, acknowledged);
+                            if raw.contains(id) {
+                                runtime.events.attach_terminal(
+                                    id,
+                                    &principal.connection_id,
+                                    &terminal_subscriber,
+                                );
+                            }
                         } else if command.op == "terminal:detach"
                             && let Some(id) = command.args.first().and_then(Value::as_str)
                         {
                             attached.remove(id);
                             raw.remove(id);
-                            flow.remove(id);
+                            outbound.detach(id);
+                            runtime.events.detach_terminal(id, &principal.connection_id);
                         }
                         let result = runtime.dispatch(&principal, &command.op, &command.args);
                         queued_commands = queued_commands.saturating_sub(1);
+                        let mut attach_snapshot = None;
                         let response = match result {
-                            Ok(value) => json!({
-                                "type": "terminal:result",
-                                "requestId": command.request_id,
-                                "ok": true,
-                                "value": value,
-                            }),
+                            Ok(value) => {
+                                if command.op == "terminal:attach" {
+                                    let last_sequence = value
+                                        .get("lastSequence")
+                                        .and_then(Value::as_u64)
+                                        .unwrap_or(0);
+                                    attach_snapshot = Some(last_sequence);
+                                }
+                                json!({
+                                    "type": "terminal:result",
+                                    "requestId": command.request_id,
+                                    "ok": true,
+                                    "value": value,
+                                })
+                            },
                             Err(error) => {
                                 if command.op == "terminal:attach"
                                     && let Some(id) = command.args.first().and_then(Value::as_str)
                                 {
                                     attached.remove(id);
                                     raw.remove(id);
-                                    flow.remove(id);
+                                    runtime.events.detach_terminal(id, &principal.connection_id);
                                 }
                                 json!({
                                     "type": "terminal:result",
@@ -701,7 +725,14 @@ async fn handle_socket(
                                 })
                             }
                         };
-                        if send_json(&mut sender, &response).await.is_err() { break; }
+                        let accepted = if command.op == "terminal:attach" {
+                            command.args.first().and_then(Value::as_str).is_some_and(|id| {
+                                outbound.enqueue_attach_result(id, attach_snapshot, &response)
+                            })
+                        } else {
+                            outbound.enqueue_reliable(&response)
+                        };
+                        if !accepted { break; }
                     }
                     Message::Close(_) => break,
                     _ => {}
@@ -711,52 +742,69 @@ async fn handle_socket(
                 let event = match event {
                     Ok(event) => event,
                     Err(broadcast::error::RecvError::Lagged(_)) => {
-                        let _ = close_socket(&mut sender, 1013, "outbound mailbox overflow").await;
+                        outbound.close(1013, "metadata outbound mailbox overflow");
                         break;
                     }
                     Err(broadcast::error::RecvError::Closed) => break,
                 };
-                if protocol == 2 && event.sequence <= snapshot_sequence {
-                    continue;
-                }
-                if event.channel.as_ref() == "security:device-revoked" {
-                    let revoked = event.args.first().and_then(Value::as_str);
-                    if revoked == principal.device_id.as_deref() {
-                        let _ = close_socket(&mut sender, 4003, "access revoked").await;
-                        break;
-                    }
-                    continue;
-                }
-                if event.channel.as_ref() == "terminal:data" {
-                    let Some(id) = event.args.first().and_then(Value::as_str) else { continue; };
-                    if !attached.contains(id) || !raw.contains(id) { continue; }
-                    let data = event.args.get(1).and_then(Value::as_str).unwrap_or("");
-                    let sequence = event.args.get(2).and_then(Value::as_u64).unwrap_or(0);
-                    if protocol == 2 {
-                        let state = flow.entry(id.to_owned()).or_insert_with(|| TerminalFlow::new(0));
-                        if !state.reserve(sequence, data.len(), flow_limit) {
-                            raw.remove(id);
-                            if send_json(&mut sender, &json!({
-                                "type": "terminal:replay-required",
-                                "terminalId": id,
-                                "sequence": state.acknowledged,
-                            })).await.is_err() { break; }
+                match event.as_ref() {
+                    HubMessage::Terminal(_) => continue,
+                    HubMessage::Event(event) => {
+                        if protocol == 2 && event.sequence <= snapshot_sequence {
                             continue;
                         }
+                        if event.channel.as_ref() == "security:device-revoked" {
+                            let revoked = event.args.first().and_then(Value::as_str);
+                            if revoked == principal.device_id.as_deref() {
+                                outbound.close(4003, "access revoked");
+                                break;
+                            }
+                            continue;
+                        }
+                        if event.channel.as_ref() == "terminal:semantic" { continue; }
+                        let outgoing = if protocol == 1 { event.legacy() } else { (**event).clone() };
+                        if !outbound.enqueue_reliable(&outgoing) { break; }
                     }
-                    let Ok(frame) = encode_terminal_data_frame(event.sequence, sequence, id, data.as_bytes()) else { continue; };
-                    if sender.send(Message::Binary(frame)).await.is_err() { break; }
-                    continue;
                 }
-                if event.channel.as_ref() == "terminal:semantic" { continue; }
-                let outgoing = if protocol == 1 { event.legacy() } else { (*event).clone() };
-                if send_json(&mut sender, &outgoing).await.is_err() { break; }
             }
         }
     }
+    runtime.events.detach_connection(&principal.connection_id);
+    outbound.stop();
+    let _ = writer.await;
     runtime
         .terminal
         .release_connection(&principal.connection_id);
+}
+
+async fn socket_writer(
+    mut sender: SplitSink<WebSocket, Message>,
+    outbound: Arc<ConnectionOutbound>,
+) {
+    while let Some(next) = outbound.next().await {
+        match next {
+            NextOutbound::Frame(frame) => {
+                let message = match frame.kind {
+                    OutboundFrameKind::Binary => Message::Binary(frame.data),
+                    OutboundFrameKind::Text => {
+                        let Ok(text) = String::from_utf8(frame.data.to_vec()) else {
+                            let _ = close_socket(&mut sender, 1011, "invalid outbound text").await;
+                            break;
+                        };
+                        Message::Text(text.into())
+                    }
+                };
+                if sender.send(message).await.is_err() {
+                    break;
+                }
+            }
+            NextOutbound::Close { code, reason } => {
+                let _ = close_socket(&mut sender, code, reason).await;
+                break;
+            }
+        }
+    }
+    outbound.stop();
 }
 
 async fn authenticate_modern(
@@ -1223,12 +1271,14 @@ fn terminal_flow_limit() -> usize {
         .unwrap_or(8 * 1024 * 1024)
 }
 
+#[cfg(test)]
 struct TerminalFlow {
     acknowledged: u64,
     outstanding: usize,
     frames: VecDeque<(u64, usize)>,
 }
 
+#[cfg(test)]
 impl TerminalFlow {
     fn new(acknowledged: u64) -> Self {
         Self {
