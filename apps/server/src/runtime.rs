@@ -389,43 +389,27 @@ impl HostRuntime {
             "mux:archiveTab" => {
                 let command = object(args, 0)?;
                 let tab_id = field_string(command, "tabId")?;
-                let current = self
-                    .store
-                    .get_tab(tab_id)
-                    .ok_or_else(|| StoreError::NotFound(format!("tab {tab_id}")))?;
-                let previous_session = self.store.get_session(&current.session_id);
-                let previous_tab_ids = self
-                    .store
-                    .get_snapshot(&current.session_id)
-                    .map(|snapshot| {
-                        snapshot
-                            .tabs
-                            .into_iter()
-                            .map(|tab| tab.id)
-                            .collect::<std::collections::HashSet<_>>()
-                    })
-                    .unwrap_or_default();
                 let stop = command.get("mode").and_then(Value::as_str) == Some("stop-terminals");
-                for terminal in self.store.terminals_for_tab(tab_id, false) {
-                    self.close_mux_terminal(&terminal, stop)?;
-                }
-                let tab = self.store.archive_tab(tab_id)?;
-                self.emit_tab("SessionTabArchived", &tab);
-                if let Some(snapshot) = self.store.get_snapshot(&current.session_id) {
-                    for replacement in snapshot.tabs {
-                        if !previous_tab_ids.contains(&replacement.id) {
-                            self.emit_tab("SessionTabCreated", &replacement);
+                let terminals = self.store.terminals_for_tab(tab_id, false);
+                if stop {
+                    for terminal in &terminals {
+                        if terminal.status.is_live()
+                            && let Some(pty_id) = terminal.output.pty_id.as_deref()
+                        {
+                            self.dispose_mux_pty(pty_id)?;
                         }
                     }
-                    if previous_session.is_some_and(|previous| {
-                        previous.active_tab_id != snapshot.session.active_tab_id
-                            || previous.active_mux_terminal_id
-                                != snapshot.session.active_mux_terminal_id
-                    }) {
-                        self.emit_session("SessionUpdated", &snapshot.session);
-                    }
                 }
-                Ok(json!(tab))
+                let result = self.store.close_tab(tab_id, stop)?;
+                for terminal in &result.terminals {
+                    self.emit_terminal_archived(terminal);
+                }
+                self.emit_tab("SessionTabArchived", &result.tab);
+                for replacement in &result.created_tabs {
+                    self.emit_tab("SessionTabCreated", replacement);
+                }
+                self.emit_session("SessionUpdated", &result.session);
+                Ok(json!(result.tab))
             }
             "mux:selectTab" => {
                 let command = object(args, 0)?;
@@ -679,7 +663,7 @@ impl HostRuntime {
             return Err(StoreError::Conflict(format!("terminal revision {}", terminal.id)).into());
         }
         if let Some(pty_id) = terminal.output.pty_id.as_deref() {
-            let _ = self.terminal.dispose(pty_id);
+            self.dispose_mux_pty(pty_id)?;
         }
         let cancelled =
             self.store
@@ -706,7 +690,7 @@ impl HostRuntime {
             return Err(StoreError::Conflict(format!("terminal revision {id}")).into());
         }
         if let Some(pty_id) = current.output.pty_id.as_deref() {
-            let _ = self.terminal.dispose(pty_id);
+            self.dispose_mux_pty(pty_id)?;
         }
         let starting = self
             .store
@@ -760,36 +744,43 @@ impl HostRuntime {
             .tab_id
             .as_deref()
             .and_then(|tab_id| self.store.get_tab(tab_id));
-        if stop && terminal.status.is_live() {
-            let latest = self
-                .store
-                .get_terminal(&terminal.id)
-                .ok_or_else(|| StoreError::NotFound(terminal.id.clone()))?;
-            let _ = self.cancel_mux_terminal(&latest, latest.revision);
+        if stop
+            && terminal.status.is_live()
+            && let Some(pty_id) = terminal.output.pty_id.as_deref()
+        {
+            self.dispose_mux_pty(pty_id)?;
         }
-        let archived = self.store.archive_terminal(&terminal.id)?;
+        let result = self.store.close_terminal(&terminal.id, stop)?;
+        self.emit_terminal_archived(&result.terminal);
+        if let Some(tab) = result.tab.as_ref()
+            && previous_tab.is_some_and(|previous| previous.revision != tab.revision)
+        {
+            self.emit_tab("SessionTabUpdated", tab);
+        }
+        if previous_session.is_some_and(|previous| previous.revision != result.session.revision) {
+            self.emit_session("SessionUpdated", &result.session);
+        }
+        Ok(result.terminal)
+    }
+
+    fn dispose_mux_pty(&self, pty_id: &str) -> Result<(), RuntimeError> {
+        match self.terminal.dispose(pty_id) {
+            Ok(()) | Err(TerminalError::NotFound(_)) => Ok(()),
+            Err(error) => Err(error.into()),
+        }
+    }
+
+    fn emit_terminal_archived(&self, terminal: &MuxTerminal) {
         self.events.emit(
             "mux:event",
             vec![json!({
                 "_tag": "MuxTerminalArchived",
-                "eventId": format!("terminal-archived:{}:{}", archived.id, Uuid::new_v4()),
-                "muxTerminalId": archived.id,
-                "revision": archived.revision,
-                "occurredAt": archived.updated_at,
+                "eventId": format!("terminal-archived:{}:{}", terminal.id, Uuid::new_v4()),
+                "muxTerminalId": terminal.id,
+                "revision": terminal.revision,
+                "occurredAt": terminal.updated_at,
             })],
         );
-        if let Some(tab_id) = archived.tab_id.as_deref()
-            && let Some(tab) = self.store.get_tab(tab_id)
-            && previous_tab.is_some_and(|previous| previous.revision != tab.revision)
-        {
-            self.emit_tab("SessionTabUpdated", &tab);
-        }
-        if let Some(session) = self.store.get_session(&archived.session_id)
-            && previous_session.is_some_and(|previous| previous.revision != session.revision)
-        {
-            self.emit_session("SessionUpdated", &session);
-        }
-        Ok(archived)
     }
 
     fn dispatch_terminal(

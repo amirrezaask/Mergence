@@ -247,6 +247,72 @@ describe("MuxSessionStore browser state", () => {
     assert.equal(store.getSnapshot().terminalsById.get(terminalId)?.archivedAt, "2026-01-02")
   })
 
+  it("stages terminal close without changing authoritative revisions and rolls back once", () => {
+    const store = new MuxSessionStore()
+    store.replace([session()], [makeTerminal()])
+    const before = store.getSnapshot().terminalsById.get(terminalId)
+    let publications = 0
+    store.subscribe(() => { publications += 1 })
+
+    const pending = store.stageTerminalClose(terminalId)
+    assert.ok(pending)
+    assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [])
+    assert.equal(store.getSnapshot().terminalsById.get(terminalId), before)
+    assert.equal(store.stageTerminalClose(terminalId), null)
+    pending.rollback()
+    assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [terminalId])
+    assert.equal(publications, 2)
+  })
+
+  it("keeps a pending Window and its terminals hidden across realtime updates", () => {
+    const store = new MuxSessionStore()
+    const tabId = Schema.decodeUnknownSync(SessionTabId)("tab-close")
+    const tab = SessionTab.make({
+      id: tabId,
+      sessionId,
+      title: "Window 1",
+      position: 0,
+      activeMuxTerminalId: terminalId,
+      createdAt: "2026-01-01",
+      updatedAt: "2026-01-01",
+    })
+    store.replace([session()], [{ ...makeTerminal(), tabId }], [tab])
+    const pending = store.stageTabClose(tabId)
+    assert.ok(pending)
+    assert.deepEqual(store.getSnapshot().visibleTabIdsBySession.get(sessionId) ?? [], [])
+    assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [])
+
+    store.apply({
+      _tag: "MuxTerminalUpdated",
+      eventId: "pending-update",
+      muxTerminalId: terminalId,
+      muxTerminal: { ...makeTerminal(), tabId, title: "Authoritative", revision: 2, updatedAt: "2026-01-02" },
+      revision: 2,
+      occurredAt: "2026-01-02",
+    })
+    assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [])
+    pending.rollback()
+    assert.equal(store.getSnapshot().terminalsById.get(terminalId)?.title, "Authoritative")
+    assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [terminalId])
+  })
+
+  it("does not let stale rollback resurrect an authoritatively archived terminal", () => {
+    const store = new MuxSessionStore()
+    store.replace([session()], [makeTerminal()])
+    const pending = store.stageTerminalClose(terminalId)
+    assert.ok(pending)
+    store.apply({
+      _tag: "MuxTerminalArchived",
+      eventId: "authoritative-close",
+      muxTerminalId: terminalId,
+      revision: 2,
+      occurredAt: "2026-01-02",
+    })
+    pending.rollback()
+    assert.deepEqual(store.getSnapshot().terminalIdsBySession.get(sessionId), [])
+    assert.equal(store.getSnapshot().terminalsById.get(terminalId)?.archivedAt, "2026-01-02")
+  })
+
   it("reports revision gaps without replacing the newer snapshot", () => {
     const store = new MuxSessionStore()
     store.replace([session()], [makeTerminal()])

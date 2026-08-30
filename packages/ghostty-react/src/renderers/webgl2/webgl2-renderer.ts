@@ -9,10 +9,18 @@ import type {
   TerminalRenderFont,
   TerminalRenderOverlays,
   TerminalRenderViewport,
+  TerminalRendererSubmissionDiagnostics,
+  TerminalRendererSubmissionFrame,
 } from "../terminal-renderer.js";
 import { terminalRowEdges, terminalUnderlineRects } from "../render-semantics.js";
 import { WebGlGlyphBatch, WebGlRectBatch } from "./batches.js";
 import { WebGlGlyphAtlas } from "./glyph-atlas.js";
+import {
+  WebGlRetainedScene,
+  type RetainedRowChange,
+  type ScenePrimitivePlan,
+  type SceneSubmissionPlan,
+} from "./retained-scene.js";
 import { assertWebGlSelfTest, createWebGlProgram } from "./program.js";
 
 const RECT_VERTEX = `#version 300 es
@@ -92,6 +100,17 @@ type RetainedRow = {
 
 type BufferState = { readonly buffer: WebGLBuffer; capacity: number };
 
+const EMPTY_SUBMISSION_FRAME: TerminalRendererSubmissionFrame = {
+  dirtyRowsBuilt: 0,
+  sceneCopyBytes: 0,
+  sceneUploadBytes: 0,
+  sceneUploadCalls: 0,
+  fullPrimitiveUploads: 0,
+  partialPrimitiveUploads: 0,
+  overlayUploadBytes: 0,
+  drawCalls: 0,
+};
+
 function colorValues(packed: number): readonly [number, number, number] {
   return [((packed >>> 16) & 0xff) / 255, ((packed >>> 8) & 0xff) / 255, (packed & 0xff) / 255];
 }
@@ -129,9 +148,7 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
   private readonly cursorBuffer: BufferState;
   private readonly glyphBuffer: BufferState;
   private readonly cursorGlyphBuffer: BufferState;
-  private readonly retainedBackgrounds = new WebGlRectBatch(262_144);
-  private readonly retainedDecorations = new WebGlRectBatch(262_144);
-  private readonly retainedGlyphs = new WebGlGlyphBatch(131_072);
+  private readonly retainedScene = new WebGlRetainedScene();
   private readonly cursors = new WebGlRectBatch(8);
   private readonly cursorGlyphs = new WebGlGlyphBatch(2);
   private readonly atlas: WebGlGlyphAtlas;
@@ -141,11 +158,24 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
   private readonly atlasUniform: WebGLUniformLocation;
   private viewport: TerminalRenderViewport;
   private font: TerminalRenderFont;
-  private sceneUploaded = false;
   private sceneGeneration = 0;
   private hoverKey = "";
   private disposed = false;
   private debugValidation = false;
+  private lastSubmission: TerminalRendererSubmissionFrame = EMPTY_SUBMISSION_FRAME;
+  private cumulativeSubmission = {
+    ...EMPTY_SUBMISSION_FRAME,
+    frames: 0,
+    rowRebuilds: 0,
+    sceneCompactions: 0,
+    atlasTextureUploads: 0,
+    atlasResets: 0,
+    rowBatchAllocations: 0,
+    currentUsedSceneBytes: 0,
+    currentAllocatedBufferBytes: 0,
+  };
+  private frameRowBatchAllocations = 0;
+  private frameRowRebuilds = 0;
   private debug: WebGlTerminalDebugCounters = {
     dirtyRows: 0,
     retainedRows: 0,
@@ -194,6 +224,14 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
   }
 
   get debugCounters(): WebGlTerminalDebugCounters { return this.debug; }
+
+  get submissionDiagnostics(): TerminalRendererSubmissionDiagnostics {
+    return {
+      backend: "webgl2",
+      lastFrame: this.lastSubmission,
+      cumulative: this.cumulativeSubmission,
+    };
+  }
 
   setDebugValidation(enabled: boolean): void { this.debugValidation = enabled; }
 
@@ -244,37 +282,50 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
       ? Array.from({ length: model.rows }, (_, row) => row)
       : [...(overlays.dirtyRows ?? model.dirtyRows)];
 
+    this.frameRowBatchAllocations = 0;
+    this.frameRowRebuilds = 0;
     let atlasGeneration = this.atlas.generation;
-    this.updateRows(model, overlays, dirty, full);
+    let submission = this.updateRows(model, overlays, dirty, full);
     if (atlasGeneration !== this.atlas.generation) {
       // Pressure reset invalidated retained UVs. Rebuild once against the fresh
       // bounded atlas; this is normal cache policy, not renderer recovery.
       atlasGeneration = this.atlas.generation;
-      this.updateRows(
+      submission = this.updateRows(
         model,
         overlays,
         Array.from({ length: model.rows }, (_, row) => row),
         true,
       );
       if (atlasGeneration !== this.atlas.generation) {
-        // The complete unique cluster set cannot fit the configured budget.
-        // Keep rendering the most recent complete atlas generation without
-        // escalating through the context recovery ladder.
-        this.invalidateScene();
+        throw new Error("WebGL glyph atlas cannot retain the complete scene");
       }
     }
     this.sceneGeneration = model.currentGeneration;
 
-    if (!this.sceneUploaded) this.uploadRetainedScene();
+    const cursorAtlasGeneration = this.atlas.generation;
     this.buildCursor(model, overlays);
+    if (cursorAtlasGeneration !== this.atlas.generation) {
+      const rebuildGeneration = this.atlas.generation;
+      submission = this.updateRows(
+        model,
+        overlays,
+        Array.from({ length: model.rows }, (_, row) => row),
+        true,
+      );
+      this.buildCursor(model, overlays);
+      if (rebuildGeneration !== this.atlas.generation) {
+        throw new Error("WebGL glyph atlas cannot retain the complete scene and cursor");
+      }
+    }
+    const sceneStats = this.submitScene(submission);
     const gl = this.gl;
     const background = colorValues(packedColor(model.background));
     gl.clearColor(background[0], background[1], background[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     let drawCalls = 0;
-    drawCalls += this.drawRects(this.backgroundBuffer, this.retainedBackgrounds.count, false);
-    drawCalls += this.drawGlyphs(this.glyphBuffer, this.retainedGlyphs.count, false);
-    drawCalls += this.drawRects(this.decorationBuffer, this.retainedDecorations.count, false);
+    drawCalls += this.drawRects(this.backgroundBuffer, this.retainedScene.backgroundCount, false);
+    drawCalls += this.drawGlyphs(this.glyphBuffer, this.retainedScene.glyphCount, false);
+    drawCalls += this.drawRects(this.decorationBuffer, this.retainedScene.decorationCount, false);
     drawCalls += this.drawRects(this.cursorBuffer, this.cursors.count, true, this.cursors.data);
     drawCalls += this.drawGlyphs(this.cursorGlyphBuffer, this.cursorGlyphs.count, true, this.cursorGlyphs.data);
     if (this.debugValidation) {
@@ -284,18 +335,46 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     this.debug = {
       dirtyRows: dirty.length,
       retainedRows: this.rows.length,
-      glyphInstances: this.retainedGlyphs.count + this.cursorGlyphs.count,
+      glyphInstances: this.retainedScene.glyphCount + this.cursorGlyphs.count,
       rectangleInstances:
-        this.retainedBackgrounds.count + this.retainedDecorations.count + this.cursors.count,
+        this.retainedScene.backgroundCount + this.retainedScene.decorationCount + this.cursors.count,
       textureUploads: this.atlas.uploads - uploadStart,
       atlasResets: this.atlas.resets - resetStart,
       atlasBytes: this.atlas.allocatedBytes,
-      bufferBytes:
-        this.retainedBackgrounds.data.byteLength + this.retainedGlyphs.data.byteLength +
-        this.retainedDecorations.data.byteLength + this.cursors.data.byteLength +
-        this.cursorGlyphs.data.byteLength,
+      bufferBytes: this.retainedScene.usedBytes + this.cursors.usedBytes + this.cursorGlyphs.usedBytes,
       drawCalls,
       atlasOccupancy: this.atlas.occupancy,
+    };
+    const overlayUploadBytes = this.cursors.usedBytes + this.cursorGlyphs.usedBytes;
+    this.lastSubmission = {
+      dirtyRowsBuilt: this.frameRowRebuilds,
+      sceneCopyBytes: sceneStats.copyBytes,
+      sceneUploadBytes: sceneStats.uploadBytes,
+      sceneUploadCalls: sceneStats.uploadCalls,
+      fullPrimitiveUploads: sceneStats.fullUploads,
+      partialPrimitiveUploads: sceneStats.partialUploads,
+      overlayUploadBytes,
+      drawCalls,
+    };
+    this.cumulativeSubmission = {
+      dirtyRowsBuilt: this.cumulativeSubmission.dirtyRowsBuilt + this.frameRowRebuilds,
+      sceneCopyBytes: this.cumulativeSubmission.sceneCopyBytes + sceneStats.copyBytes,
+      sceneUploadBytes: this.cumulativeSubmission.sceneUploadBytes + sceneStats.uploadBytes,
+      sceneUploadCalls: this.cumulativeSubmission.sceneUploadCalls + sceneStats.uploadCalls,
+      fullPrimitiveUploads: this.cumulativeSubmission.fullPrimitiveUploads + sceneStats.fullUploads,
+      partialPrimitiveUploads: this.cumulativeSubmission.partialPrimitiveUploads + sceneStats.partialUploads,
+      overlayUploadBytes: this.cumulativeSubmission.overlayUploadBytes + overlayUploadBytes,
+      drawCalls: this.cumulativeSubmission.drawCalls + drawCalls,
+      frames: this.cumulativeSubmission.frames + 1,
+      rowRebuilds: this.cumulativeSubmission.rowRebuilds + this.frameRowRebuilds,
+      sceneCompactions: this.cumulativeSubmission.sceneCompactions + sceneStats.compactions,
+      atlasTextureUploads: this.cumulativeSubmission.atlasTextureUploads + this.atlas.uploads - uploadStart,
+      atlasResets: this.cumulativeSubmission.atlasResets + this.atlas.resets - resetStart,
+      rowBatchAllocations: this.cumulativeSubmission.rowBatchAllocations + this.frameRowBatchAllocations,
+      currentUsedSceneBytes: this.retainedScene.usedBytes,
+      currentAllocatedBufferBytes:
+        this.backgroundBuffer.capacity + this.decorationBuffer.capacity + this.glyphBuffer.capacity +
+        this.cursorBuffer.capacity + this.cursorGlyphBuffer.capacity,
     };
   }
 
@@ -327,9 +406,9 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     const background = colorValues(this.rows.length > 0 ? 0 : 0);
     gl.clearColor(background[0], background[1], background[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
-    this.drawRects(this.backgroundBuffer, this.retainedBackgrounds.count, false);
-    this.drawGlyphs(this.glyphBuffer, this.retainedGlyphs.count, false);
-    this.drawRects(this.decorationBuffer, this.retainedDecorations.count, false);
+    this.drawRects(this.backgroundBuffer, this.retainedScene.backgroundCount, false);
+    this.drawGlyphs(this.glyphBuffer, this.retainedScene.glyphCount, false);
+    this.drawRects(this.decorationBuffer, this.retainedScene.decorationCount, false);
     this.drawRects(this.cursorBuffer, this.cursors.count, false);
     this.drawGlyphs(this.cursorGlyphBuffer, this.cursorGlyphs.count, false);
     const source = new Uint8Array(width * height * 4);
@@ -369,26 +448,42 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     overlays: TerminalRenderOverlays,
     rows: readonly number[],
     full: boolean,
-  ): void {
+  ): SceneSubmissionPlan {
     if (full) {
-      this.rows.length = model.rows;
-      for (let row = 0; row < model.rows; row += 1) this.rows[row] = this.buildRow(model, overlays, row);
-    } else {
-      for (const row of rows) {
-        if (row >= 0 && row < model.rows) this.rows[row] = this.buildRow(model, overlays, row);
+      for (let row = 0; row < model.rows; row += 1) {
+        this.rows[row] = this.buildRow(model, overlays, row, this.rows[row]);
       }
+      this.rows.length = model.rows;
+      return this.retainedScene.replaceAll(this.rows);
     }
-    this.sceneUploaded = false;
+    const changes: RetainedRowChange[] = [];
+    for (const row of rows) {
+      if (row < 0 || row >= model.rows) continue;
+      const batches = this.buildRow(model, overlays, row, this.rows[row]);
+      this.rows[row] = batches;
+      changes.push({ row, batches });
+    }
+    return this.retainedScene.updateRows(changes);
   }
 
   private buildRow(
     model: GhosttyViewportModel,
     overlays: TerminalRenderOverlays,
     row: number,
+    existing: RetainedRow | undefined,
   ): RetainedRow {
-    const backgrounds = new WebGlRectBatch(Math.max(8, model.cols * 2));
-    const decorations = new WebGlRectBatch(Math.max(8, model.cols * 8));
-    const glyphs = new WebGlGlyphBatch(Math.max(8, model.cols));
+    this.frameRowRebuilds += 1;
+    const retained = existing ?? {
+      backgrounds: new WebGlRectBatch(262_144),
+      decorations: new WebGlRectBatch(262_144),
+      glyphs: new WebGlGlyphBatch(131_072),
+      version: 0,
+    };
+    if (existing === undefined) this.frameRowBatchAllocations += 3;
+    const { backgrounds, decorations, glyphs } = retained;
+    backgrounds.clear();
+    decorations.clear();
+    glyphs.clear();
     const edges = terminalRowEdges(
       overlays.viewport.originY,
       row,
@@ -403,17 +498,18 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
       const style = model.styleAt(row, column);
       const left = overlays.viewport.padding + column * overlays.metrics.width;
       const backgroundPacked = model.backgroundAt(row, column);
-      if (backgroundPacked !== defaultBackgroundPacked) {
-        const color = colorValues(backgroundPacked);
-        backgrounds.push(left, top, overlays.metrics.width, height, color[0], color[1], color[2]);
-      }
-      if ((style & GHOSTTY_RENDER_STYLE.selected) !== 0) {
-        backgrounds.push(
+      if (
+        backgroundPacked !== defaultBackgroundPacked &&
+        !backgrounds.pushPacked(left, top, overlays.metrics.width, height, backgroundPacked)
+      ) throw new RangeError("WebGL background row exceeded its instance bound");
+      if (
+        (style & GHOSTTY_RENDER_STYLE.selected) !== 0 &&
+        !backgrounds.push(
           left, top, overlays.metrics.width, height,
           selection[0], selection[1], selection[2], selection[3],
-        );
-      }
-      const foreground = colorValues(model.foregroundAt(row, column));
+        )
+      ) throw new RangeError("WebGL selection row exceeded its instance bound");
+      const foregroundPacked = model.foregroundAt(row, column);
       const explicitUnderline =
         (style & GHOSTTY_RENDER_STYLE.underlineMask) >>> GHOSTTY_RENDER_STYLE.underlineShift;
       const hoverUnderline = explicitUnderline === 0 &&
@@ -422,30 +518,36 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
         (row > overlays.hoveredLinkRange.start.y || column >= overlays.hoveredLinkRange.start.x) &&
         (row < overlays.hoveredLinkRange.end.y || column <= overlays.hoveredLinkRange.end.x);
       const underline = explicitUnderline || (hoverUnderline ? 1 : 0);
-      for (const rect of terminalUnderlineRects(
-        underline,
-        left,
-        edges.bottom - 1,
-        overlays.metrics.width,
-        overlays.viewport.pixelRatio,
-      )) {
-        decorations.push(rect.x, rect.y, rect.width, rect.height, foreground[0], foreground[1], foreground[2]);
+      if (underline !== 0) {
+        for (const rect of terminalUnderlineRects(
+          underline,
+          left,
+          edges.bottom - 1,
+          overlays.metrics.width,
+          overlays.viewport.pixelRatio,
+        )) {
+          if (!decorations.pushPacked(rect.x, rect.y, rect.width, rect.height, foregroundPacked)) {
+            throw new RangeError("WebGL decoration row exceeded its instance bound");
+          }
+        }
       }
-      if ((style & GHOSTTY_RENDER_STYLE.strikethrough) !== 0) {
-        decorations.push(
+      if (
+        (style & GHOSTTY_RENDER_STYLE.strikethrough) !== 0 &&
+        !decorations.pushPacked(
           left,
           top + Math.floor(height * 0.55),
           overlays.metrics.width,
           Math.max(1 / overlays.viewport.pixelRatio, 1),
-          foreground[0], foreground[1], foreground[2],
-        );
-      }
-      if ((style & GHOSTTY_RENDER_STYLE.overline) !== 0) {
-        decorations.push(
+          foregroundPacked,
+        )
+      ) throw new RangeError("WebGL decoration row exceeded its instance bound");
+      if (
+        (style & GHOSTTY_RENDER_STYLE.overline) !== 0 &&
+        !decorations.pushPacked(
           left, top, overlays.metrics.width, Math.max(1 / overlays.viewport.pixelRatio, 1),
-          foreground[0], foreground[1], foreground[2],
-        );
-      }
+          foregroundPacked,
+        )
+      ) throw new RangeError("WebGL decoration row exceeded its instance bound");
       const text = model.textAt(row, column);
       const invisible = (style & GHOSTTY_RENDER_STYLE.invisible) !== 0;
       if (text.length === 0 || text === " " || invisible) continue;
@@ -460,30 +562,72 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
         italic: (style & GHOSTTY_RENDER_STYLE.italic) !== 0,
         pixelRatio: overlays.viewport.pixelRatio,
       });
-      glyphs.push(
+      if (!glyphs.pushPacked(
         left, top, overlays.metrics.width * span, height,
         entry.u0, entry.v0, entry.u1, entry.v1,
-        foreground[0], foreground[1], foreground[2], 1,
-        entry.colorGlyph ? 1 : 0,
-      );
+        foregroundPacked, 1, entry.colorGlyph ? 1 : 0,
+      )) throw new RangeError("WebGL glyph row exceeded its instance bound");
     }
-    return { backgrounds, decorations, glyphs, version: model.rowVersions[row] ?? 0 };
+    retained.version = model.rowVersions[row] ?? 0;
+    return retained;
   }
 
-  private uploadRetainedScene(): void {
-    this.retainedBackgrounds.clear();
-    this.retainedDecorations.clear();
-    this.retainedGlyphs.clear();
-    for (const row of this.rows) {
-      if (row === undefined) continue;
-      this.retainedBackgrounds.append(row.backgrounds);
-      this.retainedDecorations.append(row.decorations);
-      this.retainedGlyphs.append(row.glyphs);
+  private submitScene(plan: SceneSubmissionPlan): {
+    readonly copyBytes: number;
+    readonly uploadBytes: number;
+    readonly uploadCalls: number;
+    readonly fullUploads: number;
+    readonly partialUploads: number;
+    readonly compactions: number;
+  } {
+    const background = this.submitPrimitive(this.backgroundBuffer, plan.backgrounds);
+    const decoration = this.submitPrimitive(this.decorationBuffer, plan.decorations);
+    const glyph = this.submitPrimitive(this.glyphBuffer, plan.glyphs);
+    return {
+      copyBytes: background.copyBytes + decoration.copyBytes + glyph.copyBytes,
+      uploadBytes: background.uploadBytes + decoration.uploadBytes + glyph.uploadBytes,
+      uploadCalls: background.uploadCalls + decoration.uploadCalls + glyph.uploadCalls,
+      fullUploads: background.fullUploads + decoration.fullUploads + glyph.fullUploads,
+      partialUploads: background.partialUploads + decoration.partialUploads + glyph.partialUploads,
+      compactions: background.compactions + decoration.compactions + glyph.compactions,
+    };
+  }
+
+  private submitPrimitive(state: BufferState, plan: ScenePrimitivePlan): {
+    readonly copyBytes: number;
+    readonly uploadBytes: number;
+    readonly uploadCalls: number;
+    readonly fullUploads: number;
+    readonly partialUploads: number;
+    readonly compactions: number;
+  } {
+    if (plan.kind === "none") {
+      return { copyBytes: 0, uploadBytes: 0, uploadCalls: 0, fullUploads: 0, partialUploads: 0, compactions: 0 };
     }
-    this.upload(this.backgroundBuffer, this.retainedBackgrounds.data);
-    this.upload(this.decorationBuffer, this.retainedDecorations.data);
-    this.upload(this.glyphBuffer, this.retainedGlyphs.data);
-    this.sceneUploaded = true;
+    if (plan.kind === "full") {
+      this.uploadFull(state, plan.data);
+      return {
+        copyBytes: plan.data.byteLength,
+        uploadBytes: plan.data.byteLength,
+        uploadCalls: plan.data.byteLength > 0 ? 1 : 0,
+        fullUploads: plan.data.byteLength > 0 ? 1 : 0,
+        partialUploads: 0,
+        compactions: 1,
+      };
+    }
+    let bytes = 0;
+    for (const range of plan.ranges) {
+      this.uploadRange(state, range.offset * Float32Array.BYTES_PER_ELEMENT, range.data);
+      bytes += range.data.byteLength;
+    }
+    return {
+      copyBytes: bytes,
+      uploadBytes: bytes,
+      uploadCalls: plan.ranges.length,
+      fullUploads: 0,
+      partialUploads: plan.ranges.length,
+      compactions: 0,
+    };
   }
 
   private buildCursor(model: GhosttyViewportModel, overlays: TerminalRenderOverlays): void {
@@ -541,11 +685,11 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
 
   private invalidateScene(): void {
     this.rows.length = 0;
+    this.retainedScene.clear();
     this.sceneGeneration = 0;
-    this.sceneUploaded = false;
   }
 
-  private upload(state: BufferState, data: Float32Array): void {
+  private uploadFull(state: BufferState, data: Float32Array): void {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer);
     if (data.byteLength > state.capacity) {
@@ -555,6 +699,16 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
       state.capacity = capacity;
     }
     if (data.byteLength > 0) gl.bufferSubData(gl.ARRAY_BUFFER, 0, data);
+  }
+
+  private uploadRange(state: BufferState, byteOffset: number, data: Float32Array): void {
+    if (byteOffset < 0 || byteOffset + data.byteLength > state.capacity) {
+      throw new RangeError("WebGL partial upload exceeds allocated scene buffer");
+    }
+    if (data.byteLength === 0) return;
+    const gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer);
+    gl.bufferSubData(gl.ARRAY_BUFFER, byteOffset, data);
   }
 
   private configureRectVao(buffer: WebGLBuffer): void {
@@ -589,7 +743,7 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     data?: Float32Array,
   ): number {
     if (count === 0) return 0;
-    if (update && data !== undefined) this.upload(state, data);
+    if (update && data !== undefined) this.uploadFull(state, data);
     const gl = this.gl;
     this.configureRectVao(state.buffer);
     gl.useProgram(this.rectProgram);
@@ -605,7 +759,7 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     data?: Float32Array,
   ): number {
     if (count === 0) return 0;
-    if (update && data !== undefined) this.upload(state, data);
+    if (update && data !== undefined) this.uploadFull(state, data);
     const gl = this.gl;
     this.configureGlyphVao(state.buffer);
     gl.useProgram(this.glyphProgram);

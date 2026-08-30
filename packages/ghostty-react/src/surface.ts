@@ -47,7 +47,10 @@ import {
   RendererController,
   type ControlledTerminalRenderer,
 } from "./renderers/renderer-controller.js";
-import type { TerminalRenderer } from "./renderers/terminal-renderer.js";
+import type {
+  TerminalRenderer,
+  TerminalRendererSubmissionDiagnostics,
+} from "./renderers/terminal-renderer.js";
 
 export const DEFAULT_TERMINAL_FONT_SIZE = 12;
 const MIN_TERMINAL_FONT_SIZE = 6;
@@ -601,6 +604,13 @@ export interface GhosttyTerminalSurfaceOptions {
   readonly onRuntimeRecoveryRequired?: () => void;
 }
 
+export interface TerminalRendererCpuPercentiles {
+  readonly samples: number;
+  readonly p50: number;
+  readonly p95: number;
+  readonly p99: number;
+}
+
 export interface GhosttyTerminalLifecycleSnapshot {
   readonly surfaceInstanceId: number;
   readonly runtimeKind: TerminalRuntimeKind;
@@ -608,6 +618,8 @@ export interface GhosttyTerminalLifecycleSnapshot {
   readonly rendererBackend: TerminalRenderer["kind"];
   readonly rendererGeneration: number;
   readonly rendererRecoveries: number;
+  readonly rendererSubmission: TerminalRendererSubmissionDiagnostics | null;
+  readonly rendererCpuMs: TerminalRendererCpuPercentiles;
   readonly attachCount: number;
   readonly resizeCount: number;
   readonly geometryGeneration: number;
@@ -618,6 +630,22 @@ export interface GhosttyTerminalLifecycleSnapshot {
 }
 
 let nextSurfaceInstanceId = 1;
+const MAX_RENDERER_CPU_SAMPLES = 256;
+
+function rendererCpuPercentiles(samples: readonly number[]): TerminalRendererCpuPercentiles {
+  if (samples.length === 0) return { samples: 0, p50: 0, p95: 0, p99: 0 };
+  const sorted = [...samples].sort((left, right) => left - right);
+  const valueAt = (percentile: number): number => {
+    const index = Math.min(sorted.length - 1, Math.ceil(sorted.length * percentile) - 1);
+    return sorted[index] ?? 0;
+  };
+  return {
+    samples: samples.length,
+    p50: valueAt(0.5),
+    p95: valueAt(0.95),
+    p99: valueAt(0.99),
+  };
+}
 
 export class GhosttyTerminalSurface {
   readonly surfaceInstanceId = nextSurfaceInstanceId++;
@@ -729,6 +757,7 @@ export class GhosttyTerminalSurface {
   private lastSubmittedModelFrame = 0;
   private lastNextPaintObservedFrame = 0;
   private pendingPresentationFrame = 0;
+  private readonly rendererCpuSamples: number[] = [];
 
   private constructor(
     mount: HTMLElement,
@@ -819,6 +848,8 @@ export class GhosttyTerminalSurface {
       rendererBackend: this.renderBackend,
       rendererGeneration: renderer.generation,
       rendererRecoveries: renderer.recoveryCount,
+      rendererSubmission: renderer.submission,
+      rendererCpuMs: rendererCpuPercentiles(this.rendererCpuSamples),
       attachCount: this.attachCount,
       resizeCount: this.resizeCount,
       geometryGeneration: this.geometryGeneration,
@@ -2361,6 +2392,8 @@ export class GhosttyTerminalSurface {
       for (const consumed of consumedUpdates) this.core.releaseRenderUpdate(consumed);
     }
     const submittedAt = performance.now();
+    this.rendererCpuSamples.push(submittedAt - renderStartedAt);
+    if (this.rendererCpuSamples.length > MAX_RENDERER_CPU_SAMPLES) this.rendererCpuSamples.shift();
     const modelFrameId = this.viewportModel.currentFrameId;
     this.lastSubmittedModelFrame = Math.max(this.lastSubmittedModelFrame, modelFrameId);
     this.observeNextPaint({

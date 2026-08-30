@@ -1,3 +1,5 @@
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
     fs,
     path::Path,
@@ -121,10 +123,25 @@ impl PersistedState {
     }
 }
 
+pub struct CloseTerminalResult {
+    pub terminal: MuxTerminal,
+    pub tab: Option<SessionTab>,
+    pub session: AppSession,
+}
+
+pub struct CloseTabResult {
+    pub terminals: Vec<MuxTerminal>,
+    pub tab: SessionTab,
+    pub session: AppSession,
+    pub created_tabs: Vec<SessionTab>,
+}
+
 pub struct StateStore {
     database: DatabaseOwner,
     state: Mutex<PersistedState>,
     server_id: String,
+    #[cfg(test)]
+    commit_count: AtomicUsize,
 }
 
 impl StateStore {
@@ -190,6 +207,8 @@ impl StateStore {
             database,
             state: Mutex::new(state),
             server_id,
+            #[cfg(test)]
+            commit_count: AtomicUsize::new(0),
         })
     }
 
@@ -241,7 +260,14 @@ impl StateStore {
             )
         })?;
         *current = next;
+        #[cfg(test)]
+        self.commit_count.fetch_add(1, Ordering::Relaxed);
         Ok(result)
+    }
+
+    #[cfg(test)]
+    fn commit_count(&self) -> usize {
+        self.commit_count.load(Ordering::Relaxed)
     }
 
     #[must_use]
@@ -819,6 +845,164 @@ impl StateStore {
         })
     }
 
+    pub fn close_terminal(
+        &self,
+        terminal_id: &str,
+        stop: bool,
+    ) -> Result<CloseTerminalResult, StoreError> {
+        self.mutate(|state| {
+            let current = state
+                .terminals
+                .iter()
+                .find(|terminal| terminal.id == terminal_id)
+                .cloned()
+                .ok_or_else(|| StoreError::NotFound(format!("terminal {terminal_id}")))?;
+            if current.archived_at.is_some() {
+                let session = state
+                    .sessions
+                    .iter()
+                    .find(|value| value.id == current.session_id)
+                    .cloned()
+                    .ok_or_else(|| {
+                        StoreError::NotFound(format!("session {}", current.session_id))
+                    })?;
+                let tab = current
+                    .tab_id
+                    .as_deref()
+                    .and_then(|id| state.tabs.iter().find(|value| value.id == id))
+                    .cloned();
+                return Ok(CloseTerminalResult {
+                    terminal: current,
+                    tab,
+                    session,
+                });
+            }
+            let timestamp = now_iso();
+            let next_terminal = current.tab_id.as_deref().and_then(|tab_id| {
+                state
+                    .terminals
+                    .iter()
+                    .filter(|terminal| {
+                        terminal.tab_id.as_deref() == Some(tab_id)
+                            && terminal.id != terminal_id
+                            && terminal.archived_at.is_none()
+                    })
+                    .min_by_key(|terminal| terminal.position)
+                    .map(|terminal| terminal.id.clone())
+            });
+            let terminal = find_terminal_mut(state, terminal_id)?;
+            if stop && terminal.status.is_live() {
+                terminal.status = TerminalStatus::Cancelled;
+                terminal.output.process_state = crate::model::ProcessState::Exited;
+                terminal.output.activity_state = crate::model::ActivityState::Idle;
+                terminal.output.replay_available = false;
+                terminal.finished_at = Some(timestamp.clone());
+            }
+            terminal.archived_at = Some(timestamp.clone());
+            terminal.updated_at = timestamp.clone();
+            terminal.revision += 1;
+            let archived = terminal.clone();
+
+            let tab = if let Some(tab_id) = current.tab_id.as_deref() {
+                let tab = find_tab_mut(state, tab_id)?;
+                if tab.active_mux_terminal_id.as_deref() == Some(terminal_id) {
+                    tab.active_mux_terminal_id = next_terminal.clone();
+                    tab.updated_at = timestamp.clone();
+                    tab.revision += 1;
+                }
+                Some(tab.clone())
+            } else {
+                None
+            };
+            let session = find_session_mut(state, &current.session_id)?;
+            if session.active_mux_terminal_id.as_deref() == Some(terminal_id) {
+                session.active_mux_terminal_id = next_terminal;
+                session.updated_at = timestamp;
+                session.revision += 1;
+            }
+            Ok(CloseTerminalResult {
+                terminal: archived,
+                tab,
+                session: session.clone(),
+            })
+        })
+    }
+
+    pub fn close_tab(&self, tab_id: &str, stop: bool) -> Result<CloseTabResult, StoreError> {
+        self.mutate(|state| {
+            let current = state
+                .tabs
+                .iter()
+                .find(|tab| tab.id == tab_id)
+                .cloned()
+                .ok_or_else(|| StoreError::NotFound(format!("tab {tab_id}")))?;
+            let timestamp = now_iso();
+            let mut terminals = Vec::new();
+            for terminal in state.terminals.iter_mut().filter(|terminal| {
+                terminal.tab_id.as_deref() == Some(tab_id) && terminal.archived_at.is_none()
+            }) {
+                if stop && terminal.status.is_live() {
+                    terminal.status = TerminalStatus::Cancelled;
+                    terminal.output.process_state = crate::model::ProcessState::Exited;
+                    terminal.output.activity_state = crate::model::ActivityState::Idle;
+                    terminal.output.replay_available = false;
+                    terminal.finished_at = Some(timestamp.clone());
+                }
+                terminal.archived_at = Some(timestamp.clone());
+                terminal.updated_at = timestamp.clone();
+                terminal.revision += 1;
+                terminals.push(terminal.clone());
+            }
+            let tab = find_tab_mut(state, tab_id)?;
+            if tab.archived_at.is_none() {
+                tab.archived_at = Some(timestamp.clone());
+                tab.updated_at = timestamp.clone();
+                tab.revision += 1;
+            }
+            let archived_tab = tab.clone();
+            let mut created_tabs = Vec::new();
+            if !state
+                .tabs
+                .iter()
+                .any(|tab| tab.session_id == current.session_id && tab.archived_at.is_none())
+            {
+                let replacement = SessionTab {
+                    id: format!("tab-{}", Uuid::new_v4()),
+                    session_id: current.session_id.clone(),
+                    title: "Window 1".to_owned(),
+                    position: 0,
+                    active_mux_terminal_id: None,
+                    layout_json: None,
+                    revision: 1,
+                    created_at: timestamp.clone(),
+                    updated_at: timestamp.clone(),
+                    archived_at: None,
+                };
+                state.tabs.push(replacement.clone());
+                created_tabs.push(replacement);
+            }
+            let next = state
+                .tabs
+                .iter()
+                .filter(|tab| tab.session_id == current.session_id && tab.archived_at.is_none())
+                .min_by_key(|tab| tab.position)
+                .cloned();
+            let session = find_session_mut(state, &current.session_id)?;
+            if session.active_tab_id.as_deref() == Some(tab_id) {
+                session.active_tab_id = next.as_ref().map(|tab| tab.id.clone());
+                session.active_mux_terminal_id = next.and_then(|tab| tab.active_mux_terminal_id);
+                session.updated_at = timestamp;
+                session.revision += 1;
+            }
+            Ok(CloseTabResult {
+                terminals,
+                tab: archived_tab,
+                session: session.clone(),
+                created_tabs,
+            })
+        })
+    }
+
     pub fn archive_terminal(&self, terminal_id: &str) -> Result<MuxTerminal, StoreError> {
         self.mutate(|state| {
             let current = state
@@ -1218,6 +1402,65 @@ mod tests {
         let session = store.get_session(&snapshot.session.id).expect("session");
         assert_eq!(session.active_tab_id, Some(target.id));
         assert_eq!(session.active_mux_terminal_id, Some(second.id));
+    }
+
+    #[test]
+    fn terminal_close_commits_final_state_once() {
+        let store = store();
+        let snapshot = store.list_snapshots(false).remove(0);
+        let terminal = store
+            .create_terminal(
+                &snapshot.session.id,
+                snapshot.session.active_tab_id.as_deref(),
+                "Terminal",
+                TerminalInput::default(),
+            )
+            .expect("terminal");
+        let running = store
+            .update_terminal(&terminal.id, Some(terminal.revision), |value| {
+                value.status = TerminalStatus::Running;
+                value.output = TerminalOutput::running("pty-1".to_owned(), 1);
+            })
+            .expect("running");
+        let before = store.commit_count();
+        let result = store.close_terminal(&running.id, true).expect("close");
+        assert_eq!(store.commit_count() - before, 1);
+        assert_eq!(result.terminal.revision, running.revision + 1);
+        assert_eq!(result.terminal.status, TerminalStatus::Cancelled);
+        assert!(result.terminal.archived_at.is_some());
+        assert!(!result.terminal.output.replay_available);
+    }
+
+    #[test]
+    fn window_close_archives_six_terminals_in_one_commit_and_creates_one_fallback() {
+        let store = store();
+        let snapshot = store.list_snapshots(false).remove(0);
+        let tab_id = snapshot.tabs[0].id.clone();
+        for index in 0..6 {
+            store
+                .create_terminal(
+                    &snapshot.session.id,
+                    Some(&tab_id),
+                    &format!("Terminal {index}"),
+                    TerminalInput::default(),
+                )
+                .expect("terminal");
+        }
+        let before = store.commit_count();
+        let result = store.close_tab(&tab_id, true).expect("close tab");
+        assert_eq!(store.commit_count() - before, 1);
+        assert_eq!(result.terminals.len(), 6);
+        assert!(
+            result
+                .terminals
+                .iter()
+                .all(|terminal| terminal.archived_at.is_some())
+        );
+        assert_eq!(result.created_tabs.len(), 1);
+        assert_eq!(
+            result.session.active_tab_id,
+            Some(result.created_tabs[0].id.clone())
+        );
     }
 
     #[test]

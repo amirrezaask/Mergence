@@ -15,6 +15,21 @@ test("rectangle batches reuse storage and enforce their bound", () => {
   assert.equal(batch.data.buffer, buffer);
 });
 
+test("packed rectangle colors expose exact used and allocated bytes", () => {
+  const batch = new WebGlRectBatch(128);
+  const allocated = batch.allocatedBytes;
+  assert.equal(batch.pushPacked(1, 2, 3, 4, 0xff8040, 0.5), true);
+  assert.equal(batch.usedBytes, 8 * Float32Array.BYTES_PER_ELEMENT);
+  assert.equal(batch.allocatedBytes, allocated);
+  assert.equal(batch.data[4], 1);
+  assert.ok(Math.abs((batch.data[5] ?? 0) - 128 / 255) < 1e-6);
+  assert.ok(Math.abs((batch.data[6] ?? 0) - 64 / 255) < 1e-6);
+  assert.equal(batch.data[7], 0.5);
+  batch.clear();
+  assert.equal(batch.usedBytes, 0);
+  assert.equal(batch.allocatedBytes, allocated);
+});
+
 test("glyph batches retain UV, tint, alpha, and color mode", () => {
   const batch = new WebGlGlyphBatch(1);
   assert.equal(batch.push(1, 2, 3, 4, 0.1, 0.2, 0.3, 0.4, 1, 0.5, 0.25, 0.75, 1), true);

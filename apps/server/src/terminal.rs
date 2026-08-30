@@ -642,7 +642,8 @@ impl TerminalHost {
             .entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .remove(id)
+            .get(id)
+            .cloned()
             .ok_or_else(|| TerminalError::NotFound(id.to_owned()))?;
         {
             let mut state = entry
@@ -655,13 +656,28 @@ impl TerminalHost {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .unregister_terminal(id, Some(&entry.terminal_epoch));
-        self.history.close_terminal(id)?;
-        entry
+
+        // The child handle remains registered until the OS accepts the kill
+        // request. History compression and quota IO can never precede or
+        // prevent process termination.
+        let mut child = entry
             .child
             .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if !matches!(child.try_wait(), Ok(Some(_))) {
+            child
+                .kill()
+                .map_err(|error| TerminalError::Runtime(error.to_string()))?;
+        }
+        drop(child);
+        self.entries
+            .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .kill()
-            .map_err(|error| TerminalError::Runtime(error.to_string()))
+            .remove(id);
+        if let Err(error) = self.history.close_terminal(id) {
+            eprintln!("failed to enqueue terminal history finalization for {id}: {error}");
+        }
+        Ok(())
     }
 
     pub fn stop_all(&self) {

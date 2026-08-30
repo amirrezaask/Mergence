@@ -1,6 +1,9 @@
 import type {
   AppSession,
+  ArchiveSessionTab,
+  CloseTerminal,
   SessionId,
+  SessionTab,
   SessionTabId,
   MuxTerminal,
   MuxTerminalId,
@@ -102,6 +105,54 @@ export class MuxClient {
     )
   }
 
+  async closeTerminal(command: CloseTerminal): Promise<MuxTerminal | undefined> {
+    if (this.disposed) return undefined
+    const terminal = this.store.getSnapshot().terminalsById.get(command.muxTerminalId)
+    if (!terminal) return undefined
+    const pending = this.store.stageTerminalClose(command.muxTerminalId)
+    if (!pending) return undefined
+    try {
+      const archived = await this.api.closeTerminal(command)
+      if (this.disposed) return archived
+      this.store.replaceMuxTerminal(archived)
+      pending.confirm()
+      return archived
+    } catch (error) {
+      try {
+        await this.reconcileSession(terminal.sessionId)
+      } finally {
+        const authoritative = this.store.getSnapshot().terminalsById.get(command.muxTerminalId)
+        if (authoritative?.archivedAt) pending.confirm()
+        else pending.rollback()
+      }
+      throw error
+    }
+  }
+
+  async closeTab(command: ArchiveSessionTab): Promise<SessionTab | undefined> {
+    if (this.disposed) return undefined
+    const tab = this.store.getSnapshot().tabsById.get(command.tabId)
+    if (!tab) return undefined
+    const pending = this.store.stageTabClose(command.tabId)
+    if (!pending) return undefined
+    try {
+      const archived = await this.api.archiveTab(command)
+      if (this.disposed) return archived
+      this.store.replaceTab(archived)
+      pending.confirm()
+      return archived
+    } catch (error) {
+      try {
+        await this.reconcileSession(tab.sessionId)
+      } finally {
+        const authoritative = this.store.getSnapshot().tabsById.get(command.tabId)
+        if (authoritative?.archivedAt) pending.confirm()
+        else pending.rollback()
+      }
+      throw error
+    }
+  }
+
   async reconcile(): Promise<void> {
     if (this.disposed) return
     if (this.reconcilePromise) return this.reconcilePromise
@@ -117,6 +168,7 @@ export class MuxClient {
     this.disposeEvents?.()
     this.reconcilePromise = undefined
     this.store.setRevisionGapHandler(undefined)
+    this.store.clearPendingCloses()
   }
 
   private async reconcileGap(gap: MuxRevisionGap): Promise<void> {

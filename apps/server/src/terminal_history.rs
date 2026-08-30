@@ -1,9 +1,10 @@
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs::{self, File},
     io::{Read, Write},
     path::{Path, PathBuf},
-    sync::{Mutex, MutexGuard},
+    sync::{Arc, Mutex, MutexGuard, mpsc},
+    thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
@@ -74,27 +75,33 @@ pub enum HistoryError {
     Corrupt(String),
 }
 
-/// Durable block-compressed PTY history. The interface is synchronous because
-/// PTY append calls run on their dedicated reader threads; RPC callers execute
-/// reads through Tokio's blocking pool.
-pub struct TerminalHistoryArchive {
+enum FinalizeCommand {
+    Close(String),
+    Barrier(mpsc::Sender<Result<(), String>>),
+    Shutdown(mpsc::Sender<Result<(), String>>),
+}
+
+struct HistoryShared {
     root: PathBuf,
     block_bytes: usize,
     page_bytes: usize,
     states: Mutex<HashMap<String, ArchiveState>>,
+    pending_closes: Mutex<HashSet<String>>,
+    background_errors: Mutex<Vec<String>>,
+}
+
+/// Durable block-compressed PTY history. Live appends stay synchronous on PTY
+/// reader threads. Closed-history compression, manifests, and global quota
+/// maintenance are serialized on a dedicated finalizer thread.
+pub struct TerminalHistoryArchive {
+    shared: Arc<HistoryShared>,
+    finalize_tx: mpsc::Sender<FinalizeCommand>,
+    worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
 impl TerminalHistoryArchive {
     pub fn open(root: &Path) -> Result<Self, HistoryError> {
-        fs::create_dir_all(root)?;
-        let archive = Self {
-            root: root.to_owned(),
-            block_bytes: DEFAULT_BLOCK_BYTES,
-            page_bytes: DEFAULT_PAGE_BYTES,
-            states: Mutex::new(HashMap::new()),
-        };
-        archive.cleanup_expired()?;
-        Ok(archive)
+        Self::open_with_limits(root, DEFAULT_BLOCK_BYTES, DEFAULT_PAGE_BYTES, true)
     }
 
     #[cfg(test)]
@@ -103,12 +110,37 @@ impl TerminalHistoryArchive {
         block_bytes: usize,
         page_bytes: usize,
     ) -> Result<Self, HistoryError> {
+        Self::open_with_limits(root, block_bytes.max(1), page_bytes.max(1), false)
+    }
+
+    fn open_with_limits(
+        root: &Path,
+        block_bytes: usize,
+        page_bytes: usize,
+        cleanup: bool,
+    ) -> Result<Self, HistoryError> {
         fs::create_dir_all(root)?;
-        Ok(Self {
+        let shared = Arc::new(HistoryShared {
             root: root.to_owned(),
-            block_bytes: block_bytes.max(1),
-            page_bytes: page_bytes.max(1),
+            block_bytes,
+            page_bytes,
             states: Mutex::new(HashMap::new()),
+            pending_closes: Mutex::new(HashSet::new()),
+            background_errors: Mutex::new(Vec::new()),
+        });
+        if cleanup {
+            shared.cleanup_expired()?;
+        }
+        let (finalize_tx, finalize_rx) = mpsc::channel();
+        let worker_shared = Arc::clone(&shared);
+        let worker = thread::Builder::new()
+            .name("yaade-history-finalizer".to_owned())
+            .spawn(move || run_finalizer(&worker_shared, finalize_rx))
+            .map_err(HistoryError::Io)?;
+        Ok(Self {
+            shared,
+            finalize_tx,
+            worker: Mutex::new(Some(worker)),
         })
     }
 
@@ -116,15 +148,25 @@ impl TerminalHistoryArchive {
         if sequence == 0 || data.is_empty() {
             return Ok(());
         }
-        let mut states = self.states();
-        let state = self.state_for(&mut states, terminal_id)?;
+        if self.shared.pending_closes().contains(terminal_id) {
+            return Err(HistoryError::Corrupt(format!(
+                "append after close for {terminal_id}"
+            )));
+        }
+        let mut states = self.shared.states();
+        let state = self.shared.state_for(&mut states, terminal_id)?;
+        if state.manifest.closed_at.is_some() {
+            return Err(HistoryError::Corrupt(format!(
+                "append after completed close for {terminal_id}"
+            )));
+        }
         state.pending_bytes = state.pending_bytes.saturating_add(data.len());
         state.pending.push(HistoryRecord {
             sequence,
             data: data.to_owned(),
         });
         state.manifest.updated_at = now_millis();
-        if state.pending_bytes >= self.block_bytes {
+        if state.pending_bytes >= self.shared.block_bytes {
             flush_state(state)?;
             enforce_terminal_quota(state)?;
         }
@@ -137,16 +179,16 @@ impl TerminalHistoryArchive {
         after_sequence: u64,
         max_bytes: Option<usize>,
     ) -> Result<Option<TerminalHistoryPage>, HistoryError> {
-        let mut states = self.states();
-        let dir = self.terminal_dir(terminal_id);
+        let mut states = self.shared.states();
+        let dir = self.shared.terminal_dir(terminal_id);
         if !dir.exists() && !states.contains_key(terminal_id) {
             return Ok(None);
         }
-        let state = self.state_for(&mut states, terminal_id)?;
+        let state = self.shared.state_for(&mut states, terminal_id)?;
         flush_state(state)?;
         let limit = max_bytes
-            .unwrap_or(self.page_bytes)
-            .clamp(1, self.page_bytes);
+            .unwrap_or(self.shared.page_bytes)
+            .clamp(1, self.shared.page_bytes);
         let mut chunks = Vec::new();
         let mut bytes = 0_usize;
         let mut first_sequence = 0_u64;
@@ -192,43 +234,94 @@ impl TerminalHistoryArchive {
         }))
     }
 
+    /// Enqueue idempotent finalization. The PTY termination path never waits on
+    /// compression, manifest IO, or archive-wide quota scans.
     pub fn close_terminal(&self, terminal_id: &str) -> Result<(), HistoryError> {
-        let mut states = self.states();
-        let state = self.state_for(&mut states, terminal_id)?;
-        flush_state(state)?;
-        state.manifest.closed_at = Some(now_millis());
-        write_manifest(state)?;
-        drop(states);
-        self.enforce_total_quota()
+        {
+            let mut pending = self.shared.pending_closes();
+            if !pending.insert(terminal_id.to_owned()) {
+                return Ok(());
+            }
+        }
+        if self
+            .finalize_tx
+            .send(FinalizeCommand::Close(terminal_id.to_owned()))
+            .is_err()
+        {
+            self.shared.pending_closes().remove(terminal_id);
+            return Err(HistoryError::Corrupt(
+                "history finalizer stopped".to_owned(),
+            ));
+        }
+        Ok(())
     }
 
     pub fn delete_terminal(&self, terminal_id: &str) -> Result<(), HistoryError> {
-        self.states().remove(terminal_id);
-        let dir = self.terminal_dir(terminal_id);
+        self.shared.pending_closes().remove(terminal_id);
+        self.shared.states().remove(terminal_id);
+        let dir = self.shared.terminal_dir(terminal_id);
         if dir.exists() {
             fs::remove_dir_all(dir)?;
         }
         Ok(())
     }
 
+    /// Drain accepted close work, then flush live archives. Background failures
+    /// are reported at this explicit shutdown/test barrier.
     pub fn flush_all(&self) -> Result<(), HistoryError> {
-        let mut states = self.states();
-        for state in states.values_mut() {
-            flush_state(state)?;
-            enforce_terminal_quota(state)?;
+        let (tx, rx) = mpsc::channel();
+        self.finalize_tx
+            .send(FinalizeCommand::Barrier(tx))
+            .map_err(|_| HistoryError::Corrupt("history finalizer stopped".to_owned()))?;
+        match rx.recv() {
+            Ok(Ok(())) => {}
+            Ok(Err(error)) => return Err(HistoryError::Corrupt(error)),
+            Err(_) => {
+                return Err(HistoryError::Corrupt(
+                    "history finalizer stopped".to_owned(),
+                ));
+            }
         }
-        drop(states);
-        self.enforce_total_quota()
+        self.shared.flush_live()
     }
 
     #[must_use]
     pub fn available(&self, terminal_id: &str) -> bool {
-        self.states().contains_key(terminal_id)
-            || self.terminal_dir(terminal_id).join("index.json").is_file()
+        self.shared.states().contains_key(terminal_id)
+            || self
+                .shared
+                .terminal_dir(terminal_id)
+                .join("index.json")
+                .is_file()
     }
+}
 
+impl Drop for TerminalHistoryArchive {
+    fn drop(&mut self) {
+        let Some(worker) = self
+            .worker
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .take()
+        else {
+            return;
+        };
+        let (tx, rx) = mpsc::channel();
+        let _ = self.finalize_tx.send(FinalizeCommand::Shutdown(tx));
+        let _ = rx.recv();
+        let _ = worker.join();
+    }
+}
+
+impl HistoryShared {
     fn states(&self) -> MutexGuard<'_, HashMap<String, ArchiveState>> {
         self.states
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+
+    fn pending_closes(&self) -> MutexGuard<'_, HashSet<String>> {
+        self.pending_closes
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
@@ -256,10 +349,7 @@ impl TerminalHistoryArchive {
                 terminal_id.to_owned(),
                 ArchiveState {
                     dir,
-                    manifest: ArchiveManifest {
-                        closed_at: None,
-                        ..manifest
-                    },
+                    manifest,
                     pending: Vec::new(),
                     pending_bytes: 0,
                 },
@@ -268,6 +358,38 @@ impl TerminalHistoryArchive {
         states
             .get_mut(terminal_id)
             .ok_or_else(|| HistoryError::Corrupt(terminal_id.to_owned()))
+    }
+
+    fn finalize_terminal(&self, terminal_id: &str) -> Result<(), HistoryError> {
+        let mut states = self.states();
+        if let Some(state) = states.get_mut(terminal_id) {
+            flush_state(state)?;
+            enforce_terminal_quota(state)?;
+            if state.manifest.closed_at.is_none() {
+                state.manifest.closed_at = Some(now_millis());
+                write_manifest(state)?;
+            }
+            states.remove(terminal_id);
+            return Ok(());
+        }
+        let dir = self.terminal_dir(terminal_id);
+        if let Some(mut manifest) = read_manifest(&dir)?
+            && manifest.closed_at.is_none()
+        {
+            manifest.closed_at = Some(now_millis());
+            write_manifest_value(&dir, &manifest)?;
+        }
+        Ok(())
+    }
+
+    fn flush_live(&self) -> Result<(), HistoryError> {
+        let mut states = self.states();
+        for state in states.values_mut() {
+            flush_state(state)?;
+            enforce_terminal_quota(state)?;
+        }
+        drop(states);
+        self.enforce_total_quota()
     }
 
     fn terminal_dir(&self, terminal_id: &str) -> PathBuf {
@@ -335,6 +457,70 @@ impl TerminalHistoryArchive {
         }
         Ok(())
     }
+
+    fn record_error(&self, error: &HistoryError) {
+        eprintln!("{error}");
+        self.background_errors
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .push(error.to_string());
+    }
+
+    fn take_errors(&self) -> Result<(), String> {
+        let mut errors = self
+            .background_errors
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        if errors.is_empty() {
+            Ok(())
+        } else {
+            Err(std::mem::take(&mut *errors).join("; "))
+        }
+    }
+}
+
+fn run_finalizer(shared: &HistoryShared, receiver: mpsc::Receiver<FinalizeCommand>) {
+    while let Ok(command) = receiver.recv() {
+        let mut closes = Vec::new();
+        let mut barriers = Vec::new();
+        let mut shutdown = false;
+        match command {
+            FinalizeCommand::Close(id) => closes.push(id),
+            FinalizeCommand::Barrier(sender) => barriers.push(sender),
+            FinalizeCommand::Shutdown(sender) => {
+                barriers.push(sender);
+                shutdown = true;
+            }
+        }
+        while let Ok(command) = receiver.try_recv() {
+            match command {
+                FinalizeCommand::Close(id) => closes.push(id),
+                FinalizeCommand::Barrier(sender) => barriers.push(sender),
+                FinalizeCommand::Shutdown(sender) => {
+                    barriers.push(sender);
+                    shutdown = true;
+                }
+            }
+        }
+        for id in closes {
+            if let Err(error) = shared.finalize_terminal(&id) {
+                shared.record_error(&error);
+            }
+            shared.pending_closes().remove(&id);
+        }
+        if let Err(error) = shared.enforce_total_quota() {
+            shared.record_error(&error);
+        }
+        if !barriers.is_empty() {
+            let result = shared.take_errors();
+            for sender in barriers {
+                let _ = sender.send(result.clone());
+            }
+        }
+        if shutdown {
+            break;
+        }
+    }
 }
 
 fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
@@ -396,8 +582,9 @@ fn read_manifest(dir: &Path) -> Result<Option<ArchiveManifest>, HistoryError> {
     if !path.is_file() {
         return Ok(None);
     }
-    let manifest = serde_json::from_slice::<ArchiveManifest>(&fs::read(path)?)?;
-    Ok(Some(manifest))
+    Ok(Some(serde_json::from_slice::<ArchiveManifest>(&fs::read(
+        path,
+    )?)?))
 }
 
 fn write_manifest(state: &ArchiveState) -> Result<(), HistoryError> {
@@ -455,6 +642,23 @@ mod tests {
             .expect("page");
         assert_eq!(final_page.chunks, vec!["three"]);
         assert!(final_page.complete);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn close_is_enqueued_and_barrier_drains_it() {
+        let root = temp_dir();
+        let archive = TerminalHistoryArchive::with_limits(&root, 1024, 1024).expect("archive");
+        archive.append("term-1", 1, "pending").expect("append");
+        archive.close_terminal("term-1").expect("enqueue close");
+        assert!(archive.append("term-1", 2, "late").is_err());
+        archive.flush_all().expect("drain");
+        let manifest = read_manifest(&archive.shared.terminal_dir("term-1"))
+            .expect("manifest")
+            .expect("closed manifest");
+        assert!(manifest.closed_at.is_some());
+        archive.close_terminal("term-1").expect("idempotent close");
+        archive.flush_all().expect("second drain");
         fs::remove_dir_all(root).expect("cleanup");
     }
 

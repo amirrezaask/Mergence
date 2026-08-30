@@ -16,6 +16,38 @@ export type TerminalLifecycleState = {
   rendererBackend: "canvas2d" | "webgl2"
   rendererGeneration: number
   rendererRecoveries: number
+  rendererSubmission: {
+    backend: "webgl2"
+    lastFrame: {
+      dirtyRowsBuilt: number
+      sceneCopyBytes: number
+      sceneUploadBytes: number
+      sceneUploadCalls: number
+      fullPrimitiveUploads: number
+      partialPrimitiveUploads: number
+      overlayUploadBytes: number
+      drawCalls: number
+    }
+    cumulative: {
+      dirtyRowsBuilt: number
+      sceneCopyBytes: number
+      sceneUploadBytes: number
+      sceneUploadCalls: number
+      fullPrimitiveUploads: number
+      partialPrimitiveUploads: number
+      overlayUploadBytes: number
+      drawCalls: number
+      frames: number
+      rowRebuilds: number
+      sceneCompactions: number
+      atlasTextureUploads: number
+      atlasResets: number
+      rowBatchAllocations: number
+      currentUsedSceneBytes: number
+      currentAllocatedBufferBytes: number
+    }
+  } | null
+  rendererCpuMs: { samples: number; p50: number; p95: number; p99: number }
   attachCount: number
   resizeCount: number
   geometryGeneration: number

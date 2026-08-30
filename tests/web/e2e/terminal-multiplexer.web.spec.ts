@@ -380,6 +380,43 @@ test("switching Windows reconstructs each shell before releasing live output", a
     .toContain("SECOND_WINDOW_MARKER");
 });
 
+test("Window close is painted before the host request resolves", async ({ launchApp }) => {
+  const { page } = await launchApp({ workspaceRel: "fixtures/sample-workspace" });
+  const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
+  await expect(windowTabs).toHaveCount(1);
+  await page.getByRole("button", { name: "New tab" }).click();
+  await expect(windowTabs).toHaveCount(2);
+
+  await page.evaluate(() => {
+    const mux = window.yaade?.mux;
+    if (!mux) throw new Error("mux API is not ready");
+    const archiveTab = mux.archiveTab;
+    mux.archiveTab = async command => {
+      document.documentElement.dataset.yaadeTestCloseState = "started";
+      await new Promise<void>(resolve => {
+        window.addEventListener("yaade:test-release-close", () => resolve(), { once: true });
+      });
+      const result = await archiveTab(command);
+      document.documentElement.dataset.yaadeTestCloseState = "settled";
+      return result;
+    };
+  });
+
+  await windowTabs.filter({ hasText: "Window 2" })
+    .getByRole("button", { name: "Close Window 2" })
+    .click();
+  await expect.poll(() => page.locator("html").getAttribute("data-yaade-test-close-state"))
+    .toBe("started");
+  await expect(windowTabs).toHaveCount(1);
+  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await expect(windowTabs).toHaveCount(1);
+
+  await page.evaluate(() => window.dispatchEvent(new Event("yaade:test-release-close")));
+  await expect.poll(() => page.locator("html").getAttribute("data-yaade-test-close-state"))
+    .toBe("settled");
+  await expect(page.getByRole("alert").filter({ hasText: "Action failed" })).toHaveCount(0);
+});
+
 test("closing a new Window during automatic terminal creation stays quiet", async ({
   launchApp,
 }) => {

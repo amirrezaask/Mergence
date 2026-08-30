@@ -8,6 +8,7 @@ import type {
   TerminalRenderFont,
   TerminalRenderOverlays,
   TerminalRenderViewport,
+  TerminalRendererSubmissionDiagnostics,
 } from "./terminal-renderer.js";
 
 export type RendererControllerState =
@@ -30,6 +31,7 @@ export interface RendererControllerDiagnostics {
   readonly recoveryCount: number;
   readonly lastErrorClass: string | null;
   readonly fallbackReason: string | null;
+  readonly submission: TerminalRendererSubmissionDiagnostics | null;
 }
 
 export class RendererController {
@@ -72,6 +74,7 @@ export class RendererController {
       recoveryCount: this.recoveryCountValue,
       lastErrorClass: this.lastErrorClassValue,
       fallbackReason: this.fallbackReasonValue,
+      submission: this.active?.renderer.submissionDiagnostics ?? null,
     };
   }
 

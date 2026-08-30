@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent, type ReactNode } from "react";
-import { AnimatePresence, LayoutGroup } from "motion/react";
+import { LayoutGroup } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
 import { Plus, SquareTerminal, X } from "lucide-react";
 import type { MuxTerminalId, SessionTab, SessionTabId } from "@yaade/rpc";
@@ -91,8 +91,7 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
           role="tablist"
           onKeyDown={handleWindowTabKeyDown}
         >
-          <AnimatePresence initial={false} mode="popLayout">
-            {props.tabs.map((tab) => {
+          {props.tabs.map((tab) => {
               const active = tab.id === props.activeTabId;
               const editing = editingId === tab.id;
               const dockTerminalId = props.dockTerminalIdsByTab.get(tab.id);
@@ -108,7 +107,6 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                       layout
                       initial={{ opacity: 0, scale: 0.97, y: 3 }}
                       animate={{ opacity: 1, scale: 1, y: 0 }}
-                      exit={{ opacity: 0, scale: 0.97, y: -3 }}
                       transition={{
                         layout: yaadeMotion.layoutTransition,
                         default: yaadeMotion.layoutTransition,
@@ -213,7 +211,6 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
                 </DockableWindowTab>
               );
             })}
-          </AnimatePresence>
         </nav>
       </LayoutGroup>
       <ShortcutTooltip label="New tab" shortcut={newTabShortcut} side="bottom">

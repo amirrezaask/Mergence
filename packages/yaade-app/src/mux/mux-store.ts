@@ -32,6 +32,12 @@ export type MuxRevisionGap = {
   readonly actualRevision: number
 }
 
+export type PendingMuxClose = {
+  readonly mutationId: number
+  confirm(): void
+  rollback(): void
+}
+
 export type MuxStoreRevisionSnapshot = {
   readonly sessions: ReadonlyMap<SessionId, number>
   readonly tabs: ReadonlyMap<SessionTabId, number>
@@ -69,6 +75,9 @@ export class MuxSessionStore {
   private readonly tabListeners = new Map<SessionTabId, Set<Listener>>()
   private readonly terminalListeners = new Map<MuxTerminalId, Set<Listener>>()
   private readonly revisions = new Map<string, number>()
+  private readonly pendingTerminalCloses = new Map<MuxTerminalId, number>()
+  private readonly pendingTabCloses = new Map<SessionTabId, number>()
+  private nextCloseMutationId = 1
   private revisionGapHandler: ((gap: MuxRevisionGap) => void) | undefined
 
   setRevisionGapHandler(handler: ((gap: MuxRevisionGap) => void) | undefined): void {
@@ -173,6 +182,7 @@ export class MuxSessionStore {
     this.sessionsById = nextSessions
     this.tabsById = nextTabs
     this.terminalsById = nextTerminals
+    this.clearAuthoritativelyFinishedCloses()
     for (const [id, value] of nextSessions) {
       this.revisions.set(`session:${id}`, Math.max(this.revisions.get(`session:${id}`) ?? 0, value.revision ?? 0))
     }
@@ -197,6 +207,37 @@ export class MuxSessionStore {
     this.notifyMapChanges(previousSessions, nextSessions, this.sessionListeners)
     this.notifyMapChanges(previousTabs, nextTabs, this.tabListeners)
     this.notifyMapChanges(previousTerminals, nextTerminals, this.terminalListeners)
+    this.publish()
+  }
+
+  stageTerminalClose(id: MuxTerminalId): PendingMuxClose | null {
+    const terminal = this.terminalsById.get(id)
+    if (!terminal || terminal.archivedAt || this.pendingTerminalCloses.has(id)) return null
+    const mutationId = this.nextCloseMutationId++
+    this.pendingTerminalCloses.set(id, mutationId)
+    this.rebuildTerminalIndexes()
+    this.reconcileSelection()
+    this.publish()
+    return this.closeHandle(this.pendingTerminalCloses, id, mutationId)
+  }
+
+  stageTabClose(id: SessionTabId): PendingMuxClose | null {
+    const tab = this.tabsById.get(id)
+    if (!tab || tab.archivedAt || this.pendingTabCloses.has(id)) return null
+    const mutationId = this.nextCloseMutationId++
+    this.pendingTabCloses.set(id, mutationId)
+    this.rebuildVisibleTabs()
+    this.reconcileSelection()
+    this.publish()
+    return this.closeHandle(this.pendingTabCloses, id, mutationId)
+  }
+
+  clearPendingCloses(): void {
+    if (this.pendingTerminalCloses.size === 0 && this.pendingTabCloses.size === 0) return
+    this.pendingTerminalCloses.clear()
+    this.pendingTabCloses.clear()
+    this.rebuildVisibleTabs()
+    this.reconcileSelection()
     this.publish()
   }
 
@@ -246,6 +287,7 @@ export class MuxSessionStore {
           current.updatedAt > tab.updatedAt))
     ) return
     this.tabsById = new Map(this.tabsById).set(tab.id, tab)
+    if (tab.archivedAt) this.pendingTabCloses.delete(tab.id)
     this.rebuildVisibleTabs()
     this.reconcileSelection()
     this.notify(this.tabListeners, tab.id)
@@ -344,7 +386,7 @@ export class MuxSessionStore {
     this.tabsById = new Map(nextTabs.map(tab => [tab.id, tab]))
     this.visibleTabIdsBySession = new Map()
     for (const tab of nextTabs) {
-      if (tab.archivedAt) continue
+      if (tab.archivedAt || this.pendingTabCloses.has(tab.id)) continue
       const ids = this.visibleTabIdsBySession.get(tab.sessionId) ?? []
       ids.push(tab.id)
       this.visibleTabIdsBySession.set(tab.sessionId, ids)
@@ -354,6 +396,7 @@ export class MuxSessionStore {
     }
 
     this.terminalsById = new Map(terminals.map(terminal => [terminal.id, terminal]))
+    this.clearAuthoritativelyFinishedCloses()
     for (const session of sessions) {
       this.revisions.set(`session:${session.id}`, Math.max(this.revisions.get(`session:${session.id}`) ?? 0, session.revision ?? 0))
     }
@@ -384,7 +427,7 @@ export class MuxSessionStore {
 
   selectTab(id: SessionTabId): void {
     const tab = this.tabsById.get(id) ?? this.findByLocalKey(this.tabsById, id)
-    if (!tab || tab.archivedAt) return
+    if (!tab || tab.archivedAt || this.pendingTabCloses.has(tab.id)) return
     this.activeSessionId = tab.sessionId
     this.activeTabId = id
     this.activeMuxTerminalId = this.selectedTerminalForTab(id)
@@ -393,7 +436,7 @@ export class MuxSessionStore {
 
   selectMuxTerminal(id: MuxTerminalId): void {
     const terminal = this.terminalsById.get(id) ?? this.findByLocalKey(this.terminalsById, id)
-    if (!terminal || terminal.archivedAt) return
+    if (!terminal || terminal.archivedAt || this.pendingTerminalCloses.has(terminal.id)) return
     const tabId = this.tabIdForTerminal(terminal)
     if (!tabId) return
     this.activeSessionId = terminal.sessionId
@@ -489,6 +532,7 @@ export class MuxSessionStore {
       case "SessionTabUpdated":
       case "SessionTabArchived": {
         this.tabsById = new Map(this.tabsById).set(event.tab.id, event.tab)
+        if (event.tab.archivedAt) this.pendingTabCloses.delete(event.tab.id)
         this.rebuildVisibleTabs()
         this.notify(this.tabListeners, event.tab.id)
         if (this.activeTabId === event.tab.id) {
@@ -516,7 +560,10 @@ export class MuxSessionStore {
       }
       case "MuxTerminalArchived": {
         const terminal = this.terminalsById.get(event.muxTerminalId)
-        if (terminal) this.upsertTerminal({ ...terminal, archivedAt: event.occurredAt, revision: event.revision, updatedAt: event.occurredAt })
+        if (terminal) {
+          this.pendingTerminalCloses.delete(event.muxTerminalId)
+          this.upsertTerminal({ ...terminal, archivedAt: event.occurredAt, revision: event.revision, updatedAt: event.occurredAt })
+        }
         break
       }
     }
@@ -560,9 +607,9 @@ export class MuxSessionStore {
       touchedTabs.add(tabId)
     }
     const insert = (terminal: MuxTerminal) => {
-      if (terminal.archivedAt) return
+      if (terminal.archivedAt || this.pendingTerminalCloses.has(terminal.id)) return
       const tabId = this.tabIdForTerminal(terminal)
-      if (!tabId || this.tabsById.get(tabId)?.archivedAt) return
+      if (!tabId || this.tabsById.get(tabId)?.archivedAt || this.pendingTabCloses.has(tabId)) return
       sessionIndexes.set(terminal.sessionId, [
         ...(sessionIndexes.get(terminal.sessionId) ?? []),
         terminal.id,
@@ -598,13 +645,13 @@ export class MuxSessionStore {
     )
     this.terminalIdsByTab = new Map(
       [...this.tabsById.values()]
-        .filter(tab => !tab.archivedAt)
+        .filter(tab => !tab.archivedAt && !this.pendingTabCloses.has(tab.id))
         .map(tab => [tab.id, [] as MuxTerminalId[]]),
     )
     for (const terminal of this.terminalsById.values()) {
-      if (terminal.archivedAt) continue
+      if (terminal.archivedAt || this.pendingTerminalCloses.has(terminal.id)) continue
       const tabId = this.tabIdForTerminal(terminal)
-      if (!tabId || this.tabsById.get(tabId)?.archivedAt) continue
+      if (!tabId || this.tabsById.get(tabId)?.archivedAt || this.pendingTabCloses.has(tabId)) continue
       const sessionIds = this.terminalIdsBySession.get(terminal.sessionId) ?? []
       sessionIds.push(terminal.id)
       this.terminalIdsBySession.set(terminal.sessionId, sessionIds)
@@ -635,7 +682,7 @@ export class MuxSessionStore {
   private rebuildVisibleTabs(): void {
     this.visibleTabIdsBySession = new Map()
     for (const tab of this.tabsById.values()) {
-      if (tab.archivedAt) continue
+      if (tab.archivedAt || this.pendingTabCloses.has(tab.id)) continue
       const ids = this.visibleTabIdsBySession.get(tab.sessionId) ?? []
       ids.push(tab.id)
       this.visibleTabIdsBySession.set(tab.sessionId, ids)
@@ -698,6 +745,37 @@ export class MuxSessionStore {
         ? this.activeMuxTerminalId
         : this.selectedTerminalForTab(this.activeTabId)
       : undefined
+  }
+
+  private closeHandle<K>(
+    pending: Map<K, number>,
+    key: K,
+    mutationId: number,
+  ): PendingMuxClose {
+    return {
+      mutationId,
+      confirm: () => {
+        if (pending.get(key) === mutationId) pending.delete(key)
+      },
+      rollback: () => {
+        if (pending.get(key) !== mutationId) return
+        pending.delete(key)
+        this.rebuildVisibleTabs()
+        this.reconcileSelection()
+        this.publish()
+      },
+    }
+  }
+
+  private clearAuthoritativelyFinishedCloses(): void {
+    for (const id of this.pendingTerminalCloses.keys()) {
+      const terminal = this.terminalsById.get(id)
+      if (!terminal || terminal.archivedAt) this.pendingTerminalCloses.delete(id)
+    }
+    for (const id of this.pendingTabCloses.keys()) {
+      const tab = this.tabsById.get(id)
+      if (!tab || tab.archivedAt) this.pendingTabCloses.delete(id)
+    }
   }
 
   private makeSnapshot(): MuxStoreSnapshot {

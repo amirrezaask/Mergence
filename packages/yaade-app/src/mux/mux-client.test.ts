@@ -249,6 +249,62 @@ describe("MuxClient", () => {
     client.dispose()
   })
 
+  it("publishes terminal close before the host request resolves", async () => {
+    const terminal = makeTerminal(1)
+    const archived = Schema.decodeUnknownSync(MuxTerminal)({
+      ...terminal,
+      status: "cancelled",
+      revision: 2,
+      updatedAt: "2026-08-12T00:00:02.000Z",
+      archivedAt: "2026-08-12T00:00:02.000Z",
+    })
+    const session = AppSession.make({
+      id: "ses-client-test",
+      title: "Session",
+      position: 0,
+      activeMuxTerminalId: terminal.id,
+      createdAt: terminal.createdAt,
+      updatedAt: terminal.createdAt,
+    })
+    const api = makeApi({ session, muxTerminals: [terminal] }, () => terminal)
+    let resolveClose: ((value: MuxTerminal) => void) | undefined
+    api.closeTerminal = async () => new Promise(resolve => { resolveClose = resolve })
+    const client = new MuxClient({ api, window: new FakeWindow() })
+    await client.hydrate()
+
+    const closing = client.closeTerminal({ _tag: "CloseTerminal", muxTerminalId: terminal.id })
+    assert.deepEqual(client.store.getSnapshot().terminalIdsBySession.get(session.id), [])
+    assert.equal(client.store.getSnapshot().terminalsById.get(terminal.id)?.revision, 1)
+    resolveClose?.(archived)
+    await closing
+    assert.equal(client.store.getSnapshot().terminalsById.get(terminal.id)?.archivedAt, archived.archivedAt)
+    client.dispose()
+  })
+
+  it("restores authoritative terminal state after a rejected close", async () => {
+    const terminal = makeTerminal(1)
+    const session = AppSession.make({
+      id: "ses-client-test",
+      title: "Session",
+      position: 0,
+      activeMuxTerminalId: terminal.id,
+      createdAt: terminal.createdAt,
+      updatedAt: terminal.createdAt,
+    })
+    const api = makeApi({ session, muxTerminals: [terminal] }, () => terminal)
+    api.closeTerminal = async () => Promise.reject(new Error("close failed"))
+    const client = new MuxClient({ api, window: new FakeWindow() })
+    await client.hydrate()
+
+    await assert.rejects(
+      client.closeTerminal({ _tag: "CloseTerminal", muxTerminalId: terminal.id }),
+      /close failed/,
+    )
+    assert.deepEqual(client.store.getSnapshot().terminalIdsBySession.get(session.id), [terminal.id])
+    assert.equal(client.store.getSnapshot().terminalsById.get(terminal.id)?.title, "Shell")
+    client.dispose()
+  })
+
   it("reconciles after a protocol replay gap", async () => {
     let listCalls = 0
     const terminal = makeTerminal(1)

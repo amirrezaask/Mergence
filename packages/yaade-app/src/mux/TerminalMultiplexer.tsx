@@ -920,13 +920,13 @@ export function TerminalMultiplexer() {
 	const closeTab = useCallback(
 		async (tab: SessionTab) => {
 			closingTabIdsRef.current.add(tab.id);
+			setActionError(undefined);
 			try {
-				await hostPorts.mux.archiveTab?.({
+				await client.closeTab({
 					_tag: "ArchiveSessionTab",
 					tabId: tab.id,
 					mode: "stop-terminals",
 				});
-				await client.reconcileSession(tab.sessionId);
 			} catch (error) {
 				setActionError(errorMessage(error));
 			} finally {
@@ -954,21 +954,24 @@ export function TerminalMultiplexer() {
 		async (action: "cancel" | "restart" | "archive", terminal: MuxTerminal) => {
 			setActionError(undefined);
 			try {
+				if (action === "archive") {
+					await client.closeTerminal({
+						_tag: "CloseTerminal",
+						muxTerminalId: terminal.id,
+					});
+					return;
+				}
 				const api = hostPorts.mux;
-				const result =
-					action === "cancel"
-						? await api?.stopTerminal?.(terminal.id, terminal.revision)
-						: action === "restart"
-							? await api?.restartTerminal?.(terminal.id, terminal.revision)
-							: await api?.closeTerminal?.({
-								_tag: "CloseTerminal",
-								muxTerminalId: terminal.id,
-							});
+				const result = action === "cancel"
+					? await api?.stopTerminal?.(terminal.id, terminal.revision)
+					: await api?.restartTerminal?.(terminal.id, terminal.revision);
 				if (result) client.store.replaceMuxTerminal(result);
 				await client.reconcileSession(terminal.sessionId);
 			} catch (error) {
 				setActionError(errorMessage(error));
-				await client.reconcileSession(terminal.sessionId).catch(() => undefined);
+				if (action !== "archive") {
+					await client.reconcileSession(terminal.sessionId).catch(() => undefined);
+				}
 			}
 		},
 		[client],

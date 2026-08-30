@@ -30,8 +30,37 @@ export interface TerminalRenderOverlays {
   readonly viewport: TerminalRenderViewport;
 }
 
+export interface TerminalRendererSubmissionFrame {
+  readonly dirtyRowsBuilt: number;
+  readonly sceneCopyBytes: number;
+  readonly sceneUploadBytes: number;
+  readonly sceneUploadCalls: number;
+  readonly fullPrimitiveUploads: number;
+  readonly partialPrimitiveUploads: number;
+  readonly overlayUploadBytes: number;
+  readonly drawCalls: number;
+}
+
+export interface TerminalRendererSubmissionCumulative extends TerminalRendererSubmissionFrame {
+  readonly frames: number;
+  readonly rowRebuilds: number;
+  readonly sceneCompactions: number;
+  readonly atlasTextureUploads: number;
+  readonly atlasResets: number;
+  readonly rowBatchAllocations: number;
+  readonly currentUsedSceneBytes: number;
+  readonly currentAllocatedBufferBytes: number;
+}
+
+export interface TerminalRendererSubmissionDiagnostics {
+  readonly backend: "webgl2";
+  readonly lastFrame: TerminalRendererSubmissionFrame;
+  readonly cumulative: TerminalRendererSubmissionCumulative;
+}
+
 export interface TerminalRenderer {
   readonly kind: "canvas2d" | "webgl2";
+  readonly submissionDiagnostics?: TerminalRendererSubmissionDiagnostics;
   resize(viewport: TerminalRenderViewport): void;
   setFont(font: TerminalRenderFont): Promise<GhosttyCellMetrics>;
   render(

@@ -14,6 +14,7 @@ export {
   type GhosttyTerminalFont,
   type GhosttyTerminalLifecycleSnapshot,
   type GhosttyTerminalSurfaceOptions,
+  type TerminalRendererCpuPercentiles,
   type TerminalLinkWithRange,
   type TerminalScrollbarGeometry,
 } from "./surface.js"
@@ -86,6 +87,9 @@ export type {
   TerminalRenderFont,
   TerminalRenderOverlays,
   TerminalRenderViewport,
+  TerminalRendererSubmissionCumulative,
+  TerminalRendererSubmissionDiagnostics,
+  TerminalRendererSubmissionFrame,
 } from "./renderers/terminal-renderer.js"
 export {
   ghosttyTextRunEnd,

@@ -28,6 +28,19 @@ Test host: Apple M4, macOS 27, 2026-08-29. Browser: project Chromium 149.0.7827.
 
 The local results vary enough that they do not justify a performance claim. Project policy enables the worker and scheduler by operator direction so lower-spec and busier systems can keep parsing away from browser input and layout. Existing benchmark budgets remain unchanged.
 
+## Incremental WebGL scene submission
+
+WebGL retains one compact CPU/GPU scene while continuing to clear and redraw the complete default framebuffer on every present. Submission is planned independently for backgrounds, decorations, and glyphs:
+
+- cursor/focus-only frames perform no retained-scene copy or upload;
+- dirty rows with stable primitive counts patch exact merged byte ranges;
+- a row count change compacts only the affected primitive;
+- dimensions, model generation, full repaint, font, DPR, viewport origin, hover geometry, atlas reset, and renderer recovery are full barriers.
+
+Row batches retain typed-array capacity across warm same-shape updates. Cumulative lifecycle diagnostics report actual scene copy/upload bytes and calls, full/partial submissions, compactions, row allocations, overlay uploads, atlas activity, GL capacity, and a bounded 256-sample renderer CPU distribution.
+
+The pre-change Apple M4 / Chromium 149 probe used a 180×44 viewport. A static focused terminal moved 326,384 bytes in 1.25 seconds, and five coalesced presents for ten fixed-width one-row updates moved 855,140 retained-scene bytes. These numbers characterize the removed full-upload path; no latency claim is made until three matched release benchmark runs establish a repeatable CPU distribution.
+
 ## WebGPU decision
 
 Official references checked on 2026-08-29:
