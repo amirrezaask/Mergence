@@ -19,6 +19,10 @@
       "types": "./src/session-entry.ts",
       "default": "./src/session-entry.ts"
     },
+    "./fuzzy": {
+      "types": "./src/fuzzy-entry.ts",
+      "default": "./src/fuzzy-entry.ts"
+    },
     "./gallery": {
       "types": "./src/gallery-entry.ts",
       "default": "./src/gallery-entry.ts"

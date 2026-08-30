@@ -13,7 +13,10 @@ export function TerminalSurfacePlacement(props: {
   readonly terminalId: string
   readonly focused?: boolean
   readonly visible?: boolean
+  readonly onFocused?: (terminalId: string) => void
+  readonly onInteraction?: (terminalId: string) => void
 }) {
+  const { terminalId, focused, visible = true, onFocused, onInteraction } = props
   const slotRef = useRef<HTMLDivElement>(null)
 
   useLayoutEffect(() => {
@@ -23,33 +26,38 @@ export function TerminalSurfacePlacement(props: {
     const acquire = () => {
       release?.()
       release = acquireTerminalSurfacePlacement(
-        props.terminalId,
+        terminalId,
         slot,
-        props.visible ?? true,
+        visible,
       )
+      if (!release || !focused) return
+      slot
+        .querySelector<HTMLTextAreaElement>("[data-ghostty-terminal-input]")
+        ?.focus({ preventScroll: true })
+      onFocused?.(terminalId)
     }
     acquire()
-    const unsubscribe = subscribeResidentTerminalSurface(props.terminalId, acquire)
+    const unsubscribe = subscribeResidentTerminalSurface(terminalId, acquire)
     return () => {
       unsubscribe()
       release?.()
     }
-  }, [props.terminalId, props.visible])
+  }, [focused, onFocused, terminalId, visible])
 
   useLayoutEffect(() => {
-    if (!props.focused) return
-    const input = slotRef.current?.querySelector<HTMLTextAreaElement>(
-      "[data-ghostty-terminal-input]",
-    )
-    input?.focus({ preventScroll: true })
-  }, [props.focused])
+    const slot = slotRef.current
+    if (!slot || !onInteraction) return
+    const interact = () => onInteraction(terminalId)
+    slot.addEventListener("pointerdown", interact, { capture: true })
+    return () => slot.removeEventListener("pointerdown", interact, { capture: true })
+  }, [onInteraction, terminalId])
 
   return (
     <div
       ref={slotRef}
       className="relative h-full min-h-0 w-full overflow-hidden"
-      data-yaade-terminal-placement={props.terminalId}
-      data-focused={props.focused ? "" : undefined}
+      data-yaade-terminal-placement={terminalId}
+      data-focused={focused ? "" : undefined}
     />
   )
 }

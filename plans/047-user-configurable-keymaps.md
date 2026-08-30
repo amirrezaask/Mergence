@@ -22,6 +22,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
@@ -186,12 +187,40 @@ profile, browser reload, multi-tab update, and pointer reset.
 
 ## Done criteria
 
-- [ ] One effective keymap feeds every command/label/HUD consumer.
-- [ ] Invalid profiles are rejected atomically with a guaranteed reset path.
-- [ ] Terminal/browser/OS conflicts are classified and never silently stolen.
-- [ ] Leader literal behavior remains exact.
-- [ ] Profiles contain data only and remain bounded/client-local.
-- [ ] Unit, type, lint, visual, and real-PTY E2E gates pass.
+- [x] One effective keymap feeds every command/label/HUD consumer.
+- [x] Invalid profiles are rejected atomically with a guaranteed reset path.
+- [x] Terminal/browser/OS conflicts are classified and never silently stolen.
+- [x] Leader literal behavior remains exact.
+- [x] Profiles contain data only and remain bounded/client-local.
+- [x] Unit, type, targeted lint, visual, and real-PTY E2E gates pass.
+
+## Implementation notes
+
+- `keymap-profile.ts` defines the v1 grammar, Effect Schema boundary, platform
+  aliases, risk classes, strict 32 KiB/128-binding limits, normalization,
+  conflict detection, required recovery commands, and immutable compilation.
+  Missing, corrupt, oversized, newer, or conflicting profiles fall back as one
+  value and expose only a content-free diagnostic.
+- `keymap-storage.ts` and `useKeymapSettings.ts` persist revisioned data-only
+  profiles, reject stale same-origin updates, handle denied storage, validate
+  imports before apply, and install one global compiled snapshot. Dispatch,
+  which-key, palettes, tooltips, Settings labels, and native-menu command
+  execution resolve through that snapshot rather than a second dispatcher.
+- Keyboard Settings provides platform-aware capture, default/effective/context
+  labels, virtualized search results, actionable conflicts, explicit risky-chord
+  confirmation, restore/clear/reset, and JSON import/export. `Mod-,` remains an
+  immutable recovery chord, pointer reset remains available, and
+  `keymap.reset` (`Leader Shift-R`) is a registry-backed global recovery action.
+- The active leader owns exact control-byte passthrough: pressing it twice from
+  a terminal sends one byte through the host terminal port. Capture and command
+  sequences are suppressed while Settings or command overlays own input, and
+  PTY output never enters React state or DOM.
+- Verification completed with 27 package unit files / 195 tests, repository
+  typecheck, targeted type-aware lint, a headed desktop/mobile Playwright run,
+  3 keymap cases passing three consecutive runs (9/9), and the existing 22
+  command-palette/terminal-multiplexer cases. Repository-wide `vp run lint`
+  remains blocked by pre-existing anti-slop and exhaustive-deps diagnostics in
+  unrelated and previously modified files.
 
 ## STOP conditions
 

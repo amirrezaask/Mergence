@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react"
-import { RotateCcw, Terminal as TerminalIcon, X } from "lucide-react"
+import { ArrowDown, RotateCcw, Terminal as TerminalIcon, X } from "lucide-react"
 import type { YaadeTheme } from "@yaade/shared"
 import {
   GhosttyTerminalSurface,
@@ -7,6 +7,7 @@ import {
   TerminalFrameScheduler,
   type GhosttyColor,
   type GhosttyTheme,
+  type TerminalViewportActivity,
 } from "@yaade/ghostty-react"
 import { subscribeRootStyle } from "./root-style-observer.js"
 import { Button } from "../components/ui/button.js"
@@ -29,6 +30,7 @@ import {
 } from "./terminal-links.js"
 import { DEFAULT_MONO_FONT_FAMILY } from "../theme/appearance-defaults.js"
 import { registerResidentTerminalSurface } from "./terminal-surface-placement.js"
+import { terminalViewportActivityLabels } from "./terminal-viewport-label.js"
 
 export type TerminalPanelProps = {
   cwdRootUri: string
@@ -60,6 +62,7 @@ export type TerminalPanelProps = {
   onInput?: (tabId: string, data?: string) => void
   onOutput?: (tabId: string, data?: string) => void
   onTitleChange?: (tabId: string, title: string) => void
+  onJumpToLive?: () => void
   onRestart?: () => void
   onClose?: () => void
   onFailed?: () => void
@@ -210,6 +213,25 @@ function hostTerminalTheme(theme: GhosttyTheme) {
   }
 }
 
+function updateJumpToLiveControl(
+  button: HTMLButtonElement | null,
+  label: HTMLSpanElement | null,
+  activity: TerminalViewportActivity,
+): void {
+  if (!button || !label) return
+  const hidden = activity.mode === "live"
+  const count = activity.unseenRows
+  const labels = terminalViewportActivityLabels(count)
+  label.textContent = labels.visual
+  button.setAttribute("aria-label", labels.accessible)
+  button.setAttribute("aria-hidden", hidden ? "true" : "false")
+  button.tabIndex = hidden ? -1 : 0
+  button.inert = hidden
+  button.dataset.visible = hidden ? "false" : "true"
+  button.dataset.mode = activity.mode
+  button.dataset.unseenRows = count === null ? "unknown" : String(count)
+}
+
 function focusTerminalInput(tabId: string): void {
   const terminal = getRegisteredTerminal(tabId)
   if (terminal) {
@@ -289,6 +311,7 @@ export function TerminalPanel({
   onInput,
   onOutput,
   onTitleChange,
+  onJumpToLive,
   onRestart,
   onClose,
   onFailed,
@@ -296,6 +319,10 @@ export function TerminalPanel({
   onOpenPath,
 }: TerminalPanelProps) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const jumpToLiveRef = useRef<HTMLButtonElement>(null)
+  const jumpToLiveLabelRef = useRef<HTMLSpanElement>(null)
+  const renderCountRef = useRef(0)
+  renderCountRef.current += 1
   const sessionRef = useRef<TerminalSession | null>(null)
   const surfaceRef = useRef<GhosttyTerminalSurface | null>(null)
   const [displayStatus, setDisplayStatus] = useState(status)
@@ -348,6 +375,7 @@ export function TerminalPanel({
     const pendingTerminalInput: string[] = []
     let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
     let unregisterResidentSurface: (() => void) | null = null
+    let unsubscribeViewportActivity: (() => void) | null = null
     let replayPreviewActive = false
     let previewPresentationWaiter: {
       afterModelFrameId: number
@@ -840,13 +868,26 @@ export function TerminalPanel({
           return
         }
         surfaceRef.current = surface
-        unregisterResidentSurface = registerResidentTerminalSurface({
-          terminalId: tabId,
-          mount: surfaceMount,
-          home: container,
-          surface,
-        })
         const panel = container.closest<HTMLElement>("[data-yaade-terminal-panel]")
+        const panelHome = panel?.parentElement
+        if (panel && panelHome) {
+          unregisterResidentSurface = registerResidentTerminalSurface({
+            terminalId: tabId,
+            mount: panel,
+            home: panelHome,
+            surface,
+          })
+        } else {
+          const viewportAccessory = jumpToLiveRef.current ?? undefined
+          unregisterResidentSurface = registerResidentTerminalSurface({
+            terminalId: tabId,
+            mount: surfaceMount,
+            home: container,
+            accessory: viewportAccessory,
+            accessoryHome: viewportAccessory?.parentElement ?? undefined,
+            surface,
+          })
+        }
         if (panel) {
           panel.dataset.yaadeTerminalRenderer = "ghostty"
           panel.dataset.yaadeTerminalRenderBackend = surface.renderBackend
@@ -866,6 +907,18 @@ export function TerminalPanel({
         }
         sessionRef.current = session
         registerTerminalInstance(tabId, surface)
+        unsubscribeViewportActivity = surface.subscribeViewportActivity(activity => {
+          updateJumpToLiveControl(
+            jumpToLiveRef.current,
+            jumpToLiveLabelRef.current,
+            activity,
+          )
+          if (panel) {
+            panel.dataset.yaadeTerminalViewportMode = activity.mode
+            panel.dataset.yaadeTerminalUnseenRows =
+              activity.unseenRows === null ? "unknown" : String(activity.unseenRows)
+          }
+        })
 
         outputWriter = createTerminalOutputWriter({
           // Bound each command so a pooled worker yields between terminals;
@@ -927,6 +980,8 @@ export function TerminalPanel({
       pendingTerminalInput.length = 0
       outputWriter?.dispose()
       unsub?.()
+      unsubscribeViewportActivity?.()
+      unsubscribeViewportActivity = null
       unregisterResidentSurface?.()
       unregisterResidentSurface = null
       if (surface) {
@@ -1002,6 +1057,7 @@ export function TerminalPanel({
       data-yaade-terminal-pty-id={connectedPtyId ?? ""}
       data-yaade-terminal-status={displayStatus}
       data-yaade-terminal-renderer="ghostty"
+      data-yaade-terminal-panel-render-count={renderCountRef.current}
       onMouseDown={() => focusTerminalInput(tabId)}
     >
       <div className="yaade-terminal-surface relative min-h-0 flex-1 overflow-hidden">
@@ -1011,6 +1067,29 @@ export function TerminalPanel({
           data-yaade-terminal-fit=""
           data-yaade-terminal-surface=""
         />
+        <Button
+          ref={jumpToLiveRef}
+          type="button"
+          size="sm"
+          variant="secondary"
+          aria-label="Jump to live"
+          aria-hidden="true"
+          tabIndex={-1}
+          inert
+          data-yaade-jump-to-live=""
+          data-visible="false"
+          data-mode="live"
+          data-unseen-rows="0"
+          className="absolute bottom-2 right-4 z-20 min-h-[44px] min-w-[44px] gap-1.5 rounded-full border border-border/70 bg-popover/95 px-3 text-popover-foreground opacity-100 shadow-md backdrop-blur-sm transition-[opacity,transform] duration-[var(--yaade-motion-hot)] data-[visible=false]:pointer-events-none data-[visible=false]:translate-y-1 data-[visible=false]:opacity-0 motion-reduce:translate-y-0 motion-reduce:transition-none sm:min-h-8 sm:min-w-0"
+          onMouseDown={event => event.stopPropagation()}
+          onClick={() => {
+            if (onJumpToLive) onJumpToLive()
+            else surfaceRef.current?.jumpToLive()
+          }}
+        >
+          <ArrowDown className="size-3.5" aria-hidden />
+          <span ref={jumpToLiveLabelRef}>Jump to live</span>
+        </Button>
       </div>
       {displayStatus === "starting" || deferPty ? (
         <div

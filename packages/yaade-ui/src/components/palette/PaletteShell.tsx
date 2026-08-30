@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react"
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react"
 import {
   Dialog,
   DialogContent,
@@ -34,6 +34,7 @@ export interface PaletteShellProps<T> {
   items: PaletteShellItem<T>[]
   onSelect: (item: T, query: string) => void
   onHighlightChange?: (item: T | null) => void
+  isItemDisabled?: (item: T) => boolean
   renderItem: (item: T, query: string) => ReactNode
   emptyLabel: ReactNode
   statusRow?: ReactNode
@@ -59,6 +60,8 @@ export interface PaletteShellProps<T> {
   rowLayout?: PaletteRowLayout
   /** Virtual row height in CSS pixels. Defaults to the compact single-line palette contract. */
   estimateSize?: (item: T) => number
+  /** Stable surface identifier for scoped runtime and Playwright checks. */
+  surface?: string
 }
 
 export function PaletteShell<T>({
@@ -73,6 +76,7 @@ export function PaletteShell<T>({
   items,
   onSelect,
   onHighlightChange,
+  isItemDisabled,
   renderItem,
   emptyLabel,
   statusRow,
@@ -88,6 +92,7 @@ export function PaletteShell<T>({
   itemStyle,
   rowLayout = "single",
   estimateSize,
+  surface,
 }: PaletteShellProps<T>) {
   const isControlled = queryProp !== undefined
   const [uncontrolledQuery, setUncontrolledQuery] = useState("")
@@ -98,11 +103,22 @@ export function PaletteShell<T>({
   }
 
   const [contentWidthPx, setContentWidthPx] = useState(0)
+  const contentRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
     if (!open && !isControlled) setUncontrolledQuery("")
     if (!open) setContentWidthPx(0)
   }, [open, isControlled])
+
+  useEffect(() => {
+    if (!open) return
+    const animationFrame = requestAnimationFrame(() => {
+      contentRef.current
+        ?.querySelector<HTMLInputElement>('[data-slot="command-input"]')
+        ?.focus()
+    })
+    return () => cancelAnimationFrame(animationFrame)
+  }, [open])
 
   const onContentWidthChange = useCallback((widthPx: number) => {
     setContentWidthPx(widthPx)
@@ -139,13 +155,21 @@ export function PaletteShell<T>({
         <DialogDescription>{description}</DialogDescription>
       </DialogHeader>
       <DialogContent
+        ref={contentRef}
         motion="instant"
         placement="quick-input"
         size={size}
         data-yaade-palette=""
+        data-yaade-palette-surface={surface}
         data-yaade-quick-input=""
         data-yaade-palette-fit={fitContent ? "content" : undefined}
         style={fitStyle}
+        onOpenAutoFocus={event => {
+          event.preventDefault()
+          contentRef.current
+            ?.querySelector<HTMLInputElement>('[data-slot="command-input"]')
+            ?.focus()
+        }}
         className={[
           "max-h-[calc(100dvh-var(--yaade-quick-input-top)-1rem)] gap-0 overflow-hidden rounded-md border-border bg-popover p-0 text-popover-foreground shadow-xl",
           contentClassName,
@@ -178,6 +202,7 @@ export function PaletteShell<T>({
                 aria-label={title}
                 items={listerItems}
                 itemClassName={cn("mx-0 rounded-none px-2.5 py-0", itemClassName)}
+                itemDisabled={node => isItemDisabled?.(node.data) ?? false}
                 itemStyle={node => itemStyle?.(node.data)}
                 estimateSize={node =>
                   estimateSize?.(node.data) ?? readPaletteRowHeight(rowLayout)
@@ -199,8 +224,9 @@ export function PaletteShell<T>({
                   </div>
                 }
                 onActivate={node => {
-                  onSelect(node.data, query)
+                  if (isItemDisabled?.(node.data)) return
                   onOpenChange(false)
+                  onSelect(node.data, query)
                 }}
                 onSelectionChange={node =>
                   onHighlightChange?.(node?.data ?? null)

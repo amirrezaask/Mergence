@@ -20,6 +20,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: LOW
@@ -185,12 +186,44 @@ resident terminal. Assert PTY output receives no switch chord.
 
 ## Done criteria
 
-- [ ] Previous-terminal switching is one command and toggles predictably.
-- [ ] Empty-query switcher order is MRU-first; search remains relevance-first.
-- [ ] Statuses come only from typed terminal metadata, never transcript parsing.
-- [ ] History is bounded, server-qualified, client-local, and pruned authoritatively.
-- [ ] Navigation preserves resident PTY/runtime/surface identities.
-- [ ] Unit, type, lint, visual, multi-host, and real-PTY E2E gates pass.
+- [x] Previous-terminal switching is one command and toggles predictably.
+- [x] Empty-query switcher order is MRU-first; search remains relevance-first.
+- [x] Statuses come only from typed terminal metadata, never transcript parsing.
+- [x] History is bounded, server-qualified, client-local, and pruned authoritatively.
+- [x] Navigation preserves resident PTY/runtime/surface identities.
+- [x] Unit, type, targeted lint, visual, multi-host, and real-PTY E2E gates pass.
+
+## Implementation notes
+
+- `terminal-focus-history.ts` owns a versioned Effect Schema boundary and a
+  session-local, content-free history capped at 128 identities and 32 KiB. An
+  identity includes server, Session, Window, terminal, and process generation.
+  Corrupt, denied, oversized, and newer-version storage falls back to an empty
+  history. Pruning is authoritative for connected hosts while retaining
+  configured hosts that are temporarily unavailable.
+- `terminal-switcher-model.ts` derives stable fallback order, MRU sections,
+  fuzzy-first query ranking, and metadata-only Running, Waiting, Failed,
+  Interrupted, Exited, and Starting labels. `TerminalSwitcher` freezes its
+  source order for each open, keeps the current terminal explicit, and includes
+  host, Session, and Window context in desktop and mobile rows.
+- `terminal.switchPrevious` is a registry command bound to `Leader b`. Every
+  terminal selection still routes through the shared command/runtime seam. A
+  pending explicit-focus token is committed only after the selected resident
+  surface has been placed and focused; pointer and pane focus use the same
+  history recorder.
+- Resident terminal controllers now outlive Window navigation in one canonical
+  host. `TerminalSurfacePlacement` moves the existing panel between desktop,
+  mobile, and hidden homes, preserving the PTY, parser, surface instance,
+  runtime generation, renderer generation, and attach count. Temporarily
+  incomplete host metadata no longer evicts an admitted resident controller.
+- Verification completed with 28 package unit files / 196 tests, repository
+  typecheck, targeted type-aware lint for the Plan 050 modules, `test:web` (109
+  tests), a headed desktop/mobile Playwright run, MRU E2E passing three
+  consecutive runs (9/9), multi-host E2E passing three consecutive runs (3/3),
+  and 37 command, keymap, scroll-lock, compatibility, and multiplexer
+  regressions. Repository-wide `vp run lint` remains blocked by pre-existing
+  anti-slop and exhaustive-deps diagnostics in unrelated and previously
+  modified files.
 
 ## STOP conditions
 

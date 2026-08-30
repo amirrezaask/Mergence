@@ -7,7 +7,9 @@ import {
   Brush,
   Check,
   CircleAlert,
+  Download,
   Globe2,
+  Keyboard,
   LoaderCircle,
   Monitor,
   Moon,
@@ -16,15 +18,18 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  Search,
   Server,
   SlidersHorizontal,
   Sun,
   Trash2,
+  Upload,
   X,
 } from "lucide-react"
 import { AnimatePresence } from "motion/react"
 import { div as MotionDiv } from "motion/react-m"
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
+import { useVirtualizer } from "@tanstack/react-virtual"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert.js"
 import { Badge } from "@/components/ui/badge.js"
 import { Button } from "@/components/ui/button.js"
@@ -53,6 +58,7 @@ import {
   FieldLabel,
 } from "@/components/ui/field.js"
 import { Input } from "@/components/ui/input.js"
+import { Textarea } from "@/components/ui/textarea.js"
 import { Label } from "@/components/ui/label.js"
 import { ScrollArea } from "@/components/ui/scroll-area.js"
 import { Separator } from "@/components/ui/separator.js"
@@ -74,6 +80,7 @@ import { yaadeMotion } from "@/motion/tokens.js"
 import { DEFAULT_MONO_FONT_NAME } from "../theme/appearance-defaults.js"
 import { MOBILE_MEDIA_QUERY } from "../hooks/use-mobile.js"
 import { listSystemMonoFonts } from "../theme/system-mono-fonts.js"
+import { KeyBindingKbd } from "./KeyBindingKbd.js"
 
 /** Navigation chrome for the Session shell. */
 export type SessionLayout = "tabs" | "two-sidebars" | "single-sidebar"
@@ -93,6 +100,41 @@ export type YaadeAppearanceSettings = {
 const EMPTY_SERVER_DEFINITIONS: readonly YaadeServerDefinition[] = []
 const EMPTY_SERVER_CONNECTIONS: readonly YaadeServerConnection[] = []
 
+export type KeyboardCapture = {
+  readonly key: string
+  readonly metaKey: boolean
+  readonly ctrlKey: boolean
+  readonly altKey: boolean
+  readonly shiftKey: boolean
+}
+
+export type KeyboardSettingsRow = {
+  readonly id: string
+  readonly title: string
+  readonly category: string
+  readonly context: string
+  readonly defaultBinding?: string
+  readonly effectiveBinding?: string
+  readonly overridden: boolean
+  readonly configurable: boolean
+}
+
+export type KeyboardSettingsModel = {
+  readonly leader: string
+  readonly rows: readonly KeyboardSettingsRow[]
+  readonly conflicts: readonly { readonly message: string }[]
+  readonly canConfirmRisky: boolean
+  readonly diagnostic?: string
+  readonly exportJson: string
+  readonly onCaptureLeader: (capture: KeyboardCapture) => boolean
+  readonly onCaptureBinding: (id: string, capture: KeyboardCapture) => boolean
+  readonly onClearBinding: (id: string) => boolean
+  readonly onRestoreBinding: (id: string) => boolean
+  readonly onConfirmRisky: () => boolean
+  readonly onImport: (json: string) => boolean
+  readonly onReset: () => boolean
+}
+
 export type SettingsOverlayProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -100,6 +142,7 @@ export type SettingsOverlayProps = {
   settings: YaadeAppearanceSettings
   onSettingsChange: (settings: YaadeAppearanceSettings) => void
   onReset: () => void
+  keyboard?: KeyboardSettingsModel
   servers?: readonly YaadeServerDefinition[]
   serverConnections?: readonly YaadeServerConnection[]
   currentServerId?: string
@@ -243,10 +286,10 @@ function ThemeButton({
   )
 }
 
-type SettingsCategory = "appearance" | "servers"
+type SettingsCategory = "appearance" | "keyboard" | "servers"
 
 function isSettingsCategory(value: string): value is SettingsCategory {
-  return value === "appearance" || value === "servers"
+  return value === "appearance" || value === "keyboard" || value === "servers"
 }
 
 const SETTINGS_CATEGORIES = {
@@ -254,6 +297,11 @@ const SETTINGS_CATEGORIES = {
     label: "Appearance",
     description: "Tune navigation, theme, and typography across the app.",
     icon: Brush,
+  },
+  keyboard: {
+    label: "Keyboard",
+    description: "Adapt the leader and command bindings without stealing terminal input.",
+    icon: Keyboard,
   },
   servers: {
     label: "Servers",
@@ -292,6 +340,304 @@ function useCompactSettingsNavigation(): boolean {
   }, [])
 
   return compact
+}
+
+type CaptureTarget =
+  | { readonly kind: "leader" }
+  | { readonly kind: "binding"; readonly id: string }
+
+function captureValue(event: import("react").KeyboardEvent<HTMLButtonElement>): KeyboardCapture {
+  return {
+    key: event.key,
+    metaKey: event.metaKey,
+    ctrlKey: event.ctrlKey,
+    altKey: event.altKey,
+    shiftKey: event.shiftKey,
+  }
+}
+
+function KeyboardCommandRows(props: {
+  readonly rows: readonly KeyboardSettingsRow[]
+  readonly capture: CaptureTarget | null
+  readonly model: KeyboardSettingsModel
+  readonly onCaptureChange: (target: CaptureTarget) => void
+  readonly onCaptureKeyDown: (
+    event: import("react").KeyboardEvent<HTMLButtonElement>,
+    target: CaptureTarget,
+  ) => void
+}) {
+  const parentRef = useRef<HTMLDivElement>(null)
+  const virtualizer = useVirtualizer({
+    count: props.rows.length,
+    getScrollElement: () => parentRef.current,
+    estimateSize: () => 76,
+    overscan: 6,
+  })
+  return (
+    <div
+      ref={parentRef}
+      role="list"
+      data-yaade-keymap-command-list=""
+      className="h-[min(28rem,50dvh)] overflow-y-auto overscroll-contain rounded-lg"
+    >
+      <div className="relative w-full" style={{ height: virtualizer.getTotalSize() }}>
+        {virtualizer.getVirtualItems().map(virtualRow => {
+          const row = props.rows[virtualRow.index]
+          if (!row) return null
+          const capturing = props.capture?.kind === "binding" && props.capture.id === row.id
+          return (
+            <div
+              key={row.id}
+              ref={virtualizer.measureElement}
+              data-index={virtualRow.index}
+              role="listitem"
+              data-yaade-keymap-command={row.id}
+              className="absolute left-0 top-0 grid w-full min-w-0 gap-3 border-b border-border bg-card/60 p-3 last:border-b-0 sm:grid-cols-[minmax(0,1fr)_auto] sm:items-center"
+              style={{ transform: `translateY(${virtualRow.start}px)` }}
+            >
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium text-foreground">{row.title}</span>
+                  <Badge variant="outline" className="shrink-0">{row.category}</Badge>
+                  <span className="shrink-0 text-3xs text-muted-foreground">{row.context}</span>
+                </div>
+                <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-3xs text-muted-foreground">
+                  <span>Effective</span>
+                  {row.effectiveBinding ? (
+                    <KeyBindingKbd binding={row.effectiveBinding} />
+                  ) : (
+                    <span className="font-mono">Unbound</span>
+                  )}
+                  <span className="opacity-60">Default {row.defaultBinding ?? "Unbound"}</span>
+                </div>
+              </div>
+              <div className="flex flex-wrap items-center justify-end gap-1.5">
+                {row.overridden ? (
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    onClick={() => props.model.onRestoreBinding(row.id)}
+                  >
+                    Restore
+                  </Button>
+                ) : null}
+                <Button
+                  type="button"
+                  size="xs"
+                  variant={capturing ? "default" : "outline"}
+                  disabled={!row.configurable}
+                  data-yaade-keymap-capture={row.id}
+                  onClick={() => props.onCaptureChange({ kind: "binding", id: row.id })}
+                  onKeyDown={event => {
+                    if (capturing && props.capture) props.onCaptureKeyDown(event, props.capture)
+                  }}
+                >
+                  {capturing ? "Press binding…" : "Change"}
+                </Button>
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  disabled={!row.configurable || !row.effectiveBinding}
+                  onClick={() => props.model.onClearBinding(row.id)}
+                >
+                  Clear
+                </Button>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
+function KeyboardSettingsPanel({ model }: { readonly model: KeyboardSettingsModel }) {
+  const [query, setQuery] = useState("")
+  const [capture, setCapture] = useState<CaptureTarget | null>(null)
+  const [importOpen, setImportOpen] = useState(false)
+  const [importJson, setImportJson] = useState("")
+  const [copyStatus, setCopyStatus] = useState<string | null>(null)
+  const normalizedQuery = query.trim().toLowerCase()
+  const rows = normalizedQuery
+    ? model.rows.filter(row =>
+      `${row.title} ${row.category} ${row.defaultBinding ?? ""} ${row.effectiveBinding ?? ""}`
+        .toLowerCase()
+        .includes(normalizedQuery))
+    : model.rows
+
+  const onCaptureKeyDown = (
+    event: import("react").KeyboardEvent<HTMLButtonElement>,
+    target: CaptureTarget,
+  ) => {
+    event.preventDefault()
+    event.stopPropagation()
+    if (event.key === "Escape") {
+      setCapture(null)
+      return
+    }
+    if (["Meta", "Control", "Alt", "Shift"].includes(event.key)) return
+    const value = captureValue(event)
+    if (target.kind === "leader") model.onCaptureLeader(value)
+    else model.onCaptureBinding(target.id, value)
+    setCapture(null)
+  }
+
+  const exportProfile = async () => {
+    try {
+      await navigator.clipboard.writeText(model.exportJson)
+      setCopyStatus("Keymap JSON copied")
+    } catch {
+      setCopyStatus("Clipboard unavailable. Use Import to paste JSON on this device.")
+    }
+  }
+
+  return (
+    <section className="flex flex-col gap-5" data-yaade-keyboard-settings="">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+        <SettingsSectionHeader category="keyboard" />
+        <Button type="button" size="sm" variant="outline" onClick={() => model.onReset()}>
+          <RotateCcw data-icon="inline-start" />
+          Reset keymap
+        </Button>
+      </div>
+      <Separator />
+
+      {model.diagnostic ? (
+        <Alert data-yaade-keymap-diagnostic="">
+          <CircleAlert />
+          <AlertTitle>Defaults restored</AlertTitle>
+          <AlertDescription>{model.diagnostic}</AlertDescription>
+        </Alert>
+      ) : null}
+      {model.conflicts.length > 0 ? (
+        <Alert variant="destructive" data-yaade-keymap-conflict="">
+          <CircleAlert />
+          <AlertTitle>Keymap not applied</AlertTitle>
+          <AlertDescription className="space-y-2">
+            {model.conflicts.map(item => <p key={item.message}>{item.message}</p>)}
+            {model.canConfirmRisky ? (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={() => model.onConfirmRisky()}
+              >
+                Confirm risky binding
+              </Button>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ) : null}
+
+      <Card className="gap-3 py-4" data-yaade-keymap-leader="">
+        <CardHeader className="px-4">
+          <CardTitle className="flex items-center gap-2 text-sm">
+            Leader
+            <KeyBindingKbd binding={model.leader} className="ml-auto" />
+          </CardTitle>
+          <CardDescription className="text-xs">
+            Press it twice in a terminal to send its control byte exactly once.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="flex flex-wrap items-center gap-2 px-4">
+          <Button
+            type="button"
+            size="sm"
+            variant={capture?.kind === "leader" ? "default" : "outline"}
+            data-yaade-keymap-capture="leader"
+            onClick={() => setCapture({ kind: "leader" })}
+            onKeyDown={event => {
+              if (capture?.kind === "leader") onCaptureKeyDown(event, capture)
+            }}
+          >
+            {capture?.kind === "leader" ? "Press leader chord…" : "Change leader"}
+          </Button>
+          {capture?.kind === "leader" ? (
+            <span className="text-xs text-muted-foreground">Escape cancels</span>
+          ) : null}
+        </CardContent>
+      </Card>
+
+      <div className="flex flex-col gap-3">
+        <div className="relative">
+          <Search className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+          <Input
+            value={query}
+            onChange={event => setQuery(event.target.value)}
+            placeholder="Search commands…"
+            aria-label="Search keyboard commands"
+            className="pl-9"
+          />
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Capture a plain key for a leader sequence, or a modified chord for a direct binding.
+        </p>
+        {rows.length > 0 ? (
+          <KeyboardCommandRows
+            rows={rows}
+            capture={capture}
+            model={model}
+            onCaptureChange={setCapture}
+            onCaptureKeyDown={onCaptureKeyDown}
+          />
+        ) : (
+          <div className="rounded-lg border border-dashed p-5 text-center text-xs text-muted-foreground">
+            No commands match “{query}”.
+          </div>
+        )}
+      </div>
+
+      <Separator />
+      <div className="grid gap-3">
+        <div className="flex flex-wrap items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-medium text-foreground">Import and export</h3>
+            <p className="mt-1 text-xs text-muted-foreground">JSON data only. Profiles never include terminal content or credentials.</p>
+          </div>
+          <div className="flex gap-2">
+            <Button type="button" size="sm" variant="outline" onClick={() => void exportProfile()}>
+              <Download data-icon="inline-start" />
+              Export
+            </Button>
+            <Button type="button" size="sm" variant="outline" onClick={() => setImportOpen(value => !value)}>
+              <Upload data-icon="inline-start" />
+              Import
+            </Button>
+          </div>
+        </div>
+        {copyStatus ? <p role="status" className="text-xs text-muted-foreground">{copyStatus}</p> : null}
+        {importOpen ? (
+          <div className="grid gap-2 rounded-lg border border-border bg-muted/20 p-3" data-yaade-keymap-import="">
+            <Label htmlFor="yaade-keymap-json">Keymap JSON</Label>
+            <Textarea
+              id="yaade-keymap-json"
+              value={importJson}
+              onChange={event => setImportJson(event.target.value)}
+              className="min-h-36 font-mono text-xs"
+              placeholder="Paste a version 1 keymap profile"
+            />
+            <div className="flex justify-end gap-2">
+              <Button type="button" size="sm" variant="ghost" onClick={() => setImportOpen(false)}>Cancel</Button>
+              <Button
+                type="button"
+                size="sm"
+                onClick={() => {
+                  if (model.onImport(importJson)) {
+                    setImportJson("")
+                    setImportOpen(false)
+                  }
+                }}
+              >
+                Apply import
+              </Button>
+            </div>
+          </div>
+        ) : null}
+      </div>
+    </section>
+  )
 }
 
 type ServerDraft = {
@@ -655,6 +1001,7 @@ export function SettingsOverlay({
   settings,
   onSettingsChange,
   onReset,
+  keyboard,
   servers = EMPTY_SERVER_DEFINITIONS,
   serverConnections = EMPTY_SERVER_CONNECTIONS,
   currentServerId,
@@ -665,6 +1012,7 @@ export function SettingsOverlay({
   const compactNavigation = useCompactSettingsNavigation()
 
   const categories: SettingsCategory[] = ["appearance"]
+  if (keyboard) categories.push("keyboard")
   if (onServersChange) categories.push("servers")
 
   return (
@@ -682,7 +1030,7 @@ export function SettingsOverlay({
         <DialogHeader className="sr-only">
           <DialogTitle>Settings</DialogTitle>
           <DialogDescription>
-            Configure terminal appearance and server connections.
+            Configure terminal appearance, keyboard behavior, and server connections.
           </DialogDescription>
         </DialogHeader>
         <Tabs
@@ -965,6 +1313,20 @@ export function SettingsOverlay({
                 </section>
               </ScrollArea>
             </TabsContent>
+
+            {keyboard ? (
+              <TabsContent
+                value="keyboard"
+                className="min-h-0 flex-1"
+                data-yaade-settings-panel="keyboard"
+              >
+                <ScrollArea className="size-full">
+                  <div className="p-5 sm:p-7">
+                    <KeyboardSettingsPanel model={keyboard} />
+                  </div>
+                </ScrollArea>
+              </TabsContent>
+            ) : null}
 
             {onServersChange ? (
               <TabsContent

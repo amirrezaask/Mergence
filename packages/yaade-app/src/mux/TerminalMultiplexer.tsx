@@ -48,6 +48,7 @@ import {
 	PanelRightClose,
 	PanelRightOpen,
 	Plus,
+	ListFilter,
 	Settings,
 	X,
 } from "lucide-react";
@@ -59,8 +60,14 @@ import {
 	yaadeMotion,
 	type TabDndHandlers,
 } from "@yaade/ui/session";
-import { focusRegisteredTerminal } from "@yaade/ui/terminal-registry";
+import {
+	focusRegisteredTerminal,
+	jumpRegisteredTerminalToLive,
+	readTerminalViewportActivity,
+	toggleRegisteredTerminalInspectionPause,
+} from "@yaade/ui/terminal-registry";
 import { TerminalSurfacePlacement } from "@yaade/ui/terminal";
+import type { KeyboardCapture, KeyboardSettingsModel } from "@yaade/ui/settings";
 import { CHORD_TIMEOUT_MS } from "@yaade/workspace";
 import { bundledThemeList } from "@yaade/ui/appearance";
 import type { ProcessTerminalViewProps } from "./renderers/TerminalView.js";
@@ -69,6 +76,8 @@ import {
 	MIN_SIDEBAR_WIDTH,
 	useAppearanceSettings,
 } from "../hooks/useAppearanceSettings.js";
+import { useKeymapSettings } from "../hooks/useKeymapSettings.js";
+import { bindingFromKeyboardEvent } from "../keymap-profile.js";
 import { isDesktopClient, isMacDesktopClient } from "../client-environment.js";
 
 import { createTerminalClient, type MuxClient } from "./mux-client.js";
@@ -92,7 +101,11 @@ import { SessionSwitcher } from "./SessionSwitcher.js";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { TerminalTabStrip } from "./TerminalTabStrip.js";
 import { SidebarResizeHandle } from "./SidebarResizeHandle.js";
-import { nextRuntimeTerminalTitle, type RuntimeTerminalTitle } from "./terminal-title.js";
+import {
+	muxTerminalWorkTitle,
+	nextRuntimeTerminalTitle,
+	type RuntimeTerminalTitle,
+} from "./terminal-title.js";
 import { SessionLoadingState } from "./SessionEmptyState.js";
 import {
 	MAX_TERMINAL_TILES,
@@ -113,9 +126,13 @@ import {
 	terminalPaneCount,
 	type TerminalWorkspace,
 } from "./terminal-tiling.js";
-import { muxSessionDirectShortcutFor } from "./mux-keymap.js";
 import {
-	MUX_SESSION_PREFIX,
+	muxSessionDirectShortcutFor,
+	muxSessionPrimaryShortcutFor,
+	muxSessionShortcutFor,
+} from "./mux-keymap.js";
+import {
+	DEFAULT_KEYMAP_CATALOG,
 	MUX_SESSION_PREFIX_GROUPS,
 	clearMuxSessionKeymapState,
 	createMuxSessionKeymapState,
@@ -124,13 +141,35 @@ import {
 	matchMuxSessionPrefixBinding,
 	resolveMuxSessionKeydown,
 	muxSessionHudBindings,
+	muxSessionLeader,
+	isMuxSessionCommand,
 	type MuxSessionKeydownContext,
-	type MuxSessionCommand,
 } from "../keybindings.js";
+import {
+	createCommandRuntime,
+	type CommandHandlers,
+	type CommandRuntime,
+} from "../commands/runtime.js";
+import {
+	COMMAND_CATALOG,
+	commandCategoryLabel,
+	type CommandAvailabilityKey,
+} from "../commands/catalog.js";
+import {
+	loadTerminalFocusHistory,
+	saveTerminalFocusHistory,
+	terminalFocusIdentityKey,
+} from "./terminal-focus-history.js";
+import type { TerminalSwitcherSourceEntry } from "./terminal-switcher-model.js";
 
 const SettingsOverlay = lazy(() => import("@yaade/ui/settings"));
 const TerminalSwitcher = lazy(() =>
 	import("./TerminalSwitcher.js").then(({ TerminalSwitcher: View }) => ({
+		default: View,
+	})),
+);
+const CommandPalette = lazy(() =>
+	import("./CommandPalette.js").then(({ CommandPalette: View }) => ({
 		default: View,
 	})),
 );
@@ -164,11 +203,81 @@ const EMPTY_TAB_IDS: readonly SessionTabId[] = [];
 
 type CloseChoice = { readonly sessionId: SessionId } | undefined;
 
+function commandContextLabel(availability: CommandAvailabilityKey): string {
+	switch (availability) {
+		case "always": return "Global"
+		case "activeSession": return "Active session"
+		case "activeTab": return "Active Window"
+		case "activeTerminal": return "Focused terminal"
+		case "anyTerminal": return "Any terminal"
+		case "multipleTabs": return "Multiple Windows"
+		case "multipleTerminals": return "Multiple terminals in Window"
+		case "multipleAvailableTerminals": return "Multiple terminals"
+		case "sidebarLayout": return "Sidebar layout"
+		case "viewportNotLive": return "Terminal scrollback"
+		case "viewportPausable": return "Scrollable terminal"
+	}
+}
+
+function terminalHasResidentSurface(terminal: MuxTerminal): boolean {
+	return Boolean(
+		terminal.output.ptyId ||
+			(terminal.output.processState === "interrupted" &&
+				terminal.output.replayAvailable &&
+				terminal.output.historyId),
+	);
+}
+
+function keymapDiagnosticLabel(diagnostic: string | undefined): string | undefined {
+	switch (diagnostic) {
+		case "invalid-storage":
+			return "The stored keymap was invalid, so defaults are active."
+		case "newer-version":
+			return "The stored keymap needs a newer YAADE version, so defaults are active."
+		case "oversized":
+			return "The stored keymap exceeded the 32 KiB limit, so defaults are active."
+		case "compile-conflict":
+			return "The stored keymap conflicted with current commands, so defaults are active."
+		case "storage-denied":
+			return "Browser storage is unavailable. Keymap changes apply only to this tab."
+		default:
+			return undefined
+	}
+}
+
 type TerminalOpenTarget = {
 	readonly sessionId: SessionId;
 	readonly tabId: SessionTabId;
 	readonly panelId: PanelId;
 };
+
+function CommandPaletteTrigger(props: {
+	readonly onOpen: () => void;
+	readonly side: "bottom" | "right";
+	readonly size?: "icon-xs" | "icon-sm";
+	readonly className?: string;
+}) {
+	return (
+		<ShortcutTooltip
+			label="Commands"
+			shortcut={muxSessionShortcutFor("commandPalette.show")}
+			side={props.side}
+		>
+			<Button
+				type="button"
+				size={props.size ?? "icon-sm"}
+				variant="ghost"
+				aria-label="Commands"
+				title="Commands"
+				data-yaade-command-palette-trigger="desktop"
+				className={props.className}
+				onClick={props.onOpen}
+			>
+				<ListFilter />
+			</Button>
+		</ShortcutTooltip>
+	);
+}
 
 function PrefixHud(props: { readonly onSelect: (key: string) => void }) {
 	return (
@@ -176,7 +285,7 @@ function PrefixHud(props: { readonly onSelect: (key: string) => void }) {
 			<div className="pointer-events-auto w-full max-w-4xl">
 				<WhichKeyPanel
 					variant="overlay"
-					prefix={MUX_SESSION_PREFIX}
+					prefix={muxSessionLeader()}
 					groups={MUX_SESSION_PREFIX_GROUPS}
 					entries={muxSessionHudBindings().map((binding) => ({
 						key: binding.key,
@@ -197,6 +306,42 @@ function isLive(terminal: MuxTerminal): boolean {
 		terminal.status === "running" ||
 		terminal.status === "waiting"
 	);
+}
+
+function sessionStatusLabel(terminals: readonly MuxTerminal[]): string {
+	if (terminals.length === 0) return "No terminals";
+	if (
+		terminals.some(
+			(terminal) =>
+				terminal.status === "failed" ||
+				(terminal.output.kind === "process" && terminal.output.activityState === "failed"),
+		)
+	) {
+		return "Failed";
+	}
+	if (
+		terminals.some(
+			(terminal) =>
+				terminal.status === "waiting" ||
+				(terminal.output.kind === "process" &&
+					terminal.output.activityState === "waiting_for_input"),
+		)
+	) {
+		return "Waiting";
+	}
+	if (
+		terminals.some(
+			(terminal) =>
+				terminal.output.kind === "process" &&
+				(terminal.output.activityState === "working" ||
+					terminal.output.activityState === "running_command"),
+		)
+	) {
+		return "Working";
+	}
+	if (terminals.some((terminal) => terminal.status === "starting")) return "Starting";
+	if (terminals.some((terminal) => isLive(terminal))) return "Running";
+	return "Idle";
 }
 
 function firstEmptyTerminalPanel(workspace: TerminalWorkspace): PanelId | undefined {
@@ -250,6 +395,11 @@ export function TerminalMultiplexer() {
 	const macDesktopClient = isMacDesktopClient(window.location, window.navigator);
 	const { activeTheme, appearanceSettings, resetAppearanceSettings, setAppearanceSettings } =
 		useAppearanceSettings();
+	const keymapSettings = useKeymapSettings();
+	const { resetKeymap } = keymapSettings;
+	const [terminalFocusHistory] = useState(
+		() => loadTerminalFocusHistory().history,
+	);
 	const [client] = useState<MuxClient>(() => createTerminalClient({ api: hostPorts.mux }));
 	const snapshot = useSyncExternalStore(
 		client.store.subscribe,
@@ -260,12 +410,16 @@ export function TerminalMultiplexer() {
 	const [actionError, setActionError] = useState<string | undefined>();
 	const [switcherOpen, setSwitcherOpen] = useState(false);
 	const [muxTerminalSwitcherOpen, setTerminalSwitcherOpen] = useState(false);
+	const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
 	const [settingsOpen, setSettingsOpen] = useState(false);
 	const [paneChromeOverlayOpen, setPaneChromeOverlayOpen] = useState(false);
 	const [routeRevision, setRouteRevision] = useState(0);
 	const [terminalWorkspaces, setTerminalWorkspaces] = useState<
 		ReadonlyMap<SessionTabId, TerminalWorkspace>
 	>(() => new Map());
+	const [residentTerminalIds, setResidentTerminalIds] = useState<ReadonlySet<MuxTerminalId>>(
+		() => new Set(),
+	);
 	const [prefixPending, setPrefixPending] = useState(false);
 	const [runtimeTitles, setRuntimeTitles] = useState<
 		ReadonlyMap<MuxTerminalId, RuntimeTerminalTitle>
@@ -276,9 +430,11 @@ export function TerminalMultiplexer() {
 	);
 	const keymapStateRef = useRef(createMuxSessionKeymapState());
 	const prefixTimerRef = useRef<number | undefined>(undefined);
+	const prefixStartedInTerminalRef = useRef(false);
 	const pendingTerminalPanelRequestsRef = useRef(new Set<string>());
 	const closingTabIdsRef = useRef(new Set<SessionTabId>());
 	const navigationIntentRef = useRef(0);
+	const pendingFocusHistoryRef = useRef(new Set<MuxTerminalId>());
 	const muxTerminalsRef = useRef(snapshot.terminalsById);
 	const focusedMuxTerminalRef = useRef<MuxTerminal | undefined>(undefined);
 	const overlayWasOpenRef = useRef(false);
@@ -533,9 +689,113 @@ export function TerminalMultiplexer() {
 		for (const [id, ids] of snapshot.terminalIdsBySession) counts.set(id, ids.length);
 		return counts;
 	}, [snapshot.terminalIdsBySession]);
+	const sessionStatusById = useMemo(() => {
+		const statuses = new Map<SessionId, string>();
+		for (const session of visibleSessions) {
+			const terminals = (snapshot.terminalIdsBySession.get(session.id) ?? EMPTY_TERMINAL_IDS)
+				.map((id) => snapshot.terminalsById.get(id))
+				.filter((terminal): terminal is MuxTerminal => Boolean(terminal));
+			statuses.set(session.id, sessionStatusLabel(terminals));
+		}
+		return statuses;
+	}, [snapshot.terminalIdsBySession, snapshot.terminalsById, visibleSessions]);
 	const selected = snapshot.activeMuxTerminalId
 		? snapshot.terminalsById.get(snapshot.activeMuxTerminalId)
 		: undefined;
+	const terminalSwitcherEntries = useMemo<readonly TerminalSwitcherSourceEntry[]>(() => {
+		const serverPositions = new Map(
+			serverConnections.snapshot.connections.map((connection, index) => [connection.id, index]),
+		);
+		const tabIdsByTerminal = new Map<MuxTerminalId, SessionTabId>();
+		for (const [tabId, ids] of snapshot.terminalIdsByTab) {
+			for (const terminalId of ids) tabIdsByTerminal.set(terminalId, tabId);
+		}
+		const entries: TerminalSwitcherSourceEntry[] = [];
+		for (const terminal of snapshot.terminalsById.values()) {
+			if (terminal.archivedAt) continue;
+			const session = snapshot.sessionsById.get(terminal.sessionId);
+			if (!session || session.archivedAt) continue;
+			const tabId = terminal.tabId ?? tabIdsByTerminal.get(terminal.id);
+			const tab = tabId ? snapshot.tabsById.get(tabId) : undefined;
+			if (!tab || tab.archivedAt) continue;
+			const server = serverConnections.manager.serverForSession(session.id);
+			const serverId = server?.id ?? "current-host";
+			entries.push({
+				identity: {
+					serverId,
+					sessionId: session.id,
+					tabId: tab.id,
+					terminalId: terminal.id,
+					generation: terminal.output.generation,
+				},
+				terminal,
+				session,
+				tab,
+				serverName: server?.name ?? "This server",
+				serverPosition: serverPositions.get(serverId) ?? Number.MAX_SAFE_INTEGER,
+				title: muxTerminalWorkTitle(terminal, runtimeTitles.get(terminal.id)),
+			});
+		}
+		return entries;
+	}, [
+		runtimeTitles,
+		serverConnections.manager,
+		serverConnections.snapshot.connections,
+		snapshot.sessionsById,
+		snapshot.tabsById,
+		snapshot.terminalIdsByTab,
+		snapshot.terminalsById,
+	]);
+	const terminalFocusIdentities = useMemo(
+		() => terminalSwitcherEntries.map((entry) => entry.identity),
+		[terminalSwitcherEntries],
+	);
+	useEffect(() => {
+		const connections = serverConnections.snapshot.connections;
+		if (connections.length === 0) return;
+		const configured = new Set(connections.map((connection) => connection.id));
+		const authoritative = new Set(
+			connections
+				.filter((connection) => connection.status === "connected")
+				.map((connection) => connection.id),
+		);
+		const retainedUnavailable = terminalFocusHistory.toProfile().entries.filter(
+			(identity) =>
+				configured.has(identity.serverId) && !authoritative.has(identity.serverId),
+		);
+		if (terminalFocusHistory.prune([...terminalFocusIdentities, ...retainedUnavailable])) {
+			saveTerminalFocusHistory(terminalFocusHistory);
+		}
+	}, [
+		serverConnections.snapshot.connections,
+		terminalFocusHistory,
+		terminalFocusIdentities,
+	]);
+	const terminalSwitcherEntriesRef = useRef(terminalSwitcherEntries);
+	terminalSwitcherEntriesRef.current = terminalSwitcherEntries;
+	const recordTerminalFocus = useCallback(
+		(terminal: MuxTerminal) => {
+			const entry = terminalSwitcherEntriesRef.current.find(
+				(item) =>
+					item.terminal.id === terminal.id &&
+					item.identity.generation === terminal.output.generation,
+			);
+			if (entry && terminalFocusHistory.recordFocus(entry.identity)) {
+				saveTerminalFocusHistory(terminalFocusHistory);
+			}
+		},
+		[terminalFocusHistory],
+	);
+	const recordPlacedTerminalFocus = useCallback(
+		(terminalId: string) => {
+			const terminal = terminalSwitcherEntriesRef.current.find(
+				(entry) => entry.terminal.id === terminalId,
+			)?.terminal;
+			if (!terminal || !pendingFocusHistoryRef.current.delete(terminal.id)) return;
+			recordTerminalFocus(terminal);
+		},
+		[recordTerminalFocus],
+	);
 	const twoSidebarLayout = appearanceSettings.sessionLayout === "two-sidebars";
 	const singleSidebarLayout = appearanceSettings.sessionLayout === "single-sidebar";
 	const sidebarLayout = twoSidebarLayout || singleSidebarLayout;
@@ -710,6 +970,8 @@ export function TerminalMultiplexer() {
 	const selectTerminal = useCallback(
 		(terminal: MuxTerminal, target?: TerminalOpenTarget) => {
 			navigationIntentRef.current += 1;
+			pendingFocusHistoryRef.current.clear();
+			pendingFocusHistoryRef.current.add(terminal.id);
 			markPerformance("yaade:terminal-switch");
 			openTerminalInWorkspace(terminal, target);
 			const current = client.store.getSnapshot().activeMuxTerminalId;
@@ -723,6 +985,27 @@ export function TerminalMultiplexer() {
 		},
 		[client, openTerminalInWorkspace, serverConnections.manager],
 	);
+
+	const switchToPreviousTerminal = useCallback(() => {
+		const currentId = client.store.getSnapshot().activeMuxTerminalId;
+		const current = terminalSwitcherEntries.find((entry) => entry.terminal.id === currentId);
+		const previous = terminalFocusHistory.previous(
+			current?.identity ?? null,
+			terminalFocusIdentities,
+		);
+		if (!previous) return;
+		const targetKey = terminalFocusIdentityKey(previous);
+		const target = terminalSwitcherEntries.find(
+			(entry) => terminalFocusIdentityKey(entry.identity) === targetKey,
+		);
+		if (target) selectTerminal(target.terminal);
+	}, [
+		client,
+		selectTerminal,
+		terminalFocusHistory,
+		terminalFocusIdentities,
+		terminalSwitcherEntries,
+	]);
 
 	const lastAutoOpenedTerminalRef = useRef<string | undefined>(undefined);
 	useEffect(() => {
@@ -969,10 +1252,11 @@ export function TerminalMultiplexer() {
 		[client],
 	);
 
-	const createSession = useCallback(async () => {
+	const createSession = useCallback(async (title = "New session", serverId?: string) => {
 		const navigationIntent = ++navigationIntentRef.current;
 		try {
-			const created = await hostPorts.mux.createSession?.("New session");
+			if (serverId) serverConnections.manager.selectServer(serverId);
+			const created = await hostPorts.mux.createSession?.(title);
 			if (!created) return;
 			await client.reconcile();
 			if (navigationIntentRef.current === navigationIntent) {
@@ -981,7 +1265,7 @@ export function TerminalMultiplexer() {
 		} catch (error) {
 			setActionError(errorMessage(error));
 		}
-	}, [client, selectSession]);
+	}, [client, selectSession, serverConnections.manager]);
 
 	const runTerminalAction = useCallback(
 		async (action: "cancel" | "restart" | "archive", terminal: MuxTerminal) => {
@@ -1201,6 +1485,7 @@ export function TerminalMultiplexer() {
 
 	const clearPrefix = useCallback(() => {
 		clearMuxSessionKeymapState(keymapStateRef.current);
+		prefixStartedInTerminalRef.current = false;
 		if (prefixTimerRef.current !== undefined) {
 			window.clearTimeout(prefixTimerRef.current);
 			prefixTimerRef.current = undefined;
@@ -1215,92 +1500,91 @@ export function TerminalMultiplexer() {
 		setPrefixPending(true);
 		prefixTimerRef.current = window.setTimeout(() => {
 			clearMuxSessionKeymapState(keymapStateRef.current);
+			prefixStartedInTerminalRef.current = false;
 			prefixTimerRef.current = undefined;
 			setPrefixPending(false);
 		}, CHORD_TIMEOUT_MS);
 	}, []);
 
-	const runMuxSessionCommand = useCallback(
-		(command: MuxSessionCommand, jumpIndex = 0) => {
-			switch (command) {
-				case "session.new":
-					void createSession();
-					return;
-				case "tab.new":
-					void createTab();
-					return;
-				case "tab.close":
-					if (activeTab) void closeTab(activeTab);
-					return;
-				case "tab.next":
-				case "tab.previous": {
-					if (!activeTab || tabIds.length === 0) return;
-					const index = tabIds.indexOf(activeTab.id);
-					const nextIndex =
-						command === "tab.next"
-							? (index + 1) % tabIds.length
-							: (index - 1 + tabIds.length) % tabIds.length;
-					const next = snapshot.tabsById.get(tabIds[nextIndex]!);
-					if (next) selectTab(next);
-					return;
-				}
-				case "terminal.newTerminal":
-					void createTerminal("terminal");
-					return;
-				case "session.switch":
-					setSwitcherOpen(true);
-					return;
-				case "terminal.switch":
-					setTerminalSwitcherOpen(true);
-					return;
-				case "terminal.next":
-				case "terminal.previous": {
-					if (!selected || terminalIds.length === 0) return;
-					const index = terminalIds.indexOf(selected.id);
-					const nextIndex =
-						command === "terminal.next"
-							? (index + 1) % terminalIds.length
-							: (index - 1 + terminalIds.length) % terminalIds.length;
-					const next = snapshot.terminalsById.get(terminalIds[nextIndex]!);
-					if (next) selectTerminal(next);
-					return;
-				}
-				case "terminal.jump": {
-					const id = terminalIds[jumpIndex];
-					if (!id) return;
-					const next = snapshot.terminalsById.get(id);
-					if (next) selectTerminal(next);
-					return;
-				}
-				case "terminal.close": {
-					const target = focusedMuxTerminalRef.current ?? selected;
-					if (target) void runTerminalAction("archive", target);
-					return;
-				}
-				case "session.close":
-					if (activeSession) requestCloseSession(activeSession.id);
-					return;
-				case "pane.zoom":
-					if (activeTab) {
-						updateTerminalWorkspace(activeTab.id, (workspace) =>
-							toggleTerminalPanelZoom(workspace, workspace.focusedPanelId),
-						);
-					}
-					return;
-				case "pane.splitRight":
-					splitFocusedTerminalPanel("right");
-					return;
-				case "pane.splitDown":
-					splitFocusedTerminalPanel("bottom");
-					return;
-				case "sidebar.toggle":
-					toggleSidebars();
-					return;
-				case "settings.show":
-					setSettingsOpen(true);
-					return;
-			}
-		},
+	const commandHandlers = useMemo<CommandHandlers>(
+		() => ({
+			"commandPalette.show": () => setCommandPaletteOpen(true),
+			"session.new": async () => createSession(),
+			"tab.new": async () => createTab(),
+			"tab.close": async () => {
+				if (activeTab) await closeTab(activeTab);
+			},
+			"tab.next": () => {
+				if (!activeTab || tabIds.length === 0) return;
+				const index = tabIds.indexOf(activeTab.id);
+				const next = snapshot.tabsById.get(tabIds[(index + 1) % tabIds.length]!);
+				if (next) selectTab(next);
+			},
+			"tab.previous": () => {
+				if (!activeTab || tabIds.length === 0) return;
+				const index = tabIds.indexOf(activeTab.id);
+				const next = snapshot.tabsById.get(
+					tabIds[(index - 1 + tabIds.length) % tabIds.length]!,
+				);
+				if (next) selectTab(next);
+			},
+			"terminal.newTerminal": async () => {
+				await createTerminal("terminal");
+			},
+			"session.switch": () => setSwitcherOpen(true),
+			"terminal.switch": () => setTerminalSwitcherOpen(true),
+			"terminal.switchPrevious": switchToPreviousTerminal,
+			"terminal.next": () => {
+				if (!selected || terminalIds.length === 0) return;
+				const index = terminalIds.indexOf(selected.id);
+				const next = snapshot.terminalsById.get(
+					terminalIds[(index + 1) % terminalIds.length]!,
+				);
+				if (next) selectTerminal(next);
+			},
+			"terminal.previous": () => {
+				if (!selected || terminalIds.length === 0) return;
+				const index = terminalIds.indexOf(selected.id);
+				const next = snapshot.terminalsById.get(
+					terminalIds[(index - 1 + terminalIds.length) % terminalIds.length]!,
+				);
+				if (next) selectTerminal(next);
+			},
+			"terminal.jump": (invocation) => {
+				if (invocation.jumpIndex == null) return;
+				const id = terminalIds[invocation.jumpIndex];
+				const next = id ? snapshot.terminalsById.get(id) : undefined;
+				if (next) selectTerminal(next);
+			},
+			"terminal.jumpLive": () => {
+				const target = focusedMuxTerminalRef.current ?? selected;
+				if (target) jumpRegisteredTerminalToLive(target.id);
+			},
+			"terminal.toggleInspectionPause": () => {
+				const target = focusedMuxTerminalRef.current ?? selected;
+				if (target) toggleRegisteredTerminalInspectionPause(target.id);
+			},
+			"terminal.close": async () => {
+				const target = focusedMuxTerminalRef.current ?? selected;
+				if (target) await runTerminalAction("archive", target);
+			},
+			"session.close": () => {
+				if (activeSession) requestCloseSession(activeSession.id);
+			},
+			"pane.zoom": () => {
+				if (!activeTab) return;
+				updateTerminalWorkspace(activeTab.id, (workspace) =>
+					toggleTerminalPanelZoom(workspace, workspace.focusedPanelId),
+				);
+			},
+			"pane.splitRight": () => splitFocusedTerminalPanel("right"),
+			"pane.splitDown": () => splitFocusedTerminalPanel("bottom"),
+			"sidebar.toggle": toggleSidebars,
+			"settings.show": () => setSettingsOpen(true),
+			"keymap.reset": () => {
+				resetKeymap();
+			},
+		}),
 		[
 			activeSession,
 			activeTab,
@@ -1308,6 +1592,7 @@ export function TerminalMultiplexer() {
 			createTab,
 			closeTab,
 			createTerminal,
+			resetKeymap,
 			requestCloseSession,
 			runTerminalAction,
 			selectTab,
@@ -1316,15 +1601,97 @@ export function TerminalMultiplexer() {
 			snapshot.tabsById,
 			snapshot.terminalsById,
 			splitFocusedTerminalPanel,
+			switchToPreviousTerminal,
 			toggleSidebars,
 			tabIds,
 			updateTerminalWorkspace,
 			terminalIds,
 		],
 	);
-
-	const runMuxSessionCommandRef = useRef(runMuxSessionCommand);
-	runMuxSessionCommandRef.current = runMuxSessionCommand;
+	const commandRuntime = useMemo<CommandRuntime>(
+		() =>
+			createCommandRuntime({
+				context: () => {
+					const target = focusedMuxTerminalRef.current ?? selected;
+					const viewport = readTerminalViewportActivity(target?.id);
+					return {
+						hasActiveSession: Boolean(activeSession),
+						hasActiveTab: Boolean(activeTab),
+						hasActiveTerminal: Boolean(target),
+						availableTerminalCount: [...snapshot.terminalsById.values()].filter(
+							(terminal) => !terminal.archivedAt,
+						).length,
+						activeTabTerminalCount: terminalIds.length,
+						tabCount: tabIds.length,
+						sidebarLayout,
+						viewportMode: viewport?.mode ?? "unavailable",
+						viewportCanPause: viewport?.canPause ?? false,
+					};
+				},
+				handlers: commandHandlers,
+				onError: setActionError,
+			}),
+		[
+			activeSession,
+			activeTab,
+			commandHandlers,
+			selected,
+			sidebarLayout,
+			snapshot.terminalsById,
+			tabIds.length,
+			terminalIds.length,
+		],
+	);
+	const keyboardSettingsModel: KeyboardSettingsModel = {
+		leader: keymapSettings.effectiveKeymap.leader,
+		rows: COMMAND_CATALOG.map((descriptor) => ({
+			id: descriptor.id,
+			title: descriptor.title,
+			category: commandCategoryLabel(descriptor.category),
+			context: commandContextLabel(descriptor.availability),
+			defaultBinding: muxSessionPrimaryShortcutFor(
+				descriptor.id,
+				DEFAULT_KEYMAP_CATALOG,
+			),
+			effectiveBinding: muxSessionPrimaryShortcutFor(
+				descriptor.id,
+				keymapSettings.effectiveKeymap,
+			),
+			overridden: keymapSettings.profile.bindings.some(
+				(binding) => binding.command === descriptor.id,
+			),
+			configurable:
+				descriptor.id !== "terminal.jump" && descriptor.id !== "settings.show",
+		})),
+		conflicts: keymapSettings.conflicts.map((item) => ({ message: item.message })),
+		canConfirmRisky:
+			keymapSettings.conflicts.length > 0 &&
+			keymapSettings.conflicts.every(
+				(item) => item.code === "risky-confirmation-required",
+			),
+		diagnostic: keymapDiagnosticLabel(keymapSettings.diagnostic),
+		exportJson: keymapSettings.exportProfile(),
+		onCaptureLeader: (capture: KeyboardCapture) => {
+			const binding = bindingFromKeyboardEvent(capture, keymapSettings.platform);
+			return binding ? keymapSettings.setLeader(binding) : false;
+		},
+		onCaptureBinding: (id: string, capture: KeyboardCapture) => {
+			if (!isMuxSessionCommand(id)) return false;
+			const binding = bindingFromKeyboardEvent(capture, keymapSettings.platform);
+			if (!binding) return false;
+			const direct = capture.metaKey || capture.ctrlKey || capture.altKey;
+			return keymapSettings.setBinding(id, direct ? binding : `Leader ${binding}`);
+		},
+		onClearBinding: (id: string) =>
+			isMuxSessionCommand(id) ? keymapSettings.setBinding(id, null) : false,
+		onRestoreBinding: (id: string) =>
+			isMuxSessionCommand(id) ? keymapSettings.restoreBinding(id) : false,
+		onConfirmRisky: keymapSettings.confirmPending,
+		onImport: keymapSettings.importProfile,
+		onReset: keymapSettings.resetKeymap,
+	};
+	const commandRuntimeRef = useRef(commandRuntime);
+	commandRuntimeRef.current = commandRuntime;
 	useEffect(() => {
 		if (!desktopClient) return;
 		let disposed = false;
@@ -1334,7 +1701,7 @@ export function TerminalMultiplexer() {
 				listen("yaade://menu-command", (event) => {
 					const command = decodeMuxSessionCommand(event.payload);
 					if (Option.isSome(command)) {
-						runMuxSessionCommandRef.current(command.value);
+						void commandRuntimeRef.current.execute(command.value, { source: "native-menu" });
 					}
 				}),
 			)
@@ -1357,6 +1724,7 @@ export function TerminalMultiplexer() {
 		overlayOpen: Boolean(
 			switcherOpen ||
 			muxTerminalSwitcherOpen ||
+			commandPaletteOpen ||
 			settingsOpen ||
 			closeChoice ||
 			paneChromeOverlayOpen,
@@ -1370,6 +1738,7 @@ export function TerminalMultiplexer() {
 
 	useEffect(() => {
 		const keymapState = keymapStateRef.current;
+		const suppressedKeyCodes = new Set<string>();
 		const onKeyDown = (event: KeyboardEvent) => {
 			const target = event.target instanceof HTMLElement ? event.target : null;
 			const inTerminal = Boolean(
@@ -1380,14 +1749,16 @@ export function TerminalMultiplexer() {
 			const result = resolveMuxSessionKeydown(event, keymapStateRef.current, {
 				...keybindingContextRef.current,
 				inEditable,
-				inTerminal,
+				inTerminal: inTerminal || prefixStartedInTerminalRef.current,
 				inPrefixButton: Boolean(target?.closest("[data-yaade-which-key-item]")),
 			});
 			if (!result) return;
 
+			if (event.code) suppressedKeyCodes.add(event.code);
 			event.preventDefault();
 			event.stopPropagation();
 			if (result.type === "prefix-started") {
+				prefixStartedInTerminalRef.current = inTerminal;
 				showPrefix();
 				return;
 			}
@@ -1395,26 +1766,41 @@ export function TerminalMultiplexer() {
 				clearPrefix();
 				const target = focusedMuxTerminalRef.current ?? selectedTerminalRef.current;
 				const ptyId = target?.output.kind === "process" ? target.output.ptyId : undefined;
-				if (ptyId) void window.yaade?.terminal.write?.(ptyId, result.byte);
+				if (ptyId) {
+					void hostPorts.terminal.write(ptyId, result.byte).catch((error) => {
+						setActionError(errorMessage(error));
+					});
+				}
 				return;
 			}
 			if (result.type === "command") {
 				clearPrefix();
-				runMuxSessionCommandRef.current(result.command, result.jumpIndex);
+				void commandRuntimeRef.current.execute(result.command, {
+					source: "keyboard",
+					jumpIndex: result.jumpIndex,
+				});
 				return;
 			}
+			if (result.type === "consume" && keymapStateRef.current.prefix !== null) return;
 			clearPrefix();
 		};
+		const onKeyUp = (event: KeyboardEvent) => {
+			if (!suppressedKeyCodes.delete(event.code)) return;
+			event.preventDefault();
+			event.stopPropagation();
+		};
 		window.addEventListener("keydown", onKeyDown, true);
+		window.addEventListener("keyup", onKeyUp, true);
 		return () => {
 			window.removeEventListener("keydown", onKeyDown, true);
+			window.removeEventListener("keyup", onKeyUp, true);
 			if (prefixTimerRef.current !== undefined) {
 				window.clearTimeout(prefixTimerRef.current);
 				prefixTimerRef.current = undefined;
 			}
 			clearMuxSessionKeymapState(keymapState);
 		};
-	}, [clearPrefix, showPrefix]);
+	}, [clearPrefix, hostPorts, showPrefix]);
 
 	useEffect(() => {
 		const onPointerDown = (event: PointerEvent) => {
@@ -1428,7 +1814,12 @@ export function TerminalMultiplexer() {
 	}, [clearPrefix, prefixPending]);
 
 	const muxOverlayOpen = Boolean(
-		switcherOpen || muxTerminalSwitcherOpen || settingsOpen || closeChoice || paneChromeOverlayOpen,
+		switcherOpen ||
+		muxTerminalSwitcherOpen ||
+		commandPaletteOpen ||
+		settingsOpen ||
+		closeChoice ||
+		paneChromeOverlayOpen,
 	);
 	useEffect(() => {
 		if (muxOverlayOpen) {
@@ -1453,6 +1844,41 @@ export function TerminalMultiplexer() {
 			restoreTerminalWorkspace(activeTab.layoutJson, terminalIds)
 		);
 	}, [activeTab, terminalWorkspaces, terminalIds]);
+	const activeWorkspaceTerminalIds = useMemo(
+		() => terminalIdsInWorkspace(activeTerminalWorkspace),
+		[activeTerminalWorkspace],
+	);
+	useEffect(() => {
+		setResidentTerminalIds((previous) => {
+			const next = new Set<MuxTerminalId>();
+			for (const id of previous) {
+				const terminal = snapshot.terminalsById.get(id);
+				if (terminal && !terminal.archivedAt) {
+					next.add(id);
+				}
+			}
+			for (const id of activeWorkspaceTerminalIds) {
+				const terminal = snapshot.terminalsById.get(id);
+				if (terminal && !terminal.archivedAt && terminalHasResidentSurface(terminal)) {
+					next.add(id);
+				}
+			}
+			if (
+				next.size === previous.size &&
+				[...next].every((id) => previous.has(id))
+			) {
+				return previous;
+			}
+			return next;
+		});
+	}, [activeWorkspaceTerminalIds, snapshot.terminalsById]);
+	const residentTerminals = useMemo(
+		() =>
+			[...residentTerminalIds]
+				.map((id) => snapshot.terminalsById.get(id))
+				.filter((terminal): terminal is MuxTerminal => Boolean(terminal)),
+		[residentTerminalIds, snapshot.terminalsById],
+	);
 	const focusedView = activeTerminalWorkspace.tree.getView(activeTerminalWorkspace.focusedPanelId);
 	focusedMuxTerminalRef.current =
 		focusedView?.kind === "terminal"
@@ -1589,8 +2015,10 @@ export function TerminalMultiplexer() {
 			}
 			const tabId = terminal.tabId ?? client.store.getSnapshot().activeTabId;
 			writeMuxSessionLocation(muxSessionUrl(terminal.sessionId, tabId, terminal.id), "replace");
+			pendingFocusHistoryRef.current.delete(terminal.id);
+			recordTerminalFocus(terminal);
 		},
-		[client, hostPorts.mux, serverConnections.manager],
+		[client, hostPorts.mux, recordTerminalFocus, serverConnections.manager],
 	);
 
 	const dockWindowTerminal = useCallback(
@@ -1821,31 +2249,90 @@ export function TerminalMultiplexer() {
 	const routedMobileTerminalId = isMobile
 		? parseMuxSessionRoute(location.href).muxTerminalId
 		: undefined;
-	const renderTerminal = useCallback(
+	const renderTerminalController = useCallback(
 		(terminal: MuxTerminal, focused: boolean, visible = true) => (
 			<SelectedMuxTerminal
 				key={terminal.id}
 				terminal={terminal}
 				theme={activeTheme}
 				visible={visible && (!isMobile || terminal.id === routedMobileTerminalId)}
-				focused={focused && (!isMobile || terminal.id === routedMobileTerminalId)}
+				focused={
+					focused && !muxOverlayOpen && (!isMobile || terminal.id === routedMobileTerminalId)
+				}
 				onTitleChange={(title) => updateRuntimeTitle(terminal, title, "terminal")}
+				onJumpToLive={() => {
+					void commandRuntime.execute("terminal.jumpLive", { source: "pointer" });
+				}}
 				onRestart={() => void runTerminalAction("restart", terminal)}
 				onClose={() => void runTerminalAction("archive", terminal)}
 			/>
 		),
-		[activeTheme, isMobile, routedMobileTerminalId, runTerminalAction, updateRuntimeTitle],
+		[
+			activeTheme,
+			commandRuntime,
+			isMobile,
+			muxOverlayOpen,
+			routedMobileTerminalId,
+			runTerminalAction,
+			updateRuntimeTitle,
+		],
+	);
+	const handleTerminalPlacementInteraction = useCallback(
+		(terminalId: string) => {
+			const muxTerminalId = [...muxTerminalsRef.current.keys()].find(
+				(candidate) => candidate === terminalId,
+			);
+			const terminal = muxTerminalId
+				? muxTerminalsRef.current.get(muxTerminalId)
+				: undefined;
+			if (!terminal) return;
+			const matchingPanelId = activeTerminalWorkspace.tree.findPanelWithView(
+				(view) => view.kind === "terminal" && view.muxTerminalId === terminal.id,
+			);
+			if (matchingPanelId) {
+				focusWorkspacePanel(matchingPanelId, terminal);
+			}
+		},
+		[activeTerminalWorkspace.tree, focusWorkspacePanel],
+	);
+	const renderTerminal = useCallback(
+		(terminal: MuxTerminal, focused: boolean, visible = true) =>
+			terminalHasResidentSurface(terminal) ? (
+				isMobile ? (
+					<div className="h-full min-h-0" data-yaade-desktop-terminal-placeholder={terminal.id} />
+				) : (
+					<TerminalSurfacePlacement
+						key={terminal.id}
+						terminalId={terminal.id}
+						focused={focused && !muxOverlayOpen}
+						visible={visible}
+						onFocused={recordPlacedTerminalFocus}
+						onInteraction={handleTerminalPlacementInteraction}
+					/>
+				)
+			) : (
+				renderTerminalController(terminal, focused, visible)
+			),
+		[
+			handleTerminalPlacementInteraction,
+			isMobile,
+			muxOverlayOpen,
+			recordPlacedTerminalFocus,
+			renderTerminalController,
+		],
 	);
 	const renderMobileTerminal = useCallback(
 		(terminal: MuxTerminal, focused: boolean, visible = true) => (
 			<TerminalSurfacePlacement
 				key={terminal.id}
 				terminalId={terminal.id}
-				focused={focused}
+				focused={focused && !muxOverlayOpen}
 				visible={visible}
+				onFocused={recordPlacedTerminalFocus}
+				onInteraction={handleTerminalPlacementInteraction}
 			/>
 		),
-		[],
+		[handleTerminalPlacementInteraction, muxOverlayOpen, recordPlacedTerminalFocus],
 	);
 
 	const showMobileTerminalList = (terminal: MuxTerminal) => {
@@ -1863,11 +2350,16 @@ export function TerminalMultiplexer() {
 	const onPrefixHudSelect = (key: string) => {
 		clearPrefix();
 		if (isMuxSessionJumpKey(key)) {
-			runMuxSessionCommand("terminal.jump", Number(key) - 1);
+			void commandRuntime.execute("terminal.jump", {
+				source: "which-key",
+				jumpIndex: Number(key) - 1,
+			});
 			return;
 		}
 		const binding = matchMuxSessionPrefixBinding(key);
-		if (binding) runMuxSessionCommand(binding.command);
+		if (binding) {
+			void commandRuntime.execute(binding.command, { source: "which-key" });
+		}
 	};
 
 	const activeServerConnection =
@@ -1893,6 +2385,24 @@ export function TerminalMultiplexer() {
 								data-yaade-session-layout={appearanceSettings.sessionLayout}
 								data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
 							>
+								<div
+									className="pointer-events-none invisible absolute left-0 top-0 size-px overflow-hidden"
+									aria-hidden="true"
+									inert
+									data-yaade-terminal-resident-host=""
+								>
+									{residentTerminals.map((terminal) => {
+										const visible = activeWorkspaceTerminalIds.includes(terminal.id);
+										const focused =
+											focusedView?.kind === "terminal" &&
+											focusedView.muxTerminalId === terminal.id;
+										return (
+											<div key={terminal.id} className="size-px" data-yaade-terminal-resident-home={terminal.id}>
+												{renderTerminalController(terminal, focused, visible)}
+											</div>
+										);
+									})}
+								</div>
 								<div className="relative flex min-h-0 min-w-0 flex-1 flex-col">
 									<Suspense fallback={<SessionLoadingState />}>
 										<TerminalDndRoot handlers={terminalTabDnd}>
@@ -1913,6 +2423,9 @@ export function TerminalMultiplexer() {
 															onCreateTerminal={(sessionId, kind) => createTerminal(kind, sessionId)}
 															onCreateSession={createSession}
 															onCloseSession={requestCloseSession}
+															onOpenCommands={() => {
+																void commandRuntime.execute("commandPalette.show", { source: "pointer" });
+															}}
 															actionError={actionError}
 															onCloseTerminal={(terminal) => runTerminalAction("archive", terminal)}
 															onRestartTerminal={(terminal) =>
@@ -1940,15 +2453,28 @@ export function TerminalMultiplexer() {
 														>
 															<SessionSwitcher
 																open={switcherOpen}
-																onOpenChange={setSwitcherOpen}
+																onOpenChange={(open) => {
+																	if (open) {
+																		void commandRuntime.execute("session.switch", { source: "pointer" });
+																	} else setSwitcherOpen(false);
+																}}
 																sessions={visibleSessions}
 																activeSessionId={snapshot.activeSessionId}
 																onSelect={(session) => selectSession(session.id)}
-																onCreate={() => void createSession()}
+																onCreate={(title, serverId) => void createSession(title, serverId)}
 																onClose={requestCloseSession}
 																onRename={(id, title) => void renameSession(id, title)}
 																terminalCounts={terminalCounts}
 																serverNamesBySessionId={serverNamesBySessionId}
+																sessionStatusById={sessionStatusById}
+																activeServer={activeServerConnection}
+															/>
+															<CommandPaletteTrigger
+																side="bottom"
+																className="size-[var(--yaade-tab-pill-height)] shrink-0 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+																onOpen={() => {
+																	void commandRuntime.execute("commandPalette.show", { source: "pointer" });
+																}}
 															/>
 															<ShortcutTooltip
 																label="Settings"
@@ -1960,7 +2486,7 @@ export function TerminalMultiplexer() {
 																size="icon-sm"
 																variant="ghost"
 																	aria-label="Settings"
-																onClick={() => setSettingsOpen(true)}
+																onClick={() => { void commandRuntime.execute("settings.show", { source: "pointer" }); }}
 																data-yaade-session-settings=""
 																	className="size-[var(--yaade-tab-pill-height)] shrink-0 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100"
 															>
@@ -2013,7 +2539,12 @@ export function TerminalMultiplexer() {
 																sidebarOrientation={sidebarOrientation}
 																onSelect={selectSession}
 																onClose={requestCloseSession}
-																onOpenSettings={() => setSettingsOpen(true)}
+																onOpenSettings={() => {
+																	void commandRuntime.execute("settings.show", { source: "pointer" });
+																}}
+																onOpenCommands={() => {
+																	void commandRuntime.execute("commandPalette.show", { source: "pointer" });
+																}}
 																onCreate={() => void createSession()}
 																onRename={(id, title) => void renameSession(id, title)}
 																onReorder={(ids) => void reorderSessions(ids)}
@@ -2054,15 +2585,27 @@ export function TerminalMultiplexer() {
 																			<div className="flex items-center gap-1">
 																				<SessionSwitcher
 																					open={switcherOpen}
-																					onOpenChange={setSwitcherOpen}
+																					onOpenChange={(open) => {
+																							if (open) {
+																								void commandRuntime.execute("session.switch", { source: "pointer" });
+																							} else setSwitcherOpen(false);
+																						}}
 																					sessions={visibleSessions}
 																					activeSessionId={snapshot.activeSessionId}
 																					onSelect={(session) => selectSession(session.id)}
-																					onCreate={() => void createSession()}
+																					onCreate={(title, serverId) => void createSession(title, serverId)}
 																					onClose={requestCloseSession}
 																					onRename={(id, title) => void renameSession(id, title)}
 																					terminalCounts={terminalCounts}
 																					serverNamesBySessionId={serverNamesBySessionId}
+																					sessionStatusById={sessionStatusById}
+																					activeServer={activeServerConnection}
+																				/>
+																				<CommandPaletteTrigger
+																					side="right"
+																					onOpen={() => {
+																						void commandRuntime.execute("commandPalette.show", { source: "pointer" });
+																					}}
 																				/>
 																				<ShortcutTooltip
 																					label="Settings"
@@ -2074,7 +2617,7 @@ export function TerminalMultiplexer() {
 																						size="icon-sm"
 																						variant="ghost"
 																						aria-label="Settings"
-																						onClick={() => setSettingsOpen(true)}
+																						onClick={() => { void commandRuntime.execute("settings.show", { source: "pointer" }); }}
 																						data-yaade-session-settings=""
 																					>
 																						<Settings />
@@ -2273,15 +2816,27 @@ export function TerminalMultiplexer() {
 											</>
 										</TerminalDndRoot>
 									</Suspense>
+									{commandPaletteOpen ? (
+										<Suspense fallback={null}>
+											<CommandPalette
+												open
+												onOpenChange={setCommandPaletteOpen}
+												runtime={commandRuntime}
+											/>
+										</Suspense>
+									) : null}
 									{muxTerminalSwitcherOpen ? (
 										<Suspense fallback={null}>
 											<TerminalSwitcher
 												open
 												onOpenChange={setTerminalSwitcherOpen}
-												sessionsById={snapshot.sessionsById}
-												terminalsById={snapshot.terminalsById}
+												entries={terminalSwitcherEntries}
+												history={terminalFocusHistory}
+												context={{
+													activeSessionId: snapshot.activeSessionId,
+													activeTabId: snapshot.activeTabId,
+												}}
 												activeMuxTerminalId={snapshot.activeMuxTerminalId}
-												runtimeTitles={runtimeTitles}
 												onSelect={selectTerminal}
 											/>
 										</Suspense>
@@ -2293,6 +2848,7 @@ export function TerminalMultiplexer() {
 												onOpenChange={setSettingsOpen}
 												settings={appearanceSettings}
 												onSettingsChange={setAppearanceSettings}
+												keyboard={keyboardSettingsModel}
 												themes={bundledThemeList}
 												onReset={resetAppearanceSettings}
 												servers={serverConnections.servers}

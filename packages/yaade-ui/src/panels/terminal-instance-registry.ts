@@ -102,6 +102,32 @@ export function scrollTerminalLines(amount: number, tabId?: string): boolean {
   return true
 }
 
+export function readTerminalViewportActivity(tabId?: string): {
+  readonly mode: "live" | "inspecting" | "paused"
+  readonly canPause: boolean
+} | null {
+  const terminal = resolveTerminal(tabId)
+  if (!terminal) return null
+  return {
+    mode: terminal.getViewportActivity().mode,
+    canPause: terminal.canToggleInspectionPause(),
+  }
+}
+
+export function jumpRegisteredTerminalToLive(tabId?: string): boolean {
+  const terminal = resolveTerminal(tabId)
+  if (!terminal) return false
+  terminal.jumpToLive()
+  return true
+}
+
+export function toggleRegisteredTerminalInspectionPause(tabId?: string): boolean {
+  const terminal = resolveTerminal(tabId)
+  if (!terminal || !terminal.canToggleInspectionPause()) return false
+  terminal.toggleInspectionPause()
+  return true
+}
+
 /** Focus the active terminal via its hidden IME input. */
 export function focusRegisteredTerminal(tabId?: string): boolean {
   const terminal = resolveTerminal(tabId)

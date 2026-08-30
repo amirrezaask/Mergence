@@ -18,6 +18,10 @@ export {
   type TerminalLinkWithRange,
   type TerminalScrollbarGeometry,
 } from "./surface.js"
+export type {
+  TerminalViewportActivity,
+  TerminalViewportActivityMode,
+} from "./viewport-activity.js"
 export {
   GHOSTTY_CELL_WIDE,
   ghosttyColorsEqual,

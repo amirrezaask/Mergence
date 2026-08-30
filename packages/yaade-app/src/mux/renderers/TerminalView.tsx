@@ -14,6 +14,7 @@ export type ProcessTerminalViewProps = {
   readonly visible?: boolean
   readonly focused?: boolean
   readonly onTitleChange?: (title: string) => void
+  readonly onJumpToLive?: () => void
   readonly onRestart?: () => void
   readonly onClose?: () => void
 }
@@ -22,6 +23,7 @@ export function ProcessTerminalView({
   terminal,
   theme,
   onTitleChange,
+  onJumpToLive,
   onRestart,
   onClose,
   visible = true,
@@ -70,6 +72,7 @@ export function ProcessTerminalView({
             readOnlyMessage="Interrupted by host restart · retained output is read-only"
             attachOnly
             visible={visible}
+            onJumpToLive={onJumpToLive}
             onRestart={onRestart}
             onClose={onClose}
           />
@@ -131,6 +134,7 @@ export function ProcessTerminalView({
             attachOnly
             visible={visible}
             onTitleChange={(_id, title) => onTitleChange?.(title)}
+            onJumpToLive={onJumpToLive}
             onRestart={onRestart}
             onClose={onClose}
           />

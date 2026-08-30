@@ -1,4 +1,5 @@
 export { MOBILE_MEDIA_QUERY, useIsMobile } from "./hooks/use-mobile.js"
+export { fuzzyFilter, fuzzyScore } from "./lister/fuzzy.js"
 export {
   PanelDock,
   PanelDockInDnd,

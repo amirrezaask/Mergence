@@ -14,6 +14,10 @@ import {
   type GhosttyTheme,
 } from "./core.js";
 import {
+  TerminalViewportActivityPolicy,
+  type TerminalViewportActivity,
+} from "./viewport-activity.js";
+import {
   measureGhosttyCell,
   terminalGridSize,
   terminalMouseCoordinate,
@@ -717,6 +721,8 @@ export class GhosttyTerminalSurface {
   private scrollbarStateKnown = false;
   private scrollbarPointerId: number | null = null;
   private scrollbarPointerOffset = 0;
+  private readonly viewportActivity = new TerminalViewportActivityPolicy();
+  private contentGeneration = 0;
   private disposed = false;
   private originY = CONTENT_PADDING;
   private mountHeight = 0;
@@ -1050,6 +1056,7 @@ export class GhosttyTerminalSurface {
 
   write(data: string | Uint8Array, onParsed?: ParsedCallback): void {
     if (this.disposed) return;
+    this.contentGeneration += 1;
     this.core.write(data, onParsed);
     if (this.core.kind === "main") this.afterTerminalWrite();
   }
@@ -1057,12 +1064,14 @@ export class GhosttyTerminalSurface {
   /** Feed attach/reconnect output with Ghostty's PTY callback detached. */
   writeReplay(chunks: readonly Uint8Array[], onParsed?: ParsedCallback): void {
     if (this.disposed || chunks.length === 0) return;
+    this.contentGeneration += 1;
     this.core.writeReplay(chunks, onParsed);
     if (this.core.kind === "main") this.afterTerminalWrite();
   }
 
   resetAndWrite(data: string | Uint8Array, onParsed?: ParsedCallback): void {
     if (this.disposed) return;
+    this.contentGeneration += 1;
     this.core.resetAndWrite(data, onParsed);
     if (this.core.kind === "main") this.afterTerminalWrite(true);
   }
@@ -1373,10 +1382,47 @@ export class GhosttyTerminalSurface {
 
   scrollToBottom(): void {
     this.core.scrollToBottom();
+    this.viewportActivity.jumpToLive();
     this.terminalStateDirty = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
     this.requestRender();
+  }
+
+  jumpToLive(): void {
+    this.scrollToBottom();
+    this.focus();
+  }
+
+  toggleInspectionPause(): void {
+    if (this.viewportActivity.current.mode === "paused") {
+      this.viewportActivity.resume();
+      this.focus();
+      return;
+    }
+    if (this.viewportActivity.current.mode === "live") {
+      const state = this.readScrollbarState();
+      if (state === null || state.total <= state.len) return;
+      this.scrollViewport(-1);
+    }
+    this.viewportActivity.pause();
+    this.focus();
+  }
+
+  getViewportActivity(): TerminalViewportActivity {
+    return this.viewportActivity.current;
+  }
+
+  canToggleInspectionPause(): boolean {
+    if (this.viewportActivity.current.mode !== "live") return true;
+    const state = this.core.scrollbarState();
+    return state !== null && state.total > state.len;
+  }
+
+  subscribeViewportActivity(
+    listener: (activity: TerminalViewportActivity) => void,
+  ): () => void {
+    return this.viewportActivity.subscribe(listener);
   }
 
   isAtBottom(): boolean {
@@ -1532,6 +1578,7 @@ export class GhosttyTerminalSurface {
       window.clearTimeout(this.compositionSuppressionTimer);
     }
     this.removeEvents();
+    this.viewportActivity.dispose();
     this.rendererController.dispose();
     this.core.dispose();
     if (
@@ -2316,14 +2363,20 @@ export class GhosttyTerminalSurface {
   private scrollViewport(deltaRows: number): void {
     let delta = Math.trunc(deltaRows);
     const state = this.readScrollbarState();
+    let nextState = state;
     if (state !== null) {
       const maxOffset = Math.max(0, state.total - state.len);
       const offset = Math.max(0, Math.min(state.offset + delta, maxOffset));
       delta = offset - state.offset;
-      this.scrollbarState = { ...state, offset };
+      nextState = { ...state, offset };
+      this.scrollbarState = nextState;
     }
     if (delta === 0) return;
     this.core.scroll(delta);
+    if (nextState !== null) {
+      const maxOffset = Math.max(0, nextState.total - nextState.len);
+      this.observeViewportActivity(nextState, nextState.offset >= maxOffset);
+    }
     this.terminalStateDirty = true;
     this.forceFullRender = true;
     this.scrollbarDirty = true;
@@ -2367,6 +2420,20 @@ export class GhosttyTerminalSurface {
     this.scrollbarState = state;
     this.scrollbarStateKnown = true;
     return state;
+  }
+
+  private observeViewportActivity(
+    state: GhosttyScrollbar | null,
+    viewportActive = this.core.isViewportActive(),
+  ): void {
+    this.viewportActivity.observe({
+      viewportActive,
+      totalRows: state?.total ?? null,
+      viewportOffset: state?.offset ?? null,
+      geometryGeneration: this.geometryGeneration,
+      contentGeneration: this.contentGeneration,
+      alternateScreen: this.core.isAlternateScreen(),
+    });
   }
 
   private requestRender(): void {
@@ -2423,6 +2490,7 @@ export class GhosttyTerminalSurface {
       modelUpdated || this.scrollbarDirty || !this.scrollbarStateKnown
         ? this.readScrollbarState()
         : this.scrollbarState;
+    this.observeViewportActivity(scrollState);
     const anchorBottom = scrollState !== null && scrollState.total > scrollState.len;
     const nextOriginY = terminalContentOriginY(
       this.mountHeight,

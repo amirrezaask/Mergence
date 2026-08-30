@@ -1,7 +1,7 @@
 import { useRef, useState, type KeyboardEvent } from "react";
 import { AnimatePresence } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
-import { Plus, Settings, X } from "lucide-react";
+import { ListFilter, Plus, Settings, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
 import { SidebarShell, cn, yaadeMotion } from "@yaade/ui/session";
 import { Button, Input } from "@yaade/ui/primitives";
@@ -54,6 +54,7 @@ export type SessionTabStripProps = {
   readonly onSelect: (id: SessionId) => void;
   readonly onClose: (id: SessionId) => void;
   readonly onOpenSettings: () => void;
+  readonly onOpenCommands: () => void;
   readonly onCreate: () => void;
   readonly onRename: (id: SessionId, title: string) => void;
   readonly onReorder: (ids: readonly SessionId[]) => void;
@@ -70,6 +71,7 @@ export function SessionTabStrip(props: SessionTabStripProps) {
   const [draftTitle, setDraftTitle] = useState("");
   const layout = props.layout ?? "tabs";
   const settingsChord = muxSessionDirectShortcutFor("settings.show");
+  const commandsChord = muxSessionShortcutFor("commandPalette.show");
   const newSessionChord = muxSessionShortcutFor("session.new");
 
   const finishRename = (session: AppSession) => {
@@ -96,6 +98,17 @@ export function SessionTabStrip(props: SessionTabStripProps) {
       role="toolbar"
       aria-label="Session actions"
     >
+      <ShortcutTooltip label="Commands" shortcut={commandsChord} side="right">
+        <Button
+          size="icon-xs"
+          variant="ghost"
+          aria-label="Commands"
+          onClick={props.onOpenCommands}
+          data-yaade-command-palette-trigger="session-sidebar"
+        >
+          <ListFilter />
+        </Button>
+      </ShortcutTooltip>
       <ShortcutTooltip label="Settings" shortcut={settingsChord} side="right">
         <Button
           size="icon-xs"

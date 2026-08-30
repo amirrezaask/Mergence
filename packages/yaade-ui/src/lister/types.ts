@@ -71,6 +71,8 @@ export type ListerProps<T> = {
    */
   flatVariant?: "plain" | "palette"
   itemClassName?: string
+  /** Disabled rows remain discoverable/selectable but cannot activate. */
+  itemDisabled?: (node: ListerNode<T>) => boolean
   itemStyle?: (node: ListerNode<T>) => CSSProperties | undefined
   className?: string
   listClassName?: string

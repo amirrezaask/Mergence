@@ -28,6 +28,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
@@ -194,12 +195,41 @@ without arbitrary sleeps.
 
 ## Done criteria
 
-- [ ] Reading position never moves because new output arrives.
-- [ ] Parser, replay, ACK, history, and PTY continue while inspection is paused.
-- [ ] The affordance reports exact unseen rows only when exactness is proven.
-- [ ] Jump-live returns to current output and terminal focus in one action.
-- [ ] PTY bytes/rows do not enter React state or a growing DOM.
-- [ ] Main/worker, desktop/mobile, unit, type, lint, and Playwright gates pass.
+- [x] Reading position never moves because new output arrives.
+- [x] Parser, replay, ACK, history, and PTY continue while inspection is paused.
+- [x] The affordance reports exact unseen rows only when exactness is proven.
+- [x] Jump-live returns to current output and terminal focus in one action.
+- [x] PTY bytes/rows do not enter React state or a growing DOM.
+- [x] Main/worker, desktop/mobile, unit, type, targeted lint, and Playwright gates pass.
+
+## Implementation notes
+
+- `TerminalViewportActivityPolicy` owns live, inspecting, and paused transitions
+  from content-free scrollbar, geometry, content-generation, retention, and
+  alternate-screen facts. Reflow, reconnect replay, or retention uncertainty
+  reports `null` rather than a false exact count.
+- `GhosttyTerminalSurface` publishes activity on the presentation path and
+  exposes jump/pause operations. Characterization tests prove Ghostty preserves
+  the viewed rows while output appends and through alternate-screen and resize
+  transitions; browser coverage exercises both worker and main runtimes.
+- `TerminalPanel` keeps one accessible jump control mounted and updates its
+  label, visibility, mode, and count imperatively. The resident-surface seam
+  moves that control with the canvas on mobile, where it retains a 44px target.
+  PTY output is never copied into React state or DOM.
+- `terminal.jumpLive` (`Mod-k g`) and
+  `terminal.toggleInspectionPause` (`Mod-k Shift-G`) are static command
+  descriptors with focused-surface availability and scoped runtime handlers.
+  Keyboard, palette, which-key, native-menu, and pointer execution share that
+  runtime. Removed prefix/direct aliases remain banned.
+- `scroll-lock-unseen-output.web.spec.ts` uses real numbered PTY output to prove
+  stable anchors, exact and unknown counts, one-action jump, paused inspection,
+  intentional host reconnect, ordinary resize, no navigation-byte leakage,
+  bounded React renders, main/worker parity, and desktop/mobile behavior.
+- Verification completed with 43 unit files / 234 tests, repository typecheck,
+  3 focused scroll-lock Playwright cases passing three consecutive runs, and
+  the existing 22 command-palette and terminal-multiplexer cases. Targeted type-aware lint passes. Repository-
+  wide `vp run lint` remains blocked by pre-existing anti-slop diagnostics in
+  unrelated files.
 
 ## STOP conditions
 

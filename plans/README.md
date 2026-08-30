@@ -50,7 +50,7 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [032](032-restart-safe-workspace-catalog.md) | Preserve the workspace catalog and terminal history across host restart | SL continuity/history | P1 | L | 018, 019 | DONE |
 | [033](033-authoritative-semantic-terminal-stream.md) | Complete authoritative semantic snapshot/patch/resync streaming | SL exact reattach/observation | P1 | L | 017, 019, 022, 023 | TODO |
 | [034](034-progressive-scrollback-search.md) | Deliver current-screen-first reattach, million-line scrollback, and search | SL history/search/perf | P1 | L | 018, 023, 024 decision, 027, 033 | TODO |
-| [035](035-command-registry-and-palette.md) | Centralize commands and ship command/session palettes | SL command discovery | P1 | M | — | TODO |
+| [035](035-command-registry-and-palette.md) | Centralize commands and ship command/session palettes | SL command discovery | P1 | M | — | DONE |
 | [036](036-session-activity-history-notifications.md) | Surface truthful activity, lifecycle history, archives, and notifications | SL session intelligence | P2 | L | 032, 033, 035 | TODO |
 | [037](037-secure-host-onboarding-and-device-trust.md) | Turn device auth into secure remote-host onboarding and trust management | SL pairing/remote trust | P1 | L | — | TODO |
 | [038](038-device-scoped-collaboration-and-control.md) | Add device-scoped collaboration, presence, roles, and control transfer | SL collaboration | P2 | L | 033, 035, 036, 037 | TODO |
@@ -60,12 +60,12 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [042](042-operational-telemetry-diagnostics-slos.md) | Establish content-safe diagnostics, telemetry, and enforced SLOs | SL operations/quality | P1 | L | 027, 032–034, 040, 041 | TODO |
 | [043](043-shared-native-desktop-ios-shells.md) | Harden Tauri desktop and validate an iOS/iPadOS remote shell | SL native platforms | P2 | L | 029, 035, 037, 039, 041 | TODO |
 | [044](044-signed-release-and-safe-updates.md) | Ship signed releases and non-surprising updates | SL distribution/lifecycle | P3 | L | 029, 032, 040, 042, 043 decision | TODO |
-| [045](045-scroll-lock-unseen-output.md) | Keep inspected scrollback anchored and surface unseen output | Heavy UX scroll inspection | P1 | M | 035 | TODO |
+| [045](045-scroll-lock-unseen-output.md) | Keep inspected scrollback anchored and surface unseen output | Heavy UX scroll inspection | P1 | M | 035 | DONE |
 | [046](046-keyboard-copy-mode-shell-marks.md) | Add keyboard copy mode and shell-mark navigation | Heavy UX copy/marks | P2 | L | 034, 035, 036 | TODO |
-| [047](047-user-configurable-keymaps.md) | Add validated user-configurable keymaps and leader keys | Heavy UX keymaps | P2 | M | 035 | TODO |
+| [047](047-user-configurable-keymaps.md) | Add validated user-configurable keymaps and leader keys | Heavy UX keymaps | P2 | M | 035 | DONE |
 | [048](048-explicit-input-broadcast-groups.md) | Broadcast input safely to an explicit terminal group | Heavy UX synchronized input | P3 | M | 035, 038, 039 | TODO |
 | [049](049-named-window-layout-templates.md) | Save and apply named Window layout templates | Heavy UX reusable layouts | P2 | L | 032, 035 | TODO |
-| [050](050-mru-terminal-switching.md) | Make terminal switching MRU-first with truthful status previews | Heavy UX navigation | P1 | M | 035 | TODO |
+| [050](050-mru-terminal-switching.md) | Make terminal switching MRU-first with truthful status previews | Heavy UX navigation | P1 | M | 035 | DONE |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
@@ -504,14 +504,16 @@ this README unless they run in isolated worktrees with an explicit merge order.
   loses full terminal styling/input/accessibility semantics.
 - The Session switcher has no query/filter-or-create behavior. `TerminalSwitcher`
   already uses `PaletteShell`, so Plan 035 reuses that primitive.
-- `GhosttyTerminalSurface` exposes scroll-to-bottom, viewport offset, and
-  at-bottom state, but `TerminalPanel` has no anchored-inspection/unseen-output
-  treatment. Plan 045 deepens that existing seam.
+- `GhosttyTerminalSurface` now owns content-free viewport activity and stable
+  inspected scrollback, while `TerminalPanel` imperatively exposes unseen output
+  and jump-to-live on desktop/mobile. Plan 045 completed that seam.
 - Surface selection/copy and scrolling primitives exist, but there is no
   keyboard copy-mode controller or typed shell-mark navigation. Plan 046 composes
   Plan 034 rows/search with Plan 036 explicit markers.
-- The keybinding catalog is centralized but its prefix groups/bindings are empty
-  and all assignments are static. Plan 047 adds validated overrides after Plan 035.
+- The keybinding catalog now compiles bounded, versioned client-local profiles
+  into one effective snapshot with validated overrides, configurable leaders,
+  exact PTY prefix literals, cross-tab persistence, and recovery paths. Plan 047
+  completed the Settings and runtime seam.
 - Window `layoutJson` already persists validated split trees with revisions, but
   embeds terminal IDs and has no reusable neutral template entity. Plan 049
   preserves this distinction.

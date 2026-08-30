@@ -31,4 +31,16 @@ describe("lister fuzzy", () => {
   it("matches subsequence", () => {
     assert.ok(fuzzyScore("top", "terminal.open") !== null)
   })
+
+  for (const size of [1, 100, 5_000]) {
+    it(`filters a ${size}-row palette deterministically`, () => {
+      const items = Array.from({ length: size }, (_, index) => ({
+        searchText: `Session ${index} host-${index % 4} idle`,
+        index,
+      }))
+      const result = fuzzyFilter(`Session ${size - 1}`, items)
+      assert.equal(result[0]?.index, size - 1)
+      assert.equal(items.length, size)
+    })
+  }
 })

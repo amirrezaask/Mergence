@@ -85,13 +85,16 @@ async function openMuxTerminal(
 }
 
 export async function focusTerminal(page: ShellDriver): Promise<void> {
-  await page.locator("[data-yaade-terminal-panel] .yaade-terminal-surface").click()
+  const visibleSurface = page.locator(
+    "[data-yaade-terminal-panel] .yaade-terminal-surface:visible",
+  )
+  if (await visibleSurface.count() > 0) await visibleSurface.first().click()
   await page.evaluate(() => {
     window.__yaadeTest?.focusTerminal?.()
   })
   // Best-effort DOM focus — the registry focus path above is authoritative.
   await page
-    .locator("[data-yaade-terminal-panel] [data-ghostty-terminal-input]")
+    .locator("[data-yaade-terminal-panel] [data-ghostty-terminal-input]:visible")
     .first()
     .focus({ timeout: 5_000 })
     .catch(() => undefined)

@@ -141,33 +141,32 @@ test("session switcher creates and archives a session", async ({ launchApp }) =>
   });
 
   await switcher.click();
-  const popover = page.locator('[data-yaade-session-switcher-popover=""]');
-  await expect(popover).toBeVisible();
-  await expect(popover.getByRole("option", { name: /Session 1/ })).toContainText(
-    "This client · 1 terminal",
+  const palette = page.locator('[data-yaade-palette-surface="sessions"]');
+  await expect(palette).toBeVisible();
+  await expect(palette.getByRole("option", { name: /Session 1/ })).toContainText(
+    /This client · (Working|Running) · 1 terminal/,
   );
-  const newSessionButton = popover.locator('[data-yaade-new-session=""]');
+  const newSessionButton = palette.getByRole("option", { name: /New session/ });
   await expect(newSessionButton).toBeVisible();
-  await newSessionButton.focus();
-  await page.keyboard.press("Enter");
+  await newSessionButton.press("Enter");
   await expect(
     page.getByRole("button", { name: "Switch session, current New session" }),
   ).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole("button", { name: /Switch session/ }).click();
-  await expect(popover).toHaveAttribute("data-yaade-glass-material", "floating");
-  const renameButton = popover.getByRole("button", { name: "Rename New session" });
+  await expect(palette).toBeVisible();
+  await palette.getByRole("option", { name: /^New session This client/ }).hover();
+  const renameButton = palette.getByRole("button", { name: "Rename New session" });
   await renameButton.focus();
   await page.keyboard.press("Enter");
-  const renameInput = popover.getByRole("textbox", { name: "Rename New session" });
+  const renameInput = palette.getByRole("textbox", { name: "Rename New session" });
   await renameInput.fill("API work");
   await renameInput.press("Enter");
-  await expect(page.getByRole("button", { name: "Switch session, current API work" })).toBeVisible({
-    timeout: 30_000,
-  });
-  await expect(popover.getByRole("option", { name: "API work" })).toBeVisible();
+  const apiWork = palette.getByRole("option", { name: /API work/ });
+  await expect(apiWork).toContainText("current", { timeout: 30_000 });
+  await apiWork.hover();
 
-  await popover.getByRole("button", { name: "Close API work" }).click();
+  await palette.getByRole("button", { name: "Close API work" }).click();
   await expect(page.getByRole("dialog", { name: "Close “API work”?" })).toBeVisible();
   await page.getByRole("button", { name: "Stop terminals and close" }).click();
   await expect(page.getByRole("button", { name: "Switch session, current Session 1" })).toBeVisible(

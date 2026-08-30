@@ -5,6 +5,7 @@ import net from "node:net"
 import os from "node:os"
 import path from "node:path"
 import { test } from "../../fixtures/e2e.js"
+import { pressMuxPrefix } from "./_launch.js"
 
 async function freePort(): Promise<number> {
   return new Promise((resolve, reject) => {
@@ -112,7 +113,7 @@ test("settings manage multiple remote server definitions and aggregate sessions"
   let closeApp: (() => Promise<void>) | undefined
   try {
     const launched = await launchApp({ withTerminal: false })
-    closeApp = launched.app.close
+    closeApp = () => launched.app.close()
     const { page } = launched
     await page.getByRole("button", { name: "Settings" }).click()
     await expect(page.locator("[data-yaade-settings-overlay]")).toBeVisible()
@@ -141,14 +142,25 @@ test("settings manage multiple remote server definitions and aggregate sessions"
     await page.getByRole("button", { name: /Close settings/ }).click()
     const switcher = page.getByRole("button", { name: /Switch session/ })
     await switcher.click()
-    const remoteSessions = page.locator('[data-yaade-session-switcher-popover=""] [role="option"]')
+    const remoteSessions = page.locator('[data-yaade-palette-surface="sessions"] [role="option"]')
     await expect.poll(() => remoteSessions.count()).toBeGreaterThanOrEqual(3)
     await expect(remoteSessions.getByText("Build machine").first()).toBeVisible()
     await expect(remoteSessions.getByText("Staging machine").first()).toBeVisible()
 
     await remoteSessions.filter({ hasText: "Build machine" }).first().click()
-    await expect(page.locator('[data-yaade-session-switcher-popover=""]')).toHaveCount(0)
+    await expect(page.locator('[data-yaade-palette-surface="sessions"]')).toHaveCount(0)
     await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible()
+    await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible({ timeout: 30_000 })
+
+    await pressMuxPrefix(page, "u")
+    const terminals = page.locator('[data-yaade-palette-surface="terminals"]')
+    await expect(terminals).toBeVisible()
+    await expect(terminals.getByText("Build machine", { exact: false }).first()).toBeVisible()
+    await expect(terminals.getByText("Staging machine", { exact: false }).first()).toBeVisible()
+    const qualifiedIds = await terminals
+      .locator("[data-yaade-terminal-switcher-terminal]")
+      .evaluateAll(rows => rows.map(row => row.getAttribute("data-yaade-terminal-switcher-terminal")))
+    expect(new Set(qualifiedIds).size).toBe(qualifiedIds.length)
   } finally {
     if (closeApp) await closeApp().catch(() => undefined)
     await remote.close()

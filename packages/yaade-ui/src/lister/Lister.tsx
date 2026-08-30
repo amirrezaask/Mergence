@@ -203,6 +203,7 @@ export function Lister<T>({
   requireQueryForSelection = false,
   flatVariant = "plain",
   itemClassName,
+  itemDisabled,
   itemStyle,
   className,
   listClassName,
@@ -453,7 +454,7 @@ export function Lister<T>({
   const activateIndex = useCallback(
     (index: number) => {
       const row = visibleRows[index]
-      if (!row) return
+      if (!row || itemDisabled?.(row.node)) return
       if (mode === "tree" && row.node.isBranch && treeState) {
         void treeState.toggle(row.node.id).then(() => {
           onExpandedChange?.(treeState.expandedIds())
@@ -461,7 +462,7 @@ export function Lister<T>({
       }
       onActivate(row.node)
     },
-    [visibleRows, mode, treeState, onActivate, onExpandedChange],
+    [visibleRows, mode, treeState, onActivate, onExpandedChange, itemDisabled],
   )
   activateIndexRef.current = activateIndex
 
@@ -542,7 +543,11 @@ export function Lister<T>({
       const inForeignInput =
         (active instanceof HTMLInputElement || active instanceof HTMLTextAreaElement) &&
         !inSearchInput
-      if (inForeignInput) return
+      const inForeignControl =
+        active instanceof HTMLElement &&
+        active.closest("button, [role=button]") !== null &&
+        !active.hasAttribute("data-yaade-list-item")
+      if (inForeignInput || inForeignControl) return
 
       const searchFieldOpen = showInput || query.length > 0
 
@@ -560,6 +565,13 @@ export function Lister<T>({
         event.stopPropagation()
         if (requireQueryForSelection && query.trim() === "") return
         setSelectedIndex(i => Math.max(0, (i < 0 ? 0 : i) - 1))
+        return
+      }
+      if (event.key === "Home" || event.key === "End") {
+        if (!searchFieldOpen || visibleRows.length === 0) return
+        event.preventDefault()
+        event.stopPropagation()
+        setSelectedIndex(event.key === "Home" ? 0 : visibleRows.length - 1)
         return
       }
       if (event.key === "Enter") {
@@ -683,6 +695,7 @@ export function Lister<T>({
           }
 
           const rowHeight = estimateSize?.(entry.node, 0) ?? flatHeight
+          const disabled = itemDisabled?.(entry.node) ?? false
           const posStyle = {
             transform: `translateY(${v.start}px)`,
             height: rowHeight,
@@ -696,13 +709,15 @@ export function Lister<T>({
                 type="button"
                 role="option"
                 aria-selected={selected}
+                aria-disabled={disabled || undefined}
+                data-disabled={disabled ? "true" : undefined}
                 data-yaade-list-item
                 data-yaade-list-index={v.index}
                 data-node-id={entry.node.id}
                 data-slot="command-item"
                 data-selected={selected ? "true" : undefined}
                 className={cn(
-                  "absolute left-0 top-0 flex w-full shrink-0 cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none select-none",
+                  "absolute left-0 top-0 flex w-full shrink-0 cursor-default items-center gap-2 rounded-sm px-2 py-1.5 text-left text-sm outline-none select-none aria-disabled:cursor-not-allowed aria-disabled:opacity-55",
                   selected && "bg-accent text-accent-foreground",
                   itemClassName,
                 )}
@@ -714,7 +729,18 @@ export function Lister<T>({
                   setSelectedIndex(v.index)
                   activateIndex(v.index)
                 }}
+                onKeyDown={event => {
+                  if (event.key !== "Enter" && event.key !== " ") return
+                  event.preventDefault()
+                  event.stopPropagation()
+                  setSelectedIndex(v.index)
+                  activateIndex(v.index)
+                }}
                 onMouseEnter={() => {
+                  if (requireQueryForSelection && query.trim() === "") return
+                  setSelectedIndex(v.index)
+                }}
+                onFocus={() => {
                   if (requireQueryForSelection && query.trim() === "") return
                   setSelectedIndex(v.index)
                 }}

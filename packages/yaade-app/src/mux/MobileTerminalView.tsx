@@ -15,6 +15,7 @@ import {
   ArrowUp,
   ChevronRight,
   Clipboard,
+  ListFilter,
   MoreHorizontal,
   Plus,
   RotateCcw,
@@ -147,6 +148,7 @@ export type MobileTerminalViewProps = {
   ) => Promise<MuxTerminal | undefined>
   readonly onCreateSession: () => Promise<void>
   readonly onCloseSession: (sessionId: SessionId) => void
+  readonly onOpenCommands: () => void
   readonly actionError?: string
   readonly onCloseTerminal: (terminal: MuxTerminal) => Promise<void>
   readonly onRestartTerminal: (terminal: MuxTerminal) => Promise<void>
@@ -259,6 +261,7 @@ export function MobileTerminalView(props: MobileTerminalViewProps) {
             actionError={props.actionError}
             onCreateTerminal={(sessionId, kind) => void createTerminal(sessionId, kind)}
             onCreateSession={() => void props.onCreateSession()}
+            onOpenCommands={props.onOpenCommands}
             onOpenSessionActions={session => setSessionActionsId(session.id)}
             onSelect={openTerminal}
           />
@@ -271,6 +274,7 @@ export function MobileTerminalView(props: MobileTerminalViewProps) {
               setSelectedMuxTerminalId(null)
               props.onShowTerminalList(selectedVisibleTerminal)
             }}
+            onOpenCommands={props.onOpenCommands}
             onClose={async () => {
               await props.onCloseTerminal(selectedVisibleTerminal)
               setSelectedMuxTerminalId(null)
@@ -283,7 +287,7 @@ export function MobileTerminalView(props: MobileTerminalViewProps) {
 
       <div
         className={cn(
-          "absolute inset-x-0 top-[var(--yaade-touch-target)] bottom-[calc(var(--yaade-touch-target)+env(safe-area-inset-bottom))] min-h-0 overflow-hidden",
+          "pointer-events-none absolute inset-x-0 top-[var(--yaade-touch-target)] bottom-[calc(var(--yaade-touch-target)+env(safe-area-inset-bottom))] min-h-0 overflow-hidden",
           selectedVisibleTerminal
             ? "visible"
             : "pointer-events-none invisible",
@@ -364,6 +368,7 @@ function MobileTerminalList(props: {
   readonly actionError?: string
   readonly onCreateTerminal: (sessionId: SessionId, kind: MobileTerminalKind) => void
   readonly onCreateSession: () => void
+  readonly onOpenCommands: () => void
   readonly onOpenSessionActions: (session: AppSession) => void
   readonly onSelect: (terminal: MuxTerminal) => void
 }) {
@@ -376,6 +381,22 @@ function MobileTerminalList(props: {
       className="flex min-h-0 flex-1 flex-col"
       data-yaade-mobile-terminal-list=""
     >
+      <GlassSurface material="shell" asChild>
+        <header className="flex h-[var(--yaade-touch-target)] shrink-0 items-center gap-1 border-b border-border/70 px-2">
+          <p className="min-w-0 flex-1 truncate text-sm font-medium">Sessions</p>
+          <Button
+            type="button"
+            size="icon-lg"
+            variant="ghost"
+            aria-label="Commands"
+            title="Commands"
+            onClick={props.onOpenCommands}
+            data-yaade-command-palette-trigger="mobile-list"
+          >
+            <ListFilter />
+          </Button>
+        </header>
+      </GlassSurface>
       {props.actionError ? (
         <div className="shrink-0 px-3 pt-3">
           <Alert variant="destructive">
@@ -624,6 +645,7 @@ function MobileTerminalDetail(props: {
   readonly terminal: MuxTerminal
   readonly runtimeTitle?: RuntimeTerminalTitle
   readonly onBack: () => void
+  readonly onOpenCommands: () => void
   readonly onClose: () => Promise<void>
   readonly children: ReactNode
 }) {
@@ -660,6 +682,17 @@ function MobileTerminalDetail(props: {
             aria-hidden
             title={status}
           />
+          <Button
+            type="button"
+            size="icon-lg"
+            variant="ghost"
+            aria-label="Commands"
+            title="Commands"
+            onClick={props.onOpenCommands}
+            data-yaade-command-palette-trigger="mobile-terminal"
+          >
+            <ListFilter />
+          </Button>
           <Button
             type="button"
             size="icon-lg"

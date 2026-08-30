@@ -445,7 +445,7 @@ export class MultiServerHostClient {
     connection.transport.close()
   }
 
-  private selectServer(serverId: string): void {
+  selectServer(serverId: string): void {
     if (!this.connections.has(serverId)) return
     if (this.activeServerId === serverId) {
       this.publishGlobal()

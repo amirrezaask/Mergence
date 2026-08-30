@@ -1,232 +1,343 @@
-import { useState } from "react";
-import { Check, ChevronDown, Layers3, Pencil, Plus, X } from "lucide-react";
-import type { AppSession, SessionId } from "@yaade/rpc";
-import { cn, formatKeyBinding } from "@yaade/ui/session";
-import { Button, Input, Popover, PopoverContent, PopoverTrigger } from "@yaade/ui/primitives";
-import { muxSessionShortcutFor } from "./mux-keymap.js";
+import { useEffect, useMemo, useState } from "react"
+import { Check, ChevronDown, Layers3, Pencil, Plus, X } from "lucide-react"
+import type { AppSession, SessionId } from "@yaade/rpc"
+import type { YaadeServerConnection } from "@yaade/shared"
+import {
+  cn,
+  formatKeyBinding,
+  fuzzyFilter,
+  PaletteShell,
+  type PaletteShellItem,
+} from "@yaade/ui/session"
+import { Button, Input } from "@yaade/ui/primitives"
+import { muxSessionShortcutFor } from "./mux-keymap.js"
+
+const MAX_SESSION_TITLE_LENGTH = 120
+
+function nextSessionTitle(sessions: readonly AppSession[]): string {
+  const titles = new Set(sessions.map(session => session.title.trim().toLocaleLowerCase()))
+  if (!titles.has("new session")) return "New session"
+  let index = 2
+  while (titles.has(`new session ${index}`)) index += 1
+  return `New session ${index}`
+}
+
+type SessionPaletteEntry =
+  | {
+      readonly kind: "session"
+      readonly session: AppSession
+      readonly count: number
+      readonly serverName?: string
+      readonly status?: string
+    }
+  | {
+      readonly kind: "create"
+      readonly title: string
+      readonly serverId?: string
+      readonly serverName: string
+      readonly disabledReason?: string
+    }
+
+type SearchableSessionEntry = {
+  readonly searchText: string
+  readonly item: PaletteShellItem<SessionPaletteEntry>
+}
 
 export type SessionSwitcherProps = {
-	readonly open: boolean;
-	readonly onOpenChange: (open: boolean) => void;
-	readonly sessions: readonly AppSession[];
-	readonly activeSessionId?: AppSession["id"];
-	readonly onSelect: (session: AppSession) => void;
-	readonly onCreate: () => void;
-	readonly onClose?: (id: SessionId) => void;
-	readonly onRename?: (id: SessionId, title: string) => void;
-	readonly terminalCounts?: ReadonlyMap<SessionId, number>;
-	readonly serverNamesBySessionId?: ReadonlyMap<SessionId, string>;
-	readonly className?: string;
-};
+  readonly open: boolean
+  readonly onOpenChange: (open: boolean) => void
+  readonly sessions: readonly AppSession[]
+  readonly activeSessionId?: AppSession["id"]
+  readonly onSelect: (session: AppSession) => void
+  readonly onCreate: (title: string, serverId?: string) => void
+  readonly onClose?: (id: SessionId) => void
+  readonly onRename?: (id: SessionId, title: string) => void
+  readonly terminalCounts?: ReadonlyMap<SessionId, number>
+  readonly serverNamesBySessionId?: ReadonlyMap<SessionId, string>
+  readonly sessionStatusById?: ReadonlyMap<SessionId, string>
+  readonly activeServer?: YaadeServerConnection
+  readonly className?: string
+}
 
 export function SessionSwitcher(props: SessionSwitcherProps) {
-	const [editingId, setEditingId] = useState<SessionId | null>(null);
-	const [draftTitle, setDraftTitle] = useState("");
-	const activeSession = props.sessions.find((session) => session.id === props.activeSessionId);
-	const switchShortcut = muxSessionShortcutFor("session.switch");
+  const [query, setQuery] = useState("")
+  const [highlightedSession, setHighlightedSession] = useState<AppSession | null>(null)
+  const [editingId, setEditingId] = useState<SessionId | null>(null)
+  const [draftTitle, setDraftTitle] = useState("")
+  const activeSession = props.sessions.find(session => session.id === props.activeSessionId)
+  const switchShortcut = muxSessionShortcutFor("session.switch")
+  const normalizedQuery = query.trim()
 
-	const finishRename = (session: AppSession) => {
-		const next = draftTitle.trim();
-		setEditingId(null);
-		if (next && next !== session.title) props.onRename?.(session.id, next);
-	};
+  useEffect(() => {
+    if (props.open) return
+    setQuery("")
+    setHighlightedSession(null)
+    setEditingId(null)
+    setDraftTitle("")
+  }, [props.open])
 
-	const startRename = (session: AppSession) => {
-		setDraftTitle(session.title);
-		setEditingId(session.id);
-	};
+  const items = useMemo(() => {
+    const searchable: SearchableSessionEntry[] = props.sessions.map(session => {
+      const count = props.terminalCounts?.get(session.id) ?? 0
+      const serverName = props.serverNamesBySessionId?.get(session.id)
+      const status = props.sessionStatusById?.get(session.id)
+      return {
+        searchText: [session.title, serverName, status, session.id].filter(Boolean).join(" "),
+        item: {
+          key: session.id,
+          value: [session.title, serverName, status, session.id].filter(Boolean).join(" "),
+          data: { kind: "session", session, count, serverName, status },
+        },
+      }
+    })
+    const filtered = normalizedQuery
+      ? fuzzyFilter(normalizedQuery, searchable)
+      : searchable
+    const result = filtered.map(entry => entry.item)
+    const exactTitle = normalizedQuery.length > 0 && props.sessions.some(
+      session => session.title.trim().toLocaleLowerCase() === normalizedQuery.toLocaleLowerCase(),
+    )
+    if (exactTitle) return result
 
-	const selectSession = (session: AppSession) => {
-		setEditingId(null);
-		props.onSelect(session);
-		props.onOpenChange(false);
-	};
+    const title = normalizedQuery || nextSessionTitle(props.sessions)
+    const activeServer = props.activeServer
+    const disabledReason = title.length > MAX_SESSION_TITLE_LENGTH
+      ? `Session names must be ${MAX_SESSION_TITLE_LENGTH} characters or fewer.`
+      : activeServer && activeServer.status !== "connected"
+        ? `${activeServer.name} is not connected.`
+        : activeServer
+          ? undefined
+          : "No host is available."
+    result.push({
+      key: `create:${activeServer?.id ?? "unavailable"}:${title}`,
+      value: `${title} create new session ${activeServer?.name ?? "host"}`,
+      data: {
+        kind: "create",
+        title,
+        serverId: activeServer?.id,
+        serverName: activeServer?.name ?? "Current host",
+        disabledReason,
+      },
+    })
+    return result
+  }, [
+    normalizedQuery,
+    props.activeServer,
+    props.serverNamesBySessionId,
+    props.sessionStatusById,
+    props.sessions,
+    props.terminalCounts,
+  ])
 
-	const createSession = () => {
-		setEditingId(null);
-		props.onOpenChange(false);
-		props.onCreate();
-	};
+  const finishRename = (session: AppSession) => {
+    const next = draftTitle.trim()
+    setEditingId(null)
+    if (next && next !== session.title) props.onRename?.(session.id, next)
+  }
 
-	return (
-		<Popover open={props.open} onOpenChange={props.onOpenChange}>
-			<PopoverTrigger asChild>
-				<Button
-					type="button"
-					variant="ghost"
-					size="sm"
-					aria-label={`Switch session${activeSession ? `, current ${activeSession.title}` : ""}`}
-					aria-haspopup="dialog"
-					data-yaade-session-switcher=""
-					data-yaade-active-session={activeSession?.id}
-					title={
-						switchShortcut
-							? `Switch session (${formatKeyBinding(switchShortcut)})`
-							: "Switch session"
-					}
-					className={cn(
-						"h-[var(--yaade-tab-pill-height)] min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-[var(--yaade-pill-radius)] px-2.5 text-left text-muted-foreground hover:bg-accent/60 hover:text-foreground data-[state=open]:bg-accent/70 data-[state=open]:text-foreground",
-						props.className,
-					)}
-				>
-					<Layers3 className="shrink-0" data-icon="inline-start" aria-hidden />
-					<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
-						{activeSession?.title ?? "Sessions"}
-					</span>
-					<ChevronDown className="shrink-0 opacity-60" data-icon="inline-end" aria-hidden />
-				</Button>
-			</PopoverTrigger>
-			<PopoverContent
-				align="start"
-				side="bottom"
-				sideOffset={8}
-				className="w-[min(22rem,calc(100vw-1rem))] overflow-hidden p-0"
-				data-yaade-glass-surface=""
-				data-yaade-glass-material="floating"
-				data-yaade-glass-elevated="true"
-				data-yaade-session-switcher-popover=""
-			>
-				<div
-					className="relative z-1 mx-1.5 flex max-h-[min(22rem,calc(100dvh-12rem))] flex-col gap-1 overflow-y-auto"
-					role="listbox"
-					aria-label="Sessions"
-				>
-					{props.sessions.length === 0 ? (
-						<p className="px-2.5 py-5 text-xs text-muted-foreground">No active sessions.</p>
-					) : (
-						props.sessions.map((session) => {
-							const active = session.id === props.activeSessionId;
-							const editing = editingId === session.id;
-							const count = props.terminalCounts?.get(session.id) ?? 0;
-							const serverName = props.serverNamesBySessionId?.get(session.id);
-							return (
-								<div
-									key={session.id}
-									className={cn(
-										"group flex min-w-0 items-center gap-0.5 rounded-[var(--yaade-control-radius)] transition-colors duration-[var(--yaade-motion-hot)]",
-										active ? "bg-accent/80" : "hover:bg-accent/45 focus-within:bg-accent/45",
-									)}
-								>
-									{editing ? (
-										<div className="flex min-w-0 flex-1 items-center gap-1 p-1">
-											<Input
-												aria-label={`Rename ${session.title}`}
-												autoFocus
-												value={draftTitle}
-												onChange={(event) => setDraftTitle(event.target.value)}
-												onBlur={() => finishRename(session)}
-												onKeyDown={(event) => {
-													event.stopPropagation();
-													if (event.key === "Enter") finishRename(session);
-													if (event.key === "Escape") setEditingId(null);
-												}}
-												className="h-8 min-w-0 flex-1 bg-background/70 px-2"
-											/>
-											<Button
-												type="button"
-												variant="ghost"
-												size="icon-xs"
-												aria-label={`Save name for ${session.title}`}
-												onPointerDown={(event) => event.preventDefault()}
-												onClick={() => finishRename(session)}
-											>
-												<Check />
-											</Button>
-											<Button
-												type="button"
-												variant="ghost"
-												size="icon-xs"
-												aria-label={`Cancel renaming ${session.title}`}
-												onPointerDown={(event) => event.preventDefault()}
-												onClick={() => setEditingId(null)}
-											>
-												<X />
-											</Button>
-										</div>
-									) : (
-										<>
-											<button
-												type="button"
-												role="option"
-												aria-selected={active}
-												data-yaade-session={session.id}
-												data-active={active ? "true" : undefined}
-												className="flex min-h-11 min-w-0 flex-1 items-center gap-2 rounded-[var(--yaade-control-radius)] px-2.5 text-left outline-none transition-colors duration-[var(--yaade-motion-hot)] focus-visible:ring-2 focus-visible:ring-ring/60"
-												onClick={() => selectSession(session)}
-												onDoubleClick={() => {
-													if (props.onRename) startRename(session);
-												}}
-											>
-												<span
-													className={cn(
-														"grid size-5 shrink-0 place-items-center rounded-full border border-border/60 text-muted-foreground transition-colors duration-[var(--yaade-motion-hot)]",
-														active && "border-primary/30 bg-primary/15 text-primary",
-													)}
-													aria-hidden
-												>
-													{active ? <Check className="size-3.5" /> : null}
-												</span>
-												<span className="flex min-w-0 flex-1 flex-col justify-center gap-0.5">
-													<span className="truncate text-xs font-medium text-foreground">
-														{session.title}
-													</span>
-														<span className="truncate text-3xs text-muted-foreground">
-														{[serverName, `${count} terminal${count === 1 ? "" : "s"}`]
-															.filter(Boolean)
-															.join(" · ")}
-														</span>
-												</span>
-											</button>
-											{props.onRename ? (
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon-xs"
-													aria-label={`Rename ${session.title}`}
-													title={`Rename ${session.title}`}
-													className="shrink-0 text-muted-foreground opacity-70 transition-opacity hover:opacity-100 group-focus-within:opacity-100"
-													onClick={() => startRename(session)}
-												>
-													<Pencil />
-												</Button>
-											) : null}
-											{props.onClose ? (
-												<Button
-													type="button"
-													variant="ghost"
-													size="icon-xs"
-													aria-label={`Close ${session.title}`}
-													title={`Close ${session.title}`}
-													className="mr-1 shrink-0 text-muted-foreground opacity-70 transition-opacity hover:text-destructive hover:opacity-100 group-focus-within:opacity-100"
-													onClick={() => props.onClose?.(session.id)}
-												>
-													<X />
-												</Button>
-											) : null}
-										</>
-									)}
-								</div>
-							);
-						})
-					)}
-				</div>
-				<div className="relative z-1 mt-2 border-t border-border/60 p-1.5">
-					<Button
-						type="button"
-						variant="ghost"
-						size="sm"
-						className="h-10 w-full justify-start gap-2 rounded-[var(--yaade-control-radius)] text-foreground hover:bg-accent/60"
-						aria-label="New session"
-						data-yaade-new-session=""
-						onClick={createSession}
-					>
-						<span className="grid size-6 place-items-center rounded-full bg-primary/15 text-primary">
-							<Plus />
-						</span>
-						New session
-					</Button>
-				</div>
-			</PopoverContent>
-		</Popover>
-	);
+  const startRename = (session: AppSession) => {
+    setDraftTitle(session.title)
+    setEditingId(session.id)
+  }
+
+  const editingSession = editingId
+    ? props.sessions.find(session => session.id === editingId)
+    : undefined
+
+  const statusRow = editingSession ? (
+    <div
+      className="flex min-h-11 items-center gap-1 border-y border-border/60 px-2 py-1"
+      data-yaade-session-rename=""
+    >
+      <Input
+        aria-label={`Rename ${editingSession.title}`}
+        autoFocus
+        value={draftTitle}
+        onChange={event => setDraftTitle(event.target.value)}
+        onKeyDown={event => {
+          event.stopPropagation()
+          if (event.key === "Enter") finishRename(editingSession)
+          if (event.key === "Escape") setEditingId(null)
+        }}
+        className="h-8 min-w-0 flex-1 bg-background px-2"
+      />
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Save name for ${editingSession.title}`}
+        onClick={() => finishRename(editingSession)}
+      >
+        <Check />
+      </Button>
+      <Button
+        type="button"
+        variant="ghost"
+        size="icon-xs"
+        aria-label={`Cancel renaming ${editingSession.title}`}
+        onClick={() => setEditingId(null)}
+      >
+        <X />
+      </Button>
+    </div>
+  ) : highlightedSession && (props.onRename || props.onClose) ? (
+    <div
+      className="flex min-h-10 items-center gap-1 border-y border-border/60 px-2 py-1"
+      role="group"
+      aria-label={`Actions for ${highlightedSession.title}`}
+      data-yaade-session-actions=""
+    >
+      <span className="min-w-0 flex-1 truncate px-1 text-xs text-muted-foreground">
+        {highlightedSession.title}
+      </span>
+      {props.onRename ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label={`Rename ${highlightedSession.title}`}
+          onClick={() => startRename(highlightedSession)}
+        >
+          <Pencil data-icon="inline-start" />
+          Rename
+        </Button>
+      ) : null}
+      {props.onClose ? (
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          aria-label={`Close ${highlightedSession.title}`}
+          className="text-muted-foreground hover:text-destructive"
+          onClick={() => {
+            props.onOpenChange(false)
+            props.onClose?.(highlightedSession.id)
+          }}
+        >
+          <X data-icon="inline-start" />
+          Close
+        </Button>
+      ) : null}
+    </div>
+  ) : undefined
+
+  return (
+    <>
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        aria-label={`Switch session${activeSession ? `, current ${activeSession.title}` : ""}`}
+        aria-haspopup="dialog"
+        aria-expanded={props.open}
+        data-yaade-session-switcher=""
+        data-yaade-active-session={activeSession?.id}
+        title={
+          switchShortcut
+            ? `Switch session (${formatKeyBinding(switchShortcut)})`
+            : "Switch session"
+        }
+        className={cn(
+          "h-[var(--yaade-tab-pill-height)] min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-[var(--yaade-pill-radius)] px-2.5 text-left text-muted-foreground hover:bg-accent/60 hover:text-foreground aria-expanded:bg-accent/70 aria-expanded:text-foreground",
+          props.className,
+        )}
+        onClick={() => props.onOpenChange(!props.open)}
+      >
+        <Layers3 className="shrink-0" data-icon="inline-start" aria-hidden />
+        <span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+          {activeSession?.title ?? "Sessions"}
+        </span>
+        <ChevronDown className="shrink-0 opacity-60" data-icon="inline-end" aria-hidden />
+      </Button>
+      <PaletteShell
+        open={props.open}
+        onOpenChange={props.onOpenChange}
+        title="Switch session"
+        description="Find a session across connected hosts or create a named session on the current host."
+        placeholder="Search sessions or create one…"
+        surface="sessions"
+        size="picker"
+        query={query}
+        onQueryChange={setQuery}
+        items={items}
+        shouldFilter={false}
+        rowLayout="detail"
+        requireQueryForSelection={false}
+        statusRow={statusRow}
+        emptyLabel="No matching sessions."
+        isItemDisabled={entry => entry.kind === "create" && entry.disabledReason != null}
+        onHighlightChange={entry => {
+          setHighlightedSession(entry?.kind === "session" ? entry.session : null)
+        }}
+        onSelect={entry => {
+          setEditingId(null)
+          if (entry.kind === "session") {
+            props.onSelect(entry.session)
+            return
+          }
+          props.onCreate(entry.title, entry.serverId)
+        }}
+        renderItem={entry => {
+          if (entry.kind === "create") {
+            const label = normalizedQuery ? `Create “${entry.title}”` : "New session"
+            return (
+              <span
+                className="flex min-w-0 flex-1 items-center gap-2.5"
+                data-yaade-new-session=""
+              >
+                <span className="grid size-7 shrink-0 place-items-center rounded-[var(--yaade-control-radius)] bg-primary/15 text-primary">
+                  <Plus className="size-4" aria-hidden />
+                </span>
+                <span className="min-w-0 flex-1">
+                  <span className="block truncate text-sm font-medium text-foreground">
+                    {label}
+                  </span>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {entry.disabledReason ?? `on ${entry.serverName}`}
+                  </span>
+                </span>
+              </span>
+            )
+          }
+
+          const active = entry.session.id === props.activeSessionId
+          const detail = [
+            entry.serverName,
+            entry.status,
+            `${entry.count} terminal${entry.count === 1 ? "" : "s"}`,
+          ].filter(Boolean).join(" · ")
+          return (
+            <span
+              className="flex min-w-0 flex-1 items-center gap-2.5"
+              data-yaade-session={entry.session.id}
+              data-active={active ? "true" : undefined}
+            >
+              <span
+                className={cn(
+                  "grid size-7 shrink-0 place-items-center rounded-full border border-border/60 text-muted-foreground",
+                  active && "border-primary/30 bg-primary/15 text-primary",
+                )}
+                aria-hidden
+              >
+                {active ? <Check className="size-3.5" /> : <Layers3 className="size-3.5" />}
+              </span>
+              <span className="min-w-0 flex-1">
+                <span className="block truncate text-sm font-medium text-foreground">
+                  {entry.session.title}
+                </span>
+                <span className="block truncate text-xs text-muted-foreground">
+                  {detail}
+                </span>
+              </span>
+              {active ? (
+                <span className="shrink-0 text-3xs font-medium uppercase tracking-wide text-primary">
+                  current
+                </span>
+              ) : null}
+            </span>
+          )
+        }}
+      />
+    </>
+  )
 }

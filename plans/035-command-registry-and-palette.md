@@ -26,6 +26,7 @@
 
 ## Status
 
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
@@ -242,13 +243,30 @@ Expected: all commands pass; interaction remains responsive and visually verifie
 
 ## Done criteria
 
-- [ ] One typed registry supplies command metadata to keyboard, palette, HUD, and UI labels.
-- [ ] `TerminalMultiplexer` no longer owns a monolithic command switch.
-- [ ] Prefix behavior works without reintroducing documented removed shortcuts.
-- [ ] A searchable global command palette is keyboard and pointer accessible.
-- [ ] Session navigation filters across hosts and supports safe filter-or-create.
-- [ ] PTY input/output behavior is unchanged and verified with real output.
-- [ ] Unit, type, lint, responsive, and Playwright visual/runtime gates pass.
+- [x] One typed registry supplies command metadata to keyboard, palette, HUD, and UI labels.
+- [x] `TerminalMultiplexer` no longer owns a monolithic command switch.
+- [x] Prefix behavior works without reintroducing documented removed shortcuts.
+- [x] A searchable global command palette is keyboard and pointer accessible.
+- [x] Session navigation filters across hosts and supports safe filter-or-create.
+- [x] PTY input/output behavior is unchanged and verified with real output.
+- [x] Unit, type, targeted lint, responsive, and Playwright visual/runtime gates pass.
+
+## Implementation notes
+
+- Static command descriptors now live in `commands/catalog.ts`; scoped handlers,
+  availability, failure reporting, keyboard dispatch, which-key, pointer triggers,
+  native-menu events, and the command palette use the same typed IDs.
+- The Session surface is a fuzzy, host-aware filter-or-create palette with
+  status/count metadata and external keyboard-accessible rename/close controls.
+- Prefix tests cover realistic modifier keydown sequences. Desktop Playwright
+  also proves a doubled prefix writes exactly one byte (`11`, `^K`) to a real
+  PTY, while palette interaction does not leak input.
+- Fuzzy filtering is covered at 1, 100, and 5,000 synthetic rows. Desktop and
+  mobile palette flows are covered by `command-palette.web.spec.ts`.
+- Verification completed with 164 app/UI unit tests, repository typecheck, and
+  22 desktop/mobile Playwright cases. Targeted lint for the new command,
+  keymap, palette, and E2E files passes. Repository-wide `vp run lint` remains
+  blocked by pre-existing anti-slop diagnostics outside this plan's changes.
 
 ## STOP conditions
 
