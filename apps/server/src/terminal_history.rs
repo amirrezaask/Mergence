@@ -1,6 +1,6 @@
 use std::{
     collections::{HashMap, HashSet},
-    fs::{self, File},
+    fs::{self, File, OpenOptions},
     io::{Read, Write},
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard, mpsc},
@@ -24,8 +24,11 @@ const MAX_TOTAL_BYTES: u64 = 2 * 1024 * 1024 * 1024;
 const CLOSED_RETENTION: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const ARCHIVE_VERSION: u8 = 2;
 const BLOCK_MAGIC: &[u8; 8] = b"YAADEH02";
+const ACTIVE_MAGIC: &[u8; 8] = b"YAADEA02";
+const ACTIVE_FILE: &str = "active.bin";
 const BLOCK_HEADER_BYTES: usize = 16;
 const RECORD_HEADER_BYTES: usize = 12;
+const ACTIVE_RECORD_HEADER_BYTES: usize = 16;
 const MAX_RECORD_BYTES: usize = 64 * 1024;
 const MAX_BLOCK_RECORDS: usize = 1_000_000;
 const INGEST_MAX_MESSAGES: usize = 1024;
@@ -74,8 +77,11 @@ struct ArchiveManifest {
 struct ArchiveState {
     dir: PathBuf,
     manifest: ArchiveManifest,
+    active: File,
     pending: Vec<HistoryRecord>,
     pending_bytes: usize,
+    encoded_staging: Vec<u8>,
+    compressed_staging: Vec<u8>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -127,7 +133,7 @@ struct HistoryShared {
     root: PathBuf,
     block_bytes: usize,
     page_bytes: usize,
-    states: Mutex<HashMap<String, ArchiveState>>,
+    states: Mutex<HashMap<String, Arc<Mutex<ArchiveState>>>>,
     pending_closes: Mutex<HashSet<String>>,
     background_errors: Mutex<Vec<String>>,
     accepted_sequences: Mutex<HashMap<String, u64>>,
@@ -262,12 +268,14 @@ impl TerminalHistoryArchive {
             Err(_) => return Err(HistoryError::Corrupt("history owner stopped".to_owned())),
         }
         let (dir, blocks, pending, newest) = {
-            let mut states = self.shared.states();
             let dir = self.shared.terminal_dir(terminal_id);
-            if !dir.exists() && !states.contains_key(terminal_id) {
+            if !dir.exists() && !self.shared.states().contains_key(terminal_id) {
                 return Ok(None);
             }
-            let state = self.shared.state_for(&mut states, terminal_id)?;
+            let state = self.shared.state_for(terminal_id)?;
+            let state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             let newest = state
                 .pending
                 .last()
@@ -450,8 +458,10 @@ impl HistoryShared {
     }
 
     fn append_owned(&self, command: AppendCommand) -> Result<(), HistoryError> {
-        let mut states = self.states();
-        let state = self.state_for(&mut states, &command.terminal_id)?;
+        let state = self.state_for(&command.terminal_id)?;
+        let mut state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
         if state.manifest.closed_at.is_some() {
             return Err(HistoryError::Corrupt(format!(
                 "append after completed close for {}",
@@ -476,6 +486,7 @@ impl HistoryShared {
                 command.sequence
             )));
         }
+        append_active_record(&mut state.active, command.sequence, &command.data)?;
         state.pending_bytes = state.pending_bytes.saturating_add(command.data.len());
         state.pending.push(HistoryRecord {
             sequence: command.sequence,
@@ -483,14 +494,18 @@ impl HistoryShared {
         });
         state.manifest.updated_at = now_millis();
         if state.pending_bytes >= self.block_bytes {
-            flush_state(state)?;
-            enforce_terminal_quota(state)?;
+            flush_state(&mut state)?;
+            enforce_terminal_quota(&mut state)?;
         }
         Ok(())
     }
 
     fn written_sequence(&self, terminal_id: &str) -> u64 {
-        self.states().get(terminal_id).map_or(0, |state| {
+        let state = self.states().get(terminal_id).cloned();
+        state.map_or(0, |state| {
+            let state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
             state
                 .pending
                 .last()
@@ -506,7 +521,7 @@ impl HistoryShared {
         })
     }
 
-    fn states(&self) -> MutexGuard<'_, HashMap<String, ArchiveState>> {
+    fn states(&self) -> MutexGuard<'_, HashMap<String, Arc<Mutex<ArchiveState>>>> {
         self.states
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -518,54 +533,94 @@ impl HistoryShared {
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
 
-    fn state_for<'a>(
-        &self,
-        states: &'a mut HashMap<String, ArchiveState>,
-        terminal_id: &str,
-    ) -> Result<&'a mut ArchiveState, HistoryError> {
-        if !states.contains_key(terminal_id) {
-            let dir = self.terminal_dir(terminal_id);
-            fs::create_dir_all(&dir)?;
-            let manifest = match read_manifest(&dir)? {
-                Some(manifest) if manifest.version == ARCHIVE_VERSION => manifest,
-                Some(_) => {
-                    // Development history has no compatibility promise yet. An
-                    // old lossy JSON archive is quarantined by resetting its
-                    // terminal directory instead of pretending it is exact.
-                    fs::remove_dir_all(&dir)?;
-                    fs::create_dir_all(&dir)?;
-                    new_manifest(terminal_id)
-                }
-                None => new_manifest(terminal_id),
-            };
-            if manifest.terminal_id != terminal_id {
-                return Err(HistoryError::Corrupt(terminal_id.to_owned()));
-            }
-            states.insert(
-                terminal_id.to_owned(),
-                ArchiveState {
-                    dir,
-                    manifest,
-                    pending: Vec::new(),
-                    pending_bytes: 0,
-                },
-            );
+    fn state_for(&self, terminal_id: &str) -> Result<Arc<Mutex<ArchiveState>>, HistoryError> {
+        if let Some(state) = self.states().get(terminal_id).cloned() {
+            return Ok(state);
         }
-        states
-            .get_mut(terminal_id)
-            .ok_or_else(|| HistoryError::Corrupt(terminal_id.to_owned()))
+        // Build cold state without holding the global index lock. A concurrent
+        // creator wins insertion; the losing candidate is simply dropped.
+        let dir = self.terminal_dir(terminal_id);
+        fs::create_dir_all(&dir)?;
+        let manifest = match read_manifest(&dir)? {
+            Some(manifest) if manifest.version == ARCHIVE_VERSION => manifest,
+            Some(_) => {
+                fs::remove_dir_all(&dir)?;
+                fs::create_dir_all(&dir)?;
+                let manifest = new_manifest(terminal_id);
+                write_manifest_value(&dir, &manifest)?;
+                manifest
+            }
+            None => {
+                let manifest = new_manifest(terminal_id);
+                write_manifest_value(&dir, &manifest)?;
+                manifest
+            }
+        };
+        if manifest.terminal_id != terminal_id {
+            return Err(HistoryError::Corrupt(terminal_id.to_owned()));
+        }
+        let block_sequence = manifest
+            .blocks
+            .last()
+            .map_or(0, |block| block.last_sequence);
+        let (active, pending) = open_active_segment(&dir, block_sequence)?;
+        let pending_bytes = pending.iter().map(|record| record.data.len()).sum();
+        let candidate = Arc::new(Mutex::new(ArchiveState {
+            dir,
+            manifest,
+            active,
+            pending,
+            pending_bytes,
+            encoded_staging: Vec::new(),
+            compressed_staging: Vec::new(),
+        }));
+        let state = self
+            .states()
+            .entry(terminal_id.to_owned())
+            .or_insert_with(|| Arc::clone(&candidate))
+            .clone();
+        let last_sequence = {
+            let state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state
+                .pending
+                .last()
+                .map(|record| record.sequence)
+                .or_else(|| {
+                    state
+                        .manifest
+                        .blocks
+                        .last()
+                        .map(|block| block.last_sequence)
+                })
+                .unwrap_or(0)
+        };
+        if last_sequence > 0 {
+            let mut accepted = self
+                .accepted_sequences
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            accepted
+                .entry(terminal_id.to_owned())
+                .and_modify(|sequence| *sequence = (*sequence).max(last_sequence))
+                .or_insert(last_sequence);
+        }
+        Ok(state)
     }
 
     fn finalize_terminal(&self, terminal_id: &str) -> Result<(), HistoryError> {
-        let mut states = self.states();
-        if let Some(state) = states.get_mut(terminal_id) {
-            flush_state(state)?;
-            enforce_terminal_quota(state)?;
+        let state = self.states().remove(terminal_id);
+        if let Some(state) = state {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            flush_state(&mut state)?;
+            enforce_terminal_quota(&mut state)?;
             if state.manifest.closed_at.is_none() {
                 state.manifest.closed_at = Some(now_millis());
-                write_manifest(state)?;
+                write_manifest(&state)?;
             }
-            states.remove(terminal_id);
             return Ok(());
         }
         let dir = self.terminal_dir(terminal_id);
@@ -579,12 +634,14 @@ impl HistoryShared {
     }
 
     fn flush_live(&self) -> Result<(), HistoryError> {
-        let mut states = self.states();
-        for state in states.values_mut() {
-            flush_state(state)?;
-            enforce_terminal_quota(state)?;
+        let states = self.states().values().cloned().collect::<Vec<_>>();
+        for state in states {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            flush_state(&mut state)?;
+            enforce_terminal_quota(&mut state)?;
         }
-        drop(states);
         self.enforce_total_quota()
     }
 
@@ -642,11 +699,25 @@ impl HistoryShared {
             archives.push((manifest.updated_at, bytes, dir));
         }
         archives.sort_by_key(|(updated, _, _)| *updated);
+        let active = self
+            .states()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|state| {
+                state
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .dir
+                    .clone()
+            })
+            .collect::<HashSet<_>>();
         for (_, bytes, dir) in archives {
             if total <= MAX_TOTAL_BYTES {
                 break;
             }
-            if !self.states().values().any(|state| state.dir == dir) {
+            if !active.contains(&dir) {
                 fs::remove_dir_all(dir)?;
                 total = total.saturating_sub(bytes);
             }
@@ -765,29 +836,40 @@ fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
     if state.pending.is_empty() {
         return Ok(());
     }
-    let records = std::mem::take(&mut state.pending);
-    let uncompressed_bytes = std::mem::take(&mut state.pending_bytes) as u64;
+    let records = state.pending.clone();
+    let uncompressed_bytes = state.pending_bytes as u64;
     let first_sequence = records.first().map_or(0, |record| record.sequence);
     let last_sequence = records
         .last()
         .map_or(first_sequence, |record| record.sequence);
     let file = format!("{first_sequence:012}-{last_sequence:012}.bin.gz");
-    let encoded = encode_records(&records)?;
-    let mut encoder = GzEncoder::new(Vec::new(), Compression::new(6));
-    encoder.write_all(&encoded)?;
+    encode_records_into(&records, &mut state.encoded_staging)?;
+    state.compressed_staging.clear();
+    let compressed_buffer = std::mem::take(&mut state.compressed_staging);
+    let mut encoder = GzEncoder::new(compressed_buffer, Compression::new(6));
+    encoder.write_all(&state.encoded_staging)?;
     let compressed = encoder.finish()?;
+    let stored_bytes = compressed.len() as u64;
     let temporary = state.dir.join(format!("{file}.tmp"));
     fs::write(&temporary, &compressed)?;
     fs::rename(temporary, state.dir.join(&file))?;
+    state.compressed_staging = compressed;
     state.manifest.blocks.push(ArchiveBlock {
         file,
         first_sequence,
         last_sequence,
         uncompressed_bytes,
-        stored_bytes: compressed.len() as u64,
+        stored_bytes,
     });
     state.manifest.updated_at = now_millis();
-    write_manifest(state)
+    if let Err(error) = write_manifest(state) {
+        state.manifest.blocks.pop();
+        return Err(error);
+    }
+    state.pending.clear();
+    state.pending_bytes = 0;
+    reset_active_segment(&mut state.active)?;
+    Ok(())
 }
 
 fn enforce_terminal_quota(state: &mut ArchiveState) -> Result<(), HistoryError> {
@@ -808,7 +890,113 @@ fn enforce_terminal_quota(state: &mut ArchiveState) -> Result<(), HistoryError> 
     write_manifest(state)
 }
 
+fn active_checksum(sequence: u64, data: &[u8]) -> u32 {
+    let mut hash = 2_166_136_261_u32;
+    for byte in sequence.to_be_bytes().iter().chain(data) {
+        hash ^= u32::from(*byte);
+        hash = hash.wrapping_mul(16_777_619);
+    }
+    hash
+}
+
+fn append_active_record(file: &mut File, sequence: u64, data: &[u8]) -> Result<(), HistoryError> {
+    let length = u32::try_from(data.len())
+        .map_err(|_| HistoryError::Corrupt("active history payload overflow".to_owned()))?;
+    file.write_all(&sequence.to_be_bytes())?;
+    file.write_all(&length.to_be_bytes())?;
+    file.write_all(&active_checksum(sequence, data).to_be_bytes())?;
+    file.write_all(data)?;
+    Ok(())
+}
+
+fn reset_active_segment(file: &mut File) -> Result<(), HistoryError> {
+    file.set_len(0)?;
+    file.write_all(ACTIVE_MAGIC)?;
+    file.sync_data()?;
+    Ok(())
+}
+
+fn open_active_segment(
+    dir: &Path,
+    block_sequence: u64,
+) -> Result<(File, Vec<HistoryRecord>), HistoryError> {
+    let path = dir.join(ACTIVE_FILE);
+    let mut file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(&path)?;
+    if file.metadata()?.len() == 0 {
+        file.write_all(ACTIVE_MAGIC)?;
+        file.sync_data()?;
+        return Ok((file, Vec::new()));
+    }
+    let encoded = fs::read(&path)?;
+    if encoded.len() < ACTIVE_MAGIC.len() || &encoded[..ACTIVE_MAGIC.len()] != ACTIVE_MAGIC {
+        return Err(HistoryError::Corrupt(
+            "invalid active history header".to_owned(),
+        ));
+    }
+    let mut cursor = ACTIVE_MAGIC.len();
+    let mut valid_end = cursor;
+    let mut previous = 0_u64;
+    let mut pending = Vec::new();
+    while cursor < encoded.len() {
+        let header_end = cursor.saturating_add(ACTIVE_RECORD_HEADER_BYTES);
+        if header_end > encoded.len() {
+            break;
+        }
+        let sequence =
+            u64::from_be_bytes(encoded[cursor..cursor + 8].try_into().map_err(|_| {
+                HistoryError::Corrupt("truncated active history sequence".to_owned())
+            })?);
+        let length = u32::from_be_bytes(
+            encoded[cursor + 8..cursor + 12]
+                .try_into()
+                .map_err(|_| HistoryError::Corrupt("truncated active history length".to_owned()))?,
+        ) as usize;
+        let checksum =
+            u32::from_be_bytes(encoded[cursor + 12..header_end].try_into().map_err(|_| {
+                HistoryError::Corrupt("truncated active history checksum".to_owned())
+            })?);
+        let payload_end = header_end.saturating_add(length);
+        if sequence == 0
+            || sequence <= previous
+            || length == 0
+            || length > MAX_RECORD_BYTES
+            || payload_end > encoded.len()
+            || active_checksum(sequence, &encoded[header_end..payload_end]) != checksum
+        {
+            break;
+        }
+        if sequence > block_sequence {
+            pending.push(HistoryRecord {
+                sequence,
+                data: Bytes::copy_from_slice(&encoded[header_end..payload_end]),
+            });
+        }
+        previous = sequence;
+        cursor = payload_end;
+        valid_end = cursor;
+    }
+    if valid_end != encoded.len() {
+        file.set_len(valid_end as u64)?;
+        file.sync_data()?;
+    }
+    Ok((file, pending))
+}
+
+#[cfg(test)]
 fn encode_records(records: &[HistoryRecord]) -> Result<Vec<u8>, HistoryError> {
+    let mut encoded = Vec::new();
+    encode_records_into(records, &mut encoded)?;
+    Ok(encoded)
+}
+
+fn encode_records_into(
+    records: &[HistoryRecord],
+    encoded: &mut Vec<u8>,
+) -> Result<(), HistoryError> {
     if records.is_empty() || records.len() > MAX_BLOCK_RECORDS {
         return Err(HistoryError::Corrupt(
             "invalid history block record count".to_owned(),
@@ -822,7 +1010,8 @@ fn encode_records(records: &[HistoryRecord]) -> Result<Vec<u8>, HistoryError> {
             .map(|record| RECORD_HEADER_BYTES.saturating_add(record.data.len()))
             .sum::<usize>(),
     );
-    let mut encoded = Vec::with_capacity(capacity);
+    encoded.clear();
+    encoded.reserve(capacity);
     encoded.extend_from_slice(BLOCK_MAGIC);
     encoded.push(ARCHIVE_VERSION);
     encoded.extend_from_slice(&[0_u8; 3]);
@@ -846,7 +1035,7 @@ fn encode_records(records: &[HistoryRecord]) -> Result<Vec<u8>, HistoryError> {
         encoded.extend_from_slice(&record.data);
         previous = record.sequence;
     }
-    Ok(encoded)
+    Ok(())
 }
 
 fn decode_records(encoded: &[u8]) -> Result<Vec<HistoryRecord>, HistoryError> {
@@ -1030,6 +1219,43 @@ mod tests {
         assert!(manifest.closed_at.is_some());
         archive.close_terminal("term-1").expect("idempotent close");
         archive.flush_all().expect("second drain");
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn active_segment_recovers_complete_records_and_truncates_a_torn_tail() {
+        let root = temp_dir();
+        let dir = root.join(URL_SAFE_NO_PAD.encode(b"term-crash"));
+        fs::create_dir_all(&dir).expect("terminal dir");
+        write_manifest_value(&dir, &new_manifest("term-crash")).expect("manifest");
+        let (mut active, pending) = open_active_segment(&dir, 0).expect("active segment");
+        assert!(pending.is_empty());
+        append_active_record(&mut active, 1, b"one").expect("first record");
+        append_active_record(&mut active, 2, &[0xff, 0x80]).expect("second record");
+        active
+            .write_all(&3_u64.to_be_bytes())
+            .expect("torn sequence");
+        active.write_all(&4_u32.to_be_bytes()).expect("torn length");
+        active.sync_data().expect("sync torn tail");
+        drop(active);
+
+        let archive = TerminalHistoryArchive::open(&root).expect("reopen");
+        let page = archive
+            .read_page("term-crash", 0, None)
+            .expect("read")
+            .expect("page");
+        assert_eq!(
+            page.chunks,
+            vec![
+                Base64Bytes(Bytes::from_static(b"one")),
+                Base64Bytes(Bytes::from_static(&[0xff, 0x80])),
+            ]
+        );
+        assert_eq!(
+            fs::metadata(dir.join(ACTIVE_FILE)).expect("metadata").len(),
+            45
+        );
+        drop(archive);
         fs::remove_dir_all(root).expect("cleanup");
     }
 

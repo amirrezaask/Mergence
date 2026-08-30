@@ -27,6 +27,7 @@
 
 ## Status
 
+- **Status**: BLOCKED (pinned public lib-vt artifact does not build on the current supported toolchain)
 - **Priority**: P2
 - **Effort**: L
 - **Risk**: HIGH

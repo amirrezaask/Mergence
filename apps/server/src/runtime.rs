@@ -1,5 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
+use bytes::Bytes;
 use serde_json::{Value, json};
 use thiserror::Error;
 use uuid::Uuid;
@@ -840,34 +841,31 @@ impl HostRuntime {
                 Ok(attach)
             }
             "terminal:write" => {
-                self.terminal.authorize_or_acquire(
+                self.terminal.authorize_and_write(
                     id,
                     &principal.principal_id,
                     &principal.connection_id,
                     mutation_fence(args.get(2)),
+                    Bytes::copy_from_slice(string(args, 1)?.as_bytes()),
                 )?;
-                self.terminal.write(id, string(args, 1)?.as_bytes())?;
                 Ok(Value::Null)
             }
             "terminal:writeBinary" => {
-                self.terminal.authorize_or_acquire(
+                self.terminal.authorize_and_write_base64(
                     id,
                     &principal.principal_id,
                     &principal.connection_id,
                     mutation_fence(args.get(2)),
+                    string(args, 1)?,
                 )?;
-                self.terminal.write_base64(id, string(args, 1)?)?;
                 Ok(Value::Null)
             }
             "terminal:resize" => {
-                self.terminal.authorize_or_acquire(
+                self.terminal.authorize_and_resize(
                     id,
                     &principal.principal_id,
                     &principal.connection_id,
                     mutation_fence(args.get(3)),
-                )?;
-                self.terminal.resize(
-                    id,
                     u16::try_from(number(args, 1)?).unwrap_or(80),
                     u16::try_from(number(args, 2)?).unwrap_or(24),
                 )?;
@@ -963,13 +961,12 @@ impl HostRuntime {
             "terminal:getCwd" => Ok(json!(self.terminal.get_cwd(id)?)),
             "terminal:getForegroundProcess" => Ok(json!(self.terminal.get_foreground_process(id)?)),
             "terminal:dispose" => {
-                self.terminal.authorize_or_acquire(
+                self.terminal.authorize_and_dispose(
                     id,
                     &principal.principal_id,
                     &principal.connection_id,
                     mutation_fence(args.get(1)),
                 )?;
-                self.terminal.dispose(id)?;
                 Ok(Value::Null)
             }
             _ => Err(RuntimeError::Unknown(channel.to_owned())),

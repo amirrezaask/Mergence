@@ -1,15 +1,15 @@
-# Terminal Rendering Implementation Plans
+# YAADE Implementation Plans
 
 Generated on 2026-08-30 at commit `717ed49f`, extended after the resize/TUI
 audit at commit `f21fcdf4`, extended with close-latency Plan 013 against
 `4341fd51`, incremental-submission Plan 014 at `7276f526`, Ghostty hot-path
-Plans 015–019 at `7276f526`, and the twelve-plan Ghostty split (020–031) at
-`8bbcd017`. These plans modernize the shared
-browser/Tauri terminal and its host lifecycle without creating a desktop-only
-implementation. Execute them
-in the order below unless the dependency waves say otherwise. Each executor must
-read its plan fully, preserve pre-existing working-tree changes, honor STOP
-conditions, and update its status.
+Plans 015–019 at `7276f526`, the twelve-plan Ghostty split (020–031) at
+`8bbcd017`, and the Superlogical capability/quality review (032–044) at
+`a0bb3fc9`. The roadmap modernizes the shared browser/Tauri terminal, host
+lifecycle, secure multi-host product, native shells, and release quality without
+creating a browser-owned agent runtime or desktop-only implementation. Execute
+plans in dependency order. Every executor must read its plan fully, preserve
+pre-existing working-tree changes, honor STOP conditions, and update its status.
 
 ## Execution order and status
 
@@ -29,23 +29,36 @@ conditions, and update its status.
 | [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | DONE |
 | [013](013-immediate-terminal-window-close.md) | Make terminal and Window close feedback immediate and bounded | — | P1 | L | 007, 008 | DONE |
 | [014](014-incremental-webgl-scene-submission.md) | Make retained WebGL scene submission incremental | — | P1 | L | 007, 009, 010, 011 | DONE |
-| [015](015-byte-native-terminal-stream.md) | Keep terminal output byte-native from PTY read to Ghostty WASM | SolPro P0-1 | P1 | L | — | TODO |
-| [016](016-recyclable-render-buffer-ring.md) | Recycle a bounded three-slot render-update buffer ring | SolPro P0-2 | P1 | M | 015 | TODO |
-| [017](017-isolated-socket-writer-and-terminal-fanout.md) | Isolate socket writing and fan out output only to attached clients | SolPro P0-4/5 | P1 | L | 015 | TODO |
-| [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | TODO |
-| [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | TODO |
-| [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | TODO |
-| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | TODO |
-| [022](022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | TODO |
-| [023](023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | TODO |
-| [024](024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | TODO |
-| [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | TODO |
-| [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | TODO |
-| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | TODO |
-| [028](028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | TODO |
-| [029](029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | TODO |
-| [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | TODO |
-| [031](031-conditional-shaped-run-cache.md) | Add a shaped-run cache only when profiling or conformance requires it | SolPro conditional shaping | P3 | M | 009, 014, 022, 027 | TODO |
+| [015](015-byte-native-terminal-stream.md) | Keep terminal output byte-native from PTY read to Ghostty WASM | SolPro P0-1 | P1 | L | — | IN PROGRESS |
+| [016](016-recyclable-render-buffer-ring.md) | Recycle a bounded three-slot render-update buffer ring | SolPro P0-2 | P1 | M | 015 | IN PROGRESS |
+| [017](017-isolated-socket-writer-and-terminal-fanout.md) | Isolate socket writing and fan out output only to attached clients | SolPro P0-4/5 | P1 | L | 015 | IN PROGRESS |
+| [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | IN PROGRESS |
+| [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | IN PROGRESS |
+| [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | BLOCKED (pinned public lib-vt artifact does not build on the current supported toolchain) |
+| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | BLOCKED (020) |
+| [022](022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | BLOCKED (020) |
+| [023](023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | BLOCKED (020) |
+| [024](024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | BLOCKED (020) |
+| [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | IN PROGRESS |
+| [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | IN PROGRESS |
+| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | IN PROGRESS |
+| [028](028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | BLOCKED (020) |
+| [029](029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | BLOCKED (020) |
+| [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | IN PROGRESS |
+| [031](031-conditional-shaped-run-cache.md) | Add a shaped-run cache only when profiling or conformance requires it | SolPro conditional shaping | P3 | M | 009, 014, 022, 027 | BLOCKED (020) |
+| [032](032-restart-safe-workspace-catalog.md) | Preserve the workspace catalog and terminal history across host restart | SL continuity/history | P1 | L | 018, 019 | TODO |
+| [033](033-authoritative-semantic-terminal-stream.md) | Complete authoritative semantic snapshot/patch/resync streaming | SL exact reattach/observation | P1 | L | 017, 019, 022, 023 | TODO |
+| [034](034-progressive-scrollback-search.md) | Deliver current-screen-first reattach, million-line scrollback, and search | SL history/search/perf | P1 | L | 018, 023, 024 decision, 027, 033 | TODO |
+| [035](035-command-registry-and-palette.md) | Centralize commands and ship command/session palettes | SL command discovery | P1 | M | — | TODO |
+| [036](036-session-activity-history-notifications.md) | Surface truthful activity, lifecycle history, archives, and notifications | SL session intelligence | P2 | L | 032, 033, 035 | TODO |
+| [037](037-secure-host-onboarding-and-device-trust.md) | Turn device auth into secure remote-host onboarding and trust management | SL pairing/remote trust | P1 | L | — | TODO |
+| [038](038-device-scoped-collaboration-and-control.md) | Add device-scoped collaboration, presence, roles, and control transfer | SL collaboration | P2 | L | 033, 035, 036, 037 | TODO |
+| [039](039-terminal-safety-and-accessibility.md) | Harden clipboard, paste, links, and screen-reader behavior | SL safety/accessibility | P1 | L | 023, 034, 035, 037 | TODO |
+| [040](040-protocol-conformance-fuzz-compatibility.md) | Gate releases on conformance, fuzzing, and version compatibility | SL correctness/security | P1 | L | 015, 017, 018, 022, 023, 033, 037–039 | TODO |
+| [041](041-chaos-soak-and-durability-gates.md) | Prove reconnect, restart, multi-host, and resource durability | SL reliability/soak | P1 | L | 018, 019, 024 decision, 032, 033, 037, 040 | TODO |
+| [042](042-operational-telemetry-diagnostics-slos.md) | Establish content-safe diagnostics, telemetry, and enforced SLOs | SL operations/quality | P1 | L | 027, 032–034, 040, 041 | TODO |
+| [043](043-shared-native-desktop-ios-shells.md) | Harden Tauri desktop and validate an iOS/iPadOS remote shell | SL native platforms | P2 | L | 029, 035, 037, 039, 041 | TODO |
+| [044](044-signed-release-and-safe-updates.md) | Ship signed releases and non-surprising updates | SL distribution/lifecycle | P3 | L | 029, 032, 040, 042, 043 decision | TODO |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
@@ -93,6 +106,49 @@ wrapper, native/WASM parity, server migration, checkpoint feasibility, worker
 presentation suppression, worker fairness, browser subsystem benchmarks, WASM
 optimization/SIMD, Rust release packaging, idle buffer reclamation, and a
 conditional shaped-run cache.
+
+Plans 032–044 convert the broader Superlogical product comparison into separate,
+non-overlapping execution units. They extend the existing terminal ownership,
+Ghostty, checkpoint, history, and benchmark work rather than replacing it.
+
+## Superlogical capability review disposition
+
+The review found a strong existing base that does **not** need parity plans:
+server-owned PTYs; browser disconnect survival; named Sessions and Windows;
+app-level tiled panes; multi-host routing; binary raw streaming with replay and
+flow control; writer/observer leases; responsive/mobile terminal controls;
+Ghostty worker/WebGL rendering; loopback/off-loopback auth policy; device-auth
+cryptographic primitives; and substantial browser/server tests. In particular,
+split panes are not a blocker: YAADE's Window dock tree already supports tiled
+terminal panes.
+
+The demonstrated gaps and their owners are:
+
+| Demonstrated evidence at `a0bb3fc9` | Disposition |
+|---|---|
+| Host startup calls `reset_runtime_state`, discarding persisted Session/Window/terminal rows | Plan 032 preserves metadata/history and marks dead PTYs interrupted; it does not promise process resurrection |
+| Semantic/both attach is rejected; v3 codec wraps JSON; semantic renderer is not the active exact path | Plan 033 completes authoritative snapshot/patch/hash/resync on Plan 023's native Ghostty owner |
+| Reattach requests full history from the oldest page; browser Ghostty caps scrollback at 10,000 rows; no integrated find | Plan 034 adds current-screen-first handoff and bounded indexed cold rows/search |
+| Commands are split between IDs, a component switch, empty prefix groups, and separate pickers | Plan 035 creates one registry and searchable command/session palettes |
+| Low-level activity exists but no content-free lifecycle ledger, attention model, archive workflow, or notifications | Plan 036 adds truthful explicit-source session intelligence |
+| Pairing/challenge/revocation primitives exist, while onboarding, fingerprint comparison, safe browser key storage, and device management are incomplete | Plan 037 productizes secure remote trust |
+| Writer/observer and control-transfer routes exist, while resource grants, invitations, collaboration presence, and authorization UX are absent | Plan 038 adds device-scoped collaboration with one writer |
+| Bracketed paste and a labeled hidden input exist, while OSC 52 policy, risky-paste guard, safe links, and bounded screen-reader rows do not | Plan 039 owns terminal safety/accessibility; Plan 034 owns find |
+| CI is broad but lacks a unified decoder manifest, malformed-input fuzz/sanitizers, and previous/current protocol gate | Plan 040 adds conformance/fuzz/compatibility |
+| Reconnect tests exist but deterministic cross-layer chaos, platform process cleanup, and long resource soaks are not release gates | Plan 041 adds failure and soak tiers |
+| Diagnostics redact keys but do not provide a content-safe support bundle, metric taxonomy, phase tracing, or enforced SLO report | Plan 042 adds operational quality gates |
+| Tauri is a thin single-window shell with null CSP and limited native lifecycle; no validated iPhone/iPad remote shell | Plan 043 hardens desktop and gates iOS/iPadOS without a fourth app |
+| Build/package work does not yet cover signing, provenance, safe active-terminal update, promotion, and rollback | Plan 044 adds distribution lifecycle after Plan 029 |
+
+Three comparison expectations are constrained rather than silently promised:
+
+1. PTYs cannot survive **host process** death without a detached supervisor,
+   which the project architecture explicitly rejects. Plans 032/041 preserve
+   catalog/history, kill descendants safely, and represent interruption honestly.
+2. iPhone/iPad is remote-only. It may embed the shared client after Plan 043's
+   feasibility gate; it may not run a local server, PTY, or coding agent.
+3. YAADE remains a terminal multiplexer. No plan adds standalone Git, file,
+   editor, search, agent-chat, cloud account, or browser process-control surfaces.
 
 ## Dependency notes
 
@@ -159,35 +215,74 @@ conditional shaped-run cache.
   only owner-safe transient high-water capacity with measured hysteresis.
 - **031 after 009/014/022/027:** a shaped-run cache is conditional on conformance
   or profiling and must preserve Canvas as correctness oracle.
+- **032 after 018/019:** restart-safe catalog reconciliation needs durable
+  archive ownership and a single terminal lifecycle owner; it keeps host death
+  process-destructive.
+- **033 after 017/019/022/023:** semantic publication needs isolated outbound
+  lanes, one terminal actor, native/WASM public-state parity, and native Ghostty
+  as the server authority.
+- **034 after 018/023/024-decision/027/033:** current-screen-first handoff and
+  cold semantic rows depend on exact history, the final parser authority, the
+  checkpoint feasibility outcome, benchmark fences, and semantic snapshots.
+- **035 independently:** the command registry can land early and becomes the
+  source for later activity, collaboration, accessibility, and native menus.
+- **036 after 032/033/035:** truthful history/activity uses durable lifecycle,
+  explicit semantic markers, and stable command surfaces.
+- **037 independently:** secure pairing productizes existing device-auth owners
+  and is required before collaboration or remote-native credential work.
+- **038 after 033/035/036/037:** collaboration needs exact observer state, stable
+  commands/activity events, and verified device identity.
+- **039 after 023/034/035/037:** OSC policy belongs to the native parser owner;
+  accessibility consumes paged rows and commands; permissions bind verified hosts.
+- **040 after protocol/security product paths settle:** one decoder manifest and
+  compatibility gate must include semantic, auth, collaboration, and terminal-
+  capability boundaries rather than being repeatedly rebuilt.
+- **041 after 040:** chaos/soak consumes deterministic protocol reproducers and
+  validates the final restart/semantic/trust owners under system faults.
+- **042 after benchmark/chaos foundations:** SLOs and support diagnostics combine
+  measured phase, resource, correctness, and recovery artifacts.
+- **043 after 029/035/037/039/041:** native shells need portable artifacts,
+  stable command IDs, trusted credentials, terminal safety, and durability.
+- **044 last:** signed promotion/update consumes exact packaged artifacts,
+  compatibility/conformance, restart-safe state, SLO reports, and the accepted
+  Plan 043 platform set; a blocked iOS result is not bypassed or advertised.
 
 ## Recommended execution waves
 
-1. Run Plans 007 and 009; they can proceed in parallel after the completed
-   worker/scheduler work and removed WebGPU experiment settle in the working tree.
-2. Run Plans 008 and 010; they touch different ownership layers but coordinate
-   through Plan 007 lifecycle/frame IDs.
-3. Run Plan 011.
-4. Run Plan 012 and re-run all resize, multiplexer, compatibility, and benchmark
-   suites as the renderer/resize integration gate.
-5. Run Plan 013 independently of further renderer experiments; it touches the
-   mux control plane, PTY teardown, persistence, and history finalization.
-6. Run Plan 014 against the stabilized Plan 010/011 renderer. It has no code
-   dependency on Plan 013, but execute serially in one working tree because both
-   update the plan index and benchmark evidence.
-7. Run Plans 015 and 020 in parallel only in isolated worktrees. They establish
+Plans 001–014 are complete (Plan 006 was rejected and removed). Start at the
+first incomplete dependency rather than rerunning completed migrations.
+
+1. Run Plans 015 and 020 in parallel only in isolated worktrees. They establish
    byte transport and native source/ABI without depending on each other.
-8. After 015, run Plans 016 and 017. After 020, run Plan 021. These three streams
-   touch different ownership layers but share CI/docs, so merge them serially.
-9. Run Plan 022 after 015/020/021. In parallel, run Plan 018 after 013/015, then
-   Plan 019 after 017/018.
-10. Run Plan 025 after 014/015/016. Run Plan 023 after 019/021/022.
-11. Run Plan 027 after 025 to establish the final subsystem benchmark contract.
-12. After 027, Plans 026, 028, and 031 can run as isolated measured experiments.
-   Plans 026 and 031 may end `REJECTED` when their gates do not justify code.
-13. Run Plans 024 and 029 after Plan 023 and Plan 027. Plan 024 may end `BLOCKED`
-   because the pinned public Ghostty API lacks parser-state import.
-14. Run Plan 030 after its client/server owners and benchmark foundations settle.
-   Serialize all plans that touch shared CI, benchmark fixtures, docs, or README.
+2. After 015, run Plans 016 and 017. After 020, run Plan 021. Merge serially where
+   they share CI/docs.
+3. Run Plan 022 after 015/020/021. In parallel, run Plan 018 after 015, then Plan
+   019 after 017/018.
+4. Plan 035 (command registry) and Plan 037 (secure onboarding) can run in
+   isolated worktrees while terminal foundations progress; both touch shared app
+   shells/settings, so merge them serially.
+5. Run Plan 025 after 015/016. Run Plan 023 after 019/021/022.
+6. Run Plan 027 after 025. Then Plans 026, 028, and 031 may run as isolated,
+   measured experiments and may correctly end `REJECTED`.
+7. Run Plans 024 and 029 after 023/027. Plan 024 may correctly end `BLOCKED` if
+   the pinned public Ghostty API cannot restore parser state. Run Plan 030 after
+   all of its owner/benchmark dependencies.
+8. Run Plan 032 after 018/019. It can proceed before native Ghostty migration but
+   must reconcile Plan 023 state if that migration already landed.
+9. Run Plan 033 after 017/019/022/023, then Plan 034 after the Plan 024 decision
+   and Plan 027 measurements.
+10. Run Plan 036 after 032/033/035. Run Plan 039 after 023/034/035/037. These may
+    use isolated worktrees but both touch shared Session/terminal chrome.
+11. Run Plan 038 after 033/035/036/037.
+12. Run Plan 040 after 038/039 so the conformance manifest covers the final auth,
+    collaboration, clipboard, and accessibility protocol boundaries.
+13. Run Plan 041 after 040, then Plan 042 after one valid chaos/soak campaign.
+14. Run Plan 043 after its native/security/durability prerequisites. Its iOS
+    portion stops at the feasibility gate if any load-bearing capability fails.
+15. Run Plan 044 last against exact candidate artifact digests and quality reports.
+
+Serialize plans that touch shared CI, benchmark fixtures, app shell, docs, or
+this README unless they run in isolated worktrees with an explicit merge order.
 
 ## Cross-plan invariants
 
@@ -252,6 +347,33 @@ conditional shaped-run cache.
     it never drops parser, replay, history, retained scene, or queued data.
 31. A shaped-run cache ships only after conformance or profiling crosses a
     predeclared threshold and Canvas/WebGL correctness gates pass.
+32. Host restart preserves workspace metadata and retained history but marks
+    every formerly live PTY interrupted; it never claims process continuation.
+33. Semantic state is replaceable and hash/revision/epoch-checked; raw output is
+    ordered and uses replay recovery. The two lanes never share overflow policy.
+34. Current-screen previews cannot restore parser modes or enable input. Cold
+    history/search is bounded, paged, and kept outside React/one giant DOM.
+35. Keyboard, palette, native menu, context actions, and which-key consume stable
+    command IDs from one registry while terminal-reserved chords pass through.
+36. Lifecycle/activity/notification state records typed metadata only; it never
+    infers commands from terminal text or stores a transcript.
+37. Remote credentials cross confidential transport only. Device private keys
+    are non-extractable/OS-backed or explicitly session-only, never silently
+    persisted in localStorage.
+38. Collaboration intersects device scope, resource grant, and one writer lease.
+    Viewers cannot write, resize, answer queries, or discover unauthorized rows.
+39. Terminal-originated clipboard/link/capability requests are untrusted even on
+    a paired host. Clipboard bytes never enter generic events, logs, or state.
+40. Every untrusted decoder/version boundary has deterministic vectors, bounds,
+    malformed cases, and explicit compatibility behavior.
+41. Chaos/soak success uses semantic completion/invariant fences and bounded
+    resources, not elapsed time or absence of thrown errors.
+42. Telemetry/support artifacts are allowlisted, local-first, content-free, and
+    nonblocking. Performance gates use named profiles and predeclared ceilings.
+43. Desktop/iOS shells are shared-client capability adapters. They never own
+    PTYs/agents, fork terminal behavior, or turn viewport close into terminal close.
+44. Updates verify exact signed artifacts and never restart an active host
+    without explicit acknowledgement that its PTY processes will end.
 
 ## Existing evidence and baseline
 
@@ -320,22 +442,57 @@ conditional shaped-run cache.
   reports only total command duration and renderer generation. WebGL scene-copy,
   instance-upload, atlas, model-apply, and per-frame distributions are not yet
   available through the test bridge.
+- `HostRuntime::start` opens the SQLite store and immediately calls
+  `store.reset_runtime_state()`. The store otherwise persists full snapshots and
+  already supports archive/restore, so restart data loss is demonstrated policy,
+  not a missing storage primitive.
+- Terminal history is bounded to 256 MiB per terminal, 2 GiB total, and seven
+  days for closed terminals. Client archive reads are paged and yield between
+  pages; these are foundations for Plan 032/034, not systems to replace.
+- The attach contract already accepts `raw | semantic | both`, and the client v3
+  store rejects revision/epoch gaps, but the host rejects semantic modes. The v3
+  codec currently wraps `JSON.stringify(message)` in a binary envelope.
+- `SemanticTerminalView` proves a shared semantic seam exists, but the active
+  process-terminal path remains `TerminalPanel` and the semantic view currently
+  loses full terminal styling/input/accessibility semantics.
+- The Session switcher has no query/filter-or-create behavior. `TerminalSwitcher`
+  already uses `PaletteShell`, so Plan 035 reuses that primitive.
+- Device auth already includes Ed25519 identities, pairing, challenge sessions,
+  scopes, revocation, and audit records. The browser default identity store
+  serializes private material to localStorage, and the UI does not complete the
+  trust ceremony/device management workflow.
+- Writer/observer leases and request/transfer/reclaim routes already exist.
+  Collaboration work therefore adds authorization grants and UX rather than a
+  second control protocol.
+- `apps/desktop` is a thin Tauri shell over `@yaade/app`, starts the bundled host
+  service, defines one window, and has `security.csp: null`. It remains the only
+  allowed native application boundary for desktop and gated iOS/iPadOS work.
+- `diagnostics.rs` currently redacts recursively but does not define support
+  bundles or operational metrics. Existing benchmark ceilings are broad and do
+  not cover current-screen reattach, million-line history, leak slopes, chaos,
+  or release compatibility.
 
 ## Global verification gates
 
-Run after every plan unless the plan specifies a narrower intermediate command:
+These are the shared baseline. Each incomplete plan adds exact security,
+recovery, native, fuzz, soak, or release commands and those plan-specific gates
+are mandatory.
 
 ```bash
 vp test packages/ghostty-core packages/ghostty-react packages/yaade-ui
 vp run typecheck
 vp run lint
+vp run test:server
+vp run test:terminal:integration
+vp run test:web
 vp exec playwright test --project=web-e2e tests/web/e2e/terminal-compatibility.web.spec.ts tests/web/e2e/terminal-multiplexer.web.spec.ts
 vp run test:bench
 ```
 
 Expected: all functional commands exit 0. Benchmark results must be recorded and
-must satisfy `tests/bench/budgets.json`; compare medians and p95/p99 against the
-pre-plan baseline rather than merely passing the existing ceilings.
+must satisfy the approved SLO registry/current `tests/bench/budgets.json`;
+compare medians and p95/p99 against the pre-plan baseline rather than merely
+passing broad legacy ceilings.
 
 ## Explicitly rejected approaches
 
@@ -376,3 +533,27 @@ pre-plan baseline rather than merely passing the existing ceilings.
 - **Adding a shaped-run cache because shaping exists:** rejected by default. Plan
   031 requires a conformance gap or material profiled cost and removes failed
   prototype code.
+- **Treating app-level split panes as a Superlogical parity blocker:** rejected.
+  YAADE already provides tiled terminal panes inside Windows; no duplicate pane
+  product is planned.
+- **Adding a detached PTY supervisor to claim host-restart process continuity:**
+  rejected by current architecture. Plans 032/041 preserve catalog/history,
+  terminate descendants safely, and show interrupted processes honestly.
+- **Loading million-line history into React, DOM, or one Ghostty allocation:**
+  rejected. Plan 034 uses stable paged cold rows and a bounded viewport cache.
+- **Scraping terminal output/input to infer commands or agent status:** rejected.
+  Plan 036 consumes process lifecycle and explicit validated semantic markers only.
+- **Using plaintext remote HTTP or localStorage private keys for smooth onboarding:**
+  rejected. Plan 037 requires confidential transport and non-extractable,
+  OS-backed, or explicitly session-only credentials.
+- **Allowing multiple concurrent terminal writers:** rejected. Collaboration
+  builds on the single writer lease and explicit request/transfer/reclaim flow.
+- **Trusting OSC clipboard/link requests because the host is paired:** rejected.
+  Terminal programs remain untrusted and capability requests require policy and
+  user intent.
+- **Forking a fourth iOS app or running local agents/PTYS on iPhone/iPad:**
+  rejected. Plan 043 gates a remote-only target inside the existing Tauri app and
+  shared client.
+- **Silently applying a host update while terminals run:** rejected. Host restart
+  ends PTYs; Plan 044 requires explicit destructive confirmation and durable
+  state/history preflight.

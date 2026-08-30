@@ -55,6 +55,22 @@ export type TerminalLifecycleState = {
   lastNextPaintObservedFrame: number
   compatibilitySnapshotBuilds: number
   decodedGraphemes: number
+  workerDiagnostics: {
+    writes: number
+    bytesParsed: number
+    renderBuilds: number
+    transfers: number
+    suppressedHidden: number
+    suppressedSynchronized: number
+    fullCatchUps: number
+    synchronizationTimeouts: number
+    pendingPresentation: boolean
+    slotsInFlight: number
+    bufferAllocations: number
+    schedulerQueueBytes: number
+    schedulerQueueCommands: number
+    schedulerInFlight: number
+  }
 }
 
 export type YaadeTestAPI = {

@@ -6,9 +6,18 @@ import {
   validateTerminalWorkerCommand,
   type SerializedKeyEvent,
   type TerminalRuntimeState,
+  type TerminalWorkerDiagnostics,
   type TerminalWorkerCommand,
   type TerminalWorkerEvent,
 } from "./protocol.js";
+
+type MutableWorkerCounters = {
+  -readonly [Key in Exclude<
+    keyof TerminalWorkerDiagnostics,
+    "pendingPresentation" | "slotsInFlight" | "bufferAllocations" |
+      "schedulerQueueBytes" | "schedulerQueueCommands" | "schedulerInFlight"
+  >]: TerminalWorkerDiagnostics[Key]
+};
 
 type RuntimeEntry = {
   core: GhosttyTerminalCore;
@@ -19,6 +28,8 @@ type RuntimeEntry = {
   syncTimer: number | null;
   pendingFull: boolean;
   pendingCommand: TerminalWorkerCommand | null;
+  diagnostics: MutableWorkerCounters;
+  lastActivityAt: number;
 };
 const SYNCHRONIZED_OUTPUT_TIMEOUT_MS = 1_000;
 const runtimes = new Map<string, RuntimeEntry>();
@@ -47,6 +58,23 @@ function keyInput(event: SerializedKeyEvent): GhosttyKeyInput {
     ...event,
     getModifierState: key => key === "CapsLock" ? event.capsLock : key === "NumLock" && event.numLock,
   };
+}
+
+function diagnostics(entry: RuntimeEntry): TerminalWorkerDiagnostics {
+  const render = entry.core.renderUpdateDiagnostics();
+  return {
+    ...entry.diagnostics,
+    pendingPresentation: entry.pendingCommand !== null,
+    slotsInFlight: render.leasesBuilt - render.leasesReclaimed,
+    bufferAllocations: render.backingBuffersAllocated,
+    schedulerQueueBytes: 0,
+    schedulerQueueCommands: 0,
+    schedulerInFlight: 0,
+  };
+}
+
+function parsed(command: TerminalWorkerCommand, entry: RuntimeEntry): void {
+  post({ ...envelope(command), type: "parsed", diagnostics: diagnostics(entry) });
 }
 
 function state(core: GhosttyTerminalCore): TerminalRuntimeState {
@@ -83,6 +111,7 @@ function armSynchronizedTimeout(entry: RuntimeEntry, command: TerminalWorkerComm
     const current = runtimes.get(command.terminalId);
     if (current !== entry || current.generation !== command.generation || entry.sync !== "suppressing") return;
     entry.sync = "timedOut";
+    entry.diagnostics.synchronizationTimeouts += 1;
     const catchUp = entry.pendingCommand ?? command;
     if (!entry.visible) {
       entry.pendingFull = true;
@@ -91,6 +120,7 @@ function armSynchronizedTimeout(entry: RuntimeEntry, command: TerminalWorkerComm
     const forceFull = entry.pendingFull;
     entry.pendingCommand = null;
     entry.pendingFull = false;
+    entry.diagnostics.fullCatchUps += 1;
     emitOrSchedule(catchUp, entry.core, forceFull);
   }, SYNCHRONIZED_OUTPUT_TIMEOUT_MS);
 }
@@ -98,6 +128,7 @@ function armSynchronizedTimeout(entry: RuntimeEntry, command: TerminalWorkerComm
 function requestPresentation(command: TerminalWorkerCommand, entry: RuntimeEntry, forceFull = false): void {
   const synchronized = entry.core.isModeEnabled(2026);
   if (!entry.visible) {
+    entry.diagnostics.suppressedHidden += 1;
     markSuppressed(entry, command, true);
     if (synchronized && entry.sync === "inactive") {
       entry.sync = "suppressing";
@@ -109,8 +140,9 @@ function requestPresentation(command: TerminalWorkerCommand, entry: RuntimeEntry
     }
     return;
   }
-  if (synchronized && entry.sync !== "timedOut") {
-    if (entry.sync === "inactive") {
+  if (synchronized) {
+    entry.diagnostics.suppressedSynchronized += 1;
+    if (entry.sync === "inactive" || entry.sync === "timedOut") {
       entry.sync = "suppressing";
       armSynchronizedTimeout(entry, command);
     }
@@ -125,6 +157,7 @@ function requestPresentation(command: TerminalWorkerCommand, entry: RuntimeEntry
     const catchUpFull = entry.pendingFull || forceFull;
     entry.pendingCommand = null;
     entry.pendingFull = false;
+    entry.diagnostics.fullCatchUps += 1;
     emitOrSchedule(catchUp, entry.core, catchUpFull);
     return;
   }
@@ -140,6 +173,11 @@ function requestPresentation(command: TerminalWorkerCommand, entry: RuntimeEntry
 function emitUpdate(command: TerminalWorkerCommand, core: GhosttyTerminalCore, forceFull = false): boolean {
   const lease = core.tryRenderUpdate(true, forceFull)
   if (!lease) return false
+  const entry = runtimes.get(command.terminalId);
+  if (entry) {
+    entry.diagnostics.renderBuilds += 1;
+    entry.diagnostics.transfers += 1;
+  }
   post(
     {
       ...envelope(command), type: "packedUpdate", slotId: lease.slotId,
@@ -207,6 +245,12 @@ async function create(command: Extract<TerminalWorkerCommand, { type: "create" }
     syncTimer: null,
     pendingFull: !command.visible,
     pendingCommand: command.visible ? null : command,
+    diagnostics: {
+      writes: 0, bytesParsed: 0, renderBuilds: 0, transfers: 0,
+      suppressedHidden: 0, suppressedSynchronized: 0, fullCatchUps: 0,
+      synchronizationTimeouts: 0,
+    },
+    lastActivityAt: performance.now(),
   };
   runtimes.set(command.terminalId, entry);
   post({ ...envelope(command), type: "ready" });
@@ -215,10 +259,18 @@ async function create(command: Extract<TerminalWorkerCommand, { type: "create" }
 
 function process(command: TerminalWorkerCommand, entry: RuntimeEntry): void {
   const { core } = entry;
+  if (command.type !== "recycleRenderUpdate") entry.lastActivityAt = performance.now();
   switch (command.type) {
-    case "writeBytes": core.write(command.data); requestPresentation(command, entry); post({ ...envelope(command), type: "parsed" }); return;
-    case "writeReplayBytes": core.writeReplay(command.chunks); requestPresentation(command, entry); post({ ...envelope(command), type: "parsed" }); return;
-    case "resetAndWriteBytes": core.resetAndWrite(command.data); requestPresentation(command, entry, true); post({ ...envelope(command), type: "parsed" }); return;
+    case "writeBytes":
+      entry.diagnostics.writes += 1; entry.diagnostics.bytesParsed += command.data.byteLength;
+      core.write(command.data); requestPresentation(command, entry); parsed(command, entry); return;
+    case "writeReplayBytes":
+      entry.diagnostics.writes += 1;
+      entry.diagnostics.bytesParsed += command.chunks.reduce((total, chunk) => total + chunk.byteLength, 0);
+      core.writeReplay(command.chunks); requestPresentation(command, entry); parsed(command, entry); return;
+    case "resetAndWriteBytes":
+      entry.diagnostics.writes += 1; entry.diagnostics.bytesParsed += command.data.byteLength;
+      core.resetAndWrite(command.data); requestPresentation(command, entry, true); parsed(command, entry); return;
     case "recycleRenderUpdate": {
       if (core.reclaimRenderUpdate(command.slotId, command.leaseToken, command.buffers)) {
         const pending = pendingUpdates.get(command.terminalId)
@@ -270,6 +322,14 @@ function process(command: TerminalWorkerCommand, entry: RuntimeEntry): void {
   }
 }
 
+setInterval(() => {
+  const now = performance.now();
+  for (const [terminalId, entry] of runtimes) {
+    if (pendingUpdates.has(terminalId) || entry.pendingCommand !== null) continue;
+    entry.core.trimRenderBuffers(entry.lastActivityAt, now);
+  }
+}, 10_000);
+
 globalThis.addEventListener("message", (message: MessageEvent<unknown>) => {
   const command = message.data;
   if (!validateTerminalWorkerCommand(command)) return;
@@ -284,6 +344,7 @@ globalThis.addEventListener("message", (message: MessageEvent<unknown>) => {
   if (!entry || entry.generation !== command.generation) return;
   try {
     process(command, entry);
+    post({ ...envelope(command), type: "completed" });
   } catch (error) {
     post({
       ...envelope(command), type: "recoverableError",

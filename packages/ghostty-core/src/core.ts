@@ -952,6 +952,11 @@ export class GhosttyTerminalCore {
     return this.renderUpdateBuilder.diagnostics()
   }
 
+  trimRenderBuffers(lastActivityAt: number, now?: number): boolean {
+    this.ensureActive()
+    return this.renderUpdateBuilder.trimIdle(lastActivityAt, now)
+  }
+
   selectionText(): string {
     this.ensureActive();
     const options = this.runtime.alloc(SELECTION_FORMAT_OPTIONS_SIZE);

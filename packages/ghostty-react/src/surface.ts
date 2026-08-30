@@ -627,6 +627,7 @@ export interface GhosttyTerminalLifecycleSnapshot {
   readonly lastNextPaintObservedFrame: number;
   readonly compatibilitySnapshotBuilds: number;
   readonly decodedGraphemes: number;
+  readonly workerDiagnostics: ReturnType<TerminalCoreRuntime["workerDiagnostics"]>;
 }
 
 let nextSurfaceInstanceId = 1;
@@ -857,6 +858,7 @@ export class GhosttyTerminalSurface {
       lastNextPaintObservedFrame: this.lastNextPaintObservedFrame,
       compatibilitySnapshotBuilds: this.viewportModel.compatibilitySnapshotBuilds,
       decodedGraphemes: this.viewportModel.decodedGraphemes,
+      workerDiagnostics: this.core.workerDiagnostics(),
     };
   }
 

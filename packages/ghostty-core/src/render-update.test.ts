@@ -166,6 +166,26 @@ test("recycles exactly three transferred slots without steady replacement", () =
   assert.equal(builder.diagnostics().backingBuffersAllocated, before)
 })
 
+test("reclaims oversized returned slots only after idle hysteresis", () => {
+  const builder = new GhosttyRenderUpdateBuilder()
+  const wideRow = Array.from({ length: 100_000 }, () => cell("x"))
+  const large = builder.build({
+    snapshot: snapshot([wideRow], [0]), frameId: 1, generation: 1, full: true,
+  })
+  builder.release(large)
+  const small = builder.build({
+    snapshot: snapshot([[cell("x")]], [0]), frameId: 2, generation: 1, full: true,
+  })
+  builder.release(small)
+  const before = builder.diagnostics().backingBytesAllocated
+  assert.equal(builder.trimIdle(0, 30_000), false, "cooldown still active")
+  assert.equal(builder.trimIdle(0, 120_000), true)
+  const after = builder.diagnostics()
+  assert.ok(after.backingBytesAllocated < before)
+  assert.equal(after.idleTrims, 1)
+  assert.ok(after.idleBytesReclaimed >= 1024 * 1024)
+})
+
 test("rejects malformed versions, lengths, row order, and grapheme offsets", () => {
   const builder = new GhosttyRenderUpdateBuilder();
   const update = builder.build({

@@ -327,6 +327,29 @@ test.describe("terminal compatibility", () => {
     await expect(page.locator("[data-yaade-connection]")).toHaveCount(0)
   })
 
+  test("synchronized output has a bounded presentation safety timeout", async ({
+    launchApp,
+  }) => {
+    const { page } = await launchApp({ workspaceRel: "fixtures/sample-workspace" })
+    const before = await page.evaluate(
+      () => window.__yaadeTest?.getTerminalLifecycle()?.workerDiagnostics,
+    )
+    await focusTerminal(page)
+    await page.keyboard.type(
+      `printf '\\033[?2026h%s' 'YAADE_SYNC_' 'TIMEOUT'; sleep 3; printf '\\033[?2026l\\n'`,
+    )
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(
+        () => window.__yaadeTest?.getTerminalLifecycle()?.workerDiagnostics.synchronizationTimeouts ?? 0,
+      ),
+      { timeout: 5_000 },
+    ).toBeGreaterThan(before?.synchronizationTimeouts ?? 0)
+    await expect.poll(
+      () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
+    ).toContain("YAADE_SYNC_TIMEOUT")
+  })
+
   test("flow control replays from the last parsed frame after a renderer stall", async ({
     launchApp,
   }) => {
@@ -348,7 +371,7 @@ test.describe("terminal compatibility", () => {
       })
     })
     await page.keyboard.type(
-      `node -e "process.stdout.write('x'.repeat(512*1024));console.log('YAADE_FLOW_RECOVERED')"`,
+      `node -e "process.stdout.write('x'.repeat(512*1024));console.log('\\nYAADE_FLOW_RECOVERED')"`,
     )
     await page.keyboard.press("Enter")
 

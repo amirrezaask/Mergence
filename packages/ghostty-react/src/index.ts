@@ -64,6 +64,13 @@ export {
   type TerminalPresentationSample,
   type TerminalSchedulerSnapshot,
 } from "./scheduler/terminal-frame-scheduler.js"
+export {
+  TERMINAL_METRICS_VERSION,
+  TERMINAL_METRIC_STAGES,
+  TerminalStageMetrics,
+  type TerminalMetricStage,
+  type TerminalMetricsSnapshot,
+} from "./terminal-metrics.js"
 export type {
   TerminalCoreRuntime,
   TerminalRuntimeKind,

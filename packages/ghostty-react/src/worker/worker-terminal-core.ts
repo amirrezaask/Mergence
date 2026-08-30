@@ -18,6 +18,7 @@ import {
   validateTerminalWorkerCommand,
   validateTerminalWorkerEvent,
   type TerminalRuntimeState,
+  type TerminalWorkerDiagnostics,
   type TerminalWorkerCommandPayload,
 } from "./protocol.js";
 import { terminalWorkerPool, type TerminalWorkerChannel } from "./worker-pool.js";
@@ -34,6 +35,7 @@ export interface TerminalCoreRuntime {
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void;
   setTheme(theme: GhosttyTheme): void;
   setPresentationState(visible: boolean, focused: boolean): void;
+  workerDiagnostics(): TerminalWorkerDiagnostics;
   scroll(delta: number): void;
   scrollToBottom(): void;
   isViewportActive(): boolean;
@@ -80,6 +82,7 @@ export class MainThreadTerminalCore implements TerminalCoreRuntime {
   resize(cols: number, rows: number, cellWidth: number, cellHeight: number): void { this.core.resize(cols, rows, cellWidth, cellHeight); }
   setTheme(theme: GhosttyTheme): void { this.core.setTheme(theme); }
   setPresentationState(): void {}
+  workerDiagnostics(): TerminalWorkerDiagnostics { return EMPTY_DIAGNOSTICS; }
   scroll(delta: number): void { this.core.scroll(delta); }
   scrollToBottom(): void { this.core.scrollToBottom(); }
   isViewportActive(): boolean { return this.core.isViewportActive(); }
@@ -124,6 +127,14 @@ export type RuntimeCreateOptions = {
   readonly onRecoveryRequired?: () => void;
 };
 
+const EMPTY_DIAGNOSTICS: TerminalWorkerDiagnostics = {
+  writes: 0, bytesParsed: 0, renderBuilds: 0, transfers: 0,
+  suppressedHidden: 0, suppressedSynchronized: 0, fullCatchUps: 0,
+  synchronizationTimeouts: 0, pendingPresentation: false, slotsInFlight: 0,
+  bufferAllocations: 0,
+  schedulerQueueBytes: 0, schedulerQueueCommands: 0, schedulerInFlight: 0,
+};
+
 const EMPTY_STATE: TerminalRuntimeState = {
   title: "", scrollbar: null, selectionText: "", viewportActive: true,
   mouseTracking: false, mouseAnyEventTracking: false, alternateScreen: false,
@@ -148,6 +159,7 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
   get runtimeGeneration(): number { return this.generation; }
   private lastEventSequence = 0;
   private state: TerminalRuntimeState = EMPTY_STATE;
+  private diagnostics: TerminalWorkerDiagnostics = EMPTY_DIAGNOSTICS;
   private presentation: { visible: boolean; focused: boolean };
   private readonly updates: GhosttyRenderUpdate[] = [];
   private readonly updateLeases = new WeakMap<GhosttyRenderUpdate, {
@@ -220,8 +232,10 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
   private receive(value: unknown): void {
     this.readyListener?.(value);
     if (!validateTerminalWorkerEvent(value) || this.disposed || value.terminalId !== this.terminalId || value.generation !== this.generation) return;
-    if (value.sequence < this.lastEventSequence) return;
-    this.lastEventSequence = value.sequence;
+    // Packed frames have their own model frame/generation fence and may finish
+    // after a later control completion. Other event families stay strict FIFO.
+    if (value.type !== "packedUpdate" && value.sequence < this.lastEventSequence) return;
+    if (value.type !== "packedUpdate") this.lastEventSequence = value.sequence;
     switch (value.type) {
       case "packedUpdate":
         this.state = value.state;
@@ -238,7 +252,9 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
         this.options.onUpdate();
         return;
       case "encodedInput": if (value.data.length > 0) this.options.onData(value.data); return;
-      case "parsed": this.parsed.get(value.sequence)?.(); this.parsed.delete(value.sequence); return;
+      case "parsed":
+        this.diagnostics = value.diagnostics;
+        this.parsed.get(value.sequence)?.(); this.parsed.delete(value.sequence); return;
       case "fatalError": case "recoverableError": this.fail(new Error(value.message)); return;
       default: return;
     }
@@ -345,6 +361,15 @@ export class WorkerTerminalCore implements TerminalCoreRuntime {
     })
   }
   requestFullFrame(): void { this.command({ type: "requestFullFrame" }); }
+  workerDiagnostics(): TerminalWorkerDiagnostics {
+    const scheduler = this.channel.schedulerSnapshot()
+    return {
+      ...this.diagnostics,
+      schedulerQueueBytes: scheduler.bytes,
+      schedulerQueueCommands: scheduler.commands,
+      schedulerInFlight: scheduler.inFlight,
+    }
+  }
   dispose(): void {
     if (this.disposed) return;
     for (const update of this.updates.splice(0)) this.releaseRenderUpdate(update)

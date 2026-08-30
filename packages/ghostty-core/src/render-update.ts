@@ -3,6 +3,7 @@ import type {
   GhosttyColor,
   GhosttySnapshot,
 } from "./core.js";
+import { shouldReclaimIdleCapacity } from "./idle-reclaim.js"
 
 /** Increment whenever the packed layout or its semantics change. */
 export const GHOSTTY_RENDER_UPDATE_VERSION = 1 as const;
@@ -108,6 +109,8 @@ export type GhosttyRenderUpdateBuilderDiagnostics = {
   readonly reclaimRejected: number
   readonly noFreeSlot: number
   readonly maxInFlight: number
+  readonly idleTrims: number
+  readonly idleBytesReclaimed: number
 }
 
 interface BuilderSlot {
@@ -122,6 +125,9 @@ interface BuilderSlot {
   backgrounds: Uint32Array
   styles: Uint16Array
   graphemes: Uint8Array
+  targetRows: number
+  targetCells: number
+  targetGraphemes: number
 }
 
 const textEncoder = new TextEncoder();
@@ -163,6 +169,9 @@ function createSlot(id: number): BuilderSlot {
     backgrounds: new Uint32Array(1),
     styles: new Uint16Array(1),
     graphemes: new Uint8Array(1),
+    targetRows: 1,
+    targetCells: 1,
+    targetGraphemes: 1,
   };
 }
 
@@ -179,7 +188,10 @@ export class GhosttyRenderUpdateBuilder {
     reclaimRejected: 0,
     noFreeSlot: 0,
     maxInFlight: 0,
+    idleTrims: 0,
+    idleBytesReclaimed: 0,
   }
+  private lastCapacityChangeAt = 0
 
   constructor(slotCount = 3) {
     const count = Math.max(1, Math.min(3, Math.trunc(slotCount)))
@@ -257,7 +269,12 @@ export class GhosttyRenderUpdateBuilder {
         this.mutableDiagnostics.backingBuffersAllocated += 1
       }
     }
-    this.mutableDiagnostics.backingBytesAllocated += slotBytes(slot) - beforeBytes
+    const growth = slotBytes(slot) - beforeBytes
+    this.mutableDiagnostics.backingBytesAllocated += growth
+    if (growth > 0) this.lastCapacityChangeAt = clockNow()
+    slot.targetRows = Math.max(1, rows.length)
+    slot.targetCells = Math.max(1, cellCount)
+    slot.targetGraphemes = Math.max(1, graphemeCapacity)
 
     let cellIndex = 0;
     let graphemeOffset = 0;
@@ -316,6 +333,24 @@ export class GhosttyRenderUpdateBuilder {
     return lease
   }
 
+  trimIdle(lastActivityAt: number, now = clockNow()): boolean {
+    const allocatedBytes = this.slots.reduce((total, slot) => total + slotBytes(slot), 0)
+    const targetBytes = this.slots.reduce((total, slot) => total + targetSlotBytes(slot), 0)
+    const inFlight = this.slots.filter(slot => slot.inFlight).length
+    if (!shouldReclaimIdleCapacity({
+      now, allocatedBytes, targetBytes, inFlight, queued: 0,
+      lastActivityAt, lastResizeAt: this.lastCapacityChangeAt,
+    })) return false
+    for (const slot of this.slots) trimSlot(slot)
+    const afterBytes = this.slots.reduce((total, slot) => total + slotBytes(slot), 0)
+    this.mutableDiagnostics.backingBytesAllocated -= allocatedBytes - afterBytes
+    this.mutableDiagnostics.backingBuffersAllocated += this.slots.length * 8
+    this.mutableDiagnostics.idleTrims += 1
+    this.mutableDiagnostics.idleBytesReclaimed += allocatedBytes - afterBytes
+    this.lastCapacityChangeAt = now
+    return true
+  }
+
   release(update: GhosttyRenderUpdate): void {
     const lease = this.owners.get(update)
     if (!lease) return
@@ -341,6 +376,31 @@ export class GhosttyRenderUpdateBuilder {
     this.mutableDiagnostics.leasesReclaimed += 1
     return true
   }
+}
+
+function clockNow(): number {
+  return globalThis.performance?.now() ?? Date.now()
+}
+
+function targetSlotBytes(slot: BuilderSlot): number {
+  const rows = nextCapacity(slot.targetRows * 2)
+  const cells = nextCapacity(slot.targetCells * 2)
+  const graphemes = nextCapacity(slot.targetGraphemes * 2)
+  return rows * 5 + cells * 18 + graphemes
+}
+
+function trimSlot(slot: BuilderSlot): void {
+  const rows = nextCapacity(slot.targetRows * 2)
+  const cells = nextCapacity(slot.targetCells * 2)
+  const graphemes = nextCapacity(slot.targetGraphemes * 2)
+  slot.dirtyRows = new Uint32Array(rows)
+  slot.rowFlags = new Uint8Array(rows)
+  slot.graphemeOffsets = new Uint32Array(cells)
+  slot.graphemeLengths = new Uint32Array(cells)
+  slot.foregrounds = new Uint32Array(cells)
+  slot.backgrounds = new Uint32Array(cells)
+  slot.styles = new Uint16Array(cells)
+  slot.graphemes = new Uint8Array(graphemes)
 }
 
 function slotBuffers(slot: BuilderSlot): readonly ArrayBufferLike[] {

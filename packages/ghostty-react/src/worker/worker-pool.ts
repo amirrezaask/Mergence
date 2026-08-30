@@ -1,19 +1,40 @@
-import type { TerminalWorkerCommand } from "./protocol.js";
+import { validateTerminalWorkerEvent, type TerminalWorkerCommand } from "./protocol.js";
+import { FairWorkerScheduler } from "./fair-scheduler.js";
 
 export type WorkerPoolMessageHandler = (value: unknown) => void;
 export type WorkerPoolErrorHandler = (error: Error) => void;
 
 export interface TerminalWorkerChannel {
   post(command: TerminalWorkerCommand, transfer?: readonly Transferable[]): void;
+  schedulerSnapshot(): { readonly bytes: number; readonly commands: number; readonly inFlight: number }
   release(): void;
+}
+
+type QueuedWorkerCommand = {
+  readonly command: TerminalWorkerCommand
+  readonly transfer: readonly Transferable[]
 }
 
 type Slot = {
   worker: Worker;
+  readonly workerHolder: { current: Worker }
+  readonly scheduler: FairWorkerScheduler<QueuedWorkerCommand>
+  readonly priorities: Map<string, { visible: boolean; focused: boolean }>
   readonly terminals: Map<string, { message: WorkerPoolMessageHandler; error: WorkerPoolErrorHandler }>;
 };
 
 export const MAX_TERMINAL_WORKERS = 4;
+
+function workerCommandBytes(command: TerminalWorkerCommand): number {
+  switch (command.type) {
+    case "writeBytes": case "resetAndWriteBytes": return command.data.byteLength
+    case "writeReplayBytes": return command.chunks.reduce((total, chunk) => total + chunk.byteLength, 0)
+    case "recycleRenderUpdate": return Object.values(command.buffers)
+      .reduce((total, buffer) => total + buffer.byteLength, 0)
+    case "paste": case "text": return command.data.length * 2 + 256
+    default: return 256
+  }
+}
 
 function workerLimit(): number {
   const hardware = typeof navigator === "undefined" ? 2 : navigator.hardwareConcurrency || 2;
@@ -54,11 +75,27 @@ export class TerminalWorkerPool {
     let released = false;
     return {
       post: (command, transfer = []) => {
-        if (!released) slot.worker.postMessage(command, [...transfer]);
+        if (released) return
+        if (command.type === "create" || command.type === "setPresentationState") {
+          const priority = { visible: command.visible, focused: command.focused }
+          slot.priorities.set(terminalId, priority)
+          slot.scheduler.setPriority(terminalId, priority)
+        }
+        const priority = slot.priorities.get(terminalId) ?? { visible: true, focused: false }
+        slot.scheduler.enqueue(
+          terminalId,
+          { command, transfer },
+          workerCommandBytes(command),
+          priority,
+          `${command.generation}:${command.sequence}`,
+        )
       },
+      schedulerSnapshot: () => slot.scheduler.snapshot(),
       release: () => {
         if (released) return;
         released = true;
+        slot.scheduler.cancel(terminalId)
+        slot.priorities.delete(terminalId)
         slot.terminals.delete(terminalId);
       },
     };
@@ -72,8 +109,15 @@ export class TerminalWorkerPool {
   }
 
   private createSlot(): Slot {
+    const worker = this.createWorker(this.slots.length + 1)
+    const workerHolder = { current: worker }
     const slot: Slot = {
-      worker: this.createWorker(this.slots.length + 1),
+      worker,
+      workerHolder,
+      scheduler: new FairWorkerScheduler((_terminalId, queued) => {
+        workerHolder.current.postMessage(queued.command, [...queued.transfer])
+      }),
+      priorities: new Map(),
       terminals: new Map(),
     };
     this.installSlotListeners(slot);
@@ -92,13 +136,20 @@ export class TerminalWorkerPool {
     worker.addEventListener("message", event => {
       const value = event.data;
       if (typeof value !== "object" || value === null || !("terminalId" in value) || typeof value.terminalId !== "string") return;
+      if (validateTerminalWorkerEvent(value) &&
+          (value.type === "completed" || value.type === "ready" ||
+            value.type === "recoverableError" || value.type === "fatalError")) {
+        slot.scheduler.complete(value.terminalId, `${value.generation}:${value.sequence}`)
+      }
       slot.terminals.get(value.terminalId)?.message(value);
     });
     const fail = (reason: unknown) => {
       if (this.disposed || slot.worker !== worker) return;
       const error = reason instanceof Error ? reason : new Error("Terminal worker failed");
       worker.terminate();
+      slot.scheduler.reset()
       slot.worker = this.createWorker(this.slots.indexOf(slot) + 1);
+      slot.workerHolder.current = slot.worker
       this.installSlotListeners(slot);
       for (const listener of slot.terminals.values()) listener.error(error);
     };

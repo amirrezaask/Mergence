@@ -7,7 +7,6 @@ use std::{
     sync::{
         Arc, Mutex, Weak,
         atomic::{AtomicU64, Ordering},
-        mpsc,
     },
     thread,
     time::Instant,
@@ -15,6 +14,7 @@ use std::{
 
 use base64::Engine as _;
 use bytes::Bytes;
+use crossbeam_channel::{Receiver, Sender, TryRecvError, bounded, select_biased};
 use portable_pty::{Child, CommandBuilder, MasterPty, PtySize, native_pty_system};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -229,6 +229,135 @@ struct EntryState {
     last_checkpoint_at: Instant,
 }
 
+type Reply<T> = Sender<Result<T, TerminalError>>;
+
+enum TerminalCommand {
+    Inspect {
+        reply: Reply<TerminalInspect>,
+    },
+    Write {
+        data: Bytes,
+        reply: Reply<()>,
+    },
+    Authorize {
+        principal_id: String,
+        connection_id: String,
+        fence: Option<TerminalMutationFence>,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    AuthorizeAndWrite {
+        principal_id: String,
+        connection_id: String,
+        fence: Option<TerminalMutationFence>,
+        data: Bytes,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    SetTheme {
+        theme: TerminalTheme,
+        reply: Reply<()>,
+    },
+    Resize {
+        cols: u16,
+        rows: u16,
+        reply: Reply<()>,
+    },
+    AuthorizeAndResize {
+        principal_id: String,
+        connection_id: String,
+        fence: Option<TerminalMutationFence>,
+        cols: u16,
+        rows: u16,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    Attach {
+        client_id: String,
+        after_sequence: u64,
+        reply: Reply<TerminalAttach>,
+    },
+    MarkReplayReady {
+        client_id: String,
+        reply: Reply<()>,
+    },
+    Detach {
+        client_id: String,
+        reply: Reply<()>,
+    },
+    Dispose {
+        reply: Reply<()>,
+    },
+    AuthorizeAndDispose {
+        principal_id: String,
+        connection_id: String,
+        fence: Option<TerminalMutationFence>,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    GetLiveCwd {
+        reply: Reply<Option<PathBuf>>,
+    },
+    AcquireLease {
+        request: TerminalLeaseRequest,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    RenewLease {
+        lease_id: String,
+        principal_id: String,
+        connection_id: String,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    ReleaseLease {
+        lease_id: String,
+        principal_id: String,
+        connection_id: String,
+        reply: Reply<()>,
+    },
+    Takeover {
+        principal_id: String,
+        connection_id: String,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    Transfer {
+        lease_id: String,
+        principal_id: String,
+        connection_id: String,
+        target_connection_id: String,
+        reply: Reply<RuntimeTerminalLease>,
+    },
+    ListLeases {
+        reply: Reply<Vec<RuntimeTerminalLease>>,
+    },
+    ReleaseConnection {
+        connection_id: String,
+    },
+}
+
+impl TerminalCommand {
+    const fn is_urgent(&self) -> bool {
+        matches!(
+            self,
+            Self::Write { .. }
+                | Self::Authorize { .. }
+                | Self::AuthorizeAndWrite { .. }
+                | Self::Resize { .. }
+                | Self::AuthorizeAndResize { .. }
+                | Self::Attach { .. }
+                | Self::Dispose { .. }
+                | Self::AuthorizeAndDispose { .. }
+                | Self::AcquireLease { .. }
+                | Self::RenewLease { .. }
+                | Self::ReleaseLease { .. }
+                | Self::Takeover { .. }
+                | Self::Transfer { .. }
+                | Self::ReleaseConnection { .. }
+        )
+    }
+}
+
+enum OutputMessage {
+    Bytes(Bytes),
+    Eof,
+    ReadFailed(std::io::ErrorKind),
+}
+
 struct TerminalEntry {
     id: String,
     title: Option<String>,
@@ -237,15 +366,12 @@ struct TerminalEntry {
     spawn_cwd: PathBuf,
     os_pid: Option<u32>,
     process_identity: Option<ProcessIdentity>,
-    master: Mutex<Box<dyn MasterPty + Send>>,
-    writer: Mutex<Box<dyn Write + Send>>,
-    child: Mutex<Box<dyn Child + Send + Sync>>,
-    state: Mutex<EntryState>,
+    urgent_commands: Sender<TerminalCommand>,
+    normal_commands: Sender<TerminalCommand>,
 }
 
 pub struct TerminalHost {
     entries: Mutex<HashMap<String, Arc<TerminalEntry>>>,
-    control: Mutex<TerminalControlRegistry>,
     events: Arc<EventHub>,
     next_id: AtomicU64,
     cleanup_tx: tokio::sync::mpsc::UnboundedSender<(String, String)>,
@@ -262,7 +388,6 @@ impl TerminalHost {
         let (cleanup_tx, mut cleanup_rx) = tokio::sync::mpsc::unbounded_channel();
         let host = Arc::new(Self {
             entries: Mutex::new(HashMap::new()),
-            control: Mutex::new(TerminalControlRegistry::new()),
             events,
             next_id: AtomicU64::new(0),
             cleanup_tx,
@@ -297,28 +422,27 @@ impl TerminalHost {
         if !cwd.is_dir() {
             return Err(TerminalError::Invalid("cwd is not a directory".to_owned()));
         }
-        {
-            let mut entries = self
+        let at_capacity = self
+            .entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .len()
+            >= MAX_ENTRIES;
+        if at_capacity {
+            let ids = self
                 .entries
                 .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            if entries.len() >= MAX_ENTRIES {
-                let exited = entries
-                    .iter()
-                    .find(|(_, entry)| {
-                        entry
-                            .state
-                            .lock()
-                            .unwrap_or_else(|poisoned| poisoned.into_inner())
-                            .status
-                            == TerminalProcessStatus::Exited
-                    })
-                    .map(|(id, _)| id.clone());
-                if let Some(id) = exited {
-                    entries.remove(&id);
-                }
-            }
-            if entries.len() >= MAX_ENTRIES {
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>();
+            let exited = ids.into_iter().find(|id| {
+                self.inspect(id)
+                    .is_some_and(|entry| entry.status == TerminalProcessStatus::Exited)
+            });
+            if let Some(id) = exited {
+                let _ = self.dispose(&id);
+            } else {
                 return Err(TerminalError::Limit);
             }
         }
@@ -391,6 +515,9 @@ impl TerminalHost {
             .is_none()
             .then(|| Path::new(&command).file_name()?.to_str().map(str::to_owned))
             .flatten();
+        let (urgent_command_tx, urgent_command_rx) = bounded(64);
+        let (normal_command_tx, normal_command_rx) = bounded(64);
+        let (output_tx, output_rx) = bounded(64);
         let entry = Arc::new(TerminalEntry {
             id: id.clone(),
             title: title.clone(),
@@ -399,48 +526,54 @@ impl TerminalHost {
             spawn_cwd: cwd,
             os_pid,
             process_identity: process_identity.clone(),
-            master: Mutex::new(pair.master),
-            writer: Mutex::new(writer),
-            child: Mutex::new(child),
-            state: Mutex::new(EntryState {
-                status: TerminalProcessStatus::Running,
-                exit_code: None,
-                signal: None,
-                sequence: 0,
-                replay: VecDeque::new(),
-                replay_bytes: 0,
-                replay_truncated: false,
-                cols,
-                rows,
-                disposed: false,
-                replay_ready_clients: HashSet::new(),
-                query_leftover: Vec::new(),
-                osc7_scanner: Osc7Scanner::default(),
-                terminal_theme,
-                theme_updates_enabled: false,
-                live_cwd: None,
-                recorder: self.checkpoints.then(|| vt100::Parser::new(rows, cols, 0)),
-                checkpoint: None,
-                bytes_since_checkpoint: 0,
-                last_checkpoint_at: Instant::now(),
-            }),
+            urgent_commands: urgent_command_tx,
+            normal_commands: normal_command_tx,
         });
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .register_terminal(&id, &terminal_epoch)?;
+        let state = EntryState {
+            status: TerminalProcessStatus::Running,
+            exit_code: None,
+            signal: None,
+            sequence: 0,
+            replay: VecDeque::new(),
+            replay_bytes: 0,
+            replay_truncated: false,
+            cols,
+            rows,
+            disposed: false,
+            replay_ready_clients: HashSet::new(),
+            query_leftover: Vec::new(),
+            osc7_scanner: Osc7Scanner::default(),
+            terminal_theme,
+            theme_updates_enabled: false,
+            live_cwd: None,
+            recorder: self.checkpoints.then(|| vt100::Parser::new(rows, cols, 0)),
+            checkpoint: None,
+            bytes_since_checkpoint: 0,
+            last_checkpoint_at: Instant::now(),
+        };
         self.entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
             .insert(id.clone(), Arc::clone(&entry));
 
-        let (output_tx, output_rx) = mpsc::sync_channel(64);
         let weak = Arc::downgrade(self);
         let owner_entry = Arc::clone(&entry);
         thread::Builder::new()
             .name(format!("yaade-terminal-owner-{id}"))
             .stack_size(1024 * 1024)
-            .spawn(move || output_loop(weak, owner_entry, output_rx))
+            .spawn(move || {
+                terminal_owner_loop(
+                    weak,
+                    owner_entry,
+                    pair.master,
+                    writer,
+                    child,
+                    state,
+                    urgent_command_rx,
+                    normal_command_rx,
+                    output_rx,
+                );
+            })
             .map_err(|error| TerminalError::Runtime(error.to_string()))?;
         thread::Builder::new()
             .name(format!("yaade-pty-reader-{id}"))
@@ -466,25 +599,36 @@ impl TerminalHost {
             .ok_or_else(|| TerminalError::NotFound(id.to_owned()))
     }
 
+    fn request<T>(
+        &self,
+        entry: &TerminalEntry,
+        command: impl FnOnce(Reply<T>) -> TerminalCommand,
+    ) -> Result<T, TerminalError> {
+        let (reply, result) = bounded(1);
+        let command = command(reply);
+        let commands = if command.is_urgent() {
+            &entry.urgent_commands
+        } else {
+            &entry.normal_commands
+        };
+        commands.try_send(command).map_err(|error| match error {
+            crossbeam_channel::TrySendError::Full(_) => {
+                TerminalError::Runtime("terminal control mailbox is full".to_owned())
+            }
+            crossbeam_channel::TrySendError::Disconnected(_) => {
+                TerminalError::Runtime("terminal owner stopped".to_owned())
+            }
+        })?;
+        result
+            .recv_timeout(std::time::Duration::from_secs(30))
+            .map_err(|_| TerminalError::Runtime("terminal owner reply timed out".to_owned()))?
+    }
+
     #[must_use]
     pub fn inspect(&self, id: &str) -> Option<TerminalInspect> {
         let entry = self.entry(id).ok()?;
-        let state = entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        Some(TerminalInspect {
-            id: entry.id.clone(),
-            title: entry.title.clone(),
-            status: state.status,
-            exit_code: state.exit_code,
-            signal: state.signal,
-            spawn_command: entry.spawn_command.clone(),
-            spawn_cwd: entry.spawn_cwd.display().to_string(),
-            os_pid: entry.os_pid,
-            process_identity: entry.process_identity.clone(),
-            terminal_epoch: entry.terminal_epoch.clone(),
-        })
+        self.request(&entry, |reply| TerminalCommand::Inspect { reply })
+            .ok()
     }
 
     pub fn write(&self, id: &str, data: &[u8]) -> Result<(), TerminalError> {
@@ -494,14 +638,33 @@ impl TerminalHost {
             ));
         }
         let entry = self.entry(id)?;
-        let mut writer = entry
-            .writer
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        writer
-            .write_all(data)
-            .and_then(|()| writer.flush())
-            .map_err(|error| TerminalError::Runtime(error.to_string()))
+        self.request(&entry, |reply| TerminalCommand::Write {
+            data: Bytes::copy_from_slice(data),
+            reply,
+        })
+    }
+
+    pub fn authorize_and_write(
+        &self,
+        id: &str,
+        principal_id: &str,
+        connection_id: &str,
+        fence: Option<TerminalMutationFence>,
+        data: Bytes,
+    ) -> Result<RuntimeTerminalLease, TerminalError> {
+        if data.len() > MAX_WRITE_BYTES {
+            return Err(TerminalError::Invalid(
+                "terminal write exceeds 1 MiB".to_owned(),
+            ));
+        }
+        let entry = self.entry(id)?;
+        self.request(&entry, |reply| TerminalCommand::AuthorizeAndWrite {
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            fence,
+            data,
+            reply,
+        })
     }
 
     pub fn write_base64(&self, id: &str, encoded: &str) -> Result<(), TerminalError> {
@@ -511,56 +674,52 @@ impl TerminalHost {
         self.write(id, &data)
     }
 
+    pub fn authorize_and_write_base64(
+        &self,
+        id: &str,
+        principal_id: &str,
+        connection_id: &str,
+        fence: Option<TerminalMutationFence>,
+        encoded: &str,
+    ) -> Result<RuntimeTerminalLease, TerminalError> {
+        let data = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .map_err(|error| TerminalError::Invalid(error.to_string()))?;
+        self.authorize_and_write(id, principal_id, connection_id, fence, Bytes::from(data))
+    }
+
     pub fn set_theme(&self, id: &str, theme: TerminalTheme) -> Result<(), TerminalError> {
         let entry = self.entry(id)?;
-        let mut state = entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.terminal_theme == theme {
-            return Ok(());
-        }
-        state.terminal_theme = theme;
-        if state.theme_updates_enabled
-            && let Ok(mut writer) = entry.writer.lock()
-        {
-            let _ = write_terminal_theme_preference(&mut **writer, theme);
-            let _ = writer.flush();
-        }
-        Ok(())
+        self.request(&entry, |reply| TerminalCommand::SetTheme { theme, reply })
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
-        let cols = cols.clamp(1, 1000);
-        let rows = rows.clamp(1, 1000);
         let entry = self.entry(id)?;
-        entry
-            .master
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .resize(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(|error| TerminalError::Runtime(error.to_string()))?;
-        let mut state = entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        state.cols = cols;
-        state.rows = rows;
-        if state.recorder.is_some() {
-            state
-                .recorder
-                .as_mut()
-                .expect("recorder checked")
-                .screen_mut()
-                .set_size(rows, cols);
-            store_checkpoint(&entry.terminal_epoch, &mut state);
-        }
-        Ok(())
+        self.request(&entry, |reply| TerminalCommand::Resize {
+            cols,
+            rows,
+            reply,
+        })
+    }
+
+    pub fn authorize_and_resize(
+        &self,
+        id: &str,
+        principal_id: &str,
+        connection_id: &str,
+        fence: Option<TerminalMutationFence>,
+        cols: u16,
+        rows: u16,
+    ) -> Result<RuntimeTerminalLease, TerminalError> {
+        let entry = self.entry(id)?;
+        self.request(&entry, |reply| TerminalCommand::AuthorizeAndResize {
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            fence,
+            cols,
+            rows,
+            reply,
+        })
     }
 
     pub fn attach(
@@ -570,56 +729,10 @@ impl TerminalHost {
         after_sequence: u64,
     ) -> Result<TerminalAttach, TerminalError> {
         let entry = self.entry(id)?;
-        let state = entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        let replay_floor = state
-            .replay
-            .front()
-            .map_or(state.sequence + 1, |chunk| chunk.sequence);
-        let checkpoint = state
-            .checkpoint
-            .as_ref()
-            .filter(|checkpoint| state.replay_truncated && after_sequence < checkpoint.sequence)
-            .cloned();
-        let raw_after = checkpoint.as_ref().map_or(after_sequence, |checkpoint| {
-            after_sequence.max(checkpoint.sequence)
-        });
-        let truncated =
-            state.replay_truncated && checkpoint.is_none() && after_sequence + 1 < replay_floor;
-        let mut output_chunks = state
-            .replay
-            .iter()
-            .filter(|chunk| chunk.sequence > raw_after)
-            .map(|chunk| Base64Bytes(chunk.data.clone()))
-            .collect::<Vec<_>>();
-        if self.history.available(id) && raw_after < state.sequence {
-            output_chunks = bounded_replay_tail(output_chunks, EXITED_REPLAY_BYTES);
-        }
-        Ok(TerminalAttach {
-            id: entry.id.clone(),
-            title: entry.title.clone(),
-            terminal_epoch: entry.terminal_epoch.clone(),
-            replay_quality: if checkpoint.is_some() {
-                "checkpoint"
-            } else if truncated {
-                "degraded"
-            } else {
-                "exact"
-            },
-            checkpoint,
-            output_chunks,
-            output: Base64Bytes(Bytes::new()),
-            replay_truncated: state.replay_truncated && after_sequence + 1 < replay_floor,
-            replay_needs_query_responses: !state.replay_ready_clients.contains(client_id),
-            archive_available: true,
-            last_sequence: state.sequence,
-            cols: state.cols,
-            rows: state.rows,
-            status: state.status,
-            exit_code: state.exit_code,
-            signal: state.signal,
+        self.request(&entry, |reply| TerminalCommand::Attach {
+            client_id: client_id.to_owned(),
+            after_sequence,
+            reply,
         })
     }
 
@@ -637,24 +750,18 @@ impl TerminalHost {
 
     pub fn mark_replay_ready(&self, id: &str, client_id: &str) -> Result<(), TerminalError> {
         let entry = self.entry(id)?;
-        entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .replay_ready_clients
-            .insert(client_id.to_owned());
-        Ok(())
+        self.request(&entry, |reply| TerminalCommand::MarkReplayReady {
+            client_id: client_id.to_owned(),
+            reply,
+        })
     }
 
     pub fn detach(&self, id: &str, client_id: &str) -> Result<(), TerminalError> {
         let entry = self.entry(id)?;
-        entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .replay_ready_clients
-            .remove(client_id);
-        Ok(())
+        self.request(&entry, |reply| TerminalCommand::Detach {
+            client_id: client_id.to_owned(),
+            reply,
+        })
     }
 
     pub fn dispose(&self, id: &str) -> Result<(), TerminalError> {
@@ -665,31 +772,7 @@ impl TerminalHost {
             .get(id)
             .cloned()
             .ok_or_else(|| TerminalError::NotFound(id.to_owned()))?;
-        {
-            let mut state = entry
-                .state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            state.disposed = true;
-        }
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .unregister_terminal(id, Some(&entry.terminal_epoch));
-
-        // The child handle remains registered until the OS accepts the kill
-        // request. History compression and quota IO can never precede or
-        // prevent process termination.
-        let mut child = entry
-            .child
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if !matches!(child.try_wait(), Ok(Some(_))) {
-            child
-                .kill()
-                .map_err(|error| TerminalError::Runtime(error.to_string()))?;
-        }
-        drop(child);
+        self.request(&entry, |reply| TerminalCommand::Dispose { reply })?;
         self.entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
@@ -698,6 +781,27 @@ impl TerminalHost {
             eprintln!("failed to enqueue terminal history finalization for {id}: {error}");
         }
         Ok(())
+    }
+
+    pub fn authorize_and_dispose(
+        &self,
+        id: &str,
+        principal_id: &str,
+        connection_id: &str,
+        fence: Option<TerminalMutationFence>,
+    ) -> Result<RuntimeTerminalLease, TerminalError> {
+        let entry = self.entry(id)?;
+        let lease = self.request(&entry, |reply| TerminalCommand::AuthorizeAndDispose {
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            fence,
+            reply,
+        })?;
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .remove(id);
+        Ok(lease)
     }
 
     pub fn stop_all(&self) {
@@ -716,17 +820,11 @@ impl TerminalHost {
 
     pub fn get_cwd(&self, id: &str) -> Result<String, TerminalError> {
         let entry = self.entry(id)?;
+        let live_cwd = self.request(&entry, |reply| TerminalCommand::GetLiveCwd { reply })?;
         let cwd = entry
             .os_pid
             .and_then(process_cwd)
-            .or_else(|| {
-                entry
-                    .state
-                    .lock()
-                    .unwrap_or_else(|poisoned| poisoned.into_inner())
-                    .live_cwd
-                    .clone()
-            })
+            .or(live_cwd)
             .unwrap_or_else(|| entry.spawn_cwd.clone());
         url::Url::from_file_path(cwd)
             .map(String::from)
@@ -755,17 +853,16 @@ impl TerminalHost {
         mode: TerminalLeaseMode,
     ) -> Result<RuntimeTerminalLease, TerminalError> {
         let entry = self.entry(id)?;
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .acquire(TerminalLeaseRequest {
+        self.request(&entry, |reply| TerminalCommand::AcquireLease {
+            request: TerminalLeaseRequest {
                 terminal_id: id.to_owned(),
                 terminal_epoch: entry.terminal_epoch.clone(),
                 principal_id: principal_id.to_owned(),
                 connection_id: connection_id.to_owned(),
                 mode,
-            })
-            .map_err(Into::into)
+            },
+            reply,
+        })
     }
 
     pub fn renew_lease(
@@ -776,17 +873,12 @@ impl TerminalHost {
         connection_id: &str,
     ) -> Result<RuntimeTerminalLease, TerminalError> {
         let entry = self.entry(id)?;
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .renew(
-                id,
-                &entry.terminal_epoch,
-                lease_id,
-                principal_id,
-                connection_id,
-            )
-            .map_err(Into::into)
+        self.request(&entry, |reply| TerminalCommand::RenewLease {
+            lease_id: lease_id.to_owned(),
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            reply,
+        })
     }
 
     pub fn release_lease(
@@ -797,17 +889,12 @@ impl TerminalHost {
         connection_id: &str,
     ) -> Result<(), TerminalError> {
         let entry = self.entry(id)?;
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .release(
-                id,
-                &entry.terminal_epoch,
-                lease_id,
-                principal_id,
-                connection_id,
-            )
-            .map_err(Into::into)
+        self.request(&entry, |reply| TerminalCommand::ReleaseLease {
+            lease_id: lease_id.to_owned(),
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            reply,
+        })
     }
 
     pub fn takeover(
@@ -817,11 +904,11 @@ impl TerminalHost {
         connection_id: &str,
     ) -> Result<RuntimeTerminalLease, TerminalError> {
         let entry = self.entry(id)?;
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .force_takeover(id, &entry.terminal_epoch, principal_id, connection_id)
-            .map_err(Into::into)
+        self.request(&entry, |reply| TerminalCommand::Takeover {
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            reply,
+        })
     }
 
     pub fn transfer(
@@ -833,43 +920,53 @@ impl TerminalHost {
         target_connection_id: &str,
     ) -> Result<RuntimeTerminalLease, TerminalError> {
         let entry = self.entry(id)?;
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .transfer(
-                id,
-                &entry.terminal_epoch,
-                lease_id,
-                principal_id,
-                connection_id,
-                principal_id,
-                target_connection_id,
-            )
-            .map_err(Into::into)
+        self.request(&entry, |reply| TerminalCommand::Transfer {
+            lease_id: lease_id.to_owned(),
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            target_connection_id: target_connection_id.to_owned(),
+            reply,
+        })
     }
 
     pub fn list_leases(&self, id: &str) -> Result<Vec<RuntimeTerminalLease>, TerminalError> {
-        self.entry(id)?;
-        self.control
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list(id)
-            .map_err(Into::into)
+        let entry = self.entry(id)?;
+        self.request(&entry, |reply| TerminalCommand::ListLeases { reply })
     }
 
     #[must_use]
     pub fn list_all_leases(&self) -> Vec<RuntimeTerminalLease> {
-        self.control
+        let entries = self
+            .entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .list_all()
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        entries
+            .into_iter()
+            .flat_map(|entry| {
+                self.request(&entry, |reply| TerminalCommand::ListLeases { reply })
+                    .unwrap_or_default()
+            })
+            .collect()
     }
 
     pub fn release_connection(&self, connection_id: &str) {
-        self.control
+        let entries = self
+            .entries
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
-            .release_connection(connection_id);
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in entries {
+            let _ = entry
+                .urgent_commands
+                .try_send(TerminalCommand::ReleaseConnection {
+                    connection_id: connection_id.to_owned(),
+                });
+        }
     }
 
     pub fn authorize_or_acquire(
@@ -879,142 +976,575 @@ impl TerminalHost {
         connection_id: &str,
         supplied: Option<TerminalMutationFence>,
     ) -> Result<RuntimeTerminalLease, TerminalError> {
-        if let Some(mut fence) = supplied {
-            fence.principal_id = principal_id.to_owned();
-            fence.connection_id = connection_id.to_owned();
-            return self
-                .control
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .authorize_mutation(&fence)
-                .map_err(Into::into);
-        }
-        let existing = self.list_leases(id)?.into_iter().find(|lease| {
-            lease.mode == TerminalLeaseMode::Writer
-                && lease.principal_id == principal_id
-                && lease.connection_id == connection_id
-        });
-        existing.map_or_else(
-            || self.acquire_lease(id, principal_id, connection_id, TerminalLeaseMode::Writer),
-            Ok,
-        )
+        let entry = self.entry(id)?;
+        self.request(&entry, |reply| TerminalCommand::Authorize {
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            fence: supplied,
+            reply,
+        })
     }
 }
 
-fn pty_reader_loop(output: mpsc::SyncSender<Bytes>, reader: &mut Box<dyn Read + Send>) {
+fn pty_reader_loop(output: Sender<OutputMessage>, reader: &mut Box<dyn Read + Send>) {
     let mut buffer = vec![0_u8; 64 * 1024];
     loop {
         match reader.read(&mut buffer) {
-            Ok(0) => break,
+            Ok(0) => {
+                let _ = output.send(OutputMessage::Eof);
+                break;
+            }
             Ok(read) => {
                 if output
-                    .send(Bytes::copy_from_slice(&buffer[..read]))
+                    .send(OutputMessage::Bytes(Bytes::copy_from_slice(
+                        &buffer[..read],
+                    )))
                     .is_err()
                 {
                     break;
                 }
             }
             Err(error) if error.kind() == std::io::ErrorKind::Interrupted => continue,
-            Err(_) => break,
+            Err(error) => {
+                let _ = output.send(OutputMessage::ReadFailed(error.kind()));
+                break;
+            }
         }
     }
 }
 
-fn output_loop(host: Weak<TerminalHost>, entry: Arc<TerminalEntry>, output: mpsc::Receiver<Bytes>) {
-    while let Ok(data) = output.recv() {
-        let Some(host) = host.upgrade() else {
-            return;
+#[allow(clippy::too_many_arguments)]
+fn terminal_owner_loop(
+    host: Weak<TerminalHost>,
+    entry: Arc<TerminalEntry>,
+    master: Box<dyn MasterPty + Send>,
+    mut writer: Box<dyn Write + Send>,
+    mut child: Box<dyn Child + Send + Sync>,
+    mut state: EntryState,
+    urgent_commands: Receiver<TerminalCommand>,
+    normal_commands: Receiver<TerminalCommand>,
+    output: Receiver<OutputMessage>,
+) {
+    let mut control = TerminalControlRegistry::new();
+    if control
+        .register_terminal(&entry.id, &entry.terminal_epoch)
+        .is_err()
+    {
+        return;
+    }
+    macro_rules! handle {
+        ($command:expr) => {
+            if !handle_terminal_command(
+                &host,
+                &entry,
+                &*master,
+                &mut writer,
+                &mut child,
+                &mut state,
+                &mut control,
+                $command,
+            ) {
+                return;
+            }
         };
-        let mut state = entry
-            .state
-            .lock()
-            .unwrap_or_else(|poisoned| poisoned.into_inner());
-        if state.disposed {
-            return;
-        }
-        state.sequence += 1;
-        let sequence = state.sequence;
-        state.replay.push_back(ReplayChunk {
-            sequence,
-            data: data.clone(),
-        });
-        state.replay_bytes = state.replay_bytes.saturating_add(data.len());
-        while state.replay_bytes > MAX_REPLAY_BYTES && state.replay.len() > 1 {
-            if let Some(dropped) = state.replay.pop_front() {
-                state.replay_bytes = state.replay_bytes.saturating_sub(dropped.data.len());
-                state.replay_truncated = true;
+    }
+    let mut output_open = true;
+    let mut exit_observed = false;
+    loop {
+        // Bound each class per turn: input/disposal stays responsive without
+        // allowing a hot producer to starve lifecycle work or PTY output.
+        for _ in 0..16 {
+            match urgent_commands.try_recv() {
+                Ok(command) => handle!(command),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
             }
         }
-        let terminal_requests = feed_terminal_requests(&mut state.query_leftover, &data);
-        let terminal_theme = state.terminal_theme;
-        let mut terminal_queries = Vec::new();
-        for request in terminal_requests {
-            match request {
-                TerminalRequest::Query(query) => {
-                    terminal_queries.push((query, state.theme_updates_enabled));
+        let mut output_bytes = 0_usize;
+        while output_open && output_bytes < 1024 * 1024 {
+            match output.try_recv() {
+                Ok(OutputMessage::Bytes(data)) => {
+                    output_bytes = output_bytes.saturating_add(data.len());
+                    process_terminal_output(&host, &entry, &mut writer, &mut state, data);
                 }
-                TerminalRequest::SetThemeUpdates(enabled) => {
-                    state.theme_updates_enabled = enabled;
+                Ok(OutputMessage::ReadFailed(kind)) => {
+                    eprintln!("[terminal-reader] {} failed: {kind:?}", entry.id);
+                    output_open = false;
+                    break;
                 }
+                Ok(OutputMessage::Eof) | Err(TryRecvError::Disconnected) => {
+                    output_open = false;
+                    break;
+                }
+                Err(TryRecvError::Empty) => break,
             }
         }
-        if !terminal_queries.is_empty()
-            && let Ok(mut writer) = entry.writer.lock()
-        {
-            for (query, theme_updates_enabled) in terminal_queries {
+        for _ in 0..4 {
+            match normal_commands.try_recv() {
+                Ok(command) => handle!(command),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => return,
+            }
+        }
+        if !output_open && !exit_observed {
+            observe_terminal_exit(&host, &entry, &mut child, &mut state);
+            exit_observed = true;
+        }
+        if !output_open {
+            select_biased! {
+                recv(urgent_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
+                recv(normal_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
+            }
+            continue;
+        }
+        select_biased! {
+            recv(urgent_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
+            recv(output) -> message => match message {
+                Ok(OutputMessage::Bytes(data)) => {
+                    process_terminal_output(&host, &entry, &mut writer, &mut state, data);
+                }
+                Ok(OutputMessage::ReadFailed(kind)) => {
+                    eprintln!("[terminal-reader] {} failed: {kind:?}", entry.id);
+                    output_open = false;
+                }
+                Ok(OutputMessage::Eof) | Err(_) => output_open = false,
+            },
+            recv(normal_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
+        }
+    }
+}
+
+fn authorize_terminal(
+    control: &mut TerminalControlRegistry,
+    entry: &TerminalEntry,
+    principal_id: &str,
+    connection_id: &str,
+    supplied: Option<TerminalMutationFence>,
+) -> Result<RuntimeTerminalLease, TerminalError> {
+    if let Some(mut fence) = supplied {
+        fence.principal_id = principal_id.to_owned();
+        fence.connection_id = connection_id.to_owned();
+        return control.authorize_mutation(&fence).map_err(Into::into);
+    }
+    if let Some(existing) = control.list(&entry.id)?.into_iter().find(|lease| {
+        lease.mode == TerminalLeaseMode::Writer
+            && lease.principal_id == principal_id
+            && lease.connection_id == connection_id
+    }) {
+        return Ok(existing);
+    }
+    control
+        .acquire(TerminalLeaseRequest {
+            terminal_id: entry.id.clone(),
+            terminal_epoch: entry.terminal_epoch.clone(),
+            principal_id: principal_id.to_owned(),
+            connection_id: connection_id.to_owned(),
+            mode: TerminalLeaseMode::Writer,
+        })
+        .map_err(Into::into)
+}
+
+fn write_terminal(writer: &mut Box<dyn Write + Send>, data: &Bytes) -> Result<(), TerminalError> {
+    writer
+        .write_all(data)
+        .and_then(|()| writer.flush())
+        .map_err(|error| TerminalError::Runtime(error.to_string()))
+}
+
+fn resize_terminal(
+    master: &dyn MasterPty,
+    entry: &TerminalEntry,
+    state: &mut EntryState,
+    cols: u16,
+    rows: u16,
+) -> Result<(), TerminalError> {
+    let cols = cols.clamp(1, 1000);
+    let rows = rows.clamp(1, 1000);
+    master
+        .resize(PtySize {
+            rows,
+            cols,
+            pixel_width: 0,
+            pixel_height: 0,
+        })
+        .map_err(|error| TerminalError::Runtime(error.to_string()))?;
+    state.cols = cols;
+    state.rows = rows;
+    if let Some(recorder) = state.recorder.as_mut() {
+        recorder.screen_mut().set_size(rows, cols);
+        store_checkpoint(&entry.terminal_epoch, state);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_terminal_command(
+    host: &Weak<TerminalHost>,
+    entry: &TerminalEntry,
+    master: &dyn MasterPty,
+    writer: &mut Box<dyn Write + Send>,
+    child: &mut Box<dyn Child + Send + Sync>,
+    state: &mut EntryState,
+    control: &mut TerminalControlRegistry,
+    command: TerminalCommand,
+) -> bool {
+    match command {
+        TerminalCommand::Inspect { reply } => {
+            let _ = reply.send(Ok(TerminalInspect {
+                id: entry.id.clone(),
+                title: entry.title.clone(),
+                status: state.status,
+                exit_code: state.exit_code,
+                signal: state.signal,
+                spawn_command: entry.spawn_command.clone(),
+                spawn_cwd: entry.spawn_cwd.display().to_string(),
+                os_pid: entry.os_pid,
+                process_identity: entry.process_identity.clone(),
+                terminal_epoch: entry.terminal_epoch.clone(),
+            }));
+        }
+        TerminalCommand::Write { data, reply } => {
+            let _ = reply.send(write_terminal(writer, &data));
+        }
+        TerminalCommand::Authorize {
+            principal_id,
+            connection_id,
+            fence,
+            reply,
+        } => {
+            let _ = reply.send(authorize_terminal(
+                control,
+                entry,
+                &principal_id,
+                &connection_id,
+                fence,
+            ));
+        }
+        TerminalCommand::AuthorizeAndWrite {
+            principal_id,
+            connection_id,
+            fence,
+            data,
+            reply,
+        } => {
+            let result = authorize_terminal(control, entry, &principal_id, &connection_id, fence)
+                .and_then(|lease| write_terminal(writer, &data).map(|()| lease));
+            let _ = reply.send(result);
+        }
+        TerminalCommand::SetTheme { theme, reply } => {
+            if state.terminal_theme != theme {
+                state.terminal_theme = theme;
+                if state.theme_updates_enabled {
+                    let _ = write_terminal_theme_preference(&mut **writer, theme);
+                    let _ = writer.flush();
+                }
+            }
+            let _ = reply.send(Ok(()));
+        }
+        TerminalCommand::Resize { cols, rows, reply } => {
+            let _ = reply.send(resize_terminal(master, entry, state, cols, rows));
+        }
+        TerminalCommand::AuthorizeAndResize {
+            principal_id,
+            connection_id,
+            fence,
+            cols,
+            rows,
+            reply,
+        } => {
+            let result = authorize_terminal(control, entry, &principal_id, &connection_id, fence)
+                .and_then(|lease| {
+                    resize_terminal(master, entry, state, cols, rows).map(|()| lease)
+                });
+            let _ = reply.send(result);
+        }
+        TerminalCommand::Attach {
+            client_id,
+            after_sequence,
+            reply,
+        } => {
+            let archive_available = host
+                .upgrade()
+                .is_some_and(|host| host.history.available(&entry.id));
+            let replay_floor = state
+                .replay
+                .front()
+                .map_or(state.sequence + 1, |chunk| chunk.sequence);
+            let checkpoint = state
+                .checkpoint
+                .as_ref()
+                .filter(|checkpoint| state.replay_truncated && after_sequence < checkpoint.sequence)
+                .cloned();
+            let raw_after = checkpoint.as_ref().map_or(after_sequence, |checkpoint| {
+                after_sequence.max(checkpoint.sequence)
+            });
+            let truncated =
+                state.replay_truncated && checkpoint.is_none() && after_sequence + 1 < replay_floor;
+            let mut output_chunks = state
+                .replay
+                .iter()
+                .filter(|chunk| chunk.sequence > raw_after)
+                .map(|chunk| Base64Bytes(chunk.data.clone()))
+                .collect::<Vec<_>>();
+            if archive_available && raw_after < state.sequence {
+                output_chunks = bounded_replay_tail(output_chunks, EXITED_REPLAY_BYTES);
+            }
+            let _ = reply.send(Ok(TerminalAttach {
+                id: entry.id.clone(),
+                title: entry.title.clone(),
+                terminal_epoch: entry.terminal_epoch.clone(),
+                replay_quality: if checkpoint.is_some() {
+                    "checkpoint"
+                } else if truncated {
+                    "degraded"
+                } else {
+                    "exact"
+                },
+                checkpoint,
+                output_chunks,
+                output: Base64Bytes(Bytes::new()),
+                replay_truncated: state.replay_truncated && after_sequence + 1 < replay_floor,
+                replay_needs_query_responses: !state.replay_ready_clients.contains(&client_id),
+                archive_available,
+                last_sequence: state.sequence,
+                cols: state.cols,
+                rows: state.rows,
+                status: state.status,
+                exit_code: state.exit_code,
+                signal: state.signal,
+            }));
+        }
+        TerminalCommand::MarkReplayReady { client_id, reply } => {
+            state.replay_ready_clients.insert(client_id);
+            let _ = reply.send(Ok(()));
+        }
+        TerminalCommand::Detach { client_id, reply } => {
+            state.replay_ready_clients.remove(&client_id);
+            let _ = reply.send(Ok(()));
+        }
+        TerminalCommand::GetLiveCwd { reply } => {
+            let _ = reply.send(Ok(state.live_cwd.clone()));
+        }
+        TerminalCommand::AcquireLease { request, reply } => {
+            let _ = reply.send(control.acquire(request).map_err(Into::into));
+        }
+        TerminalCommand::RenewLease {
+            lease_id,
+            principal_id,
+            connection_id,
+            reply,
+        } => {
+            let _ = reply.send(
+                control
+                    .renew(
+                        &entry.id,
+                        &entry.terminal_epoch,
+                        &lease_id,
+                        &principal_id,
+                        &connection_id,
+                    )
+                    .map_err(Into::into),
+            );
+        }
+        TerminalCommand::ReleaseLease {
+            lease_id,
+            principal_id,
+            connection_id,
+            reply,
+        } => {
+            let _ = reply.send(
+                control
+                    .release(
+                        &entry.id,
+                        &entry.terminal_epoch,
+                        &lease_id,
+                        &principal_id,
+                        &connection_id,
+                    )
+                    .map_err(Into::into),
+            );
+        }
+        TerminalCommand::Takeover {
+            principal_id,
+            connection_id,
+            reply,
+        } => {
+            let _ = reply.send(
+                control
+                    .force_takeover(
+                        &entry.id,
+                        &entry.terminal_epoch,
+                        &principal_id,
+                        &connection_id,
+                    )
+                    .map_err(Into::into),
+            );
+        }
+        TerminalCommand::Transfer {
+            lease_id,
+            principal_id,
+            connection_id,
+            target_connection_id,
+            reply,
+        } => {
+            let _ = reply.send(
+                control
+                    .transfer(
+                        &entry.id,
+                        &entry.terminal_epoch,
+                        &lease_id,
+                        &principal_id,
+                        &connection_id,
+                        &principal_id,
+                        &target_connection_id,
+                    )
+                    .map_err(Into::into),
+            );
+        }
+        TerminalCommand::ListLeases { reply } => {
+            let _ = reply.send(control.list(&entry.id).map_err(Into::into));
+        }
+        TerminalCommand::ReleaseConnection { connection_id } => {
+            control.release_connection(&connection_id);
+        }
+        TerminalCommand::AuthorizeAndDispose {
+            principal_id,
+            connection_id,
+            fence,
+            reply,
+        } => {
+            let result = authorize_terminal(control, entry, &principal_id, &connection_id, fence)
+                .and_then(|lease| {
+                    state.disposed = true;
+                    control.unregister_terminal(&entry.id, Some(&entry.terminal_epoch));
+                    let killed = if matches!(child.try_wait(), Ok(Some(_))) {
+                        Ok(())
+                    } else {
+                        child
+                            .kill()
+                            .map_err(|error| TerminalError::Runtime(error.to_string()))
+                    };
+                    killed.map(|()| lease)
+                });
+            let should_stop = result.is_ok();
+            if should_stop
+                && let Some(host) = host.upgrade()
+                && let Err(error) = host.history.close_terminal(&entry.id)
+            {
+                eprintln!(
+                    "failed to enqueue terminal history finalization for {}: {error}",
+                    entry.id
+                );
+            }
+            let _ = reply.send(result);
+            if should_stop {
+                return false;
+            }
+        }
+        TerminalCommand::Dispose { reply } => {
+            state.disposed = true;
+            control.unregister_terminal(&entry.id, Some(&entry.terminal_epoch));
+            let result = if matches!(child.try_wait(), Ok(Some(_))) {
+                Ok(())
+            } else {
+                child
+                    .kill()
+                    .map_err(|error| TerminalError::Runtime(error.to_string()))
+            };
+            if let Some(host) = host.upgrade()
+                && let Err(error) = host.history.close_terminal(&entry.id)
+            {
+                eprintln!(
+                    "failed to enqueue terminal history finalization for {}: {error}",
+                    entry.id
+                );
+            }
+            let _ = reply.send(result);
+            return false;
+        }
+    }
+    true
+}
+
+fn process_terminal_output(
+    host: &Weak<TerminalHost>,
+    entry: &TerminalEntry,
+    writer: &mut Box<dyn Write + Send>,
+    state: &mut EntryState,
+    data: Bytes,
+) {
+    if state.disposed {
+        return;
+    }
+    state.sequence += 1;
+    let sequence = state.sequence;
+    state.replay.push_back(ReplayChunk {
+        sequence,
+        data: data.clone(),
+    });
+    state.replay_bytes = state.replay_bytes.saturating_add(data.len());
+    while state.replay_bytes > MAX_REPLAY_BYTES && state.replay.len() > 1 {
+        if let Some(dropped) = state.replay.pop_front() {
+            state.replay_bytes = state.replay_bytes.saturating_sub(dropped.data.len());
+            state.replay_truncated = true;
+        }
+    }
+    let terminal_requests = feed_terminal_requests(&mut state.query_leftover, &data);
+    let terminal_theme = state.terminal_theme;
+    for request in terminal_requests {
+        match request {
+            TerminalRequest::Query(query) => {
                 let _ = write_terminal_query_response(
                     &mut **writer,
                     query,
                     terminal_theme,
-                    theme_updates_enabled,
+                    state.theme_updates_enabled,
                 );
             }
-            let _ = writer.flush();
+            TerminalRequest::SetThemeUpdates(enabled) => state.theme_updates_enabled = enabled,
         }
-        if let Some(cwd) = state.osc7_scanner.feed(&data) {
-            state.live_cwd = Some(cwd.canonicalize().unwrap_or(cwd));
-        }
-        if let Some(recorder) = state.recorder.as_mut() {
-            recorder.process(&data);
-            state.bytes_since_checkpoint = state.bytes_since_checkpoint.saturating_add(data.len());
-            if state.bytes_since_checkpoint >= CHECKPOINT_BYTES
-                || state.last_checkpoint_at.elapsed() >= CHECKPOINT_INTERVAL
-            {
-                store_checkpoint(&entry.terminal_epoch, &mut state);
-            }
-        }
-        drop(state);
-        if let Err(error) = host.history.append(&entry.id, sequence, data.clone()) {
-            eprintln!("[terminal-history] {error}");
-        }
-        host.events
-            .emit_terminal(Arc::<str>::from(entry.id.as_str()), sequence, data);
     }
-    let Some(host) = host.upgrade() else {
+    let _ = writer.flush();
+    if let Some(cwd) = state.osc7_scanner.feed(&data) {
+        state.live_cwd = Some(cwd.canonicalize().unwrap_or(cwd));
+    }
+    if let Some(recorder) = state.recorder.as_mut() {
+        recorder.process(&data);
+        state.bytes_since_checkpoint = state.bytes_since_checkpoint.saturating_add(data.len());
+        if state.bytes_since_checkpoint >= CHECKPOINT_BYTES
+            || state.last_checkpoint_at.elapsed() >= CHECKPOINT_INTERVAL
+        {
+            store_checkpoint(&entry.terminal_epoch, state);
+        }
+    }
+    let Some(host) = host.upgrade() else { return };
+    if let Err(error) = host.history.append(&entry.id, sequence, data.clone()) {
+        eprintln!("[terminal-history] {error}");
+    }
+    host.events
+        .emit_terminal(Arc::<str>::from(entry.id.as_str()), sequence, data);
+}
+
+fn observe_terminal_exit(
+    host: &Weak<TerminalHost>,
+    entry: &TerminalEntry,
+    child: &mut Box<dyn Child + Send + Sync>,
+    state: &mut EntryState,
+) {
+    if state.disposed {
         return;
-    };
-    let exit = entry
-        .child
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner())
-        .wait();
+    }
+    let exit = child.wait();
     let (exit_code, signal) = exit.map_or((1, None), |status| {
         (
             i32::try_from(status.exit_code()).unwrap_or(1),
             status.signal().and_then(signal_number),
         )
     });
-    let mut state = entry
-        .state
-        .lock()
-        .unwrap_or_else(|poisoned| poisoned.into_inner());
-    if state.disposed {
-        return;
-    }
     state.status = TerminalProcessStatus::Exited;
     state.exit_code = Some(exit_code);
     if state.recorder.is_some() {
-        store_checkpoint(&entry.terminal_epoch, &mut state);
+        store_checkpoint(&entry.terminal_epoch, state);
     }
     state.signal = signal;
     while state.replay_bytes > EXITED_REPLAY_BYTES && state.replay.len() > 1 {
@@ -1023,7 +1553,7 @@ fn output_loop(host: Weak<TerminalHost>, entry: Arc<TerminalEntry>, output: mpsc
             state.replay_truncated = true;
         }
     }
-    drop(state);
+    let Some(host) = host.upgrade() else { return };
     let mut args = vec![json!(entry.id), json!(exit_code)];
     if let Some(signal) = signal {
         args.push(json!(signal));

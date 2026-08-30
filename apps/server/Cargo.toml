@@ -20,6 +20,7 @@ embedded-web = ["dep:include_dir"]
 axum = { version = "0.8", features = ["http2", "ws"] }
 base64 = "0.22"
 bytes = "1.10"
+crossbeam-channel = "0.5"
 flate2 = "1.1"
 futures-util = "0.3"
 getrandom = "0.3"

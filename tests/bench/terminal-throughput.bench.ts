@@ -147,7 +147,8 @@ test("bench terminal-stream-throughput", async () => {
 
           const baselineFrame =
             window.__yaadeTest?.getTerminalLifecycle?.()?.lastNextPaintObservedFrame ?? 0
-          let tail = ""
+          const markerBytes = new TextEncoder().encode(currentMarker)
+          let matchedMarkerBytes = 0
           let unsubscribe = () => {}
           let transportArrivedAt = 0
           const markerArrived = new Promise<void>((resolve, reject) => {
@@ -156,15 +157,19 @@ test("bench terminal-stream-throughput", async () => {
               reject(new Error(`terminal marker did not arrive: ${currentMarker}`))
             }, 30_000)
             unsubscribe = terminal.onData(ptyId, data => {
-              const combined = `${tail}${data}`
-              if (!combined.includes(currentMarker)) {
-                tail = combined.slice(-currentMarker.length * 2)
+              for (const byte of data) {
+                if (byte === markerBytes[matchedMarkerBytes]) {
+                  matchedMarkerBytes += 1
+                } else {
+                  matchedMarkerBytes = byte === markerBytes[0] ? 1 : 0
+                }
+                if (matchedMarkerBytes !== markerBytes.length) continue
+                transportArrivedAt = performance.now()
+                window.clearTimeout(timeout)
+                unsubscribe()
+                resolve()
                 return
               }
-              transportArrivedAt = performance.now()
-              window.clearTimeout(timeout)
-              unsubscribe()
-              resolve()
             })
           })
           // Adjacent shell literals evaluate to the marker, while their quote

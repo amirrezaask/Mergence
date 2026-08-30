@@ -52,6 +52,23 @@ export type TerminalWorkerCommandPayload =
 
 export type TerminalWorkerCommand = Envelope & TerminalWorkerCommandPayload;
 
+export type TerminalWorkerDiagnostics = {
+  readonly writes: number;
+  readonly bytesParsed: number;
+  readonly renderBuilds: number;
+  readonly transfers: number;
+  readonly suppressedHidden: number;
+  readonly suppressedSynchronized: number;
+  readonly fullCatchUps: number;
+  readonly synchronizationTimeouts: number;
+  readonly pendingPresentation: boolean;
+  readonly slotsInFlight: number;
+  readonly bufferAllocations: number;
+  readonly schedulerQueueBytes: number;
+  readonly schedulerQueueCommands: number;
+  readonly schedulerInFlight: number;
+};
+
 export type TerminalRuntimeState = {
   readonly title: string;
   readonly scrollbar: { readonly total: number; readonly offset: number; readonly len: number } | null;
@@ -66,9 +83,10 @@ export type TerminalRuntimeState = {
 
 export type TerminalWorkerEvent = Envelope & (
   | { readonly type: "ready" }
+  | { readonly type: "completed" }
   | { readonly type: "packedUpdate"; readonly slotId: number; readonly leaseToken: number; readonly update: GhosttyRenderUpdate; readonly state: TerminalRuntimeState }
   | { readonly type: "encodedInput"; readonly data: string }
-  | { readonly type: "parsed" }
+  | { readonly type: "parsed"; readonly diagnostics: TerminalWorkerDiagnostics }
   | { readonly type: "selectionResult"; readonly result: unknown }
   | { readonly type: "recoverableError" | "fatalError"; readonly message: string }
   | { readonly type: "disposed" }
@@ -118,6 +136,13 @@ export function validateTerminalWorkerCommand(value: unknown): value is Terminal
   }
 }
 
+function validateDiagnostics(value: unknown): value is TerminalWorkerDiagnostics {
+  if (!isRecord(value)) return false;
+  const counters = ["writes", "bytesParsed", "renderBuilds", "transfers", "suppressedHidden", "suppressedSynchronized", "fullCatchUps", "synchronizationTimeouts", "slotsInFlight", "bufferAllocations", "schedulerQueueBytes", "schedulerQueueCommands", "schedulerInFlight"];
+  return counters.every(field => Number.isSafeInteger(value[field]) && Number(value[field]) >= 0) &&
+    typeof value.pendingPresentation === "boolean";
+}
+
 function validateState(value: unknown): value is TerminalRuntimeState {
   return isRecord(value) && typeof value.title === "string" &&
     typeof value.selectionText === "string" && typeof value.viewportActive === "boolean" &&
@@ -130,7 +155,8 @@ function validateState(value: unknown): value is TerminalRuntimeState {
 export function validateTerminalWorkerEvent(value: unknown): value is TerminalWorkerEvent {
   if (!isRecord(value) || !validEnvelope(value) || typeof value.type !== "string") return false;
   switch (value.type) {
-    case "ready": case "parsed": case "disposed": return true;
+    case "ready": case "completed": case "disposed": return true;
+    case "parsed": return validateDiagnostics(value.diagnostics);
     case "encodedInput": return typeof value.data === "string";
     case "packedUpdate": return Number.isSafeInteger(value.slotId) && Number(value.slotId) >= 0 &&
       Number.isSafeInteger(value.leaseToken) && Number(value.leaseToken) >= 1 &&
