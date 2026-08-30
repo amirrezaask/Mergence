@@ -9,7 +9,7 @@ test("rectangle batches reuse storage and enforce their bound", () => {
   assert.equal(batch.push(5, 6, 7, 8, 0.4, 0.5, 0.6), true);
   assert.equal(batch.push(9, 9, 9, 9, 1, 1, 1), false);
   assert.equal(batch.count, 2);
-  assert.deepEqual([...batch.data.slice(0, 4)], [1, 2, 3, 4]);
+  assert.deepEqual(Array.from(batch.data.slice(0, 4)), [1, 2, 3, 4]);
   batch.clear();
   batch.push(0, 0, 1, 1, 1, 1, 1);
   assert.equal(batch.data.buffer, buffer);

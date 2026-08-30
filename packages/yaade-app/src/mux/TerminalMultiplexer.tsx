@@ -34,6 +34,10 @@ import {
 	DialogFooter,
 	DialogHeader,
 	DialogTitle,
+	Sidebar,
+	SidebarHeader,
+	SidebarProvider,
+	SidebarTrigger,
 	Spinner,
 	TooltipProvider,
 } from "@yaade/ui/primitives";
@@ -42,8 +46,8 @@ import {
 	PanelLeftOpen,
 	PanelRightClose,
 	PanelRightOpen,
+	Plus,
 	Settings,
-	Terminal as TerminalIcon,
 } from "lucide-react";
 import {
 	AmbientCanvas,
@@ -523,6 +527,15 @@ export function TerminalMultiplexer() {
 			sidebarCollapsed: !previous.sidebarCollapsed,
 		}));
 	}, [setAppearanceSettings]);
+	const setSidebarOpen = useCallback(
+		(open: boolean) => {
+			setAppearanceSettings((previous) => ({
+				...previous,
+				sidebarCollapsed: !open,
+			}));
+		},
+		[setAppearanceSettings],
+	);
 
 	const resizeSidebar = useCallback(
 		(width: number) => {
@@ -1899,6 +1912,7 @@ export function TerminalMultiplexer() {
 																	<Settings />
 																</Button>
 															</ShortcutTooltip>
+															{!singleSidebarLayout ? (
 															<SessionWindowTabStrip
 																tabs={visibleTabs}
 																activeTabId={activeTab?.id}
@@ -1908,6 +1922,7 @@ export function TerminalMultiplexer() {
 																onRename={(id, title) => void renameTab(id, title)}
 																dockTerminalIdsByTab={dockTerminalIdsByTab}
 															/>
+															) : null}
 														</header>
 													) : null}
 													<div
@@ -1962,7 +1977,7 @@ export function TerminalMultiplexer() {
 																	sidebarsCollapsed && "pointer-events-none max-md:hidden",
 																	"max-md:h-auto max-md:w-full max-md:border-r-0 max-md:border-b",
 																)}
-																aria-label="Navigation"
+																aria-label="Windows"
 																aria-hidden={sidebarsCollapsed || undefined}
 																inert={sidebarsCollapsed || undefined}
 																data-yaade-single-sidebar=""
@@ -1970,46 +1985,74 @@ export function TerminalMultiplexer() {
 																	sidebarsCollapsed ? "collapsed" : "expanded"
 																}
 															>
-																<SessionTabStrip
-																	sessions={visibleSessions}
-																	activeSessionId={snapshot.activeSessionId}
-																	layout="single-sidebar"
-																	collapsed={sidebarsCollapsed}
-																	sidebarOrientation={sidebarOrientation}
-																	onSelect={selectSession}
-																	onClose={requestCloseSession}
-																	onOpenSettings={() => setSettingsOpen(true)}
-																	onCreate={() => void createSession()}
-																	onRename={(id, title) => void renameSession(id, title)}
-																	onReorder={(ids) => void reorderSessions(ids)}
-																	serverNamesBySessionId={serverNamesBySessionId}
-																	terminalCounts={terminalCounts}
-																/>
-																<TerminalTabStrip
-																	terminalIds={terminalIds}
-																	terminalsById={snapshot.terminalsById}
-																	activeMuxTerminalId={snapshot.activeMuxTerminalId}
-																	openMuxTerminalIds={openMuxTerminalIds}
-																	runtimeTitles={runtimeTitles}
-																	sessionTitlesById={sessionTitlesById}
-																	sectionLabel="Terminals"
-																	emptyLabel="No terminals yet"
-																	layout="single-sidebar"
-																	collapsed={sidebarsCollapsed}
-																	sidebarOrientation={sidebarOrientation}
-																	dockable
-																	dockableTerminalIds={activeSessionTerminalIds}
-																	onSelect={selectTerminal}
-																	onAddKind={(kind) => void createTerminal(kind)}
-																	onClose={(terminal) =>
-																		void runTerminalAction("archive", terminal)
-																	}
-																	onRename={(terminal, title) =>
-																		void renameMuxTerminal(terminal, title)
-																	}
-																	onReorder={(ids) => void reorderMuxTerminals(ids)}
-																	onToggleSidebar={toggleSidebars}
-																/>
+																<SidebarProvider
+																	open={!sidebarsCollapsed}
+																	onOpenChange={setSidebarOpen}
+																	className="h-full min-h-0 w-full"
+																>
+																	<Sidebar
+																		collapsible="none"
+																		className="w-full min-w-0 border-0 bg-transparent"
+																	>
+																		<SidebarHeader className="border-b border-sidebar-border/70 p-1">
+																			<div className="flex items-center gap-1">
+																				<SessionSwitcher
+																					open={switcherOpen}
+																					onOpenChange={setSwitcherOpen}
+																					sessions={visibleSessions}
+																					activeSessionId={snapshot.activeSessionId}
+																					onSelect={(session) => selectSession(session.id)}
+																					onCreate={() => void createSession()}
+																					onClose={requestCloseSession}
+																					onRename={(id, title) => void renameSession(id, title)}
+																					terminalCounts={terminalCounts}
+																					serverNamesBySessionId={serverNamesBySessionId}
+																				/>
+																				<ShortcutTooltip
+																					label="Settings"
+																					shortcut={muxSessionDirectShortcutFor("settings.show")}
+																					side="right"
+																				>
+																					<Button
+																						type="button"
+																						size="icon-sm"
+																						variant="ghost"
+																						aria-label="Settings"
+																						onClick={() => setSettingsOpen(true)}
+																						data-yaade-session-settings=""
+																					>
+																						<Settings />
+																					</Button>
+																				</ShortcutTooltip>
+																				<Button
+																					type="button"
+																					variant="ghost"
+																					size="icon-sm"
+																					aria-label="New tab"
+																					title="New tab"
+																					data-yaade-new-session-tab=""
+																					onClick={() => void createTab()}
+																				>
+																					<Plus />
+																				</Button>
+																				<SidebarTrigger
+																					aria-label="Hide Window sidebar"
+																					title="Hide Window sidebar"
+																				/>
+																			</div>
+																		</SidebarHeader>
+																		<SessionWindowTabStrip
+																			placement="sidebar"
+																			tabs={visibleTabs}
+																			activeTabId={activeTab?.id}
+																			onSelect={selectTab}
+																			onCreate={() => void createTab()}
+																			onClose={closeTab}
+																			onRename={(id, title) => void renameTab(id, title)}
+																			dockTerminalIdsByTab={dockTerminalIdsByTab}
+																		/>
+																	</Sidebar>
+																</SidebarProvider>
 															</MotionAside>
 														) : null}
 														{twoSidebarLayout && !sidebarsCollapsed ? (
@@ -2028,7 +2071,7 @@ export function TerminalMultiplexer() {
 																min={MIN_SIDEBAR_WIDTH}
 																max={MAX_SIDEBAR_WIDTH}
 																side="left"
-																label="Resize sidebar"
+																label="Resize Window sidebar"
 																onChange={resizeSidebar}
 															/>
 														) : null}
@@ -2038,7 +2081,7 @@ export function TerminalMultiplexer() {
 																sidebarLayout && "col-start-2",
 															)}
 														>
-															{sidebarLayout ? (
+															{twoSidebarLayout ? (
 																<SessionWindowTabStrip
 																	tabs={visibleTabs}
 																	activeTabId={activeTab?.id}

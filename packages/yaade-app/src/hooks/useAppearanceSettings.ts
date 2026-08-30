@@ -87,10 +87,8 @@ export function themeIdForColorSchemeMode(
   return siblingThemeForScheme(themeId, scheme).id
 }
 
-export function normalizeSessionLayout(_value: PersistedAppearanceValue): SessionLayout {
-  // The multiplexer keeps session and terminal navigation in one top tab bar.
-  // Older layout preferences migrate to the simplified layout.
-  return "tabs"
+export function normalizeSessionLayout(value: PersistedAppearanceValue): SessionLayout {
+  return value === "single-sidebar" ? "single-sidebar" : "tabs"
 }
 
 function preferredColorScheme(): ColorScheme {
@@ -289,12 +287,17 @@ export function useAppearanceSettings() {
     applyColorScheme(colorScheme, activeTheme)
   }, [colorScheme, activeTheme])
 
-  // Theme selection is navigational UI state: persist it with the same commit
-  // that applies the tokens so reloads and other tabs cannot observe the old
-  // palette during the general appearance debounce below.
+  // Theme, tab layout, and sidebar visibility are navigational UI state:
+  // persist them immediately so reloads cannot observe stale chrome during the general
+  // appearance debounce below.
   useEffect(() => {
     persistAppearanceSettings(appearanceSettingsRef.current)
-  }, [appearanceSettings.colorSchemeMode, appearanceSettings.themeId])
+  }, [
+    appearanceSettings.colorSchemeMode,
+    appearanceSettings.sessionLayout,
+    appearanceSettings.sidebarCollapsed,
+    appearanceSettings.themeId,
+  ])
 
   const persistTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   useEffect(() => {

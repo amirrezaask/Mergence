@@ -11,6 +11,8 @@ import {
   LoaderCircle,
   Monitor,
   Moon,
+  PanelLeft,
+  PanelTop,
   Pencil,
   Plus,
   RotateCcw,
@@ -250,7 +252,7 @@ function isSettingsCategory(value: string): value is SettingsCategory {
 const SETTINGS_CATEGORIES = {
   appearance: {
     label: "Appearance",
-    description: "Tune the theme and typography across the app.",
+    description: "Tune navigation, theme, and typography across the app.",
     icon: Brush,
   },
   servers: {
@@ -770,6 +772,55 @@ export function SettingsOverlay({
               <ScrollArea className="size-full">
                 <section className="flex flex-col gap-6 p-5 sm:p-7">
                   <SettingsSectionHeader category="appearance" />
+                  <Separator />
+                  <FieldGroup className="gap-0">
+                    <Field
+                      orientation="responsive"
+                      className="grid items-start gap-3 py-4 first:pt-0 last:pb-0 sm:grid-cols-[minmax(10rem,13rem)_minmax(14rem,1fr)] sm:gap-6"
+                    >
+                      <FieldContent className="min-w-0">
+                        <FieldLabel className="text-sm font-medium leading-snug text-foreground">
+                          Tab layout
+                        </FieldLabel>
+                        <FieldDescription className="mt-1 text-xs leading-relaxed">
+                          Keep Window tabs above the workspace or move them into a sidebar.
+                        </FieldDescription>
+                      </FieldContent>
+                      <ToggleGroup
+                        type="single"
+                        variant="outline"
+                        size="sm"
+                        value={settings.sessionLayout}
+                        aria-label="Tab layout"
+                        className="w-full"
+                        onValueChange={value => {
+                          if (value !== "tabs" && value !== "single-sidebar") return
+                          onSettingsChange(
+                            settingPatch(settings, { sessionLayout: value }),
+                          )
+                        }}
+                      >
+                        <ToggleGroupItem
+                          value="tabs"
+                          aria-label="Horizontal tabs"
+                          className="flex-1"
+                          data-yaade-session-layout-option="tabs"
+                        >
+                          <PanelTop aria-hidden />
+                          Horizontal
+                        </ToggleGroupItem>
+                        <ToggleGroupItem
+                          value="single-sidebar"
+                          aria-label="Vertical tabs"
+                          className="flex-1"
+                          data-yaade-session-layout-option="single-sidebar"
+                        >
+                          <PanelLeft aria-hidden />
+                          Vertical
+                        </ToggleGroupItem>
+                      </ToggleGroup>
+                    </Field>
+                  </FieldGroup>
                   <Separator />
                   <FieldGroup className="gap-0">
                     <div className="pb-3">

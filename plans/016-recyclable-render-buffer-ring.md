@@ -191,7 +191,7 @@ dirty rows without delivering them. Main-thread rendering may retain its simple
 **Out of scope**
 
 - Worker input byte migration (Plan 015), synchronized-output/visibility worker
-  scheduling (Plan 021), or changing the worker pool size/hash policy.
+  scheduling (Plan 025), or changing the worker pool size/hash policy.
 - WebGL retained scene, VBO upload, atlas, Canvas, or renderer semantics (Plan 014).
 - SharedArrayBuffer/cross-origin isolation.
 - More than three normal in-flight slots, an unbounded emergency pool, or

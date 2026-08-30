@@ -2,8 +2,9 @@
 
 Generated on 2026-08-30 at commit `717ed49f`, extended after the resize/TUI
 audit at commit `f21fcdf4`, extended with close-latency Plan 013 against
-`4341fd51`, incremental-submission Plan 014 at `7276f526`, and Ghostty
-performance Plans 015–021 at `7276f526`. These plans modernize the shared
+`4341fd51`, incremental-submission Plan 014 at `7276f526`, Ghostty hot-path
+Plans 015–019 at `7276f526`, and the twelve-plan Ghostty split (020–031) at
+`8bbcd017`. These plans modernize the shared
 browser/Tauri terminal and its host lifecycle without creating a desktop-only
 implementation. Execute them
 in the order below unless the dependency waves say otherwise. Each executor must
@@ -26,15 +27,25 @@ conditions, and update its status.
 | [010](010-retained-gpu-scene-and-glyph-cache.md) | Add a retained GPU scene and stable glyph cache | — | P1 | L | 007, 009 | DONE |
 | [011](011-packed-viewport-hot-path.md) | Keep viewport data packed through rendering | — | P2 | L | 004, 005, 010 | DONE |
 | [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | DONE |
-| [013](013-immediate-terminal-window-close.md) | Make terminal and Window close feedback immediate and bounded | — | P1 | L | 007, 008 | TODO |
-| [014](014-incremental-webgl-scene-submission.md) | Make retained WebGL scene submission incremental | — | P1 | L | 007, 009, 010, 011 | TODO |
+| [013](013-immediate-terminal-window-close.md) | Make terminal and Window close feedback immediate and bounded | — | P1 | L | 007, 008 | DONE |
+| [014](014-incremental-webgl-scene-submission.md) | Make retained WebGL scene submission incremental | — | P1 | L | 007, 009, 010, 011 | DONE |
 | [015](015-byte-native-terminal-stream.md) | Keep terminal output byte-native from PTY read to Ghostty WASM | SolPro P0-1 | P1 | L | — | TODO |
 | [016](016-recyclable-render-buffer-ring.md) | Recycle a bounded three-slot render-update buffer ring | SolPro P0-2 | P1 | M | 015 | TODO |
 | [017](017-isolated-socket-writer-and-terminal-fanout.md) | Isolate socket writing and fan out output only to attached clients | SolPro P0-4/5 | P1 | L | 015 | TODO |
 | [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | TODO |
 | [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | TODO |
-| [020](020-native-libghostty-vt-server-state.md) | Make native libghostty-vt the server terminal-state authority | SolPro P1-7/8 | P2 | L | 019 | TODO |
-| [021](021-terminal-worker-scheduling-and-build-budgets.md) | Suppress unnecessary worker frames and make terminal builds measurable | SolPro P1-9/10 + build/bench | P2 | L | 014, 015, 016 | TODO |
+| [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | TODO |
+| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | TODO |
+| [022](022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | TODO |
+| [023](023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | TODO |
+| [024](024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | TODO |
+| [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | TODO |
+| [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | TODO |
+| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | TODO |
+| [028](028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | TODO |
+| [029](029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | TODO |
+| [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | TODO |
+| [031](031-conditional-shaped-run-cache.md) | Add a shaped-run cache only when profiling or conformance requires it | SolPro conditional shaping | P3 | M | 009, 014, 022, 027 | TODO |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
@@ -74,12 +85,14 @@ path. Cursor-only frames perform no terminal-scene transfer, stable-topology
 row updates patch exact GPU ranges, and topology/barrier changes retain a
 bounded full-compaction fallback.
 
-Plans 015–021 turn the SolPro Ghostty comparison into executable ownership and
-measurement work. They remove terminal-text round trips, return transferred
-render buffers, activate isolated socket mailboxes and attached-only fan-out,
-move durable history off the PTY path, give each terminal an actor owner, adopt
-the same pinned libghostty-vt revision on the server, and suppress hidden/
-synchronized worker frame preparation while verifying build choices.
+Plans 015–031 turn the SolPro Ghostty comparison into executable ownership and
+measurement work. Plans 015–019 cover byte transport, recyclable frame buffers,
+socket/fan-out isolation, asynchronous history, and terminal actor ownership.
+Plans 020–031 are twelve separate plans for native source/ABI, a safe Rust
+wrapper, native/WASM parity, server migration, checkpoint feasibility, worker
+presentation suppression, worker fairness, browser subsystem benchmarks, WASM
+optimization/SIMD, Rust release packaging, idle buffer reclamation, and a
+conditional shaped-run cache.
 
 ## Dependency notes
 
@@ -121,10 +134,31 @@ synchronized worker frame preparation while verifying build choices.
   deepens both into the full asynchronous ingest/compression/index pipeline.
 - **019 after 017/018:** a terminal actor can publish nonblocking to isolated
   subscribers and enqueue history without retaining socket or disk work.
-- **020 after 019:** native Ghostty handles are thread-confined to the terminal
-  owner rather than put behind another shared parser mutex.
-- **021 after 014/015/016:** hidden/synchronized suppression relies on byte
-  commands, recyclable render slots, and the final retained-renderer counters.
+- **020 independently:** native source/static build/ABI validation can land
+  before server integration and must not acquire terminal policy.
+- **021 after 020:** safe ownership/callback/render lifetimes depend on validated
+  bindings but remain independent from `apps/server`.
+- **022 after 015/020/021:** the differential runner needs exact byte fixtures,
+  a native wrapper, and the same-revision WASM loader.
+- **023 after 019/021/022:** migrate only after the terminal actor can confine the
+  native handle and parity fixtures explain semantic differences.
+- **024 after 018/022/023/027:** checkpoint decisions need indexed history,
+  server/native parity, and measured maximum-history raw replay. The pinned ABI
+  is expected to block public state restore.
+- **025 after 014/015/016:** hidden/synchronized suppression relies on byte
+  commands, recyclable slots, and stabilized retained-renderer semantics.
+- **027 after 025:** subsystem metrics must include final hidden/synchronized
+  presentation ownership before later scheduling/build decisions consume them.
+- **026 after 027:** add worker priority only when the shared-worker contention
+  fixture proves FIFO misses focused latency or fairness targets.
+- **028 after 020/022/027:** compare WASM modes/features with exact source,
+  semantic parity, and stable startup/throughput/memory measurements.
+- **029 after 020/023/027:** release-profile and packaging candidates must contain
+  the final native server dependency and use fixed benchmark workloads.
+- **030 after buffer/history/actor/suppression/benchmark foundations:** reclaim
+  only owner-safe transient high-water capacity with measured hysteresis.
+- **031 after 009/014/022/027:** a shaped-run cache is conditional on conformance
+  or profiling and must preserve Canvas as correctness oracle.
 
 ## Recommended execution waves
 
@@ -140,15 +174,20 @@ synchronized worker frame preparation while verifying build choices.
 6. Run Plan 014 against the stabilized Plan 010/011 renderer. It has no code
    dependency on Plan 013, but execute serially in one working tree because both
    update the plan index and benchmark evidence.
-7. Run Plan 015 first among the Ghostty review work.
-8. After 015, run Plans 016 and 017 in parallel only in isolated worktrees; one
-   is browser-worker ownership and the other server transport/fan-out.
-9. After Plan 013 and 015, run Plan 018. Then run Plan 019 after both 017 and 018.
-10. Run Plan 020 after the terminal actor owns parser state. It requires green
-    Linux, macOS, and Windows ABI/build jobs before completion.
-11. Run Plan 021 after Plans 014–016. It may proceed in parallel with server-only
-    Plans 017–020 in isolated worktrees, but serialize changes to shared docs,
-    CI, benchmarks, and the plan index.
+7. Run Plans 015 and 020 in parallel only in isolated worktrees. They establish
+   byte transport and native source/ABI without depending on each other.
+8. After 015, run Plans 016 and 017. After 020, run Plan 021. These three streams
+   touch different ownership layers but share CI/docs, so merge them serially.
+9. Run Plan 022 after 015/020/021. In parallel, run Plan 018 after 013/015, then
+   Plan 019 after 017/018.
+10. Run Plan 025 after 014/015/016. Run Plan 023 after 019/021/022.
+11. Run Plan 027 after 025 to establish the final subsystem benchmark contract.
+12. After 027, Plans 026, 028, and 031 can run as isolated measured experiments.
+   Plans 026 and 031 may end `REJECTED` when their gates do not justify code.
+13. Run Plans 024 and 029 after Plan 023 and Plan 027. Plan 024 may end `BLOCKED`
+   because the pinned public Ghostty API lacks parser-state import.
+14. Run Plan 030 after its client/server owners and benchmark foundations settle.
+   Serialize all plans that touch shared CI, benchmark fixtures, docs, or README.
 
 ## Cross-plan invariants
 
@@ -193,8 +232,26 @@ synchronized worker frame preparation while verifying build choices.
     owns mutable PTY/parser/control state and guarantees final resize/lifecycle.
 21. Native and WASM Ghostty builds use one exact revision. Private Ghostty memory
     is never a YAADE persistence or wire format.
-22. Hidden/synchronized terminals continue parsing and ACKing while frame
+22. The safe native Ghostty terminal is thread-confined; callbacks are bounded,
+    nonblocking, non-reentrant, and drained after parser writes.
+23. Native/WASM parity compares public state and effect bytes from identical
+    binary corpora, options, and chunk boundaries.
+24. A checkpoint can ship only when fresh-parser continuation equals uninterrupted
+    parsing; render rows or formatter output alone do not restore parser state.
+25. Hidden/synchronized terminals continue parsing and ACKing while frame
     extraction is suppressed; safety timeout and show emit bounded catch-up.
+26. Worker priority never reorders one terminal's commands, acknowledges
+    unparsed bytes, exceeds coordinated bounds, or starves hidden terminals.
+27. Performance gates use release artifacts, pre-generated corpora, semantic
+    completion points, exact work counters, and recorded runtime/hardware context.
+28. WASM mode/SIMD/feature claims come from inspected artifacts plus parity and
+    startup/throughput/replay/memory measurements.
+29. Rust releases remain portable and statically package exact-revision Ghostty;
+    no distributed build uses `target-cpu=native`.
+30. Idle reclamation frees only owner-safe transient capacity after hysteresis;
+    it never drops parser, replay, history, retained scene, or queued data.
+31. A shaped-run cache ships only after conformance or profiling crosses a
+    predeclared threshold and Canvas/WebGL correctness gates pass.
 
 ## Existing evidence and baseline
 
@@ -303,9 +360,19 @@ pre-plan baseline rather than merely passing the existing ceilings.
   004/005 remove parser contention first; Plan 007 must show remaining renderer
   submission work before another worker/canvas failure domain is justified.
 - **Persisting Ghostty page memory as a checkpoint:** rejected. The pinned C ABI
-  exposes render traversal but no public versioned parser-state restore. Plan 020
+  exposes render traversal but no public versioned parser-state restore. Plan 024
   must not persist private pages, pointers, offsets, or allocator state.
 - **Treating a compact render snapshot as restorable terminal state:** rejected
   until libghostty-vt exposes matching public export/import or YAADE chooses a
-  different terminal-state authority. The current synthetic bootstrap remains a
-  documented transitional compatibility path during Plan 020.
+  different terminal-state authority. Plan 023 keeps the current synthetic
+  bootstrap as a transitional path; Plan 024 may end `BLOCKED`.
+- **Adding shared-worker priority without contention evidence:** rejected by
+  default. Plan 026 implements it only when measured FIFO misses explicit latency
+  or fairness bounds.
+- **Choosing ReleaseFast from parser throughput alone:** rejected. Plan 028 also
+  measures compressed size, cold/warm startup, replay, memory, and compatibility.
+- **Shipping `target-cpu=native`:** rejected for distributed server/desktop
+  binaries. Plan 029 compares portable release profiles only.
+- **Adding a shaped-run cache because shaping exists:** rejected by default. Plan
+  031 requires a conformance gap or material profiled cost and removes failed
+  prototype code.

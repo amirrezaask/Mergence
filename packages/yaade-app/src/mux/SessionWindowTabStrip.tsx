@@ -3,13 +3,28 @@ import { LayoutGroup } from "motion/react";
 import { div as MotionDiv } from "motion/react-m";
 import { Plus, SquareTerminal, X } from "lucide-react";
 import type { MuxTerminalId, SessionTab, SessionTabId } from "@yaade/rpc";
-import { Button, Input } from "@yaade/ui/primitives";
+import {
+  Button,
+  Input,
+  SidebarContent,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarMenu,
+  SidebarMenuAction,
+  SidebarMenuButton,
+  SidebarMenuItem,
+} from "@yaade/ui/primitives";
 import { cn, useDockReorderTarget, useDockSource, yaadeMotion } from "@yaade/ui/session";
 import { ShortcutTooltip } from "./ShortcutTooltip.js";
 import { muxSessionShortcutFor } from "./mux-keymap.js";
 
-function handleWindowTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
-  if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+function handleWindowTabKeyDown(
+  event: KeyboardEvent<HTMLElement>,
+  orientation: "horizontal" | "vertical" = "horizontal",
+): void {
+  const previousKey = orientation === "vertical" ? "ArrowUp" : "ArrowLeft";
+  const nextKey = orientation === "vertical" ? "ArrowDown" : "ArrowRight";
+  if (![previousKey, nextKey, "Home", "End"].includes(event.key)) return;
   const tabs = [...event.currentTarget.querySelectorAll<HTMLElement>('[role="tab"]')];
   if (tabs.length === 0) return;
   const activeElement = document.activeElement;
@@ -22,7 +37,7 @@ function handleWindowTabKeyDown(event: KeyboardEvent<HTMLElement>): void {
       ? 0
       : event.key === "End"
         ? tabs.length - 1
-        : (current + (event.key === "ArrowRight" ? 1 : -1) + tabs.length) % tabs.length;
+        : (current + (event.key === nextKey ? 1 : -1) + tabs.length) % tabs.length;
   event.preventDefault();
   tabs[next]?.focus();
   tabs[next]?.click();
@@ -40,6 +55,7 @@ export type SessionWindowTabStripProps = {
   readonly onClose: (tab: SessionTab) => void;
   readonly onRename: (id: SessionTabId, title: string) => void;
   readonly dockTerminalIdsByTab: ReadonlyMap<SessionTabId, MuxTerminalId>;
+  readonly placement?: "header" | "sidebar";
 };
 
 type DockableWindowTabProps = {
@@ -79,9 +95,112 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
     setEditingId(tab.id);
   };
 
+  if (props.placement === "sidebar") {
+    return (
+      <SidebarContent data-yaade-window-sidebar-tabs="" className="gap-0">
+        <SidebarGroup className="min-h-0 flex-1">
+          <SidebarGroupContent className="min-h-0 flex-1 overflow-y-auto">
+            <SidebarMenu
+              aria-label="Windows"
+              aria-orientation="vertical"
+              role="tablist"
+              onKeyDown={(event) => handleWindowTabKeyDown(event, "vertical")}
+            >
+              {props.tabs.map((tab) => {
+                const active = tab.id === props.activeTabId;
+                const editing = editingId === tab.id;
+                const dockTerminalId = props.dockTerminalIdsByTab.get(tab.id);
+                return (
+                  <DockableWindowTab
+                    key={tab.id}
+                    tab={tab}
+                    dockTerminalId={dockTerminalId}
+                    disabled={editing}
+                  >
+                    {(dockSource, dropTarget) => (
+                      <SidebarMenuItem
+                        ref={dropTarget.setNodeRef}
+                        data-yaade-session-tab={tab.id}
+                        data-active={active ? "true" : undefined}
+                        data-yaade-window-tab-drop-target={dropTarget.isOver ? "" : undefined}
+                        className={cn(
+                          "rounded-md transition-opacity duration-[var(--yaade-motion-fast)]",
+                          dockSource.isDragging && "opacity-35",
+                          dropTarget.isOver &&
+                            !dockSource.isDragging &&
+                            "bg-sidebar-accent ring-1 ring-sidebar-ring/30",
+                        )}
+                      >
+                        {editing ? (
+                          <Input
+                            aria-label={`Rename ${tab.title}`}
+                            autoFocus
+                            value={draftTitle}
+                            className="h-8 min-w-0"
+                            onChange={(event) => setDraftTitle(event.target.value)}
+                            onBlur={() => finishRename(tab)}
+                            onKeyDown={(event) => {
+                              event.stopPropagation();
+                              if (event.key === "Enter") finishRename(tab);
+                              if (event.key === "Escape") setEditingId(null);
+                            }}
+                          />
+                        ) : (
+                          <SidebarMenuButton
+                            ref={dockSource.setNodeRef}
+                            {...dockSource.attributes}
+                            {...dockSource.listeners}
+                            type="button"
+                            role="tab"
+                            tabIndex={active ? 0 : -1}
+                            aria-selected={active}
+                            aria-label={tab.title}
+                            aria-roledescription={
+                              dockTerminalId ? "draggable Window tab" : undefined
+                            }
+                            isActive={active}
+                            className="h-9 cursor-grab touch-none pr-8 active:cursor-grabbing"
+                            onClick={() => props.onSelect(tab)}
+                            onDoubleClick={() => startRename(tab)}
+                          >
+                            <WindowTabProcessTile />
+                            <span>{tab.title}</span>
+                          </SidebarMenuButton>
+                        )}
+                        {!editing ? (
+                          <SidebarMenuAction
+                            type="button"
+                            showOnHover
+                            aria-label={`Close ${tab.title}`}
+                            title={`Close ${tab.title}`}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              props.onClose(tab);
+                            }}
+                            onPointerDown={(event) => event.stopPropagation()}
+                            onKeyDown={(event) => event.stopPropagation()}
+                          >
+                            <X />
+                          </SidebarMenuAction>
+                        ) : null}
+                      </SidebarMenuItem>
+                    )}
+                  </DockableWindowTab>
+                );
+              })}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+    );
+  }
+
   return (
     <div
-      className="flex h-[var(--yaade-tab-bar-height)] min-w-0 flex-1 items-center px-0"
+      className={cn(
+        "flex h-[var(--yaade-tab-bar-height)] min-w-0 items-center px-0",
+        "flex-1",
+      )}
       data-yaade-window-tabs=""
     >
       <LayoutGroup id="yaade-window-tabs">

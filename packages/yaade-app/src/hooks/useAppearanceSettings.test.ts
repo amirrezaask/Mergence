@@ -22,10 +22,13 @@ describe("normalizeThemeId", () => {
 })
 
 describe("session layout", () => {
-  it("migrates every stored layout to the top tab bar", () => {
+  it("keeps supported horizontal and vertical tab layouts", () => {
     assert.equal(normalizeSessionLayout("tabs"), "tabs")
+    assert.equal(normalizeSessionLayout("single-sidebar"), "single-sidebar")
+  })
+
+  it("migrates removed layouts to horizontal tabs", () => {
     assert.equal(normalizeSessionLayout("two-sidebars"), "tabs")
-    assert.equal(normalizeSessionLayout("single-sidebar"), "tabs")
     assert.equal(normalizeSessionLayout("sidebar"), "tabs")
     assert.equal(normalizeSessionLayout("cards"), "tabs")
   })

@@ -810,6 +810,60 @@ test("split controls open Terminal by default and the picker with a modifier", a
   await expect(page.locator('[data-yaade-mux-split="down"]').first()).toBeVisible();
 });
 
+test("switches between horizontal and vertical tab layouts in Settings", async ({
+  launchApp,
+}) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  });
+  const shell = page.locator('[data-yaade-shell="terminal-multiplexer"]');
+  await expect(shell).toHaveAttribute("data-yaade-session-layout", "tabs");
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await expect(settings).toBeVisible();
+  await settings.getByRole("radio", { name: "Vertical tabs" }).click();
+  await expect(shell).toHaveAttribute(
+    "data-yaade-session-layout",
+    "single-sidebar",
+  );
+  await settings.getByRole("button", { name: "Close settings" }).click();
+
+  const navigation = page.getByRole("complementary", { name: "Windows" });
+  await expect(navigation).toBeVisible();
+  await expect(page.locator("[data-yaade-top-tabbar]")).toHaveCount(0);
+  await expect(navigation.locator('[data-slot="sidebar"]')).toHaveCount(1);
+  await expect(navigation.getByRole("button", { name: /Switch session/ })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "New tab" })).toBeVisible();
+  await expect(navigation.getByText("Windows", { exact: true })).toHaveCount(0);
+  const windowTabs = navigation.getByRole("tablist", { name: "Windows" });
+  await expect(windowTabs).toHaveAttribute("aria-orientation", "vertical");
+  await expect(windowTabs.getByRole("tab")).toHaveCount(1);
+  await expect(windowTabs.getByRole("tab").first()).toBeVisible();
+  await expect(windowTabs.getByRole("tab").first()).not.toHaveText("");
+  await expect(navigation.getByRole("tablist", { name: "Sessions" })).toHaveCount(0);
+  await expect(navigation.getByRole("tablist", { name: "Terminals" })).toHaveCount(0);
+
+  await navigation.getByRole("button", { name: "Hide Window sidebar" }).click();
+  await expect(navigation).toBeHidden();
+  const showSidebar = page.getByRole("button", { name: "Show sidebars" });
+  await showSidebar.focus();
+  await page.keyboard.press("Enter");
+  await expect(navigation).toBeVisible();
+
+  await page.reload();
+  await expect(shell).toHaveAttribute(
+    "data-yaade-session-layout",
+    "single-sidebar",
+  );
+  await expect(navigation).toBeVisible();
+
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await settings.getByRole("radio", { name: "Horizontal tabs" }).click();
+  await expect(shell).toHaveAttribute("data-yaade-session-layout", "tabs");
+});
+
 test("closing Settings returns keyboard focus to the terminal", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",

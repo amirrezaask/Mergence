@@ -18,6 +18,10 @@ test.describe("incremental WebGL scene submission", () => {
     ).filter({ visible: true }).first()
     await expect(panel).toHaveAttribute("data-yaade-terminal-render-backend", "webgl2")
 
+    await expect.poll(() => page.evaluate(() => {
+      const submission = window.__yaadeTest?.getTerminalLifecycle?.()?.rendererSubmission
+      return submission?.lastFrame.sceneUploadBytes ?? -1
+    }), { timeout: 5_000 }).toBe(0)
     const baseline = await page.evaluate(() =>
       window.__yaadeTest?.getTerminalLifecycle?.()?.rendererSubmission?.cumulative ?? null,
     )

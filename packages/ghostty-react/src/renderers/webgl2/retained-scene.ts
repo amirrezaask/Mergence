@@ -55,10 +55,11 @@ class PrimitiveScene {
   ) {}
 
   get count(): number { return this.countValue; }
-  get data(): Float32Array { return this.values; }
+  get data(): Float32Array {
+    return this.values.subarray(0, checkedLength(this.countValue, this.floatsPerInstance));
+  }
 
   clear(): void {
-    this.values = new Float32Array(0);
     this.ranges = [];
     this.countValue = 0;
   }
@@ -73,7 +74,13 @@ class PrimitiveScene {
       count += batch.count;
       if (!Number.isSafeInteger(count)) throw new RangeError("scene instance count overflow");
     }
-    const values = new Float32Array(checkedLength(count, this.floatsPerInstance));
+    const required = checkedLength(count, this.floatsPerInstance);
+    if (required > this.values.length) {
+      let capacity = Math.max(64 * this.floatsPerInstance, this.values.length);
+      while (capacity < required) capacity *= 2;
+      this.values = new Float32Array(capacity);
+    }
+    const values = this.values.subarray(0, required);
     for (let row = 0; row < rows.length; row += 1) {
       const range = ranges[row];
       if (!range || range.count === 0) continue;
@@ -83,7 +90,6 @@ class PrimitiveScene {
       }
       values.set(batch.data, checkedLength(range.offset, this.floatsPerInstance));
     }
-    this.values = values;
     this.ranges = ranges;
     this.countValue = count;
     return { kind: "full", data: values };

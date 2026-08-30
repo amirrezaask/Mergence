@@ -264,7 +264,7 @@ Effect Schema seam. Base64 is a cold transport encoding, not terminal text; no
 - Render-update buffer recycling; Plan 016 owns it.
 - Socket reader/writer task separation and per-terminal subscribers; Plan 017.
 - Moving history compression/IO to a background owner; Plan 018.
-- Replacing `vt100` with native libghostty-vt; Plan 020.
+- Replacing `vt100` with native libghostty-vt; Plan 023.
 - Removing string input for keyboard, paste, local error/status text, titles,
   cwd, URLs, or other inherently textual data.
 - A new semantic terminal protocol, WebGPU, SharedArrayBuffer, or renderer work.
@@ -429,8 +429,8 @@ Use one decoded `Uint8Array` model across `@yaade/rpc`, `@yaade/host-client`, an
 - `HostTerminal.onData` receives `Uint8Array`.
 - attach `outputChunks` and replay-page `chunks` decode to byte arrays.
 - the transitional checkpoint field becomes byte-oriented (for example
-  `syntheticBytes`) so applying it never requires `TextEncoder`; Plan 020 owns
-  removal of synthetic checkpoints.
+  `syntheticBytes`) so applying it never requires `TextEncoder`; Plan 024 owns
+  the checkpoint replacement decision.
 - remove the redundant attach `output: string` field if no protocol-1 caller
   needs it; otherwise encode/decode it as bytes too.
 

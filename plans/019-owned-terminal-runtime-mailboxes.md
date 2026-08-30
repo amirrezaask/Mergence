@@ -27,7 +27,7 @@
 > Confirm Plans 012, 015, 017, and 018 are `DONE`. This plan builds on byte
 > chunks, attached-only non-awaiting fan-out, asynchronous history, and the
 > existing client latest-wins resize coordinator. Do not recreate global socket
-> broadcast, synchronous history, or string terminal output. Plan 020 later
+> broadcast, synchronous history, or string terminal output. Plan 023 later
 > replaces the actor-owned transitional `vt100` recorder with libghostty-vt.
 
 ## Status
@@ -169,7 +169,7 @@ blocking or panic.
 
 **Out of scope**
 
-- Native libghostty-vt or checkpoint format replacement; Plan 020.
+- Native libghostty-vt integration or checkpoint replacement; Plans 023 and 024.
 - Socket writer/fan-out/history architecture already completed in Plans 017/018.
 - Browser worker/rendering changes.
 - Detached process supervision or host-restart durability.

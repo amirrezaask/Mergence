@@ -71,10 +71,12 @@ test("mixed partial and topology updates equal a fresh full compaction", () => {
   const scene = new WebGlRetainedScene();
   const rows = [row(1, 0, 1, 1), row(2, 1, 1, 10), row(0, 2, 2, 20)];
   scene.replaceAll(rows);
+  const backgroundBuffer = scene.backgroundData.buffer;
   rows[0] = row(1, 0, 1, 100);
   scene.updateRows([{ row: 0, batches: rows[0] }]);
   rows[2] = row(1, 1, 3, 200);
   scene.updateRows([{ row: 2, batches: rows[2] }]);
+  assert.equal(scene.backgroundData.buffer, backgroundBuffer);
 
   const fresh = new WebGlRetainedScene();
   fresh.replaceAll(rows);
