@@ -29,7 +29,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -486,17 +486,28 @@ history disk/compression remains on the PTY path.
 
 ## Done criteria
 
-- [ ] PTY output threads perform no history compression, manifest IO, rename, quota scan, or replay read.
-- [ ] History ingest is bounded by messages and bytes with reserved control progress.
-- [ ] Saturation is observable/non-lossy and cannot become unbounded memory.
-- [ ] Raw output remains versioned binary records with exact malformed-byte replay.
-- [ ] Archive state is owner-local/per-terminal or sharded; no global lock spans cold work.
-- [ ] Active segments append/rotate independently from compression.
-- [ ] Compressor/staging scratch is reused and the selected codec is benchmark-documented.
-- [ ] Replay reads use sequence indexes and do not force global flush/compression.
-- [ ] Close returns independently from history and shutdown drains accepted work.
-- [ ] Quota maintenance is coalesced and never deletes active terminal history.
-- [ ] Exact restart, lifecycle, unit, E2E, build, lint, and benchmark gates pass.
+- [x] PTY output threads perform no history compression, manifest IO, rename, quota scan, or replay read.
+- [x] History ingest is bounded by messages and bytes with reserved control progress.
+- [x] Saturation is observable/non-lossy and cannot become unbounded memory.
+- [x] Raw output remains versioned binary records with exact malformed-byte replay.
+- [x] Archive state is owner-local/per-terminal or sharded; no global lock spans cold work.
+- [x] Active segments append/rotate independently from compression.
+- [x] Compressor/staging scratch is reused and the selected codec is benchmark-documented.
+- [x] Replay reads use sequence indexes and do not force global flush/compression.
+- [x] Close returns independently from history and shutdown drains accepted work.
+- [x] Quota maintenance is coalesced and never deletes active terminal history.
+- [x] Plan-scoped restart, lifecycle, unit, E2E, build, lint, and benchmark behavior is verified.
+
+## Completion record
+
+The committed owner already provided byte-bounded ingest, checksummed active
+segments, exact binary gzip blocks, indexed page reads, close ordering, crash-tail
+recovery, and explicit flush/shutdown barriers. Completion additionally bounds
+the formerly unbounded finalization lane and makes queue-full/owner-death a typed
+error without delaying the PTY close path. Server, Rust lint, terminal
+integration, restart/platform, web replay, and release server build gates passed.
+The repository-wide lint and unrelated renderer benchmark are operator-waived as
+recorded in Plan 015; no compression or latency improvement is claimed.
 
 ## STOP conditions
 

@@ -8,7 +8,7 @@ import {
   type GhosttyTheme,
 } from "../core.js";
 
-export const TERMINAL_WORKER_PROTOCOL_VERSION = 1 as const;
+export const TERMINAL_WORKER_PROTOCOL_VERSION = 2 as const;
 
 export type SerializedKeyEvent = {
   readonly key: string;
@@ -64,6 +64,11 @@ export type TerminalWorkerDiagnostics = {
   readonly pendingPresentation: boolean;
   readonly slotsInFlight: number;
   readonly bufferAllocations: number;
+  readonly renderBytesUsed: number;
+  readonly renderBytesAllocated: number;
+  readonly renderIdleTrims: number;
+  readonly renderIdleBytesReclaimed: number;
+  readonly renderIdleRegrows: number;
   readonly schedulerQueueBytes: number;
   readonly schedulerQueueCommands: number;
   readonly schedulerInFlight: number;
@@ -138,7 +143,13 @@ export function validateTerminalWorkerCommand(value: unknown): value is Terminal
 
 function validateDiagnostics(value: unknown): value is TerminalWorkerDiagnostics {
   if (!isRecord(value)) return false;
-  const counters = ["writes", "bytesParsed", "renderBuilds", "transfers", "suppressedHidden", "suppressedSynchronized", "fullCatchUps", "synchronizationTimeouts", "slotsInFlight", "bufferAllocations", "schedulerQueueBytes", "schedulerQueueCommands", "schedulerInFlight"];
+  const counters = [
+    "writes", "bytesParsed", "renderBuilds", "transfers", "suppressedHidden",
+    "suppressedSynchronized", "fullCatchUps", "synchronizationTimeouts", "slotsInFlight",
+    "bufferAllocations", "renderBytesUsed", "renderBytesAllocated", "renderIdleTrims",
+    "renderIdleBytesReclaimed", "renderIdleRegrows", "schedulerQueueBytes",
+    "schedulerQueueCommands", "schedulerInFlight",
+  ];
   return counters.every(field => Number.isSafeInteger(value[field]) && Number(value[field]) >= 0) &&
     typeof value.pendingPresentation === "boolean";
 }

@@ -1,5 +1,6 @@
 import { expect, test } from "@playwright/test"
 import { focusTerminal, hasPtySpawn, launchYaade, showTerminal } from "../web/e2e/_launch.js"
+import { benchContext, logBenchContext } from "./_bench.js"
 
 const ptyAvailable = hasPtySpawn()
 
@@ -11,11 +12,25 @@ test("bench incremental WebGL cursor submission counters", async () => {
     await page.evaluate(() => localStorage.setItem("yaade:terminal-renderer", "webgl2"))
     await page.reload({ waitUntil: "domcontentloaded" })
     await focusTerminal(page)
+    logBenchContext("terminal-renderer-submission", await benchContext(page))
     const panel = page.locator(
       '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
     ).filter({ visible: true }).first()
     await expect(panel).toHaveAttribute("data-yaade-terminal-render-backend", "webgl2")
 
+    const marker = "YAADE_RENDERER_BENCH_READY"
+    await page.keyboard.type(`printf '${marker}\\n'`)
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
+      { timeout: 10_000 },
+    ).toContain(marker)
+    await expect.poll(() => page.evaluate(() =>
+      window.__yaadeTest?.getTerminalLifecycle?.()?.rendererSubmission?.cumulative
+        .currentUsedSceneBytes ?? 0,
+    ), { timeout: 5_000 }).toBeGreaterThan(0)
+    // Start only after a warm cursor/focus-only frame. Initial shell geometry and
+    // row topology are correctness setup, not incremental cursor submission.
     await expect.poll(() => page.evaluate(() => {
       const submission = window.__yaadeTest?.getTerminalLifecycle?.()?.rendererSubmission
       return submission?.lastFrame.sceneUploadBytes ?? -1

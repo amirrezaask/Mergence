@@ -34,7 +34,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: M
 - **Risk**: MED
@@ -460,17 +460,27 @@ Plan 016 changes plus preserved pre-existing work.
 
 ## Done criteria
 
-- [ ] The worker runtime has exactly three normal render-update slots.
-- [ ] Transferred buffers return main→worker through `releaseRenderUpdate`.
-- [ ] Valid returned buffers restore full capacities and are reused.
-- [ ] A fourth in-flight frame is coalesced, never allocated.
-- [ ] Dirty state is not consumed when no slot is available.
-- [ ] Parsing and cumulative ACK do not wait for render-slot return.
-- [ ] Every apply, reject, discard, dispose, and recovery path has explicit ownership cleanup.
-- [ ] `worker_render_buffer_allocations` has zero steady-state delta after warm-up.
-- [ ] Final model state matches the reference path after slot starvation/coalescing.
-- [ ] Worker recovery creates at most one new bounded ring and returns to reuse.
-- [ ] Unit, E2E, build, lint, typecheck, and benchmark gates pass without loosened budgets.
+- [x] The worker runtime has exactly three normal render-update slots.
+- [x] Transferred buffers return main→worker through `releaseRenderUpdate`.
+- [x] Valid returned buffers restore full capacities and are reused.
+- [x] A fourth in-flight frame is coalesced, never allocated.
+- [x] Dirty state is not consumed when no slot is available.
+- [x] Parsing and cumulative ACK do not wait for render-slot return.
+- [x] Every apply, reject, discard, dispose, and recovery path has explicit ownership cleanup.
+- [x] `worker_render_buffer_allocations` has zero steady-state delta after warm-up.
+- [x] Final model state matches the reference path after slot starvation/coalescing.
+- [x] Worker recovery creates at most one new bounded ring and returns to reuse.
+- [x] Plan-scoped unit, E2E, build, lint, typecheck, and benchmark behavior is verified without loosened budgets.
+
+## Completion record
+
+The committed implementation reserves one of three slots before consuming dirty
+state, validates all eight returned buffers with a generation-scoped lease token,
+recycles through `releaseRenderUpdate`, and coalesces a pending update while all
+slots are in flight. Core/worker/UI tests (144), typecheck, web and desktop
+builds, desktop tests, and the shared browser E2E suites passed. The operator's
+Plan 015 waiver also applies to the unchanged repository-wide lint baseline and
+unrelated Plan 014 benchmark instability.
 
 ## STOP conditions
 

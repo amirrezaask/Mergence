@@ -29,7 +29,12 @@ export {
   type GhosttyRenderUpdateLease,
 } from "./render-update.js"
 export { GhosttyViewportModel } from "./viewport-model.js"
-export { IDLE_RECLAIM_POLICY, shouldReclaimIdleCapacity, type IdleReclaimInput } from "./idle-reclaim.js"
+export {
+  IDLE_RECLAIM_POLICY,
+  shouldReclaimIdleCapacity,
+  type IdleReclaimInput,
+  type IdleReclaimPolicy,
+} from "./idle-reclaim.js"
 export {
   GhosttyRuntime,
   loadGhosttyRuntime,

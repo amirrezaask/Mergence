@@ -1,5 +1,7 @@
 import {
   GHOSTTY_RENDER_STYLE,
+  IDLE_RECLAIM_POLICY,
+  shouldReclaimIdleCapacity,
   type GhosttyRenderUpdate,
   type GhosttyViewportModel,
 } from "@yaade/ghostty-core";
@@ -100,6 +102,11 @@ type RetainedRow = {
 
 type BufferState = { readonly buffer: WebGLBuffer; capacity: number };
 
+const WEBGL_IDLE_RECLAIM_POLICY = {
+  ...IDLE_RECLAIM_POLICY,
+  shrinkRatio: 2,
+} as const
+
 const EMPTY_SUBMISSION_FRAME: TerminalRendererSubmissionFrame = {
   dirtyRowsBuilt: 0,
   sceneCopyBytes: 0,
@@ -173,9 +180,18 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     rowBatchAllocations: 0,
     currentUsedSceneBytes: 0,
     currentAllocatedBufferBytes: 0,
+    currentAllocatedCpuBytes: 0,
+    currentTargetTransientBytes: 0,
+    currentAtlasBytes: 0,
+    currentGlyphScratchBytes: 0,
+    idleTrims: 0,
+    idleBytesReclaimed: 0,
+    idleRegrows: 0,
   };
   private frameRowBatchAllocations = 0;
   private frameRowRebuilds = 0;
+  private lastCapacityChangeAt = 0
+  private trimmedSinceGrowth = false
   private debug: WebGlTerminalDebugCounters = {
     dirtyRows: 0,
     retainedRows: 0,
@@ -276,6 +292,7 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     overlays: TerminalRenderOverlays,
   ): void {
     if (this.disposed) return;
+    const capacityBefore = this.transientAllocatedBytes()
     const uploadStart = this.atlas.uploads;
     const resetStart = this.atlas.resets;
     const nextHoverKey = overlays.hoveredLinkRange === null || overlays.hoveredLinkRange === undefined
@@ -361,6 +378,16 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
       overlayUploadBytes,
       drawCalls,
     };
+    const allocatedCpuBytes = this.cpuAllocatedBytes()
+    const allocatedBufferBytes = this.gpuAllocatedBytes()
+    const capacityAfter = allocatedCpuBytes + allocatedBufferBytes
+    if (capacityAfter > capacityBefore) {
+      if (this.trimmedSinceGrowth) {
+        this.cumulativeSubmission.idleRegrows += 1
+        this.trimmedSinceGrowth = false
+      }
+      this.lastCapacityChangeAt = performance.now()
+    }
     this.cumulativeSubmission = {
       dirtyRowsBuilt: this.cumulativeSubmission.dirtyRowsBuilt + this.frameRowRebuilds,
       sceneCopyBytes: this.cumulativeSubmission.sceneCopyBytes + sceneStats.copyBytes,
@@ -377,10 +404,55 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
       atlasResets: this.cumulativeSubmission.atlasResets + this.atlas.resets - resetStart,
       rowBatchAllocations: this.cumulativeSubmission.rowBatchAllocations + this.frameRowBatchAllocations,
       currentUsedSceneBytes: this.retainedScene.usedBytes,
-      currentAllocatedBufferBytes:
-        this.backgroundBuffer.capacity + this.decorationBuffer.capacity + this.glyphBuffer.capacity +
-        this.cursorBuffer.capacity + this.cursorGlyphBuffer.capacity,
+      currentAllocatedBufferBytes: allocatedBufferBytes,
+      currentAllocatedCpuBytes: allocatedCpuBytes,
+      currentTargetTransientBytes: this.transientTargetBytes(),
+      currentAtlasBytes: this.atlas.allocatedBytes,
+      currentGlyphScratchBytes: this.atlas.scratchAllocatedBytes,
+      idleTrims: this.cumulativeSubmission.idleTrims,
+      idleBytesReclaimed: this.cumulativeSubmission.idleBytesReclaimed,
+      idleRegrows: this.cumulativeSubmission.idleRegrows,
     };
+  }
+
+  trimIdle(lastActivityAt: number, now = performance.now()): boolean {
+    if (this.disposed) return false
+    const allocatedBytes = this.transientAllocatedBytes()
+    const targetBytes = this.transientTargetBytes()
+    if (!shouldReclaimIdleCapacity({
+      now,
+      allocatedBytes,
+      targetBytes,
+      inFlight: 0,
+      queued: 0,
+      lastActivityAt,
+      lastResizeAt: this.lastCapacityChangeAt,
+    }, WEBGL_IDLE_RECLAIM_POLICY)) return false
+
+    this.retainedScene.trimCapacity()
+    this.atlas.trimScratch()
+    this.trimGpuBuffer(this.backgroundBuffer, this.retainedScene.backgroundData)
+    this.trimGpuBuffer(this.decorationBuffer, this.retainedScene.decorationData)
+    this.trimGpuBuffer(this.glyphBuffer, this.retainedScene.glyphData)
+    this.trimGpuBuffer(this.cursorBuffer, this.cursors.data)
+    this.trimGpuBuffer(this.cursorGlyphBuffer, this.cursorGlyphs.data)
+    const afterBytes = this.transientAllocatedBytes()
+    const reclaimedBytes = allocatedBytes - afterBytes
+    if (reclaimedBytes <= 0) return false
+    this.lastCapacityChangeAt = now
+    this.trimmedSinceGrowth = true
+    this.cumulativeSubmission = {
+      ...this.cumulativeSubmission,
+      currentUsedSceneBytes: this.retainedScene.usedBytes,
+      currentAllocatedBufferBytes: this.gpuAllocatedBytes(),
+      currentAllocatedCpuBytes: this.cpuAllocatedBytes(),
+      currentTargetTransientBytes: this.transientTargetBytes(),
+      currentAtlasBytes: this.atlas.allocatedBytes,
+      currentGlyphScratchBytes: this.atlas.scratchAllocatedBytes,
+      idleTrims: this.cumulativeSubmission.idleTrims + 1,
+      idleBytesReclaimed: this.cumulativeSubmission.idleBytesReclaimed + reclaimedBytes,
+    }
+    return true
   }
 
   capturePixels(): Promise<ImageData> {
@@ -694,6 +766,38 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     this.sceneGeneration = 0;
   }
 
+  private cpuAllocatedBytes(): number {
+    return this.retainedScene.allocatedBytes + this.cursors.allocatedBytes +
+      this.cursorGlyphs.allocatedBytes + this.atlas.scratchAllocatedBytes
+  }
+
+  private gpuAllocatedBytes(): number {
+    return this.backgroundBuffer.capacity + this.decorationBuffer.capacity +
+      this.glyphBuffer.capacity + this.cursorBuffer.capacity + this.cursorGlyphBuffer.capacity
+  }
+
+  private transientAllocatedBytes(): number {
+    return this.cpuAllocatedBytes() + this.gpuAllocatedBytes()
+  }
+
+  private transientTargetBytes(): number {
+    return this.retainedScene.targetAllocatedBytes + this.cursors.targetAllocatedBytes +
+      this.cursorGlyphs.targetAllocatedBytes + targetBufferCapacity(this.retainedScene.backgroundData) +
+      targetBufferCapacity(this.retainedScene.decorationData) +
+      targetBufferCapacity(this.retainedScene.glyphData) + targetBufferCapacity(this.cursors.data) +
+      targetBufferCapacity(this.cursorGlyphs.data)
+  }
+
+  private trimGpuBuffer(state: BufferState, data: Float32Array): void {
+    const target = targetBufferCapacity(data)
+    if (target >= state.capacity) return
+    const gl = this.gl
+    gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer)
+    gl.bufferData(gl.ARRAY_BUFFER, target, gl.DYNAMIC_DRAW)
+    state.capacity = target
+    if (data.byteLength > 0) gl.bufferSubData(gl.ARRAY_BUFFER, 0, data)
+  }
+
   private uploadFull(state: BufferState, data: Float32Array): void {
     const gl = this.gl;
     gl.bindBuffer(gl.ARRAY_BUFFER, state.buffer);
@@ -775,4 +879,12 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     gl.drawArraysInstanced(gl.TRIANGLES, 0, 6, count);
     return 1;
   }
+}
+
+function targetBufferCapacity(data: Float32Array): number {
+  if (data.byteLength === 0) return 0
+  let capacity = 1024
+  const target = data.byteLength * 2
+  while (capacity < target) capacity *= 2
+  return capacity
 }

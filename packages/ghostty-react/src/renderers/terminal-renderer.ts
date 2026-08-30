@@ -51,6 +51,13 @@ export interface TerminalRendererSubmissionCumulative extends TerminalRendererSu
   readonly rowBatchAllocations: number;
   readonly currentUsedSceneBytes: number;
   readonly currentAllocatedBufferBytes: number;
+  readonly currentAllocatedCpuBytes: number;
+  readonly currentTargetTransientBytes: number;
+  readonly currentAtlasBytes: number;
+  readonly currentGlyphScratchBytes: number;
+  readonly idleTrims: number;
+  readonly idleBytesReclaimed: number;
+  readonly idleRegrows: number;
 }
 
 export interface TerminalRendererSubmissionDiagnostics {
@@ -71,5 +78,6 @@ export interface TerminalRenderer {
     overlays: TerminalRenderOverlays,
   ): void;
   capturePixels?(): Promise<ImageData>;
+  trimIdle?(lastActivityAt: number, now?: number): boolean;
   dispose(): void;
 }

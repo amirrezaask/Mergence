@@ -346,8 +346,117 @@ test.describe("terminal compatibility", () => {
       { timeout: 5_000 },
     ).toBeGreaterThan(before?.synchronizationTimeouts ?? 0)
     await expect.poll(
+      () => page.evaluate(
+        () => window.__yaadeTest?.getTerminalLifecycle()?.workerDiagnostics.suppressedSynchronized ?? 0,
+      ),
+    ).toBeGreaterThan(before?.suppressedSynchronized ?? 0)
+    await expect.poll(
+      () => page.evaluate(
+        () => window.__yaadeTest?.getTerminalLifecycle()?.workerDiagnostics.fullCatchUps ?? 0,
+      ),
+    ).toBeGreaterThan(before?.fullCatchUps ?? 0)
+    await expect.poll(
       () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
     ).toContain("YAADE_SYNC_TIMEOUT")
+  })
+
+  test("idle high-water trim preserves the first resumed WebGL frame", async ({ launchApp }) => {
+    const { page } = await launchApp({ workspaceRel: "fixtures/sample-workspace" })
+    const terminalId = await page.evaluate(
+      () => window.__yaadeTest?.getState().activeMuxTerminalId ?? null,
+    )
+    expect(terminalId).not.toBeNull()
+    await page.setViewportSize({ width: 12_000, height: 700 })
+    await expect.poll(
+      () => page.evaluate(id => window.__yaadeTest?.getTerminalDims(id)?.cols ?? 0, terminalId),
+      { timeout: 15_000 },
+    ).toBeGreaterThan(1_000)
+    await focusTerminal(page)
+    await page.keyboard.type(
+      `node -e "process.stdout.write('X'.repeat(30000));console.log('\\nYAADE_HIGH_WATER')"`,
+    )
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(id =>
+        window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative
+          .currentUsedSceneBytes ?? 0,
+      terminalId),
+      { timeout: 30_000 },
+    ).toBeGreaterThan(1024 * 1024)
+    const highWater = await page.evaluate(id => {
+      const submission = window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative
+      if (!submission) return null
+      return {
+        frame: submission.frames,
+        used: submission.currentUsedSceneBytes,
+        allocated: submission.currentAllocatedCpuBytes + submission.currentAllocatedBufferBytes,
+      }
+    }, terminalId)
+    expect(highWater).not.toBeNull()
+    expect(highWater?.used ?? 0).toBeGreaterThan(1024 * 1024)
+
+    await page.setViewportSize({ width: 1_280, height: 800 })
+    await expect.poll(
+      () => page.evaluate(id => window.__yaadeTest?.getTerminalDims(id)?.cols ?? 0, terminalId),
+      { timeout: 15_000 },
+    ).toBeLessThan(300)
+    await expect.poll(
+      () => page.evaluate(id =>
+        window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative.frames ?? 0,
+      terminalId),
+    ).toBeGreaterThan(highWater?.frame ?? 0)
+    await expect.poll(() => page.evaluate(id => {
+      const value = window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative
+      if (!value) return false
+      const allocated = value.currentAllocatedCpuBytes + value.currentAllocatedBufferBytes
+      return allocated >= value.currentTargetTransientBytes * 2 &&
+        allocated - value.currentTargetTransientBytes >= 1024 * 1024
+    }, terminalId)).toBe(true)
+    const beforeTrim = await page.evaluate(id => {
+      const submission = window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative
+      return submission
+        ? submission.currentAllocatedCpuBytes + submission.currentAllocatedBufferBytes
+        : 0
+    }, terminalId)
+    expect(await page.evaluate(
+      id => window.__yaadeTest?.maintainTerminalIdleCapacity(id) ?? false,
+      terminalId,
+    )).toBe(true)
+    const afterTrim = await page.evaluate(id => {
+      const submission = window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative
+      return submission
+        ? {
+            allocated: submission.currentAllocatedCpuBytes + submission.currentAllocatedBufferBytes,
+            trims: submission.idleTrims,
+            reclaimed: submission.idleBytesReclaimed,
+            regrows: submission.idleRegrows,
+          }
+        : null
+    }, terminalId)
+    expect(afterTrim?.allocated ?? Number.POSITIVE_INFINITY).toBeLessThan(beforeTrim)
+    expect(afterTrim?.trims).toBe(1)
+    expect(afterTrim?.reclaimed ?? 0).toBeGreaterThanOrEqual(1024 * 1024)
+    expect(afterTrim?.regrows).toBe(0)
+
+    await focusTerminal(page)
+    await page.keyboard.type("printf 'YAADE_TRIM_%s\\n' 'RESUMED'")
+    await page.keyboard.press("Enter")
+    await expect.poll(
+      () => page.evaluate(id => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId),
+      { timeout: 15_000 },
+    ).toContain("YAADE_TRIM_RESUMED")
+    await expect.poll(
+      () => page.evaluate(async id =>
+        (await window.__yaadeTest?.getTerminalPixelStats(id))?.nonBackgroundPixels ?? 0,
+      terminalId),
+    ).toBeGreaterThan(0)
+    expect(await page.evaluate(id =>
+      window.__yaadeTest?.getTerminalLifecycle(id)?.rendererSubmission?.cumulative.idleRegrows ?? 0,
+    terminalId)).toBeLessThanOrEqual(1)
+    expect(await page.evaluate(
+      id => window.__yaadeTest?.maintainTerminalIdleCapacity(id) ?? false,
+      terminalId,
+    )).toBe(false)
   })
 
   test("flow control replays from the last parsed frame after a renderer stall", async ({

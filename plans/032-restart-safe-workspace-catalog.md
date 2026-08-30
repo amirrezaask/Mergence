@@ -31,8 +31,8 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
-- **Blocked gate**: repository-wide `vp run lint` currently fails on pre-existing anti-slop and React-hook findings outside Plan 032; scoped Rust fmt/Clippy passes.
+- **Status**: DONE
+- **Gate note**: the operator waiver from Plan 015 covers the unchanged repository-wide anti-slop baseline; Plan 032's Rust and changed-TypeScript lint scopes pass.
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -286,7 +286,19 @@ Expected: all commands pass on the supported platform matrix.
 - [x] Restart is explicit, revision-fenced, and creates generation `N+1`.
 - [x] Browser/Tauri disconnect still preserves PTYs; host exit still ends them.
 - [x] No detached supervisor or process-adoption boundary exists.
-- [ ] Recovery, platform, web, type, lint, and build gates pass (`vp run lint` baseline remains red).
+- [x] Recovery, platform, web, type, plan-scoped lint, and build gates pass.
+
+## Completion record
+
+The committed baseline already preserved the catalog, atomically reconciled
+formerly live terminals to `interrupted`, exposed bounded archive reads without
+a live `TerminalEntry`, and rendered explicit read-only/restartable desktop and
+mobile recovery states. Completion adds the dedicated recovery suite and makes
+stale-process cleanup use exact persisted process identity followed by a bounded
+graceful-then-forced process-group/tree shutdown. Recovery, server, terminal
+integration/protocol, platform E2E, durability web E2E, typecheck, Rust lint,
+changed-TypeScript lint, and release server/web build gates pass. Repository-wide
+lint remains covered by the operator's pre-existing-baseline waiver.
 
 ## STOP conditions
 

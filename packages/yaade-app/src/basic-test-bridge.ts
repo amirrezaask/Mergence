@@ -2,6 +2,7 @@ import type { YaadeTestAPI } from "./test-bridge.js"
 import {
   findTerminalBufferMatch,
   focusRegisteredTerminal,
+  maintainTerminalIdleCapacity,
   readTerminalBufferText,
   readTerminalCellHeight,
   readTerminalCellSize,
@@ -23,6 +24,7 @@ export function basicTestBridge(): YaadeTestAPI {
     getTerminalCellSize: id => readTerminalCellSize(id),
     getTerminalDims: id => readTerminalDims(id),
     getTerminalLifecycle: id => readTerminalLifecycle(id),
+    maintainTerminalIdleCapacity: id => maintainTerminalIdleCapacity(id),
     getTerminalPixelStats: id => readTerminalPixelStats(id),
     getTerminalCursor: id => readTerminalCursor(id),
     getTerminalViewportY: id => readTerminalViewportY(id),

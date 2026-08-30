@@ -30,24 +30,24 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | DONE |
 | [013](013-immediate-terminal-window-close.md) | Make terminal and Window close feedback immediate and bounded | — | P1 | L | 007, 008 | DONE |
 | [014](014-incremental-webgl-scene-submission.md) | Make retained WebGL scene submission incremental | — | P1 | L | 007, 009, 010, 011 | DONE |
-| [015](015-byte-native-terminal-stream.md) | Keep terminal output byte-native from PTY read to Ghostty WASM | SolPro P0-1 | P1 | L | — | IN PROGRESS |
-| [016](016-recyclable-render-buffer-ring.md) | Recycle a bounded three-slot render-update buffer ring | SolPro P0-2 | P1 | M | 015 | IN PROGRESS |
-| [017](017-isolated-socket-writer-and-terminal-fanout.md) | Isolate socket writing and fan out output only to attached clients | SolPro P0-4/5 | P1 | L | 015 | IN PROGRESS |
-| [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | IN PROGRESS |
-| [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | IN PROGRESS |
+| [015](015-byte-native-terminal-stream.md) | Keep terminal output byte-native from PTY read to Ghostty WASM | SolPro P0-1 | P1 | L | — | DONE |
+| [016](016-recyclable-render-buffer-ring.md) | Recycle a bounded three-slot render-update buffer ring | SolPro P0-2 | P1 | M | 015 | DONE |
+| [017](017-isolated-socket-writer-and-terminal-fanout.md) | Isolate socket writing and fan out output only to attached clients | SolPro P0-4/5 | P1 | L | 015 | DONE |
+| [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | DONE |
+| [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | DONE |
 | [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | DONE |
 | [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | TODO |
 | [022](blocked/022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | BLOCKED (015, 021) |
 | [023](blocked/023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | BLOCKED (019, 021, 022) |
 | [024](blocked/024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | BLOCKED (018, 022, 023, 027) |
-| [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | IN PROGRESS |
-| [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | IN PROGRESS |
-| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | IN PROGRESS |
+| [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | DONE |
+| [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | DONE |
+| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | DONE |
 | [028](blocked/028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | BLOCKED (022, 027) |
 | [029](blocked/029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | BLOCKED (023, 027) |
-| [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | IN PROGRESS |
+| [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | DONE |
 | [031](blocked/031-conditional-shaped-run-cache.md) | Add a shaped-run cache only when profiling or conformance requires it | SolPro conditional shaping | P3 | M | 009, 014, 022, 027 | BLOCKED (022, 027) |
-| [032](032-restart-safe-workspace-catalog.md) | Preserve the workspace catalog and terminal history across host restart | SL continuity/history | P1 | L | 018, 019 | IN PROGRESS |
+| [032](032-restart-safe-workspace-catalog.md) | Preserve the workspace catalog and terminal history across host restart | SL continuity/history | P1 | L | 018, 019 | DONE |
 | [033](033-authoritative-semantic-terminal-stream.md) | Complete authoritative semantic snapshot/patch/resync streaming | SL exact reattach/observation | P1 | L | 017, 019, 022, 023 | TODO |
 | [034](034-progressive-scrollback-search.md) | Deliver current-screen-first reattach, million-line scrollback, and search | SL history/search/perf | P1 | L | 018, 023, 024 decision, 027, 033 | TODO |
 | [035](035-command-registry-and-palette.md) | Centralize commands and ship command/session palettes | SL command discovery | P1 | M | — | TODO |

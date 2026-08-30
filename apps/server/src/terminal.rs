@@ -27,7 +27,10 @@ use crate::{
     terminal_control::{
         RuntimeTerminalLease, TerminalControlError, TerminalControlRegistry, TerminalLeaseRequest,
     },
-    terminal_history::{Base64Bytes, HistoryError, TerminalHistoryArchive, TerminalHistoryPage},
+    terminal_history::{
+        Base64Bytes, HistoryError, TerminalHistoryArchive, TerminalHistoryCapacityDiagnostics,
+        TerminalHistoryPage,
+    },
     wire::{TerminalLeaseMode, TerminalMutationFence},
 };
 
@@ -35,6 +38,9 @@ const MAX_ENTRIES: usize = 64;
 const MAX_REPLAY_BYTES: usize = 2 * 1024 * 1024;
 const EXITED_REPLAY_BYTES: usize = 256 * 1024;
 const MAX_WRITE_BYTES: usize = 1024 * 1024;
+const OWNER_COMMAND_BATCH_MESSAGES: usize = 64;
+const OWNER_WRITE_BATCH_BYTES: usize = 256 * 1024;
+const CLEANUP_QUEUE_CAPACITY: usize = 256;
 const CHECKPOINT_BYTES: usize = 512 * 1024;
 const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 const EXITED_DISPOSE_TTL: std::time::Duration = std::time::Duration::from_secs(90);
@@ -363,7 +369,7 @@ pub struct TerminalHost {
     entries: Mutex<HashMap<String, Arc<TerminalEntry>>>,
     events: Arc<EventHub>,
     next_id: AtomicU64,
-    cleanup_tx: tokio::sync::mpsc::UnboundedSender<(String, String)>,
+    cleanup_tx: tokio::sync::mpsc::Sender<(String, String)>,
     history: TerminalHistoryArchive,
     checkpoints: bool,
 }
@@ -374,7 +380,7 @@ impl TerminalHost {
         history_root: &Path,
         checkpoints: bool,
     ) -> Result<Arc<Self>, TerminalError> {
-        let (cleanup_tx, mut cleanup_rx) = tokio::sync::mpsc::unbounded_channel();
+        let (cleanup_tx, mut cleanup_rx) = tokio::sync::mpsc::channel(CLEANUP_QUEUE_CAPACITY);
         let host = Arc::new(Self {
             entries: Mutex::new(HashMap::new()),
             events,
@@ -782,6 +788,11 @@ impl TerminalHost {
         self.history.available(id)
     }
 
+    #[must_use]
+    pub fn history_capacity_diagnostics(&self) -> TerminalHistoryCapacityDiagnostics {
+        self.history.capacity_diagnostics()
+    }
+
     pub fn terminate_stale_process(
         &self,
         identity: &ProcessIdentity,
@@ -789,7 +800,7 @@ impl TerminalHost {
         if !process_identity_matches(identity) {
             return Ok(false);
         }
-        terminate_process_group(identity.pid)?;
+        terminate_process_group(identity)?;
         Ok(true)
     }
 
@@ -1093,17 +1104,39 @@ fn terminal_owner_loop(
             }
         };
     }
+    macro_rules! handle_batch {
+        ($commands:expr, $scratch:expr) => {
+            if !handle_terminal_command_batch(
+                &host,
+                &entry,
+                &*master,
+                &mut writer,
+                &mut child,
+                &mut state,
+                &mut control,
+                $commands,
+                $scratch,
+            ) {
+                return;
+            }
+        };
+    }
+    let mut write_scratch = Vec::new();
     let mut output_open = true;
     let mut exit_observed = false;
     loop {
         // Bound each class per turn: input/disposal stays responsive without
         // allowing a hot producer to starve lifecycle work or PTY output.
-        for _ in 0..16 {
+        let mut urgent_batch = Vec::new();
+        for _ in 0..OWNER_COMMAND_BATCH_MESSAGES {
             match urgent_commands.try_recv() {
-                Ok(command) => handle!(command),
+                Ok(command) => urgent_batch.push(command),
                 Err(TryRecvError::Empty) => break,
                 Err(TryRecvError::Disconnected) => return,
             }
+        }
+        if !urgent_batch.is_empty() {
+            handle_batch!(urgent_batch, &mut write_scratch);
         }
         let mut output_bytes = 0_usize;
         while output_open && output_bytes < 1024 * 1024 {
@@ -1137,13 +1170,19 @@ fn terminal_owner_loop(
         }
         if !output_open {
             select_biased! {
-                recv(urgent_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
+                recv(urgent_commands) -> command => {
+                    let first = match command { Ok(value) => value, Err(_) => return };
+                    handle_batch!(collect_command_batch(first, &urgent_commands), &mut write_scratch);
+                },
                 recv(normal_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
             }
             continue;
         }
         select_biased! {
-            recv(urgent_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
+            recv(urgent_commands) -> command => {
+                let first = match command { Ok(value) => value, Err(_) => return };
+                handle_batch!(collect_command_batch(first, &urgent_commands), &mut write_scratch);
+            },
             recv(output) -> message => match message {
                 Ok(OutputMessage::Bytes(data)) => {
                     process_terminal_output(&host, &entry, &mut writer, &mut state, data);
@@ -1157,6 +1196,217 @@ fn terminal_owner_loop(
             recv(normal_commands) -> command => handle!(match command { Ok(value) => value, Err(_) => return }),
         }
     }
+}
+
+fn collect_command_batch(
+    first: TerminalCommand,
+    commands: &Receiver<TerminalCommand>,
+) -> Vec<TerminalCommand> {
+    let mut batch = Vec::with_capacity(OWNER_COMMAND_BATCH_MESSAGES);
+    batch.push(first);
+    for _ in 1..OWNER_COMMAND_BATCH_MESSAGES {
+        match commands.try_recv() {
+            Ok(command) => batch.push(command),
+            Err(TryRecvError::Empty | TryRecvError::Disconnected) => break,
+        }
+    }
+    batch
+}
+
+enum BatchedWriteReply {
+    Direct(Reply<()>),
+    Authorized {
+        reply: Reply<RuntimeTerminalLease>,
+        lease: RuntimeTerminalLease,
+    },
+}
+
+enum BatchedResizeReply {
+    Direct(Reply<()>),
+    Authorized {
+        reply: Reply<RuntimeTerminalLease>,
+        lease: RuntimeTerminalLease,
+    },
+}
+
+const fn command_write_bytes(command: &TerminalCommand) -> Option<usize> {
+    match command {
+        TerminalCommand::Write { data, .. } | TerminalCommand::AuthorizeAndWrite { data, .. } => {
+            Some(data.len())
+        }
+        _ => None,
+    }
+}
+
+const fn command_is_resize(command: &TerminalCommand) -> bool {
+    matches!(
+        command,
+        TerminalCommand::Resize { .. } | TerminalCommand::AuthorizeAndResize { .. }
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn handle_terminal_command_batch(
+    host: &Weak<TerminalHost>,
+    entry: &TerminalEntry,
+    master: &dyn MasterPty,
+    writer: &mut Box<dyn Write + Send>,
+    child: &mut Box<dyn Child + Send + Sync>,
+    state: &mut EntryState,
+    control: &mut TerminalControlRegistry,
+    commands: Vec<TerminalCommand>,
+    write_scratch: &mut Vec<u8>,
+) -> bool {
+    let mut commands = VecDeque::from(commands);
+    while let Some(command) = commands.pop_front() {
+        if command_write_bytes(&command).is_some() {
+            let mut write_commands = vec![command];
+            let mut batch_bytes = command_write_bytes(&write_commands[0]).unwrap_or(0);
+            while write_commands.len() < OWNER_COMMAND_BATCH_MESSAGES {
+                let Some(next_bytes) = commands.front().and_then(command_write_bytes) else {
+                    break;
+                };
+                if batch_bytes > 0
+                    && batch_bytes.saturating_add(next_bytes) > OWNER_WRITE_BATCH_BYTES
+                {
+                    break;
+                }
+                batch_bytes = batch_bytes.saturating_add(next_bytes);
+                if let Some(next) = commands.pop_front() {
+                    write_commands.push(next);
+                }
+            }
+
+            write_scratch.clear();
+            write_scratch.reserve(batch_bytes);
+            let mut replies = Vec::with_capacity(write_commands.len());
+            for command in write_commands {
+                match command {
+                    TerminalCommand::Write { data, reply } => {
+                        write_scratch.extend_from_slice(&data);
+                        replies.push(BatchedWriteReply::Direct(reply));
+                    }
+                    TerminalCommand::AuthorizeAndWrite {
+                        principal_id,
+                        connection_id,
+                        fence,
+                        data,
+                        reply,
+                    } => match authorize_terminal(
+                        control,
+                        entry,
+                        &principal_id,
+                        &connection_id,
+                        fence,
+                    ) {
+                        Ok(lease) => {
+                            write_scratch.extend_from_slice(&data);
+                            replies.push(BatchedWriteReply::Authorized { reply, lease });
+                        }
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
+                        }
+                    },
+                    _ => unreachable!("write batch contains only write commands"),
+                }
+            }
+            let write_error = if write_scratch.is_empty() {
+                None
+            } else {
+                writer
+                    .write_all(write_scratch)
+                    .and_then(|()| writer.flush())
+                    .err()
+                    .map(|error| error.to_string())
+            };
+            for reply in replies {
+                match reply {
+                    BatchedWriteReply::Direct(reply) => {
+                        let result = write_error
+                            .as_ref()
+                            .map_or(Ok(()), |error| Err(TerminalError::Runtime(error.clone())));
+                        let _ = reply.send(result);
+                    }
+                    BatchedWriteReply::Authorized { reply, lease } => {
+                        let result = write_error.as_ref().map_or(Ok(lease), |error| {
+                            Err(TerminalError::Runtime(error.clone()))
+                        });
+                        let _ = reply.send(result);
+                    }
+                }
+            }
+            continue;
+        }
+
+        if command_is_resize(&command) {
+            let mut resize_commands = vec![command];
+            while resize_commands.len() < OWNER_COMMAND_BATCH_MESSAGES
+                && commands.front().is_some_and(command_is_resize)
+            {
+                if let Some(next) = commands.pop_front() {
+                    resize_commands.push(next);
+                }
+            }
+            let mut latest = None;
+            let mut replies = Vec::with_capacity(resize_commands.len());
+            for command in resize_commands {
+                match command {
+                    TerminalCommand::Resize { cols, rows, reply } => {
+                        latest = Some((cols, rows));
+                        replies.push(BatchedResizeReply::Direct(reply));
+                    }
+                    TerminalCommand::AuthorizeAndResize {
+                        principal_id,
+                        connection_id,
+                        fence,
+                        cols,
+                        rows,
+                        reply,
+                    } => match authorize_terminal(
+                        control,
+                        entry,
+                        &principal_id,
+                        &connection_id,
+                        fence,
+                    ) {
+                        Ok(lease) => {
+                            latest = Some((cols, rows));
+                            replies.push(BatchedResizeReply::Authorized { reply, lease });
+                        }
+                        Err(error) => {
+                            let _ = reply.send(Err(error));
+                        }
+                    },
+                    _ => unreachable!("resize batch contains only resize commands"),
+                }
+            }
+            let resize_error = latest
+                .and_then(|(cols, rows)| resize_terminal(master, entry, state, cols, rows).err())
+                .map(|error| error.to_string());
+            for reply in replies {
+                match reply {
+                    BatchedResizeReply::Direct(reply) => {
+                        let result = resize_error
+                            .as_ref()
+                            .map_or(Ok(()), |error| Err(TerminalError::Runtime(error.clone())));
+                        let _ = reply.send(result);
+                    }
+                    BatchedResizeReply::Authorized { reply, lease } => {
+                        let result = resize_error.as_ref().map_or(Ok(lease), |error| {
+                            Err(TerminalError::Runtime(error.clone()))
+                        });
+                        let _ = reply.send(result);
+                    }
+                }
+            }
+            continue;
+        }
+
+        if !handle_terminal_command(host, entry, master, writer, child, state, control, command) {
+            return false;
+        }
+    }
+    true
 }
 
 fn authorize_terminal(
@@ -1609,7 +1859,7 @@ fn observe_terminal_exit(
     }
     let _ = host
         .cleanup_tx
-        .send((entry.id.clone(), entry.terminal_epoch.clone()));
+        .blocking_send((entry.id.clone(), entry.terminal_epoch.clone()));
 }
 
 fn store_checkpoint(terminal_epoch: &str, state: &mut EntryState) {
@@ -1907,28 +2157,79 @@ fn process_identity_matches(identity: &ProcessIdentity) -> bool {
     capture_process_identity(identity.pid).as_ref() == Some(identity)
 }
 
-fn terminate_process_group(pid: u32) -> Result<(), TerminalError> {
+fn terminate_process_group(identity: &ProcessIdentity) -> Result<(), TerminalError> {
+    let pid = identity.pid;
     #[cfg(unix)]
-    let status = ProcessCommand::new("kill")
-        .args(["-KILL", &format!("-{pid}")])
-        .status();
-    #[cfg(target_os = "windows")]
-    let status = ProcessCommand::new("taskkill.exe")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
-    #[cfg(not(any(unix, target_os = "windows")))]
-    return Err(TerminalError::Runtime(
-        "stale process cleanup is unsupported on this platform".to_owned(),
-    ));
-    #[cfg(any(unix, target_os = "windows"))]
-    match status {
-        Ok(result) if result.success() => Ok(()),
-        Ok(_) if capture_process_identity(pid).is_none() => Ok(()),
-        Ok(result) => Err(TerminalError::Runtime(format!(
-            "failed to terminate stale terminal process group {pid}: {result}"
-        ))),
-        Err(error) => Err(TerminalError::Runtime(error.to_string())),
+    {
+        let process_group = format!("-{pid}");
+        let graceful = ProcessCommand::new("kill")
+            .args(["-TERM", &process_group])
+            .status();
+        match graceful {
+            Ok(result) if result.success() => {}
+            Ok(_) if !process_identity_matches(identity) => return Ok(()),
+            Ok(result) => {
+                return Err(TerminalError::Runtime(format!(
+                    "failed to terminate stale terminal process group {pid}: {result}"
+                )));
+            }
+            Err(error) => return Err(TerminalError::Runtime(error.to_string())),
+        }
+
+        let deadline = Instant::now() + std::time::Duration::from_millis(100);
+        while Instant::now() < deadline {
+            if !process_group_exists(&process_group) {
+                return Ok(());
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let forced = ProcessCommand::new("kill")
+            .args(["-KILL", &process_group])
+            .status();
+        match forced {
+            Ok(result) if result.success() || !process_group_exists(&process_group) => Ok(()),
+            Ok(result) => Err(TerminalError::Runtime(format!(
+                "failed to kill stale terminal process group {pid}: {result}"
+            ))),
+            Err(error) => Err(TerminalError::Runtime(error.to_string())),
+        }
     }
+    #[cfg(target_os = "windows")]
+    {
+        let pid_text = pid.to_string();
+        let _ = ProcessCommand::new("taskkill.exe")
+            .args(["/PID", &pid_text, "/T"])
+            .status();
+        let deadline = Instant::now() + std::time::Duration::from_millis(100);
+        while Instant::now() < deadline {
+            if !process_identity_matches(identity) {
+                return Ok(());
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let forced = ProcessCommand::new("taskkill.exe")
+            .args(["/PID", &pid_text, "/T", "/F"])
+            .status();
+        match forced {
+            Ok(result) if result.success() || !process_identity_matches(identity) => Ok(()),
+            Ok(result) => Err(TerminalError::Runtime(format!(
+                "failed to terminate stale terminal process tree {pid}: {result}"
+            ))),
+            Err(error) => Err(TerminalError::Runtime(error.to_string())),
+        }
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    Err(TerminalError::Runtime(
+        "stale process cleanup is unsupported on this platform".to_owned(),
+    ))
+}
+
+#[cfg(unix)]
+fn process_group_exists(process_group: &str) -> bool {
+    ProcessCommand::new("kill")
+        .args(["-0", process_group])
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 pub(crate) fn capture_process_identity(pid: u32) -> Option<ProcessIdentity> {

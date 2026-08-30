@@ -17,6 +17,8 @@ import { test, expect } from "@playwright/test"
 import type { ShellDriver } from "../shell/driver.js"
 import {
   assertBudget,
+  benchContext,
+  logBenchContext,
   logBenchResult,
   median,
   percentile,
@@ -123,6 +125,7 @@ test("bench terminal-stream-throughput", async () => {
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
+    logBenchContext("terminal-stream-throughput", await benchContext(page))
     logTerminalRenderInfo("terminal-stream", await terminalRenderInfo(page))
 
     let round = 0
@@ -227,6 +230,7 @@ test("bench terminal-output-flood-throughput", async () => {
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
+    logBenchContext("terminal-output-flood-throughput", await benchContext(page))
 
     let round = 0
     const result = await runBench({
@@ -294,6 +298,7 @@ test("bench terminal-dashboard-present-latency", async () => {
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
+    logBenchContext("terminal-dashboard-present-latency", await benchContext(page))
     const marker = `YAADE-TUI-${Date.now().toString(36)}`
     const command = terminalDashboardCommand({
       marker,
@@ -348,6 +353,7 @@ test("bench terminal-typing-idle", async () => {
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
+    logBenchContext("terminal-typing-idle", await benchContext(page))
 
     await focusTerminal(page)
 
@@ -401,6 +407,7 @@ test("bench terminal-typing-under-flood", async () => {
   try {
     await showTerminal(page)
     await waitForRunningTerminal(page)
+    logBenchContext("terminal-typing-under-flood", await benchContext(page))
 
     const renderInfo = await terminalRenderInfo(page)
     logTerminalRenderInfo("terminal-under-flood", renderInfo)

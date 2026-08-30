@@ -45,6 +45,13 @@ export type TerminalLifecycleState = {
       rowBatchAllocations: number
       currentUsedSceneBytes: number
       currentAllocatedBufferBytes: number
+      currentAllocatedCpuBytes: number
+      currentTargetTransientBytes: number
+      currentAtlasBytes: number
+      currentGlyphScratchBytes: number
+      idleTrims: number
+      idleBytesReclaimed: number
+      idleRegrows: number
     }
   } | null
   rendererCpuMs: { samples: number; p50: number; p95: number; p99: number }
@@ -67,6 +74,11 @@ export type TerminalLifecycleState = {
     pendingPresentation: boolean
     slotsInFlight: number
     bufferAllocations: number
+    renderBytesUsed: number
+    renderBytesAllocated: number
+    renderIdleTrims: number
+    renderIdleBytesReclaimed: number
+    renderIdleRegrows: number
     schedulerQueueBytes: number
     schedulerQueueCommands: number
     schedulerInFlight: number
@@ -91,6 +103,7 @@ export type YaadeTestAPI = {
   getTerminalCellSize(tabId?: string): { width: number; height: number } | null
   getTerminalDims(tabId?: string): { cols: number; rows: number } | null
   getTerminalLifecycle(tabId?: string): TerminalLifecycleState | null
+  maintainTerminalIdleCapacity(tabId?: string): boolean
   getTerminalPixelStats(tabId?: string): Promise<{
     width: number
     height: number

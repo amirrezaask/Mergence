@@ -50,6 +50,13 @@ export class WebGlGlyphAtlas {
   get uploads(): number { return this.uploadsValue; }
   get resets(): number { return this.resetsValue; }
   get allocatedBytes(): number { return this.allocatedBytesValue; }
+  get scratchAllocatedBytes(): number {
+    let bytes = 0
+    for (const { canvas } of this.scratch.values()) {
+      bytes += canvas.width * canvas.height * 4
+    }
+    return bytes
+  }
   get occupancy(): number {
     return (this.nextY * this.size + this.nextX * Math.max(1, this.shelfHeight)) /
       (this.size * this.size);
@@ -140,6 +147,12 @@ export class WebGlGlyphAtlas {
     this.nextX += canvas.width;
     this.shelfHeight = Math.max(this.shelfHeight, canvas.height);
     return entry;
+  }
+
+  trimScratch(): number {
+    const reclaimed = this.scratchAllocatedBytes
+    this.scratch.clear()
+    return reclaimed
   }
 
   clear(): void {

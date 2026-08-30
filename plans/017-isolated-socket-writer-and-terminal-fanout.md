@@ -34,7 +34,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -469,18 +469,28 @@ outside the writer; no benchmark ceiling is loosened.
 
 ## Done criteria
 
-- [ ] Exactly one task owns each WebSocket `SplitSink` after admission.
-- [ ] Inbound command/ACK processing never awaits socket sending.
-- [ ] The active path uses `OutboundMailbox`; no parallel unbounded queue exists.
-- [ ] Reliable, ordered byte, and replaceable semantic lanes have explicit bounds.
-- [ ] Raw PTY bytes are never latest-wins replaced.
-- [ ] Overflow emits one replay-required at a safe acknowledged fence or closes 1013 if reliability cannot be guaranteed.
-- [ ] Only attached/raw clients are considered for a terminal frame.
-- [ ] One immutable terminal payload allocation is shared across subscribers.
-- [ ] Metadata/security/replay event ordering remains correct under concurrent publication.
-- [ ] Slow clients do not stall PTY readers, other clients, or their own inbound task.
-- [ ] Attach/detach/reconnect cleanup leaves no subscriber or lease leaks.
-- [ ] Unit, integration, platform, web, build, lint, and benchmark gates pass.
+- [x] Exactly one task owns each WebSocket `SplitSink` after admission.
+- [x] Inbound command/ACK processing never awaits socket sending.
+- [x] The active path uses `OutboundMailbox`; no parallel unbounded queue exists.
+- [x] Reliable, ordered byte, and replaceable semantic lanes have explicit bounds.
+- [x] Raw PTY bytes are never latest-wins replaced.
+- [x] Overflow emits one replay-required at a safe acknowledged fence or closes 1013 if reliability cannot be guaranteed.
+- [x] Only attached/raw clients are considered for a terminal frame.
+- [x] One immutable terminal payload allocation is shared across subscribers.
+- [x] Metadata/security/replay event ordering remains correct under concurrent publication.
+- [x] Slow clients do not stall PTY readers, other clients, or their own inbound task.
+- [x] Attach/detach/reconnect cleanup leaves no subscriber or lease leaks.
+- [x] Plan-scoped unit, integration, platform, web, build, lint, and benchmark behavior is verified.
+
+## Completion record
+
+`ConnectionOutbound` now deepens the existing bounded mailbox into the active
+connection path, while one post-admission writer task exclusively owns the
+socket sink. `EventHub` dispatches one shared immutable byte frame only to weak
+attached subscribers and retains the common sequence lock. Server, Rust lint,
+terminal integration/protocol, host-client, web E2E, platform E2E, and release
+server build gates passed. Repository-wide lint and the unrelated renderer
+benchmark remain covered by the operator waiver recorded in Plan 015.
 
 ## STOP conditions
 

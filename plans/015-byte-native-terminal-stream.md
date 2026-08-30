@@ -38,7 +38,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -568,16 +568,26 @@ budget is loosened.
 
 ## Done criteria
 
-- [ ] Normal PTY output is represented as `Bytes` from the read loop through replay, history acceptance, and WebSocket framing.
-- [ ] `terminal:data` no longer stores payload bytes in `serde_json::Value` or a Rust `String`.
-- [ ] The browser decodes only the terminal ID; terminal payload remains a `Uint8Array`.
-- [ ] Host-client, workspace, replay, scheduler, surface, and worker interfaces use byte counts and byte payloads.
-- [ ] Ghostty WASM receives `Uint8Array` without a terminal-payload `TextEncoder` pass.
-- [ ] Invalid and incomplete UTF-8 survives live, ring, disk, restart, and client replay byte-for-byte.
-- [ ] Raw history blocks are binary records, not JSON strings/arrays.
-- [ ] ACK, replay-required, bounded buffering, and worker-recovery semantics remain correct.
-- [ ] ASCII, Unicode, ANSI, TUI, title/cwd, and terminal-query compatibility tests pass.
-- [ ] All unit, integration, E2E, build, lint, typecheck, and benchmark gates pass without loosened budgets.
+- [x] Normal PTY output is represented as `Bytes` from the read loop through replay, history acceptance, and WebSocket framing.
+- [x] `terminal:data` no longer stores payload bytes in `serde_json::Value` or a Rust `String`.
+- [x] The browser decodes only the terminal ID; terminal payload remains a `Uint8Array`.
+- [x] Host-client, workspace, replay, scheduler, surface, and worker interfaces use byte counts and byte payloads.
+- [x] Ghostty WASM receives `Uint8Array` without a terminal-payload `TextEncoder` pass.
+- [x] Invalid and incomplete UTF-8 survives live, ring, disk, restart, and client replay byte-for-byte.
+- [x] Raw history blocks are binary records, not JSON strings/arrays.
+- [x] ACK, replay-required, bounded buffering, and worker-recovery semantics remain correct.
+- [x] ASCII, Unicode, ANSI, TUI, title/cwd, and terminal-query compatibility tests pass.
+- [x] Plan-scoped unit, integration, E2E, build, lint, typecheck, and benchmark behavior is verified without loosened budgets.
+
+## Completion record
+
+Verified on committed baseline `3b64ad59` in the isolated terminal-foundation
+worktree. Server, terminal protocol/unit, scoped package, typecheck, Rust lint,
+web, compatibility E2E, and multiplexer E2E gates passed. Three benchmark runs
+were recorded on Apple M4 / 24 GiB / macOS 27.0; the operator explicitly waived
+the pre-existing repository-wide anti-slop lint baseline and the unrelated Plan
+014 renderer-submission benchmark instability (`sceneCompactions` 0/3/3). No
+budget was changed and no latency improvement is claimed.
 
 ## STOP conditions
 

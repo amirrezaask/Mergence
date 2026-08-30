@@ -30,7 +30,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
@@ -276,11 +276,11 @@ thresholds without loosening old budgets.
 
 Implementation outcome:
 
-- [ ] Shared worker queues and in-flight commands have coordinated byte/command bounds.
-- [ ] Focused/visible weighting preserves strict per-terminal order.
-- [ ] Hidden terminals make progress within a tested maximum wait.
-- [ ] Worker crash/dispose cannot falsely ACK or leak transferred buffers.
-- [ ] Focused and single-terminal benchmark thresholds pass.
+- [x] Shared worker queues and in-flight commands have coordinated byte/command bounds.
+- [x] Focused/visible weighting preserves strict per-terminal order.
+- [x] Hidden terminals make progress within a tested maximum wait.
+- [x] Worker crash/dispose cannot falsely ACK or leak transferred buffers.
+- [x] Focused and single-terminal benchmark thresholds pass.
 
 Measured-rejection outcome:
 
@@ -289,6 +289,22 @@ Measured-rejection outcome:
 - [ ] README status records `REJECTED (scheduler not justified)`.
 
 Both outcomes require full unit, browser, and Tauri correctness gates.
+
+## Completion record
+
+Plan 027's repeatable same-worker gate disproves the rejection condition: FIFO
+places the focused command at service turn five against the declared maximum
+turn one. The existing bounded weighted deficit scheduler serves it at turn zero
+while all five hidden lanes are serviced by turn five. It retains one strict
+FIFO per terminal, 32 MiB / 8,192-command aggregate bounds, an eight-command
+credit window, generation-qualified completion, queued-buffer ownership until
+dispatch, and explicit crash/dispose reset.
+
+The contention decision passed five consecutive runs. Scheduler units, worker
+units, focused multi-terminal browser checks, Tauri tests, typecheck, and the
+single-terminal/full benchmark gates pass except for the already waived
+under-flood timing variance recorded in Plan 027. No budget was loosened and the
+plan is completed through its implementation outcome, not `REJECTED`.
 
 ## STOP conditions
 

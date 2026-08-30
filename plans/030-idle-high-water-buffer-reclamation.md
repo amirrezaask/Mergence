@@ -33,7 +33,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P3
 - **Effort**: M
 - **Risk**: MED
@@ -306,13 +306,41 @@ Expected: all pass without relaxing memory or latency budgets.
 
 ## Done criteria
 
-- [ ] Metrics distinguish used/allocated, transient/cache/durable, and current owner.
-- [ ] Trim policy has measured idle, headroom, hysteresis, and cooldown constants.
-- [ ] No leased, queued, durable, parser, or retained-scene data is trimmed.
-- [ ] Client worker/GPU and server staging high-water capacity falls after idle.
-- [ ] Resume preserves exact state and existing input/present budgets.
-- [ ] No grow/shrink oscillation or significant idle timer CPU appears.
-- [ ] Full browser/Tauri/server/benchmark gates pass.
+- [x] Metrics distinguish used/allocated, transient/cache/durable, and current owner.
+- [x] Trim policy has measured idle, headroom, hysteresis, and cooldown constants.
+- [x] No leased, queued, durable, parser, or retained-scene data is trimmed.
+- [x] Client worker/GPU and server staging high-water capacity falls after idle.
+- [x] Resume preserves exact state and existing input/present budgets.
+- [x] No grow/shrink oscillation or significant idle timer CPU appears.
+- [x] Full browser/Tauri/server/benchmark gates pass.
+
+## Completion record
+
+Completion extends the existing three-slot worker trim with exact used/allocated,
+trim/reclaim, and one-shot regrow counters. A single shared renderer maintenance
+loop now compacts rebuildable row/scene typed arrays, releases bounded glyph
+scratch, shrinks GPU buffers, and re-uploads the complete retained scene without
+clearing rows or the atlas. The six-terminal gate reduced transient allocation
+from 2,120,184 to 25,080 bytes, reclaimed 2,095,104 bytes, preserved exact scene
+data, resumed correctly, and reported zero repeated reclaim.
+
+The release-browser geometry gate grows current WebGL scene use above 1 MiB,
+then requires the measured 2× target ratio and 1 MiB reclaim threshold after a
+shrink. It passed five consecutive runs, with exact resumed terminal text,
+non-background pixels, at most one regrow, and no second trim cycle. The complete
+11-test benchmark passed; resumed typing-under-flood remained inside the existing
+80 ms p95 budget at 79.5 ms. The 18-test multiplexer suite, client units,
+typecheck, and web/Tauri builds pass.
+
+History encoded/compressed staging now trims only on an empty owner mailbox turn
+with no pending records, retaining two 64 KiB minimum buffers. Its test reclaims
+at least 3 MiB from a synthetic high water, then proves exact four-record replay
+and one regrow. All 91 server units, 13 server parity/integration tests, Clippy,
+release server build, and diagnostics accounting pass. PTY actor write scratch
+remains bounded at 256 KiB below the reclaim threshold; durable pending records,
+queue capacities, and shutdown barriers are unchanged. Repository-wide Oxlint's
+pre-existing findings remain covered by the operator waiver; scoped changed-file
+lint passes.
 
 ## STOP conditions
 

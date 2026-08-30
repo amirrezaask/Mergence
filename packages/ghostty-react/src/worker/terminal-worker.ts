@@ -15,7 +15,9 @@ type MutableWorkerCounters = {
   -readonly [Key in Exclude<
     keyof TerminalWorkerDiagnostics,
     "pendingPresentation" | "slotsInFlight" | "bufferAllocations" |
-      "schedulerQueueBytes" | "schedulerQueueCommands" | "schedulerInFlight"
+      "renderBytesUsed" | "renderBytesAllocated" | "renderIdleTrims" |
+      "renderIdleBytesReclaimed" | "renderIdleRegrows" | "schedulerQueueBytes" |
+      "schedulerQueueCommands" | "schedulerInFlight"
   >]: TerminalWorkerDiagnostics[Key]
 };
 
@@ -67,6 +69,11 @@ function diagnostics(entry: RuntimeEntry): TerminalWorkerDiagnostics {
     pendingPresentation: entry.pendingCommand !== null,
     slotsInFlight: render.leasesBuilt - render.leasesReclaimed,
     bufferAllocations: render.backingBuffersAllocated,
+    renderBytesUsed: render.backingBytesUsed,
+    renderBytesAllocated: render.backingBytesAllocated,
+    renderIdleTrims: render.idleTrims,
+    renderIdleBytesReclaimed: render.idleBytesReclaimed,
+    renderIdleRegrows: render.idleRegrows,
     schedulerQueueBytes: 0,
     schedulerQueueCommands: 0,
     schedulerInFlight: 0,
@@ -164,9 +171,11 @@ function requestPresentation(command: TerminalWorkerCommand, entry: RuntimeEntry
   if (!synchronized && entry.sync === "timedOut") {
     entry.sync = "inactive";
   }
+  const catchingUp = entry.pendingCommand !== null || entry.pendingFull;
   entry.pendingCommand = null;
   const catchUpFull = entry.pendingFull || forceFull;
   entry.pendingFull = false;
+  if (catchingUp) entry.diagnostics.fullCatchUps += 1;
   emitOrSchedule(command, entry.core, catchUpFull);
 }
 

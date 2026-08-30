@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test"
-import { percentile } from "./_bench.js"
+import { benchContext, logBenchContext, percentile } from "./_bench.js"
 import { hasPtySpawn, launchYaade, showTerminal } from "../web/e2e/_launch.js"
 
 const ptyAvailable = hasPtySpawn()
@@ -10,6 +10,7 @@ test("bench optimistic Window close next-paint latency", async () => {
   try {
     await showTerminal(page)
     await expect(page.locator("[data-yaade-window-tabs]")).toBeVisible()
+    logBenchContext("mux-window-close-next-paint", await benchContext(page))
     const samples: number[] = []
     for (let round = 0; round < 7; round += 1) {
       await page.evaluate(() => window.__yaadeTest?.createTab?.())

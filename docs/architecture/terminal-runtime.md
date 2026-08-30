@@ -8,17 +8,26 @@ browser  <->  host server  <->  TerminalHost  <->  node-pty children
 
 `TerminalHost` maps terminal IDs to handles. One owner thread per terminal owns
 the PTY master, writer, child, replay, checkpoint parser, and writer leases. A
-small reader thread only reads the blocking PTY and sends immutable chunks over
-a bounded channel. The owner services bounded urgent and normal command lanes
-between measured output quanta. Queue saturation returns a typed runtime error.
+small 256 KiB-stack reader thread only reads the blocking PTY and sends at most
+64 immutable 64 KiB chunks over a bounded channel. The 1 MiB-stack owner
+services 64-entry urgent and normal command lanes between 1 MiB output quanta.
+It drains up to 64 immediately available adjacent writes into one bounded 256
+KiB scratch batch and flushes once; a lone keystroke is never timer-delayed.
+Consecutive resize bursts are latest-wins within the same owner turn, all
+receipts resolve, and the final dimensions update the PTY, recorder, and
+checkpoint together. Terminal-map cleanup also uses a bounded 256-entry lane.
+Queue saturation returns a typed runtime error.
 
-The history owner accepts records through a separate mailbox bounded by message
-count and bytes. It writes a checksummed append-only active segment before
-adding each record to the compression batch. Startup keeps complete records and
+The history owner accepts records through a 1,024-message / 32 MiB ingest
+mailbox. A separate bounded 1,024-message close lane reserves lifecycle progress;
+a full or stopped lane returns a typed error rather than dropping finalization.
+The owner writes a checksummed append-only active segment before adding each
+record to its 512 KiB binary block batch. Startup keeps complete records and
 truncates a torn tail. Block and manifest publication clears the active segment
-only after the manifest rename. Compression and file work never hold the
-terminal map lock. There is no detached supervisor or disk-backed process
-recovery.
+only after the manifest rename. Compression uses reusable gzip level-6 staging;
+no codec latency advantage is claimed by this completion. Compression and file
+work never run on a PTY reader or hold the terminal map lock. There is no
+detached supervisor or disk-backed process recovery.
 
 ## Lifetime
 
@@ -36,8 +45,9 @@ Startup performs one atomic store reconciliation. Restart metadata records the
 reason and previous/new server epochs outside terminal output. Before stale
 process identity is cleared, the host compares the persisted PID start token,
 boot identity where available, and executable path with the current process. It
-terminates only an exact matching PTY process group (or Windows process tree) and
-never adopts the old PTY or signals a reused PID.
+terminates only an exact matching PTY process group (or Windows process tree),
+first requesting graceful termination and then applying a bounded forced-kill
+fallback. It never adopts the old PTY or signals a reused PID.
 
 ## Data path
 
@@ -50,10 +60,18 @@ or incomplete UTF-8 replays exactly. Output is batched by byte count to reduce
 framing overhead, while small interactive chunks flush immediately. A
 fresh browser renderer attaches behind a replay barrier: history pages are
 parsed in order, concurrent live bytes remain bounded, and only bytes newer
-than the replay cursor are released afterward. Each browser has an isolated
-bounded socket queue; a slow viewer cannot pause the PTY or another viewer.
-Semantic snapshots use a replaceable binary lane rather than the reliable
-control mailbox. The history archive can rebuild terminal bytes after the live replay ring trims
+than the replay cursor are released afterward. Each admitted WebSocket has one writer task as the sole sink owner. The reader
+handles commands and ACKs without awaiting network output; every producer uses
+a non-awaiting `ConnectionOutbound` backed by bounded reliable, ordered raw, and
+replaceable semantic lanes. `EventHub` indexes weak subscribers by terminal and
+connection, so a raw terminal frame visits only attached clients while metadata
+retains the shared sequence source. On raw/flow overflow the connection rejects
+later live bytes for that terminal and enqueues one reliable replay-required
+fence at the parser-acknowledged sequence; reliable overflow closes with 1013.
+A successful attach/replay resets the fence. Consequently a slow viewer cannot
+pause the PTY, another viewer, or its own inbound command task. Semantic
+snapshots use a replaceable binary lane rather than the reliable control
+mailbox. The history archive can rebuild terminal bytes after the live replay ring trims
 old chunks and can serve validated pages without a live terminal entry. It does
 not keep the PTY alive across host restarts. Mailbox acceptance is a bounded
 in-memory fence, not an `fsync` promise. `flush_all` waits for accepted records,
