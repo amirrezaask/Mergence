@@ -45,6 +45,8 @@ importers:
         specifier: ^2.11.4
         version: 2.11.4
 
+  apps/desktop-gpui: {}
+
   apps/server: {}
 
   apps/web:

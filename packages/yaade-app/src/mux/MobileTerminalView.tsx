@@ -17,6 +17,7 @@ import {
   Clipboard,
   MoreHorizontal,
   Plus,
+  RotateCcw,
   Terminal as TerminalIcon,
   X,
   type LucideIcon,
@@ -148,6 +149,7 @@ export type MobileTerminalViewProps = {
   readonly onCloseSession: (sessionId: SessionId) => void
   readonly actionError?: string
   readonly onCloseTerminal: (terminal: MuxTerminal) => Promise<void>
+  readonly onRestartTerminal: (terminal: MuxTerminal) => Promise<void>
   /** Render the selected or retained terminal; the argument order matches the desktop renderer. */
   readonly renderTerminal: (
     terminal: MuxTerminal,
@@ -309,7 +311,14 @@ export function MobileTerminalView(props: MobileTerminalViewProps) {
           })}
       </div>
 
-      {selectedVisibleTerminal ? <MobileTerminalAccessory terminal={selectedVisibleTerminal} /> : null}
+      {selectedVisibleTerminal?.output.processState === "interrupted" ? (
+        <MobileInterruptedActions
+          onRestart={() => props.onRestartTerminal(selectedVisibleTerminal)}
+          onClose={() => props.onCloseTerminal(selectedVisibleTerminal)}
+        />
+      ) : selectedVisibleTerminal ? (
+        <MobileTerminalAccessory terminal={selectedVisibleTerminal} />
+      ) : null}
 
       <Drawer
         open={sessionActions != null}
@@ -670,6 +679,34 @@ function MobileTerminalDetail(props: {
         {props.children}
       </main>
     </MotionDiv>
+  )
+}
+
+function MobileInterruptedActions(props: {
+  readonly onRestart: () => Promise<void>
+  readonly onClose: () => Promise<void>
+}) {
+  return (
+    <GlassSurface material="shell" asChild>
+      <div
+        className="absolute inset-x-0 bottom-0 z-10 flex min-h-[calc(var(--yaade-touch-target)+env(safe-area-inset-bottom))] flex-wrap items-center justify-center gap-2 border-t border-border/70 px-2 pb-[env(safe-area-inset-bottom)]"
+        data-yaade-mobile-interrupted-actions=""
+        role="group"
+        aria-label="Interrupted terminal actions"
+      >
+        <span className="min-w-0 flex-1 text-xs text-muted-foreground">
+          The previous process ended. Restart opens a new shell.
+        </span>
+        <Button type="button" size="sm" onClick={() => void props.onRestart()}>
+          <RotateCcw />
+          Restart terminal
+        </Button>
+        <Button type="button" size="sm" variant="ghost" onClick={() => void props.onClose()}>
+          <X />
+          Close
+        </Button>
+      </div>
+    </GlassSurface>
   )
 }
 

@@ -4,8 +4,9 @@ Generated on 2026-08-30 at commit `717ed49f`, extended after the resize/TUI
 audit at commit `f21fcdf4`, extended with close-latency Plan 013 against
 `4341fd51`, incremental-submission Plan 014 at `7276f526`, Ghostty hot-path
 Plans 015–019 at `7276f526`, the twelve-plan Ghostty split (020–031) at
-`8bbcd017`, and the Superlogical capability/quality review (032–044) at
-`a0bb3fc9`. The roadmap modernizes the shared browser/Tauri terminal, host
+`8bbcd017`, the Superlogical capability/quality review (032–044) at
+`a0bb3fc9`, and the heavy-terminal UX extension (045–050) at `0739eacf`.
+The roadmap modernizes the shared browser/Tauri terminal, host
 lifecycle, secure multi-host product, native shells, and release quality without
 creating a browser-owned agent runtime or desktop-only implementation. Execute
 plans in dependency order. Every executor must read its plan fully, preserve
@@ -34,19 +35,19 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [017](017-isolated-socket-writer-and-terminal-fanout.md) | Isolate socket writing and fan out output only to attached clients | SolPro P0-4/5 | P1 | L | 015 | IN PROGRESS |
 | [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | IN PROGRESS |
 | [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | IN PROGRESS |
-| [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | BLOCKED (pinned public lib-vt artifact does not build on the current supported toolchain) |
-| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | BLOCKED (020) |
-| [022](022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | BLOCKED (020) |
-| [023](023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | BLOCKED (020) |
-| [024](024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | BLOCKED (020) |
+| [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | DONE |
+| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | TODO |
+| [022](blocked/022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | BLOCKED (015, 021) |
+| [023](blocked/023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | BLOCKED (019, 021, 022) |
+| [024](blocked/024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | BLOCKED (018, 022, 023, 027) |
 | [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | IN PROGRESS |
 | [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | IN PROGRESS |
 | [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | IN PROGRESS |
-| [028](028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | BLOCKED (020) |
-| [029](029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | BLOCKED (020) |
+| [028](blocked/028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | BLOCKED (022, 027) |
+| [029](blocked/029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | BLOCKED (023, 027) |
 | [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | IN PROGRESS |
-| [031](031-conditional-shaped-run-cache.md) | Add a shaped-run cache only when profiling or conformance requires it | SolPro conditional shaping | P3 | M | 009, 014, 022, 027 | BLOCKED (020) |
-| [032](032-restart-safe-workspace-catalog.md) | Preserve the workspace catalog and terminal history across host restart | SL continuity/history | P1 | L | 018, 019 | TODO |
+| [031](blocked/031-conditional-shaped-run-cache.md) | Add a shaped-run cache only when profiling or conformance requires it | SolPro conditional shaping | P3 | M | 009, 014, 022, 027 | BLOCKED (022, 027) |
+| [032](032-restart-safe-workspace-catalog.md) | Preserve the workspace catalog and terminal history across host restart | SL continuity/history | P1 | L | 018, 019 | IN PROGRESS |
 | [033](033-authoritative-semantic-terminal-stream.md) | Complete authoritative semantic snapshot/patch/resync streaming | SL exact reattach/observation | P1 | L | 017, 019, 022, 023 | TODO |
 | [034](034-progressive-scrollback-search.md) | Deliver current-screen-first reattach, million-line scrollback, and search | SL history/search/perf | P1 | L | 018, 023, 024 decision, 027, 033 | TODO |
 | [035](035-command-registry-and-palette.md) | Centralize commands and ship command/session palettes | SL command discovery | P1 | M | — | TODO |
@@ -59,6 +60,12 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [042](042-operational-telemetry-diagnostics-slos.md) | Establish content-safe diagnostics, telemetry, and enforced SLOs | SL operations/quality | P1 | L | 027, 032–034, 040, 041 | TODO |
 | [043](043-shared-native-desktop-ios-shells.md) | Harden Tauri desktop and validate an iOS/iPadOS remote shell | SL native platforms | P2 | L | 029, 035, 037, 039, 041 | TODO |
 | [044](044-signed-release-and-safe-updates.md) | Ship signed releases and non-surprising updates | SL distribution/lifecycle | P3 | L | 029, 032, 040, 042, 043 decision | TODO |
+| [045](045-scroll-lock-unseen-output.md) | Keep inspected scrollback anchored and surface unseen output | Heavy UX scroll inspection | P1 | M | 035 | TODO |
+| [046](046-keyboard-copy-mode-shell-marks.md) | Add keyboard copy mode and shell-mark navigation | Heavy UX copy/marks | P2 | L | 034, 035, 036 | TODO |
+| [047](047-user-configurable-keymaps.md) | Add validated user-configurable keymaps and leader keys | Heavy UX keymaps | P2 | M | 035 | TODO |
+| [048](048-explicit-input-broadcast-groups.md) | Broadcast input safely to an explicit terminal group | Heavy UX synchronized input | P3 | M | 035, 038, 039 | TODO |
+| [049](049-named-window-layout-templates.md) | Save and apply named Window layout templates | Heavy UX reusable layouts | P2 | L | 032, 035 | TODO |
+| [050](050-mru-terminal-switching.md) | Make terminal switching MRU-first with truthful status previews | Heavy UX navigation | P1 | M | 035 | TODO |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
@@ -110,6 +117,14 @@ conditional shaped-run cache.
 Plans 032–044 convert the broader Superlogical product comparison into separate,
 non-overlapping execution units. They extend the existing terminal ownership,
 Ghostty, checkpoint, history, and benchmark work rather than replacing it.
+
+Plans 045–050 add the remaining heavy-terminal workflows requested on
+2026-08-31. They do not duplicate the existing roadmap: Plan 034 already owns
+current-screen/input readiness, cold scrollback, and find; Plan 035 owns the
+command palette; Plan 036 owns attention/notifications; and Plan 039 owns risky
+paste and safe links. The new plans cover inspection/unseen output, keyboard copy
+mode and shell marks, keymap overrides, explicit input groups, reusable layout
+templates, and MRU switching.
 
 ## Superlogical capability review disposition
 
@@ -246,6 +261,19 @@ Three comparison expectations are constrained rather than silently promised:
 - **044 last:** signed promotion/update consumes exact packaged artifacts,
   compatibility/conformance, restart-safe state, SLO reports, and the accepted
   Plan 043 platform set; a blocked iOS result is not bypassed or advertised.
+- **045 after 035 for commands:** viewport anchoring can be characterized first,
+  but jump-live/pause must use the shared command registry. Plan 034 later
+  consumes the same viewport-activity interface for cold rows.
+- **046 after 034/035/036:** keyboard copy mode needs stable paged rows/search,
+  stable command IDs, and explicit content-free shell markers.
+- **047 after 035:** overrides compile against the final command descriptor and
+  key-risk catalog instead of creating a second dispatcher.
+- **048 after 035/038/039:** broadcast groups need shared commands, final
+  writer/grant semantics, and one risky-paste policy before they can send input.
+- **049 after 032/035:** named templates need restart-safe host persistence and
+  stable commands; they reuse ordinary Window tree persistence without owning PTYs.
+- **050 after 035:** MRU ranking and previous-terminal switching consume stable
+  command IDs while remaining independent from Plan 036 attention truth.
 
 ## Recommended execution waves
 
@@ -279,7 +307,14 @@ first incomplete dependency rather than rerunning completed migrations.
 13. Run Plan 041 after 040, then Plan 042 after one valid chaos/soak campaign.
 14. Run Plan 043 after its native/security/durability prerequisites. Its iOS
     portion stops at the feasibility gate if any load-bearing capability fails.
-15. Run Plan 044 last against exact candidate artifact digests and quality reports.
+15. After Plan 035, run Plans 045, 047, and 050. Serialize their app-shell and
+    Settings changes; the pure viewport/keymap/MRU modules may be developed in
+    isolated worktrees first.
+16. Run Plan 049 after Plans 032/035. Run Plan 046 only after Plans 034–036 have
+    supplied stable cold rows, search, commands, and explicit semantic marks.
+17. Treat Plan 048 as an opt-in P3 safety feature after Plans 038/039; it may be
+    deferred without blocking the rest of the heavy-terminal UX wave.
+18. Run Plan 044 last against exact candidate artifact digests and quality reports.
 
 Serialize plans that touch shared CI, benchmark fixtures, app shell, docs, or
 this README unless they run in isolated worktrees with an explicit merge order.
@@ -374,6 +409,18 @@ this README unless they run in isolated worktrees with an explicit merge order.
     PTYs/agents, fork terminal behavior, or turn viewport close into terminal close.
 44. Updates verify exact signed artifacts and never restart an active host
     without explicit acknowledgement that its PTY processes will end.
+45. Scroll inspection/pause anchors presentation only; PTY, parser, replay,
+    history, and ACKs continue, and unseen counters remain content-free.
+46. Copy mode owns navigation keys exclusively, uses bounded row/search/mark
+    interfaces, and never infers shell boundaries from terminal text.
+47. User keymaps compile atomically against one command registry; invalid or
+    risky mappings cannot remove the pointer-accessible reset path.
+48. Input broadcast targets an explicit visible writer group, encodes per
+    terminal, disarms on authority/readiness drift, and never retains input.
+49. Named layout templates persist neutral geometry only and never start, stop,
+    close, restart, or reattach terminals.
+50. MRU is bounded client-local navigation history from successful explicit
+    focus; output/activity cannot reorder it and switching preserves residency.
 
 ## Existing evidence and baseline
 
@@ -457,6 +504,20 @@ this README unless they run in isolated worktrees with an explicit merge order.
   loses full terminal styling/input/accessibility semantics.
 - The Session switcher has no query/filter-or-create behavior. `TerminalSwitcher`
   already uses `PaletteShell`, so Plan 035 reuses that primitive.
+- `GhosttyTerminalSurface` exposes scroll-to-bottom, viewport offset, and
+  at-bottom state, but `TerminalPanel` has no anchored-inspection/unseen-output
+  treatment. Plan 045 deepens that existing seam.
+- Surface selection/copy and scrolling primitives exist, but there is no
+  keyboard copy-mode controller or typed shell-mark navigation. Plan 046 composes
+  Plan 034 rows/search with Plan 036 explicit markers.
+- The keybinding catalog is centralized but its prefix groups/bindings are empty
+  and all assignments are static. Plan 047 adds validated overrides after Plan 035.
+- Window `layoutJson` already persists validated split trees with revisions, but
+  embeds terminal IDs and has no reusable neutral template entity. Plan 049
+  preserves this distinction.
+- `TerminalSwitcher` currently iterates terminal map order and shows current/kind;
+  it has no server-qualified focus history or typed status ranking. Plan 050 adds
+  those without transcript thumbnails.
 - Device auth already includes Ed25519 identities, pairing, challenge sessions,
   scopes, revocation, and audit records. The browser default identity store
   serializes private material to localStorage, and the UI does not complete the
@@ -557,3 +618,16 @@ passing broad legacy ceilings.
 - **Silently applying a host update while terminals run:** rejected. Host restart
   ends PTYs; Plan 044 requires explicit destructive confirmation and durable
   state/history preflight.
+- **Freezing a PTY to freeze the viewport:** rejected. Plan 045 pauses presentation
+  anchoring only; parsing, ACKs, history, and the process continue.
+- **Inferring shell marks from prompt-looking text:** rejected. Plan 046 consumes
+  only explicit validated semantic markers.
+- **Component-local or executable keybindings:** rejected. Plan 047 compiles data
+  overrides against Plan 035's registry and never evaluates code.
+- **Broadcasting to every terminal by default:** rejected. Plan 048 requires an
+  explicit visible target group, current writer rights, per-terminal encoding,
+  and conspicuous armed state.
+- **Storing launch commands/CWD/environment in layout templates:** rejected.
+  Plan 049 stores neutral pane geometry only.
+- **Transcript/canvas previews or output-ranked MRU:** rejected. Plan 050 uses
+  typed process/activity metadata for labels and explicit successful focus for order.

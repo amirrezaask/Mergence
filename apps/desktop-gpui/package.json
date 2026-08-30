@@ -1,0 +1,11 @@
+{
+  "name": "@yaade/desktop-gpui",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "prepare": "node scripts/prepare-zig.mjs",
+    "dev": "node scripts/run-cargo.mjs run",
+    "build": "node scripts/run-cargo.mjs build --release --locked",
+    "test": "node scripts/run-cargo.mjs test --locked"
+  }
+}

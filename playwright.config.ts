@@ -20,8 +20,8 @@ export default defineConfig({
   projects: [
     {
       name: "web-e2e",
-      testDir: "./tests/web/e2e",
-      testMatch: "*.web.spec.ts",
+      testDir: "./tests/web",
+      testMatch: "**/*.web.spec.ts",
       timeout: 180_000,
     },
     {

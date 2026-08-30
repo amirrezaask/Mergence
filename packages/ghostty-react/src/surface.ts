@@ -1238,9 +1238,11 @@ export class GhosttyTerminalSurface {
       this.canvas.height = pixelHeight;
       this.canvasConfigured = true;
     }
-    // Local viewport commits first. The retained renderer immediately clears
-    // and composites into the destination while runtime/host geometry catches up.
+    // A backing-store resize clears the canvas before the next paint. Refill it
+    // immediately, then composite the retained model in this same frame while
+    // runtime/host geometry catches up.
     this.rendererController.resize(this.renderViewport);
+    if (backingChanged) this.rendererController.clear(this.theme.background);
     this.forceFullRender = this.forceFullRender || backingChanged || gridChanged;
     this.scrollbarDirty = this.scrollbarDirty || backingChanged || gridChanged;
     if (gridChanged) {
@@ -1250,7 +1252,13 @@ export class GhosttyTerminalSurface {
       this.terminalStateDirty = true;
       this.notifyResize();
     }
-    if (backingChanged || gridChanged) this.requestRender();
+    const repaintedBacking = backingChanged && this.viewportModel.currentFrameId !== 0;
+    if (repaintedBacking) {
+      // Main-thread geometry is already authoritative; workers present their
+      // update asynchronously and retain the previous model until then.
+      this.renderFrame(this.core.kind === "main");
+    }
+    if (!repaintedBacking && (backingChanged || gridChanged)) this.requestRender();
     this.fitRetries = 0;
     this.mount.dataset.ghosttyTerminalGeometryGeneration = String(this.geometryGeneration);
   }
@@ -2184,6 +2192,7 @@ export class GhosttyTerminalSurface {
     this.canvas = next.canvas;
     this.installCanvasEvents(next.canvas);
     next.renderer.resize(this.renderViewport);
+    next.renderer.clear(this.theme.background);
     this.mount.dataset.ghosttyTerminalRenderBackend = next.renderer.kind;
     const panel = this.mount.closest<HTMLElement>("[data-yaade-terminal-panel]");
     if (panel !== null) panel.dataset.yaadeTerminalRenderBackend = next.renderer.kind;
@@ -2329,17 +2338,19 @@ export class GhosttyTerminalSurface {
     });
   }
 
-  private renderFrame(): void {
+  private renderFrame(drainRuntimeUpdates = true): void {
     if (this.disposed || !this.visible) return;
     if (this.frame !== 0) {
       window.cancelAnimationFrame(this.frame);
       this.frame = 0;
     }
-    const terminalUpdated = this.terminalStateDirty || this.viewportModel.currentFrameId === 0;
+    const runtimeUpdatePending =
+      this.terminalStateDirty || this.viewportModel.currentFrameId === 0;
+    let modelUpdated = false;
     let modelAppliedAt = performance.now();
     let update: GhosttyRenderUpdate | null = null;
     const consumedUpdates: GhosttyRenderUpdate[] = [];
-    if (terminalUpdated) {
+    if (drainRuntimeUpdates && runtimeUpdatePending) {
       const updates = this.core.drainRenderUpdates();
       if (updates.length === 0) return;
       if (updates.length > 1) this.forceFullRender = true;
@@ -2353,6 +2364,7 @@ export class GhosttyTerminalSurface {
       }
       this.snapshot = null;
       this.terminalStateDirty = false;
+      modelUpdated = true;
       modelAppliedAt = performance.now();
     }
     if (this.viewportModel.currentFrameId === 0) return;
@@ -2364,7 +2376,7 @@ export class GhosttyTerminalSurface {
     // rows painted at the previous one. Bottom anchoring starts once
     // scrollback exists, i.e. when the prompt actually lives at the bottom.
     const scrollState =
-      terminalUpdated || this.scrollbarDirty || !this.scrollbarStateKnown
+      modelUpdated || this.scrollbarDirty || !this.scrollbarStateKnown
         ? this.readScrollbarState()
         : this.scrollbarState;
     const anchorBottom = scrollState !== null && scrollState.total > scrollState.len;
@@ -2392,7 +2404,7 @@ export class GhosttyTerminalSurface {
         previousCursorY: this.renderedCursorY,
         focused: this.focused,
         hoveredLinkRange: this.hoveredLink?.range ?? null,
-        dirtyRows: terminalUpdated ? this.viewportModel.dirtyRows : NO_DIRTY_ROWS,
+        dirtyRows: modelUpdated ? this.viewportModel.dirtyRows : NO_DIRTY_ROWS,
         ...(this.theme.selectionBackground !== undefined
           ? { selectionBackground: this.theme.selectionBackground }
           : {}),

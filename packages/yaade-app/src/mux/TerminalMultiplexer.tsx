@@ -9,6 +9,7 @@ import {
 	lazy,
 } from "react";
 import { LayoutGroup, LazyMotion, MotionConfig } from "motion/react";
+import { Option } from "effect";
 import { aside as MotionAside } from "motion/react-m";
 import type {
 	CreateTerminal,
@@ -48,6 +49,7 @@ import {
 	PanelRightOpen,
 	Plus,
 	Settings,
+	X,
 } from "lucide-react";
 import {
 	AmbientCanvas,
@@ -67,6 +69,7 @@ import {
 	MIN_SIDEBAR_WIDTH,
 	useAppearanceSettings,
 } from "../hooks/useAppearanceSettings.js";
+import { isDesktopClient, isMacDesktopClient } from "../client-environment.js";
 
 import { createTerminalClient, type MuxClient } from "./mux-client.js";
 import { useHostPorts } from "../host-ports.js";
@@ -116,6 +119,7 @@ import {
 	MUX_SESSION_PREFIX_GROUPS,
 	clearMuxSessionKeymapState,
 	createMuxSessionKeymapState,
+	decodeMuxSessionCommand,
 	isMuxSessionJumpKey,
 	matchMuxSessionPrefixBinding,
 	resolveMuxSessionKeydown,
@@ -242,6 +246,8 @@ function markPerformance(name: string): void {
 export function TerminalMultiplexer() {
 	const hostPorts = useHostPorts();
 	const serverConnections = useServerConnections();
+	const desktopClient = isDesktopClient(window.location);
+	const macDesktopClient = isMacDesktopClient(window.location, window.navigator);
 	const { activeTheme, appearanceSettings, resetAppearanceSettings, setAppearanceSettings } =
 		useAppearanceSettings();
 	const [client] = useState<MuxClient>(() => createTerminalClient({ api: hostPorts.mux }));
@@ -470,6 +476,20 @@ export function TerminalMultiplexer() {
 	const activeTab = snapshot.activeTabId ? snapshot.tabsById.get(snapshot.activeTabId) : undefined;
 	const activeSessionId = activeSession?.id;
 	const activeTabId = activeTab?.id;
+	useEffect(() => {
+		const title = [activeTab?.title, activeSession?.title, "YAADE"].filter(Boolean).join(" — ");
+		document.title = title;
+		if (!desktopClient) return;
+		let cancelled = false;
+		void import("@tauri-apps/api/window")
+			.then(({ getCurrentWindow }) => {
+				if (!cancelled) return getCurrentWindow().setTitle(title);
+			})
+			.catch(() => undefined);
+		return () => {
+			cancelled = true;
+		};
+	}, [activeSession?.title, activeTab?.title, desktopClient]);
 	const tabIds = useMemo(
 		() =>
 			activeSessionId
@@ -1305,6 +1325,29 @@ export function TerminalMultiplexer() {
 
 	const runMuxSessionCommandRef = useRef(runMuxSessionCommand);
 	runMuxSessionCommandRef.current = runMuxSessionCommand;
+	useEffect(() => {
+		if (!desktopClient) return;
+		let disposed = false;
+		let unlisten: (() => void) | undefined;
+		void import("@tauri-apps/api/event")
+			.then(({ listen }) =>
+				listen("yaade://menu-command", (event) => {
+					const command = decodeMuxSessionCommand(event.payload);
+					if (Option.isSome(command)) {
+						runMuxSessionCommandRef.current(command.value);
+					}
+				}),
+			)
+			.then((stop) => {
+				if (disposed) stop();
+				else unlisten = stop;
+			})
+			.catch(() => undefined);
+		return () => {
+			disposed = true;
+			unlisten?.();
+		};
+	}, [desktopClient]);
 	const selectedTerminalRef = useRef(selected);
 	selectedTerminalRef.current = selected;
 	const keybindingContextRef = useRef<
@@ -1787,9 +1830,11 @@ export function TerminalMultiplexer() {
 				visible={visible && (!isMobile || terminal.id === routedMobileTerminalId)}
 				focused={focused && (!isMobile || terminal.id === routedMobileTerminalId)}
 				onTitleChange={(title) => updateRuntimeTitle(terminal, title, "terminal")}
+				onRestart={() => void runTerminalAction("restart", terminal)}
+				onClose={() => void runTerminalAction("archive", terminal)}
 			/>
 		),
-		[activeTheme, isMobile, routedMobileTerminalId, updateRuntimeTitle],
+		[activeTheme, isMobile, routedMobileTerminalId, runTerminalAction, updateRuntimeTitle],
 	);
 	const renderMobileTerminal = useCallback(
 		(terminal: MuxTerminal, focused: boolean, visible = true) => (
@@ -1830,6 +1875,9 @@ export function TerminalMultiplexer() {
 			(connection) => connection.id === serverConnections.snapshot.activeServerId,
 		) ?? serverConnections.snapshot.connections[0];
 	const hostAccessRevoked = activeServerConnection?.status === "revoked";
+	const closingSessionTitle = closeChoice
+		? snapshot.sessionsById.get(closeChoice.sessionId)?.title
+		: undefined;
 
 	return (
 		<MotionConfig reducedMotion="user">
@@ -1840,6 +1888,8 @@ export function TerminalMultiplexer() {
 							<div
 								className="flex h-full min-h-0 flex-row overflow-hidden bg-transparent text-foreground"
 								data-yaade-shell="terminal-multiplexer"
+								data-yaade-client={desktopClient ? "desktop" : "web"}
+								data-yaade-desktop-platform={macDesktopClient ? "macos" : undefined}
 								data-yaade-session-layout={appearanceSettings.sessionLayout}
 								data-yaade-sidebars-state={sidebarsCollapsed ? "collapsed" : "expanded"}
 							>
@@ -1865,6 +1915,9 @@ export function TerminalMultiplexer() {
 															onCloseSession={requestCloseSession}
 															actionError={actionError}
 															onCloseTerminal={(terminal) => runTerminalAction("archive", terminal)}
+															onRestartTerminal={(terminal) =>
+																runTerminalAction("restart", terminal)
+															}
 															renderTerminal={renderMobileTerminal}
 														/>
 													) : null}
@@ -1880,9 +1933,10 @@ export function TerminalMultiplexer() {
 												>
 													{!sidebarLayout ? (
 														<header
-															className="group/titlebar flex shrink-0 items-center"
+															className="group/titlebar relative flex shrink-0 items-center"
 															data-yaade-session-tabs=""
 															data-yaade-top-tabbar=""
+															data-tauri-drag-region=""
 														>
 															<SessionSwitcher
 																open={switcherOpen}
@@ -1896,16 +1950,23 @@ export function TerminalMultiplexer() {
 																terminalCounts={terminalCounts}
 																serverNamesBySessionId={serverNamesBySessionId}
 															/>
+															<ShortcutTooltip
+																label="Settings"
+																shortcut={muxSessionDirectShortcutFor("settings.show")}
+																side="bottom"
+															>
 															<Button
 																type="button"
 																size="icon-sm"
 																variant="ghost"
+																	aria-label="Settings"
 																onClick={() => setSettingsOpen(true)}
 																data-yaade-session-settings=""
-																className="size-[var(--yaade-tab-pill-height)] shrink-0 opacity-55 transition-opacity hover:opacity-100 focus-visible:opacity-100"
+																	className="size-[var(--yaade-tab-pill-height)] shrink-0 opacity-70 transition-opacity hover:opacity-100 focus-visible:opacity-100"
 															>
 																<Settings />
 															</Button>
+															</ShortcutTooltip>
 															{!singleSidebarLayout ? (
 																<SessionWindowTabStrip
 																	tabs={visibleTabs}
@@ -1926,6 +1987,7 @@ export function TerminalMultiplexer() {
 															"grid max-md:flex max-md:flex-col yaade-terminal-multiplexer-grid",
 															!sidebarLayout && "flex flex-col",
 														)}
+														data-tauri-drag-region=""
 														style={
 															twoSidebarLayout
 																? {
@@ -2022,8 +2084,8 @@ export function TerminalMultiplexer() {
 																					type="button"
 																					variant="ghost"
 																					size="icon-sm"
-																					aria-label="New tab"
-																					title="New tab"
+																					aria-label="New Window"
+																					title="New Window"
 																					data-yaade-new-session-tab=""
 																					onClick={() => void createTab()}
 																				>
@@ -2088,7 +2150,10 @@ export function TerminalMultiplexer() {
 															) : null}
 															{snapshot.connection === "reconciling" ||
 																snapshot.connection === "offline" ? (
-																<Alert className="m-4" data-yaade-connection={snapshot.connection}>
+																<Alert
+																	className="mx-2 mt-2 py-2"
+																	data-yaade-connection={snapshot.connection}
+																>
 																	<AlertTitle>
 																		{hostAccessRevoked
 																			? "Access revoked"
@@ -2104,9 +2169,22 @@ export function TerminalMultiplexer() {
 																</Alert>
 															) : null}
 															{actionError ? (
-																<Alert variant="destructive" className="m-4">
+																<Alert
+																	variant="destructive"
+																	className="relative mx-2 mt-2 py-2 pr-10"
+																>
 																	<AlertTitle>Action failed</AlertTitle>
 																	<AlertDescription>{actionError}</AlertDescription>
+																	<Button
+																		type="button"
+																		variant="ghost"
+																		size="icon-xs"
+																		aria-label="Dismiss error"
+																		className="absolute right-2 top-2"
+																		onClick={() => setActionError(undefined)}
+																	>
+																		<X />
+																	</Button>
 																</Alert>
 															) : null}
 															{sidebarLayout && sidebarsCollapsed ? (
@@ -2227,6 +2305,7 @@ export function TerminalMultiplexer() {
 									) : null}
 									<CloseSessionDialog
 										sessionId={closeChoice?.sessionId}
+										sessionTitle={closingSessionTitle}
 										onCancel={() => setCloseChoice(undefined)}
 										onClose={(mode) =>
 											closeChoice ? void closeSession(closeChoice.sessionId, mode) : undefined
@@ -2297,6 +2376,7 @@ function SelectedMuxTerminal(props: ProcessTerminalViewProps) {
 
 function CloseSessionDialog(props: {
 	sessionId?: SessionId;
+	sessionTitle?: string;
 	onCancel: () => void;
 	onClose: (mode: "keep-running" | "stop-terminals") => void;
 }) {
@@ -2309,9 +2389,12 @@ function CloseSessionDialog(props: {
 		>
 			<DialogContent size="picker">
 				<DialogHeader>
-					<DialogTitle>Close session?</DialogTitle>
+					<DialogTitle>
+						{props.sessionTitle ? `Close “${props.sessionTitle}”?` : "Close session?"}
+					</DialogTitle>
 					<DialogDescription>
-						Live terminals can keep running after this session is archived.
+						This removes the session from YAADE. Choose whether its terminals keep running on the
+						host or stop now.
 					</DialogDescription>
 				</DialogHeader>
 				<DialogFooter className="flex-wrap">
@@ -2323,14 +2406,14 @@ function CloseSessionDialog(props: {
 						className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-center leading-normal"
 						onClick={() => props.onClose("keep-running")}
 					>
-						Keep running and archive
+						Close and keep terminals running
 					</Button>
 					<Button
 						variant="destructive"
 						className="h-auto min-h-8 min-w-0 max-w-full whitespace-normal text-center leading-normal"
 						onClick={() => props.onClose("stop-terminals")}
 					>
-						Stop terminals and archive
+						Stop terminals and close
 					</Button>
 				</DialogFooter>
 			</DialogContent>

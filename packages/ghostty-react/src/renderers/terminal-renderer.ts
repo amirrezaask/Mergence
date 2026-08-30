@@ -2,6 +2,7 @@ import type {
   GhosttyRenderUpdate,
   GhosttyViewportModel,
 } from "@yaade/ghostty-core";
+import type { GhosttyColor } from "../core.js";
 import type { GhosttyCellMetrics, GhosttyCellRange } from "../renderer.js";
 
 export interface TerminalRenderViewport {
@@ -61,6 +62,7 @@ export interface TerminalRendererSubmissionDiagnostics {
 export interface TerminalRenderer {
   readonly kind: "canvas2d" | "webgl2";
   readonly submissionDiagnostics?: TerminalRendererSubmissionDiagnostics;
+  clear(background: GhosttyColor): void;
   resize(viewport: TerminalRenderViewport): void;
   setFont(font: TerminalRenderFont): Promise<GhosttyCellMetrics>;
   render(

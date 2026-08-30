@@ -23,7 +23,7 @@
 
 ## Status
 
-- **Status**: BLOCKED (Plan 020)
+- **Status**: TODO
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: HIGH
@@ -44,7 +44,7 @@ with `apps/server`; Plan 023 owns the migration.
 
 ## Current state
 
-Plan 020 should provide `crates/ghostty-vt-sys` with opaque C handles and minimal
+Plan 020 provides `crates/ghostty-vt-sys` with opaque C handles and checked
 bindings. No Rust type currently owns a Ghostty terminal, render state, grid
 reference, formatter, callback userdata, or allocator lifecycle.
 

@@ -780,10 +780,10 @@ export function SettingsOverlay({
                     >
                       <FieldContent className="min-w-0">
                         <FieldLabel className="text-sm font-medium leading-snug text-foreground">
-                          Tab layout
+                          Window navigation
                         </FieldLabel>
                         <FieldDescription className="mt-1 text-xs leading-relaxed">
-                          Keep Window tabs above the workspace or move them into a sidebar.
+                          Keep Windows in the title bar or move them into a sidebar.
                         </FieldDescription>
                       </FieldContent>
                       <ToggleGroup
@@ -791,7 +791,7 @@ export function SettingsOverlay({
                         variant="outline"
                         size="sm"
                         value={settings.sessionLayout}
-                        aria-label="Tab layout"
+                        aria-label="Window navigation"
                         className="w-full"
                         onValueChange={value => {
                           if (value !== "tabs" && value !== "single-sidebar") return
@@ -802,21 +802,21 @@ export function SettingsOverlay({
                       >
                         <ToggleGroupItem
                           value="tabs"
-                          aria-label="Horizontal tabs"
+                          aria-label="Top bar"
                           className="flex-1"
                           data-yaade-session-layout-option="tabs"
                         >
                           <PanelTop aria-hidden />
-                          Horizontal
+                          Top bar
                         </ToggleGroupItem>
                         <ToggleGroupItem
                           value="single-sidebar"
-                          aria-label="Vertical tabs"
+                          aria-label="Sidebar"
                           className="flex-1"
                           data-yaade-session-layout-option="single-sidebar"
                         >
                           <PanelLeft aria-hidden />
-                          Vertical
+                          Sidebar
                         </ToggleGroupItem>
                       </ToggleGroup>
                     </Field>

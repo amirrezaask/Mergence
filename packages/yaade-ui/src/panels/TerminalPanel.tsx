@@ -46,6 +46,8 @@ export type TerminalPanelProps = {
   exitCode?: number
   sessionGeneration?: number
   readOnly?: boolean
+  /** Visible explanation for a history-only terminal surface. */
+  readOnlyMessage?: string
   /** Attach to an existing PTY without ever creating, restarting, or disposing it. */
   attachOnly?: boolean
   /** Hold off creating/attaching a PTY until the surrounding session is ready. */
@@ -278,6 +280,7 @@ export function TerminalPanel({
   exitCode,
   sessionGeneration = 0,
   readOnly = false,
+  readOnlyMessage = "Archived · read-only",
   attachOnly = false,
   deferPty = false,
   visible = true,
@@ -311,6 +314,7 @@ export function TerminalPanel({
   isActiveRef.current = isActive
   const visibleRef = useRef(visible)
   visibleRef.current = visible
+  const replayPresentationPausedRef = useRef(false)
   const onTitleChangeRef = useRef(onTitleChange)
   onTitleChangeRef.current = onTitleChange
   const onPtyIdRef = useRef(onPtyId)
@@ -344,6 +348,11 @@ export function TerminalPanel({
     const pendingTerminalInput: string[] = []
     let outputWriter: ReturnType<typeof createTerminalOutputWriter> | null = null
     let unregisterResidentSurface: (() => void) | null = null
+    let replayPreviewActive = false
+    let previewPresentationWaiter: {
+      afterModelFrameId: number
+      resolve: () => void
+    } | null = null
     const frameScheduler = new TerminalFrameScheduler()
     const updateSchedulerDiagnostics = () => {
       const panel = containerRef.current?.closest<HTMLElement>("[data-yaade-terminal-panel]")
@@ -459,6 +468,32 @@ export function TerminalPanel({
       if (path) onOpenPathRef.current?.(path.path, path.line, path.column)
     }
 
+    const consumeAttachPreview = async (replay: {
+      data: Uint8Array
+      replayNeedsQueryResponses: boolean
+      replayTruncated: boolean
+    }): Promise<void> => {
+      if (cancelled) throw new Error("terminal replay cancelled")
+      if (!surface || replay.data.byteLength === 0) return
+      const previewSurface = surface
+      onOutputRef.current?.(tabId)
+      const waitForPresentation =
+        visibleRef.current && document.visibilityState === "visible"
+      const presented = waitForPresentation
+        ? new Promise<void>(resolve => {
+            previewPresentationWaiter = {
+              afterModelFrameId: previewSurface.lifecycleSnapshot().lastNextPaintObservedFrame,
+              resolve,
+            }
+          })
+        : Promise.resolve()
+      await new Promise<void>(resolve => previewSurface.resetAndWrite(replay.data, resolve))
+      await presented
+      if (cancelled) throw new Error("terminal replay cancelled")
+      replayPreviewActive = true
+      surfaceMount.dataset.yaadeTerminalReplayPhase = "preview"
+    }
+
     const consumeAttachReplay = (replay: {
       data: Uint8Array
       replayNeedsQueryResponses: boolean
@@ -466,8 +501,17 @@ export function TerminalPanel({
     }): void => {
       if (cancelled) throw new Error("terminal replay cancelled")
       if (!outputWriter || replay.data.byteLength === 0) return
+      const replacingPreview = replayPreviewActive
+      if (replacingPreview) {
+        replayPreviewActive = false
+        replayPresentationPausedRef.current = true
+        surface?.setVisible(false)
+        surfaceMount.dataset.yaadeTerminalReplayPhase = "history"
+      }
       onOutputRef.current?.(tabId)
-      if (replay.replayTruncated) outputWriter.enqueueReplay(new Uint8Array([0x1b, 0x63]))
+      if (replay.replayTruncated || replacingPreview) {
+        outputWriter.enqueueReplay(new Uint8Array([0x1b, 0x63]))
+      }
       if (replay.replayNeedsQueryResponses) {
         outputWriter.enqueue(replay.data)
       } else {
@@ -482,7 +526,15 @@ export function TerminalPanel({
       surface?.recordAttach()
       return terminalApi.attach(id, {
         replay: "full",
+        onReplayPreview: consumeAttachPreview,
         onReplay: consumeAttachReplay,
+      }).finally(() => {
+        replayPreviewActive = false
+        previewPresentationWaiter?.resolve()
+        previewPresentationWaiter = null
+        replayPresentationPausedRef.current = false
+        surface?.setVisible(visibleRef.current)
+        delete surfaceMount.dataset.yaadeTerminalReplayPhase
       })
     }
 
@@ -750,6 +802,14 @@ export function TerminalPanel({
           onPresented: sample => {
             frameScheduler.presented(sample)
             updateSchedulerDiagnostics()
+            if (
+              previewPresentationWaiter &&
+              sample.modelFrameId > previewPresentationWaiter.afterModelFrameId
+            ) {
+              const waiter = previewPresentationWaiter
+              previewPresentationWaiter = null
+              waiter.resolve()
+            }
           },
           onRuntimeRecoveryRequired: () => {
             const id = session?.ptyId
@@ -848,6 +908,10 @@ export function TerminalPanel({
 
     return () => {
       cancelled = true
+      replayPreviewActive = false
+      previewPresentationWaiter?.resolve()
+      previewPresentationWaiter = null
+      replayPresentationPausedRef.current = false
       disposePrecreatedPty()
       if (session) session.live = false
       if (sessionRef.current === session) sessionRef.current = null
@@ -900,7 +964,7 @@ export function TerminalPanel({
   }, [theme.id, readOnly])
 
   useEffect(() => {
-    surfaceRef.current?.setVisible(visible)
+    surfaceRef.current?.setVisible(visible && !replayPresentationPausedRef.current)
   }, [visible])
 
   useEffect(() => {
@@ -977,7 +1041,7 @@ export function TerminalPanel({
           data-yaade-terminal-archived=""
           className="pointer-events-none absolute left-1/2 top-2 z-10 -translate-x-1/2 rounded-md border bg-popover px-2.5 py-1 text-center text-xs text-popover-foreground shadow-md"
         >
-          Archived · read-only · Resume to reconnect
+          {readOnlyMessage}
         </div>
       ) : null}
       {displayStatus === "exited" || displayStatus === "failed" ? (
@@ -991,10 +1055,10 @@ export function TerminalPanel({
               ? "Terminal failed to start"
               : `Process exited${displayExitCode == null ? "" : ` with code ${displayExitCode}`}`}
           </span>
-          {!readOnly && !attachOnly ? (
+          {onRestart ? (
             <Button type="button" size="xs" variant="ghost" onClick={onRestart}>
               <RotateCcw className="size-3" />
-              Restart
+              Restart terminal
             </Button>
           ) : null}
           <Button

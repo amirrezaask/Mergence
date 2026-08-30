@@ -84,6 +84,12 @@ struct ArchiveState {
     compressed_staging: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalHistoryMetadata {
+    pub last_sequence: u64,
+    pub closed: bool,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalHistoryPage {
@@ -92,6 +98,13 @@ pub struct TerminalHistoryPage {
     pub last_sequence: u64,
     pub next_sequence: u64,
     pub complete: bool,
+}
+
+struct HistoryReadSnapshot {
+    dir: PathBuf,
+    blocks: Vec<ArchiveBlock>,
+    pending: Vec<HistoryRecord>,
+    newest: u64,
 }
 
 #[derive(Debug, Error)]
@@ -252,63 +265,66 @@ impl TerminalHistoryArchive {
         Ok(())
     }
 
+    pub fn inspect(
+        &self,
+        terminal_id: &str,
+    ) -> Result<Option<TerminalHistoryMetadata>, HistoryError> {
+        self.snapshot()?;
+        let dir = self.shared.terminal_dir(terminal_id);
+        if !dir.exists() && !self.shared.states().contains_key(terminal_id) {
+            return Ok(None);
+        }
+        let state = self.shared.state_for(terminal_id)?;
+        let state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for block in &state.manifest.blocks {
+            if !state.dir.join(&block.file).is_file() {
+                return Err(HistoryError::Corrupt(format!(
+                    "history block {} is missing for {terminal_id}",
+                    block.file
+                )));
+            }
+        }
+        let last_sequence = state
+            .pending
+            .last()
+            .map(|record| record.sequence)
+            .or_else(|| {
+                state
+                    .manifest
+                    .blocks
+                    .last()
+                    .map(|block| block.last_sequence)
+            })
+            .unwrap_or(0);
+        Ok(Some(TerminalHistoryMetadata {
+            last_sequence,
+            closed: state.manifest.closed_at.is_some(),
+        }))
+    }
+
     pub fn read_page(
         &self,
         terminal_id: &str,
         after_sequence: u64,
         max_bytes: Option<usize>,
     ) -> Result<Option<TerminalHistoryPage>, HistoryError> {
-        let (snapshot_tx, snapshot_rx) = mpsc::channel();
-        self.ingest_tx
-            .send(IngestCommand::Snapshot(snapshot_tx))
-            .map_err(|_| HistoryError::Corrupt("history owner stopped".to_owned()))?;
-        match snapshot_rx.recv() {
-            Ok(Ok(())) => {}
-            Ok(Err(error)) => return Err(HistoryError::Corrupt(error)),
-            Err(_) => return Err(HistoryError::Corrupt("history owner stopped".to_owned())),
-        }
-        let (dir, blocks, pending, newest) = {
-            let dir = self.shared.terminal_dir(terminal_id);
-            if !dir.exists() && !self.shared.states().contains_key(terminal_id) {
-                return Ok(None);
-            }
-            let state = self.shared.state_for(terminal_id)?;
-            let state = state
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            let newest = state
-                .pending
-                .last()
-                .map(|record| record.sequence)
-                .or_else(|| {
-                    state
-                        .manifest
-                        .blocks
-                        .last()
-                        .map(|block| block.last_sequence)
-                })
-                .unwrap_or(after_sequence);
-            (
-                state.dir.clone(),
-                state.manifest.blocks.clone(),
-                state.pending.clone(),
-                newest,
-            )
+        let Some(snapshot) = self.read_snapshot(terminal_id, after_sequence)? else {
+            return Ok(None);
         };
-        let limit = max_bytes
-            .unwrap_or(self.shared.page_bytes)
-            .clamp(1, self.shared.page_bytes);
+        let limit = self.page_limit(max_bytes);
         let mut chunks = Vec::new();
         let mut bytes = 0_usize;
         let mut first_sequence = 0_u64;
         let mut last_sequence = after_sequence;
         let mut selected = Vec::new();
-        for block in &blocks {
+        for block in &snapshot.blocks {
             if block.last_sequence > after_sequence {
-                selected.extend(read_block(&dir.join(&block.file))?);
+                selected.extend(read_block(&snapshot.dir.join(&block.file))?);
             }
         }
-        selected.extend(pending);
+        selected.extend(snapshot.pending);
         for record in selected {
             if record.sequence <= after_sequence {
                 continue;
@@ -335,8 +351,121 @@ impl TerminalHistoryArchive {
             first_sequence,
             last_sequence,
             next_sequence: last_sequence,
-            complete: last_sequence >= newest,
+            complete: last_sequence >= snapshot.newest,
         }))
+    }
+
+    /// Read the newest bounded page before a sequence cursor. Records inside
+    /// the page stay chronological so callers can feed the page to a terminal
+    /// parser; successive page requests move from the newest page to older ones.
+    pub fn read_page_reverse(
+        &self,
+        terminal_id: &str,
+        before_sequence: u64,
+        max_bytes: Option<usize>,
+    ) -> Result<Option<TerminalHistoryPage>, HistoryError> {
+        let Some(snapshot) = self.read_snapshot(terminal_id, 0)? else {
+            return Ok(None);
+        };
+        let ceiling = if before_sequence == 0 {
+            snapshot.newest
+        } else {
+            before_sequence.saturating_sub(1).min(snapshot.newest)
+        };
+        let limit = self.page_limit(max_bytes);
+        let mut selected = Vec::new();
+        let mut bytes = 0_usize;
+        let mut complete = true;
+
+        'records: {
+            for record in snapshot.pending.iter().rev() {
+                if record.sequence > ceiling {
+                    continue;
+                }
+                let size = record.data.len();
+                if !selected.is_empty() && bytes.saturating_add(size) > limit {
+                    complete = false;
+                    break 'records;
+                }
+                bytes = bytes.saturating_add(size);
+                selected.push(record.clone());
+            }
+            for block in snapshot.blocks.iter().rev() {
+                if block.first_sequence > ceiling {
+                    continue;
+                }
+                for record in read_block(&snapshot.dir.join(&block.file))?
+                    .into_iter()
+                    .rev()
+                {
+                    if record.sequence > ceiling {
+                        continue;
+                    }
+                    let size = record.data.len();
+                    if !selected.is_empty() && bytes.saturating_add(size) > limit {
+                        complete = false;
+                        break 'records;
+                    }
+                    bytes = bytes.saturating_add(size);
+                    selected.push(record);
+                }
+            }
+        }
+
+        selected.reverse();
+        let first_sequence = selected.first().map_or(0, |record| record.sequence);
+        let last_sequence = selected.last().map_or(0, |record| record.sequence);
+        let chunks = selected
+            .into_iter()
+            .map(|record| Base64Bytes(record.data))
+            .collect();
+        Ok(Some(TerminalHistoryPage {
+            chunks,
+            first_sequence,
+            last_sequence,
+            next_sequence: first_sequence,
+            complete,
+        }))
+    }
+
+    fn read_snapshot(
+        &self,
+        terminal_id: &str,
+        fallback_sequence: u64,
+    ) -> Result<Option<HistoryReadSnapshot>, HistoryError> {
+        self.snapshot()?;
+        let dir = self.shared.terminal_dir(terminal_id);
+        if !dir.exists() && !self.shared.states().contains_key(terminal_id) {
+            return Ok(None);
+        }
+        let state = self.shared.state_for(terminal_id)?;
+        let state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let newest = state
+            .pending
+            .last()
+            .map(|record| record.sequence)
+            .or_else(|| {
+                state
+                    .manifest
+                    .blocks
+                    .last()
+                    .map(|block| block.last_sequence)
+            })
+            .unwrap_or(fallback_sequence);
+        Ok(Some(HistoryReadSnapshot {
+            dir: state.dir.clone(),
+            blocks: state.manifest.blocks.clone(),
+            pending: state.pending.clone(),
+            newest,
+        }))
+    }
+
+    fn page_limit(&self, max_bytes: Option<usize>) -> usize {
+        max_bytes
+            .unwrap_or(self.shared.page_bytes)
+            .clamp(1, self.shared.page_bytes)
     }
 
     /// Enqueue idempotent finalization. The PTY termination path never waits on
@@ -403,12 +532,22 @@ impl TerminalHistoryArchive {
 
     #[must_use]
     pub fn available(&self, terminal_id: &str) -> bool {
-        self.shared.states().contains_key(terminal_id)
-            || self
-                .shared
-                .terminal_dir(terminal_id)
-                .join("index.json")
-                .is_file()
+        self.inspect(terminal_id)
+            .ok()
+            .flatten()
+            .is_some_and(|metadata| metadata.last_sequence > 0)
+    }
+
+    fn snapshot(&self) -> Result<(), HistoryError> {
+        let (snapshot_tx, snapshot_rx) = mpsc::channel();
+        self.ingest_tx
+            .send(IngestCommand::Snapshot(snapshot_tx))
+            .map_err(|_| HistoryError::Corrupt("history owner stopped".to_owned()))?;
+        match snapshot_rx.recv() {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(error)) => Err(HistoryError::Corrupt(error)),
+            Err(_) => Err(HistoryError::Corrupt("history owner stopped".to_owned())),
+        }
     }
 }
 
@@ -543,12 +682,11 @@ impl HistoryShared {
         fs::create_dir_all(&dir)?;
         let manifest = match read_manifest(&dir)? {
             Some(manifest) if manifest.version == ARCHIVE_VERSION => manifest,
-            Some(_) => {
-                fs::remove_dir_all(&dir)?;
-                fs::create_dir_all(&dir)?;
-                let manifest = new_manifest(terminal_id);
-                write_manifest_value(&dir, &manifest)?;
-                manifest
+            Some(manifest) => {
+                return Err(HistoryError::Corrupt(format!(
+                    "unsupported history version {} for {terminal_id}",
+                    manifest.version
+                )));
             }
             None => {
                 let manifest = new_manifest(terminal_id);
@@ -658,10 +796,18 @@ impl HistoryShared {
                 continue;
             }
             let dir = item.path();
-            let Some(mut manifest) = read_manifest(&dir)? else {
-                fs::remove_dir_all(dir)?;
-                continue;
+            let manifest = match read_manifest(&dir) {
+                Ok(Some(manifest)) if manifest.version == ARCHIVE_VERSION => manifest,
+                Ok(Some(_)) | Err(_) => {
+                    quarantine_archive(&dir, now)?;
+                    continue;
+                }
+                Ok(None) => {
+                    fs::remove_dir_all(dir)?;
+                    continue;
+                }
             };
+            let mut manifest = manifest;
             match manifest.closed_at {
                 None => {
                     manifest.closed_at = Some(now);
@@ -1122,6 +1268,22 @@ fn new_manifest(terminal_id: &str) -> ArchiveManifest {
     }
 }
 
+fn quarantine_archive(dir: &Path, now: u64) -> Result<(), HistoryError> {
+    let Some(root) = dir.parent() else {
+        return Err(HistoryError::Corrupt(
+            "history archive has no parent directory".to_owned(),
+        ));
+    };
+    let quarantine = root.with_extension("corrupt");
+    fs::create_dir_all(&quarantine)?;
+    let name = dir
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or("archive");
+    fs::rename(dir, quarantine.join(format!("{name}-{now}")))?;
+    Ok(())
+}
+
 fn read_manifest(dir: &Path) -> Result<Option<ArchiveManifest>, HistoryError> {
     let path = dir.join("index.json");
     if !path.is_file() {
@@ -1196,6 +1358,48 @@ mod tests {
             vec![Base64Bytes(Bytes::from_static(b"three"))]
         );
         assert!(final_page.complete);
+        fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn reverse_pages_start_at_the_newest_records_and_keep_each_page_chronological() {
+        let root = temp_dir();
+        let archive = TerminalHistoryArchive::with_limits(&root, 4, 6).expect("archive");
+        archive
+            .append("term-reverse", 1, Bytes::from_static(b"one"))
+            .expect("append");
+        archive
+            .append("term-reverse", 2, Bytes::from_static(b"two"))
+            .expect("append");
+        archive
+            .append("term-reverse", 3, Bytes::from_static(b"three"))
+            .expect("append");
+
+        let newest = archive
+            .read_page_reverse("term-reverse", 0, None)
+            .expect("read newest")
+            .expect("newest page");
+        assert_eq!(
+            newest.chunks,
+            vec![Base64Bytes(Bytes::from_static(b"three"))]
+        );
+        assert_eq!(newest.first_sequence, 3);
+        assert!(!newest.complete);
+
+        let older = archive
+            .read_page_reverse("term-reverse", newest.next_sequence, None)
+            .expect("read older")
+            .expect("older page");
+        assert_eq!(
+            older.chunks,
+            vec![
+                Base64Bytes(Bytes::from_static(b"one")),
+                Base64Bytes(Bytes::from_static(b"two")),
+            ]
+        );
+        assert_eq!(older.first_sequence, 1);
+        assert_eq!(older.last_sequence, 2);
+        assert!(older.complete);
         fs::remove_dir_all(root).expect("cleanup");
     }
 
@@ -1291,6 +1495,47 @@ mod tests {
             },
         ];
         assert!(encode_records(&duplicate).is_err());
+    }
+
+    #[test]
+    fn corrupt_manifest_is_quarantined_without_preventing_startup() {
+        let root = temp_dir();
+        let dir = root.join(URL_SAFE_NO_PAD.encode(b"term-corrupt"));
+        fs::create_dir_all(&dir).expect("terminal dir");
+        fs::write(dir.join("index.json"), b"{not-json").expect("corrupt manifest");
+
+        let archive = TerminalHistoryArchive::open(&root).expect("archive opens");
+        assert!(!archive.available("term-corrupt"));
+        assert!(!dir.exists());
+        let quarantine = root.with_extension("corrupt");
+        assert_eq!(fs::read_dir(&quarantine).expect("quarantine").count(), 1);
+        drop(archive);
+        fs::remove_dir_all(root).expect("cleanup root");
+        fs::remove_dir_all(quarantine).expect("cleanup quarantine");
+    }
+
+    #[test]
+    fn missing_block_is_reported_as_degraded_history() {
+        let root = temp_dir();
+        let dir = root.join(URL_SAFE_NO_PAD.encode(b"term-missing-block"));
+        fs::create_dir_all(&dir).expect("terminal dir");
+        let mut manifest = new_manifest("term-missing-block");
+        manifest.blocks.push(ArchiveBlock {
+            file: "block-1-1.bin.gz".to_owned(),
+            first_sequence: 1,
+            last_sequence: 1,
+            uncompressed_bytes: 3,
+            stored_bytes: 3,
+        });
+        write_manifest_value(&dir, &manifest).expect("manifest");
+
+        let archive = TerminalHistoryArchive::open(&root).expect("archive opens");
+        assert!(matches!(
+            archive.inspect("term-missing-block"),
+            Err(HistoryError::Corrupt(_))
+        ));
+        drop(archive);
+        fs::remove_dir_all(root).expect("cleanup");
     }
 
     #[test]

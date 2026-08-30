@@ -28,7 +28,7 @@
 
 ## Status
 
-- **Status**: BLOCKED (Plan 020)
+- **Status**: BLOCKED (Plans 023 and 027)
 - **Priority**: P3
 - **Effort**: M
 - **Risk**: MED

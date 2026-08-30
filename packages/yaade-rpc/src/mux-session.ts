@@ -62,12 +62,22 @@ export const ActivityState = Schema.Literal(
   "failed",
 );
 
+export class ProcessIdentity extends Schema.Class<ProcessIdentity>("ProcessIdentity")({
+  pid: Schema.Number,
+  platform: Schema.String,
+  bootId: Schema.optional(Schema.String),
+  startToken: Schema.String,
+  executablePath: Schema.optional(Schema.String),
+}) {}
+
 export class TerminalOutput extends Schema.TaggedClass<TerminalOutput>()(
   "TerminalOutput",
   {
     kind: Schema.Literal("process"),
     terminalInstanceId: Schema.String,
     ptyId: Schema.optional(Schema.String),
+    historyId: Schema.optional(Schema.String),
+    processIdentity: Schema.optional(ProcessIdentity),
     generation: Schema.Number,
     processState: ProcessState,
     activityState: ActivityState,

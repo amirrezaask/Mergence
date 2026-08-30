@@ -65,6 +65,8 @@ export type DurableRuntimeHarness = {
   readonly port: number
   api: ApiHandle | null
   startApi(): Promise<ApiHandle>
+  stopApi(signal?: NodeJS.Signals): Promise<void>
+  restartApi(signal?: NodeJS.Signals): Promise<ApiHandle>
   startBrowser(userDataDir?: string, startPath?: string): Promise<BrowserHandle>
   retainDiagnostics(outputDir: string): Promise<void>
   close(): Promise<void>
@@ -149,6 +151,21 @@ export async function createDurableRuntimeHarness(
     return apiHandle
   }
 
+  const stopApi = async (signal: NodeJS.Signals = "SIGTERM"): Promise<void> => {
+    if (!apiProc?.pid || apiProc.exitCode !== null) {
+      apiHandle = null
+      harness.api = null
+      return
+    }
+    signalPid(apiProc.pid, signal)
+    await waitForExit(apiProc, 8_000)
+    if (apiProc.exitCode === null) signalPid(apiProc.pid, "SIGKILL")
+    await waitForExit(apiProc, 2_000)
+    await waitForApiDown()
+    apiHandle = null
+    harness.api = null
+  }
+
   const killApi = async (): Promise<void> => {
     if (!apiProc?.pid || apiProc.exitCode !== null) {
       apiHandle = null
@@ -224,6 +241,11 @@ export async function createDurableRuntimeHarness(
     port,
     api: null,
     startApi,
+    stopApi,
+    restartApi: async signal => {
+      await stopApi(signal)
+      return startApi()
+    },
     startBrowser,
     retainDiagnostics: async outputDir => {
       fs.mkdirSync(outputDir, { recursive: true })

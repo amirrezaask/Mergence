@@ -32,7 +32,9 @@ vp run lint
 vp run build:server
 vp run build:web
 vp run build:desktop
+vp run build:desktop-gpui
 vp run test:desktop
+vp run test:desktop-gpui
 vp run test:web:e2e
 vp exec playwright test --project=platform-e2e
 ```
@@ -44,22 +46,25 @@ The web dev server runs through Vite+; start the Bun-backed host with
 
 ## Application isolation
 
-The repository has exactly three executable applications:
+The repository has exactly four executable applications:
 
 - `apps/server` owns the server process entrypoint and the server-side execution boundary.
 - `apps/web` owns only Vite configuration and browser packaging.
 - `apps/desktop` is a thin Tauri shell that embeds the same `@yaade/app` React client as the browser. It never owns PTYs or agent processes.
+- `apps/desktop-gpui` is a native Rust/GPUI client of the same server-owned multiplexer. It never owns PTYs or agent processes.
 
-Reusable client implementation belongs in `packages/`; do not fork browser and
-desktop Session, Window, terminal, transport, or state behavior. Native Rust in
-`apps/desktop` must remain limited to the Tauri application boundary unless a
-concrete platform feature requires more. Applications may depend on packages or
-wire contracts, but they must not import another application's source. The root build and
+Reusable browser/Tauri client implementation belongs in `packages/`; reusable
+native GPUI rendering belongs in `crates/`. Native Rust in `apps/desktop` must
+remain limited to the Tauri application boundary. `apps/desktop-gpui` may own
+native presentation and client projection state, but it must consume the same
+typed host RPC and binary terminal protocols and must never own PTYs or agent
+processes. Applications may depend on packages, crates, or wire contracts, but
+they must not import another application's source. The root build and
 development commands are intentionally independent: `build:server`,
-`build:web`, `build:desktop`, `dev:server`, `dev:web`, and `dev:desktop`. Web
-development does not start a host process. Desktop startup ensures the bundled
-host is running on the default port as an OS user service, independently of the
-desktop process. Never add a separate agent server or provider-specific process boundary: launch
+`build:web`, `build:desktop`, `build:desktop-gpui`, `dev:server`, `dev:web`,
+`dev:desktop`, and `dev:desktop-gpui`. Web development does not start a host
+process. Desktop startup ensures the bundled host is running on the default port
+as an OS user service, independently of the desktop process. Never add a separate agent server or provider-specific process boundary: launch
 agent CLIs through the existing server terminal runtime.
 
 ## Architecture invariants
@@ -73,7 +78,7 @@ agent CLIs through the existing server terminal runtime.
 - Host work must stay behind typed RPC boundaries.
 - Paths are validated against `allowedRoots` on the host.
 - Default bind is loopback and may stay open without a token. Binding off loopback requires `--token` / `YAADE_HOST_TOKEN`.
-- The host process owns PTYs directly. Browser disconnects do not kill PTYs, but host restart/shutdown kills all PTYs and resets Session/Window/terminal state. There is no detached supervisor, agent control plane, or restart durability; users are responsible for not restarting the host while a long-running agent or command matters.
+- The host process owns PTYs directly. Browser disconnects do not kill PTYs. Host restart/shutdown kills all PTYs, preserves the Session/Window/terminal catalog and retained history, and marks formerly live terminals interrupted. There is no detached supervisor, agent control plane, or process restart durability; users are responsible for not restarting the host while a long-running agent or command matters.
 
 ## UI rules
 

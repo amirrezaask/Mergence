@@ -49,6 +49,20 @@ jobs:
         with:
           components: clippy,rustfmt
       - run: vp install --frozen-lockfile
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cache/yaade/ghostty
+            ~/.cache/zig
+          key: ghostty-${{ matrix.os }}-zig-0.15.2-${{ hashFiles('packages/ghostty-core/src/vendor/VERSION') }}
+      - run: vp run prepare:ghostty
+      - run: vp run check:ghostty-source
+      - run: cargo fmt --manifest-path crates/ghostty-vt-sys/Cargo.toml -- --check
+      - run: cargo test --manifest-path crates/ghostty-vt-sys/Cargo.toml
+      - run: cargo test --release --manifest-path crates/ghostty-vt-sys/Cargo.toml
+      - run: cargo clippy --manifest-path crates/ghostty-vt-sys/Cargo.toml --all-targets -- -D warnings
+      - if: runner.os == 'Linux'
+        run: cargo run --manifest-path crates/ghostty-vt-sys/Cargo.toml --features bindgen-tool --bin gen-bindings -- --check
       - run: vp run typecheck
       - run: cargo fmt --manifest-path apps/server/Cargo.toml -- --check
       - run: cargo clippy --manifest-path apps/server/Cargo.toml --all-targets -- -D warnings

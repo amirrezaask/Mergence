@@ -206,6 +206,48 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
     return transport.invoke("terminal:attach", id, afterSequence, mode);
   };
 
+  const previewNewestReplay = async (
+    id: string,
+    result: TerminalAttachResult,
+    onPreview: NonNullable<TerminalAttachOptions["onReplayPreview"]>,
+  ): Promise<boolean> => {
+    if (result.archiveAvailable !== true || result.lastSequence <= 0) return false;
+    const resultChunks =
+      result.outputChunks && result.outputChunks.length > 0
+        ? result.outputChunks
+        : result.output.byteLength > 0
+          ? [result.output]
+          : [];
+    let previewChunks = result.checkpoint?.syntheticBytes.byteLength
+      ? [result.checkpoint.syntheticBytes, ...resultChunks]
+      : resultChunks;
+    let replayTruncated = result.replayTruncated === true;
+    if (previewChunks.length === 0) {
+      try {
+        const page = await transport.invoke(
+          "terminal:readReplayPage",
+          id,
+          0,
+          256 * 1024,
+          "backward",
+        );
+        if (page?.chunks.length) {
+          previewChunks = page.chunks;
+          replayTruncated = page.firstSequence > 1;
+        }
+      } catch {
+        // A preview is opportunistic. Ordered replay remains authoritative.
+      }
+    }
+    if (previewChunks.length === 0) return false;
+    await onPreview({
+      data: concatTerminalBytes(previewChunks),
+      replayNeedsQueryResponses: false,
+      replayTruncated,
+    });
+    return true;
+  };
+
   const streamArchivedReplay = async (
     id: string,
     result: TerminalAttachResult,
@@ -712,9 +754,12 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
 
           let replayDelivered = false;
           let replayedThrough = result.lastSequence;
+          if (fullReplay && options?.onReplayPreview) {
+            await previewNewestReplay(id, result, options.onReplayPreview);
+          }
           if (options?.onReplay) {
             let archiveCursor = replayAfterSequence;
-            if (result.checkpoint?.syntheticBytes.byteLength) {
+            if (!fullReplay && result.checkpoint?.syntheticBytes.byteLength) {
               await options.onReplay({
                 data: result.checkpoint.syntheticBytes,
                 replayNeedsQueryResponses: false,

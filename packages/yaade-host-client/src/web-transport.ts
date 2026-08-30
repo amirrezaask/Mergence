@@ -1,6 +1,7 @@
 import type { YaadeHostTransport } from "./transport.js";
 import {
   HostDisconnectedError,
+  decodeHostRouteResult,
   decodeTerminalDataFrame,
   decodeTerminalStreamV3,
   encodeTerminalWsAck,
@@ -236,6 +237,7 @@ export class WebHostTransport implements YaadeHostTransport {
   private readonly pendingRealtime = new Map<
     string,
     {
+      channel: TerminalWsHotOp;
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
       timeout: ReturnType<typeof setTimeout>;
@@ -346,13 +348,14 @@ export class WebHostTransport implements YaadeHostTransport {
         reject(new Error(`terminal realtime command timed out: ${channel}`));
       }, 10_000);
       this.pendingRealtime.set(requestId, {
+        channel,
         resolve,
         reject,
         timeout,
       });
       try {
         socket.send(
-          encodeTerminalWsCommand(requestId, channel as TerminalWsHotOp, args),
+          encodeTerminalWsCommand(requestId, channel, args),
         );
       } catch (error) {
         clearTimeout(timeout);
@@ -806,7 +809,11 @@ export class WebHostTransport implements YaadeHostTransport {
     clearTimeout(pending.timeout);
     this.pendingRealtime.delete(result.requestId);
     if (result.ok) {
-      pending.resolve(result.value);
+      try {
+        pending.resolve(decodeHostRouteResult(pending.channel, result.value));
+      } catch (error) {
+        pending.reject(error instanceof Error ? error : new Error(String(error)));
+      }
       return;
     }
     pending.reject(

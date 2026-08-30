@@ -16,10 +16,10 @@
 > git status --short
 > git diff --stat a0bb3fc9..HEAD -- \
 >   apps/server apps/desktop apps/web package.json pnpm-workspace.yaml \
->   .github/workflows docs tests/release plans/029-rust-release-profile-and-packaging.md
+>   .github/workflows docs tests/release plans/blocked/029-rust-release-profile-and-packaging.md
 > git diff --stat -- \
 >   apps/server apps/desktop apps/web package.json pnpm-workspace.yaml \
->   .github/workflows docs tests/release plans/029-rust-release-profile-and-packaging.md
+>   .github/workflows docs tests/release plans/blocked/029-rust-release-profile-and-packaging.md
 > ```
 
 ## Status

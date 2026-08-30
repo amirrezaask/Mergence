@@ -60,13 +60,9 @@ function createCanvasRenderer(
       "Canvas 2D is unavailable",
     );
   }
-  context.fillStyle = `rgb(${background.r}, ${background.g}, ${background.b})`;
-  context.fillRect(0, 0, canvas.width, canvas.height);
-  return {
-    canvas,
-    renderer: new Canvas2dTerminalRenderer(context, font, viewport),
-    fallbackReason: null,
-  };
+  const renderer = new Canvas2dTerminalRenderer(context, font, viewport);
+  renderer.clear(background);
+  return { canvas, renderer, fallbackReason: null };
 }
 
 const webGlSupportByDocument = new WeakMap<Document, RendererInitializationError | null>();
@@ -124,11 +120,9 @@ export function createTerminalRenderer(options: {
       });
       if (gl !== null) {
         try {
-          return {
-            canvas,
-            renderer: new WebGl2TerminalRenderer(gl, options.font, options.viewport),
-            fallbackReason: null,
-          };
+          const renderer = new WebGl2TerminalRenderer(gl, options.font, options.viewport);
+          renderer.clear(options.background);
+          return { canvas, renderer, fallbackReason: null };
         } catch (error) {
           const canvasFallback = createCanvasRenderer(
             options.font,

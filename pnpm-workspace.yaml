@@ -2,6 +2,7 @@ packages:
   - "apps/web"
   - "apps/server"
   - "apps/desktop"
+  - "apps/desktop-gpui"
   - "packages/*"
 
 pnpm:

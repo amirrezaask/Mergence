@@ -235,6 +235,13 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
 
   setDebugValidation(enabled: boolean): void { this.debugValidation = enabled; }
 
+  clear(background: GhosttyColor): void {
+    if (this.disposed) return;
+    const color = colorValues(packedColor(background));
+    this.gl.clearColor(color[0], color[1], color[2], 1);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+  }
+
   resize(viewport: TerminalRenderViewport): void {
     if (viewport.pixelRatio !== this.viewport.pixelRatio) {
       this.atlas.clear();
@@ -319,9 +326,7 @@ export class WebGl2TerminalRenderer implements TerminalRenderer {
     }
     const sceneStats = this.submitScene(submission);
     const gl = this.gl;
-    const background = colorValues(packedColor(model.background));
-    gl.clearColor(background[0], background[1], background[2], 1);
-    gl.clear(gl.COLOR_BUFFER_BIT);
+    this.clear(model.background);
     let drawCalls = 0;
     drawCalls += this.drawRects(this.backgroundBuffer, this.retainedScene.backgroundCount, false);
     drawCalls += this.drawGlyphs(this.glyphBuffer, this.retainedScene.glyphCount, false);

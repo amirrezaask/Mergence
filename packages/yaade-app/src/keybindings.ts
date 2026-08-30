@@ -24,6 +24,7 @@
  *                  (Shift-Enter, Escape, mac Option/Cmd arrows + Backspace)
  */
 
+import { Schema } from "effect";
 import {
   clearChord,
   createChordState,
@@ -35,25 +36,33 @@ import {
 export const SHELL_PREFIX = "Mod-k";
 export const MUX_SESSION_PREFIX = SHELL_PREFIX;
 
-export type MuxSessionCommand =
-  | "terminal.newTerminal"
-  | "terminal.next"
-  | "terminal.previous"
-  | "tab.next"
-  | "tab.previous"
-  | "pane.zoom"
-  | "pane.splitRight"
-  | "pane.splitDown"
-  | "terminal.switch"
-  | "sidebar.toggle"
-  | "session.switch"
-  | "terminal.jump"
-  | "session.new"
-  | "tab.new"
-  | "tab.close"
-  | "terminal.close"
-  | "session.close"
-  | "settings.show";
+export const MUX_SESSION_COMMANDS = [
+  "terminal.newTerminal",
+  "terminal.next",
+  "terminal.previous",
+  "tab.next",
+  "tab.previous",
+  "pane.zoom",
+  "pane.splitRight",
+  "pane.splitDown",
+  "terminal.switch",
+  "sidebar.toggle",
+  "session.switch",
+  "terminal.jump",
+  "session.new",
+  "tab.new",
+  "tab.close",
+  "terminal.close",
+  "session.close",
+  "settings.show",
+] as const;
+
+export type MuxSessionCommand = (typeof MUX_SESSION_COMMANDS)[number];
+
+const MuxSessionCommandSchema = Schema.Literal(...MUX_SESSION_COMMANDS);
+
+export const decodeMuxSessionCommand = Schema.decodeUnknownOption(MuxSessionCommandSchema);
+export const isMuxSessionCommand = Schema.is(MuxSessionCommandSchema);
 
 export type MuxSessionPrefixGroupId = "open" | "move" | "session";
 

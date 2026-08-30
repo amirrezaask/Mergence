@@ -31,6 +31,8 @@
 
 ## Status
 
+- **Status**: IN PROGRESS
+- **Blocked gate**: repository-wide `vp run lint` currently fails on pre-existing anti-slop and React-hook findings outside Plan 032; scoped Rust fmt/Clippy passes.
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -277,14 +279,14 @@ Expected: all commands pass on the supported platform matrix.
 
 ## Done criteria
 
-- [ ] Host startup no longer calls `reset_runtime_state` unconditionally.
-- [ ] Session, Window, terminal, layout, and archive IDs survive restart.
-- [ ] Formerly live terminals become explicitly interrupted; no UI claims they resumed.
-- [ ] Retained history is readable without a live `TerminalEntry`.
-- [ ] Restart is explicit, revision-fenced, and creates generation `N+1`.
-- [ ] Browser/Tauri disconnect still preserves PTYs; host exit still ends them.
-- [ ] No detached supervisor or process-adoption boundary exists.
-- [ ] Recovery, platform, web, type, lint, and build gates pass.
+- [x] Host startup no longer calls `reset_runtime_state` unconditionally.
+- [x] Session, Window, terminal, layout, and archive IDs survive restart.
+- [x] Formerly live terminals become explicitly interrupted; no UI claims they resumed.
+- [x] Retained history is readable without a live `TerminalEntry`.
+- [x] Restart is explicit, revision-fenced, and creates generation `N+1`.
+- [x] Browser/Tauri disconnect still preserves PTYs; host exit still ends them.
+- [x] No detached supervisor or process-adoption boundary exists.
+- [ ] Recovery, platform, web, type, lint, and build gates pass (`vp run lint` baseline remains red).
 
 ## STOP conditions
 

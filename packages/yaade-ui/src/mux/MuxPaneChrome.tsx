@@ -170,59 +170,64 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             data-yaade-mux-pane-drag=""
             data-yaade-mux-pane-title=""
             className={cn(
-              "pointer-events-auto absolute inset-x-0 top-0 h-px opacity-0",
+              "pointer-events-auto absolute inset-x-0 top-0 h-8 opacity-0",
               draggable ? "cursor-grab touch-none active:cursor-grabbing" : "",
             )}
             {...(draggable ? attributes : {})}
           />
           <div
-            className="pointer-events-none absolute top-2 right-2 flex items-center gap-0.5"
-            data-yaade-mux-pane-controls=""
-            onPointerDown={event => event.stopPropagation()}
+            className="pointer-events-auto absolute top-0 right-0 p-2"
+            data-yaade-mux-pane-control-zone=""
           >
-            <SplitControl
-              direction="right"
-              icon={<Columns2 />}
-              shortcut={splitRightShortcut}
-              onSplit={onSplitRight}
-              onSplitButton={onSplitButton}
-              wrapSplitButton={wrapSplitButton}
-            />
-            <SplitControl
-              direction="down"
-              icon={<Rows2 />}
-              shortcut={splitDownShortcut}
-              onSplit={onSplitDown}
-              onSplitButton={onSplitButton}
-              wrapSplitButton={wrapSplitButton}
-            />
-            {canZoom ? (
+            <div
+              className="pointer-events-none flex items-center gap-0.5"
+              data-yaade-mux-pane-controls=""
+              onPointerDown={event => event.stopPropagation()}
+            >
+              <SplitControl
+                direction="right"
+                icon={<Columns2 />}
+                shortcut={splitRightShortcut}
+                onSplit={onSplitRight}
+                onSplitButton={onSplitButton}
+                wrapSplitButton={wrapSplitButton}
+              />
+              <SplitControl
+                direction="down"
+                icon={<Rows2 />}
+                shortcut={splitDownShortcut}
+                onSplit={onSplitDown}
+                onSplitButton={onSplitButton}
+                wrapSplitButton={wrapSplitButton}
+              />
+              {canZoom ? (
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="icon-xs"
+                  aria-label={zoomLabel}
+                  aria-pressed={zoomed}
+                  title={zoomTitle}
+                  data-yaade-mux-zoom=""
+                  className="text-muted-foreground/55 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
+                  onClick={onZoom}
+                >
+                  {zoomed ? <Minimize2 /> : <Maximize2 />}
+                </Button>
+              ) : null}
               <Button
                 type="button"
                 variant="ghost"
                 size="icon-xs"
-                aria-label={zoomLabel}
-                aria-pressed={zoomed}
-                title={zoomTitle}
-                data-yaade-mux-zoom=""
+                aria-label="Close pane"
+                title="Close pane"
+                data-yaade-mux-close-pane=""
                 className="text-muted-foreground/55 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
-                onClick={onZoom}
+                onClick={onClose}
               >
-                {zoomed ? <Minimize2 /> : <Maximize2 />}
+                <X />
               </Button>
-            ) : null}
-            <Button
-              type="button"
-              variant="ghost"
-              size="icon-xs"
-              aria-label="Close pane"
-              title="Close pane"
-              data-yaade-mux-close-pane=""
-              className="text-muted-foreground/55 opacity-60 hover:text-foreground hover:opacity-100 focus-visible:text-foreground focus-visible:opacity-100 group-hover/mux-chrome:opacity-100 group-focus-within/mux-chrome:opacity-100"
-              onClick={onClose}
-            >
-              <X />
-            </Button>
+            </div>
           </div>
         </div>
       </ContextMenuTrigger>

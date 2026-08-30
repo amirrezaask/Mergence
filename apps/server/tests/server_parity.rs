@@ -230,6 +230,137 @@ async fn server_identity_survives_api_restart_while_epoch_changes() {
 }
 
 #[tokio::test]
+async fn restart_preserves_workspace_and_exposes_interrupted_history_read_only() {
+    let temp = tempfile::tempdir().expect("temp dir");
+    let first = serve(config(&temp, 0, None)).await.expect("first server");
+    let principal = Principal::local("restart-test".to_owned());
+    let snapshot = first.runtime.store.list_snapshots(false).remove(0);
+    let session_id = snapshot.session.id.clone();
+    let tab_id = snapshot.tabs[0].id.clone();
+    first
+        .runtime
+        .dispatch(
+            &principal,
+            "mux:saveTabLayout",
+            &[json!({
+                "tabId": tab_id,
+                "layoutJson": "{\"version\":1,\"root\":{\"kind\":\"leaf\"}}",
+                "revision": snapshot.tabs[0].revision,
+            })],
+        )
+        .expect("save layout");
+    let created = first
+        .runtime
+        .dispatch(
+            &principal,
+            "mux:createTerminal",
+            &[json!({
+                "sessionId": session_id,
+                "tabId": tab_id,
+                "title": "Restart history",
+                "kind": "terminal",
+                "input": {
+                    "_tag": "TerminalInput",
+                    "kind": "terminal",
+                    "shellArgs": ["-c", "printf 'retained-before-restart\\n'; sleep 30"],
+                },
+            })],
+        )
+        .expect("create terminal");
+    let terminal_id = created["id"].as_str().expect("mux terminal id").to_owned();
+    let pty_id = created["output"]["ptyId"]
+        .as_str()
+        .expect("pty id")
+        .to_owned();
+    let generation = created["output"]["generation"]
+        .as_u64()
+        .expect("generation");
+    tokio::time::timeout(Duration::from_secs(5), async {
+        while !first.runtime.terminal.history_available(&pty_id) {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("history written");
+
+    first.shutdown().await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+
+    let second = serve(config(&temp, 0, None)).await.expect("second server");
+    let recovered = second
+        .runtime
+        .store
+        .get_terminal(&terminal_id)
+        .expect("recovered terminal");
+    assert_eq!(recovered.session_id, session_id);
+    assert_eq!(recovered.tab_id.as_deref(), Some(tab_id.as_str()));
+    assert_eq!(
+        recovered.status,
+        yaade_server::model::TerminalStatus::Disconnected
+    );
+    assert_eq!(
+        recovered.output.process_state,
+        yaade_server::model::ProcessState::Interrupted
+    );
+    assert_eq!(recovered.output.pty_id, None);
+    assert_eq!(
+        recovered.output.history_id.as_deref(),
+        Some(pty_id.as_str())
+    );
+    assert!(recovered.output.replay_available);
+    assert_eq!(recovered.output.generation, generation);
+    assert_eq!(
+        second
+            .runtime
+            .store
+            .get_tab(&tab_id)
+            .expect("preserved tab")
+            .layout_json
+            .as_deref(),
+        Some("{\"version\":1,\"root\":{\"kind\":\"leaf\"}}")
+    );
+
+    let attached = second
+        .runtime
+        .dispatch(&principal, "terminal:attach", &[json!(pty_id), json!(0)])
+        .expect("read-only attach");
+    assert_eq!(attached["status"], "exited");
+    assert_eq!(attached["archiveAvailable"], true);
+    let page = second
+        .runtime
+        .dispatch(
+            &principal,
+            "terminal:readReplayPage",
+            &[json!(pty_id), json!(0), json!(256 * 1024)],
+        )
+        .expect("history page");
+    let bytes = page["chunks"]
+        .as_array()
+        .expect("chunks")
+        .iter()
+        .flat_map(|chunk| {
+            base64::engine::general_purpose::STANDARD
+                .decode(chunk.as_str().expect("base64 chunk"))
+                .expect("decode")
+        })
+        .collect::<Vec<_>>();
+    assert!(String::from_utf8_lossy(&bytes).contains("retained-before-restart"));
+
+    let restarted = second
+        .runtime
+        .dispatch(
+            &principal,
+            "mux:restartTerminal",
+            &[json!(terminal_id), json!(recovered.revision)],
+        )
+        .expect("restart terminal");
+    assert_eq!(restarted["status"], "running");
+    assert_eq!(restarted["output"]["generation"], generation + 1);
+    assert_ne!(restarted["output"]["ptyId"], pty_id);
+    second.shutdown().await;
+}
+
+#[tokio::test]
 async fn start_host_server_binds_an_os_assigned_high_port_when_preferred_is_zero() {
     let harness = Harness::start(None).await;
     assert_ne!(harness.server.address.port(), 0);

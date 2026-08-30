@@ -2,6 +2,7 @@ import type {
   GhosttyRenderUpdate,
   GhosttyViewportModel,
 } from "@yaade/ghostty-core";
+import type { GhosttyColor } from "../core.js";
 import {
   measureGhosttyCell,
   renderGhosttySnapshot,
@@ -26,6 +27,15 @@ export class Canvas2dTerminalRenderer implements TerminalRenderer {
   ) {
     this.font = font;
     this.viewport = viewport;
+  }
+
+  clear(background: GhosttyColor): void {
+    if (this.disposed) return;
+    this.context.save();
+    this.context.resetTransform();
+    this.context.fillStyle = `rgb(${background.r}, ${background.g}, ${background.b})`;
+    this.context.fillRect(0, 0, this.context.canvas.width, this.context.canvas.height);
+    this.context.restore();
   }
 
   resize(viewport: TerminalRenderViewport): void {

@@ -1,4 +1,10 @@
-use std::{path::PathBuf, sync::Arc};
+use std::{
+    path::PathBuf,
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+};
 
 use bytes::Bytes;
 use serde_json::{Value, json};
@@ -132,6 +138,7 @@ pub struct HostRuntime {
     pub devices: Arc<DeviceAuthService>,
     pub home_dir: String,
     pub machine_hostname: String,
+    shutting_down: AtomicBool,
 }
 
 impl HostRuntime {
@@ -144,12 +151,6 @@ impl HostRuntime {
             &config.data_dir.join("yaade.sqlite3"),
             machine_hostname.clone(),
         )?);
-        store.reset_runtime_state()?;
-        let devices = Arc::new(DeviceAuthService::new(Arc::clone(&store)).map_err(|error| {
-            RuntimeError::Invalid(format!(
-                "device authentication initialization failed: {error}"
-            ))
-        })?);
         let identity = ServerIdentity {
             server_id: store.server_id().to_owned(),
             server_epoch: Uuid::new_v4().to_string(),
@@ -163,6 +164,24 @@ impl HostRuntime {
             &config.data_dir.join("terminal-history"),
             config.features.terminal_checkpoints,
         )?;
+        let startup_terminals = store.startup_terminals();
+        let mut available_history_ids = std::collections::HashSet::new();
+        for startup in &startup_terminals {
+            if let Some(identity) = startup.process_identity.as_ref() {
+                terminal.terminate_stale_process(identity)?;
+            }
+            if let Some(history_id) = startup.history_id.as_ref()
+                && terminal.history_available(history_id)
+            {
+                available_history_ids.insert(history_id.clone());
+            }
+        }
+        store.reconcile_startup(&identity.server_epoch, &available_history_ids)?;
+        let devices = Arc::new(DeviceAuthService::new(Arc::clone(&store)).map_err(|error| {
+            RuntimeError::Invalid(format!(
+                "device authentication initialization failed: {error}"
+            ))
+        })?);
         let capabilities =
             ServerCapabilities::parity(&identity, config.features.terminal_checkpoints);
         let runtime = Arc::new(Self {
@@ -175,6 +194,7 @@ impl HostRuntime {
             store,
             terminal,
             devices,
+            shutting_down: AtomicBool::new(false),
         });
         Self::start_lifecycle_listener(&runtime);
         Ok(runtime)
@@ -194,6 +214,9 @@ impl HostRuntime {
                 let Some(runtime) = weak.upgrade() else {
                     break;
                 };
+                if runtime.shutting_down.load(Ordering::Acquire) {
+                    continue;
+                }
                 let Some(pty_id) = event.args.first().and_then(Value::as_str) else {
                     continue;
                 };
@@ -256,6 +279,7 @@ impl HostRuntime {
     }
 
     pub fn shutdown(&self) {
+        self.shutting_down.store(true, Ordering::Release);
         self.events.emit("server:shuttingDown", Vec::<Value>::new());
         self.terminal.stop_all();
     }
@@ -634,8 +658,11 @@ impl HostRuntime {
                     Some(starting.revision),
                     |terminal| {
                         terminal.status = TerminalStatus::Running;
-                        terminal.output =
-                            TerminalOutput::running(pty.id.clone(), terminal.output.generation);
+                        terminal.output = TerminalOutput::running(
+                            pty.id.clone(),
+                            terminal.output.generation,
+                            pty.process_identity.clone(),
+                        );
                     },
                 )?;
                 self.emit_terminal_updated(&running);
@@ -718,6 +745,7 @@ impl HostRuntime {
                             terminal.output = TerminalOutput::running(
                                 pty.id.clone(),
                                 terminal.output.generation + 1,
+                                pty.process_identity.clone(),
                             );
                         })?;
                 self.emit_terminal_updated(&running);
@@ -818,17 +846,19 @@ impl HostRuntime {
                         "semantic terminal mode is not available on this host".to_owned(),
                     ));
                 }
-                let lease = self.terminal.acquire_lease(
-                    id,
-                    &principal.principal_id,
-                    &principal.connection_id,
-                    if principal.can_control {
-                        TerminalLeaseMode::Writer
-                    } else {
-                        TerminalLeaseMode::Observer
-                    },
-                )?;
-                drop(lease);
+                if self.terminal.is_live_terminal(id) {
+                    let lease = self.terminal.acquire_lease(
+                        id,
+                        &principal.principal_id,
+                        &principal.connection_id,
+                        if principal.can_control {
+                            TerminalLeaseMode::Writer
+                        } else {
+                            TerminalLeaseMode::Observer
+                        },
+                    )?;
+                    drop(lease);
+                }
                 let mut attach = serde_json::to_value(self.terminal.attach(
                     id,
                     &principal.connection_id,
@@ -956,6 +986,7 @@ impl HostRuntime {
                     args.get(2)
                         .and_then(Value::as_u64)
                         .and_then(|value| usize::try_from(value).ok()),
+                    args.get(3).and_then(Value::as_str) == Some("backward"),
                 )?
             )),
             "terminal:getCwd" => Ok(json!(self.terminal.get_cwd(id)?)),
@@ -1118,10 +1149,11 @@ fn validate_route_args(channel: &str, args: &[Value]) -> Result<(), RuntimeError
                 && (args.len() < 3 || matches!(args[2].as_str(), Some("raw" | "semantic" | "both")))
         }
         "terminal:readReplayPage" => {
-            (args.len() == 2 || args.len() == 3)
+            (2..=4).contains(&args.len())
                 && string_at(0)
                 && number_at(1)
-                && (args.len() == 2 || number_at(2))
+                && (args.len() < 3 || number_at(2))
+                && (args.len() < 4 || matches!(args[3].as_str(), Some("forward" | "backward")))
         }
         "terminal:requestControl"
         | "terminal:listViewers"
@@ -1345,6 +1377,20 @@ mod tests {
             validate_route_args(
                 "terminal:attach",
                 &[json!("id"), json!(0), json!("invalid")]
+            )
+            .is_err()
+        );
+        assert!(
+            validate_route_args(
+                "terminal:readReplayPage",
+                &[json!("id"), json!(0), json!(256 * 1024), json!("backward")]
+            )
+            .is_ok()
+        );
+        assert!(
+            validate_route_args(
+                "terminal:readReplayPage",
+                &[json!("id"), json!(0), json!(256 * 1024), json!("sideways")]
             )
             .is_err()
         );

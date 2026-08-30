@@ -24,11 +24,20 @@ recovery.
 
 - Browser reloads and disconnects only remove viewers. PTYs continue running.
 - Closing a terminal disposes its PTY.
-- Host shutdown or crash ends all PTYs.
-- Host startup discards persisted Session, Window, terminal, and terminal-instance
-  rows, then creates one fresh Session.
+- Host shutdown or crash ends all PTYs and their process groups.
+- Host startup preserves Session, Window, layout, title, ordering, terminal, and
+  archive identities. Every formerly live terminal becomes `disconnected` /
+  `interrupted`, loses its writer/PTY identity, and keeps its last generation.
+- An interrupted terminal can render validated retained output read-only. Its
+  explicit restart creates a new shell and generation; it never resumes execution.
 - Users must not restart the host while a long-running command matters.
 
+Startup performs one atomic store reconciliation. Restart metadata records the
+reason and previous/new server epochs outside terminal output. Before stale
+process identity is cleared, the host compares the persisted PID start token,
+boot identity where available, and executable path with the current process. It
+terminates only an exact matching PTY process group (or Windows process tree) and
+never adopts the old PTY or signals a reused PID.
 
 ## Data path
 
@@ -44,8 +53,14 @@ parsed in order, concurrent live bytes remain bounded, and only bytes newer
 than the replay cursor are released afterward. Each browser has an isolated
 bounded socket queue; a slow viewer cannot pause the PTY or another viewer.
 Semantic snapshots use a replaceable binary lane rather than the reliable
-control mailbox. The history archive can rebuild terminal bytes after the live
-replay ring trims old chunks; it does not keep the PTY alive across host restarts.
+control mailbox. The history archive can rebuild terminal bytes after the live replay ring trims
+old chunks and can serve validated pages without a live terminal entry. It does
+not keep the PTY alive across host restarts. Mailbox acceptance is a bounded
+in-memory fence, not an `fsync` promise. `flush_all` waits for accepted records,
+active-segment writes, block publication, and manifest renames, but does not claim
+power-loss durability beyond the operating system's page-cache guarantees. Crash
+recovery retains complete checksummed active records and rejects missing or
+corrupt archives instead of presenting partial output as exact.
 
 Input, resize, paste, focus, mouse, and close operations use per-connection
 writer leases. The terminal owner authorizes a mutation and applies it in one
@@ -85,5 +100,6 @@ buffers.
 5. Prefer direct calls over process boundaries, adapters, and recovery state.
 6. Test a real interactive shell and a directly launched command through
    `portable-pty`.
-7. Treat host restart as destructive. Breaking persisted-state upgrades may
-   reset the database instead of adding compatibility code.
+7. Treat host restart as process-destructive and catalog/history-preserving.
+   Breaking persisted-state upgrades may reset the database instead of adding
+   compatibility code.

@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Check, Layers3, Pencil, Plus, X } from "lucide-react";
+import { Check, ChevronDown, Layers3, Pencil, Plus, X } from "lucide-react";
 import type { AppSession, SessionId } from "@yaade/rpc";
 import { cn, formatKeyBinding } from "@yaade/ui/session";
 import { Button, Input, Popover, PopoverContent, PopoverTrigger } from "@yaade/ui/primitives";
@@ -65,11 +65,15 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 							: "Switch session"
 					}
 					className={cn(
-						"h-[var(--yaade-tab-pill-height)] min-w-0 max-w-40 shrink-0 justify-start gap-1.5 rounded-[var(--yaade-pill-radius)] px-2.5 text-left text-muted-foreground hover:bg-accent/60 hover:text-foreground data-[state=open]:bg-accent/70 data-[state=open]:text-foreground",
+						"h-[var(--yaade-tab-pill-height)] min-w-0 max-w-56 shrink-0 justify-start gap-1.5 rounded-[var(--yaade-pill-radius)] px-2.5 text-left text-muted-foreground hover:bg-accent/60 hover:text-foreground data-[state=open]:bg-accent/70 data-[state=open]:text-foreground",
 						props.className,
 					)}
 				>
 					<Layers3 className="shrink-0" data-icon="inline-start" aria-hidden />
+					<span className="min-w-0 flex-1 truncate text-xs font-medium text-foreground">
+						{activeSession?.title ?? "Sessions"}
+					</span>
+					<ChevronDown className="shrink-0 opacity-60" data-icon="inline-end" aria-hidden />
 				</Button>
 			</PopoverTrigger>
 			<PopoverContent
@@ -166,11 +170,11 @@ export function SessionSwitcher(props: SessionSwitcherProps) {
 													<span className="truncate text-xs font-medium text-foreground">
 														{session.title}
 													</span>
-													{serverName ? (
 														<span className="truncate text-3xs text-muted-foreground">
-															{serverName}
+														{[serverName, `${count} terminal${count === 1 ? "" : "s"}`]
+															.filter(Boolean)
+															.join(" · ")}
 														</span>
-													) : null}
 												</span>
 											</button>
 											{props.onRename ? (

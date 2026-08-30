@@ -78,6 +78,8 @@
   --yaade-control-radius: 0.625rem;
   --yaade-pill-radius: 999rem;
   --yaade-app-header-height: 3rem;
+  --yaade-native-titlebar-inline-inset: 5.5rem;
+  --yaade-native-titlebar-block-inset: 2.25rem;
   /* Target sizes stay in CSS px even when the compact UI font scales rem units. */
   --yaade-pointer-target: 24px;
   --yaade-touch-target: 44px;
@@ -263,6 +265,26 @@ body {
   border-radius: var(--yaade-island-radius);
   background: var(--yaade-canvas-background);
   box-shadow: var(--yaade-material-inset-rim);
+}
+
+/* The Tauri shell owns the outer window edge. macOS overlays native traffic
+ * lights into the shared top bar, so only the non-interactive chrome moves. */
+[data-yaade-shell="terminal-multiplexer"][data-yaade-client="desktop"] {
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+}
+
+[data-yaade-shell="terminal-multiplexer"][data-yaade-desktop-platform="macos"]
+  [data-yaade-top-tabbar] {
+  padding-inline-start: var(--yaade-native-titlebar-inline-inset);
+}
+
+[data-yaade-shell="terminal-multiplexer"][data-yaade-desktop-platform="macos"]:not(
+    [data-yaade-session-layout="tabs"]
+  )
+  .yaade-terminal-multiplexer-grid {
+  padding-top: var(--yaade-native-titlebar-block-inset);
 }
 
 .yaade-pwa-update {
@@ -546,8 +568,9 @@ body {
 }
 
 [data-yaade-terminal-workspace]
-  [data-yaade-panel-leaf]:is(:hover, :focus-within)
-  [data-yaade-mux-pane-controls] {
+  [data-yaade-mux-pane-control-zone]:hover
+  [data-yaade-mux-pane-controls],
+[data-yaade-terminal-workspace] [data-yaade-mux-pane-controls]:has(:focus-visible) {
   pointer-events: auto;
   opacity: 1;
   transform: translateY(0);

@@ -8,6 +8,15 @@ const decode = (value: Uint8Array): string => new TextDecoder().decode(value)
 
 type AttachResult = {
   id: string
+  checkpoint?: {
+    checkpointVersion: 1
+    terminalEpoch: string
+    sequence: number
+    cols: number
+    rows: number
+    createdAt: string
+    syntheticBytes: Uint8Array
+  }
   outputChunks: Uint8Array[]
   output: Uint8Array
   lastSequence: number
@@ -164,9 +173,13 @@ test("a new renderer receives full paged replay before buffered live output", as
     complete: true,
   })
 
+  const preview: string[] = []
   const replay: string[] = []
   const attached = await terminal.attach("pty-remount", {
     replay: "full",
+    onReplayPreview: chunk => {
+      preview.push(decode(chunk.data))
+    },
     onReplay: chunk => {
       replay.push(decode(chunk.data))
       transport.emit("terminal:data", "pty-remount", encode("duplicate-live-5"), 5)
@@ -176,6 +189,7 @@ test("a new renderer receives full paged replay before buffered live output", as
   const live: string[] = []
   terminal.onData("pty-remount", data => live.push(decode(data)))
 
+  assert.deepEqual(preview, ["bounded-tail"])
   assert.deepEqual(replay, [
     "history-1history-2history-3history-4history-5",
   ])
@@ -188,6 +202,115 @@ test("a new renderer receives full paged replay before buffered live output", as
       channel: "terminal:attach",
       args: ["pty-remount", 0, "raw"],
       via: "realtime",
+    },
+  )
+})
+
+test("a cold archive fetches its newest page before ordered history replay", async () => {
+  const transport = new FakeTransport()
+  transport.queueAttach({
+    id: "pty-cold-preview",
+    outputChunks: [],
+    output: new Uint8Array(),
+    lastSequence: 4,
+    archiveAvailable: true,
+    status: "running",
+  })
+  transport.queueReplayPage({
+    chunks: [encode("history-3"), encode("history-4")],
+    firstSequence: 3,
+    lastSequence: 4,
+    nextSequence: 3,
+    complete: false,
+  })
+  transport.queueReplayPage({
+    chunks: [encode("history-1"), encode("history-2"), encode("history-3"), encode("history-4")],
+    firstSequence: 1,
+    lastSequence: 4,
+    nextSequence: 4,
+    complete: true,
+  })
+
+  const delivery: string[] = []
+  await createYaadeApi(transport).terminal.attach("pty-cold-preview", {
+    replay: "full",
+    onReplayPreview: chunk => {
+      delivery.push(`preview:${decode(chunk.data)}`)
+    },
+    onReplay: chunk => {
+      delivery.push(`replay:${decode(chunk.data)}`)
+    },
+  })
+
+  assert.deepEqual(delivery, [
+    "preview:history-3history-4",
+    "replay:history-1history-2history-3history-4",
+  ])
+  assert.deepEqual(
+    transport.calls.filter(call => call.channel === "terminal:readReplayPage"),
+    [
+      {
+        channel: "terminal:readReplayPage",
+        args: ["pty-cold-preview", 0, 256 * 1024, "backward"],
+        via: "http",
+      },
+      {
+        channel: "terminal:readReplayPage",
+        args: ["pty-cold-preview", 0, 256 * 1024],
+        via: "http",
+      },
+    ],
+  )
+})
+
+test("a newest-screen checkpoint previews without skipping older scrollback", async () => {
+  const transport = new FakeTransport()
+  transport.queueAttach({
+    id: "pty-checkpoint-preview",
+    checkpoint: {
+      checkpointVersion: 1,
+      terminalEpoch: "epoch-1",
+      sequence: 3,
+      cols: 80,
+      rows: 24,
+      createdAt: "2026-01-01T00:00:00.000Z",
+      syntheticBytes: encode("current-screen"),
+    },
+    outputChunks: [encode("current-delta")],
+    output: new Uint8Array(),
+    lastSequence: 4,
+    archiveAvailable: true,
+    status: "running",
+  })
+  transport.queueReplayPage({
+    chunks: [encode("history-1"), encode("history-2"), encode("history-3"), encode("history-4")],
+    firstSequence: 1,
+    lastSequence: 4,
+    nextSequence: 4,
+    complete: true,
+  })
+
+  const delivery: string[] = []
+  await createYaadeApi(transport).terminal.attach("pty-checkpoint-preview", {
+    replay: "full",
+    onReplayPreview: chunk => {
+      delivery.push(`preview:${decode(chunk.data)}`)
+    },
+    onReplay: chunk => {
+      delivery.push(`replay:${decode(chunk.data)}`)
+    },
+  })
+
+  assert.deepEqual(delivery, [
+    "preview:current-screencurrent-delta",
+    "replay:history-1history-2history-3history-4",
+  ])
+  assert.deepEqual(
+    transport.calls.filter(call => call.channel === "terminal:readReplayPage").at(-1),
+    {
+      channel: "terminal:readReplayPage",
+      args: ["pty-checkpoint-preview", 0, 256 * 1024],
+      via: "http",
     },
   )
 })

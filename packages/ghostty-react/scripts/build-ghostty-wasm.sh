@@ -8,87 +8,16 @@ CORE_PACKAGE_DIR="${PACKAGE_DIR}/../ghostty-core"
 VENDOR_DIR="${CORE_PACKAGE_DIR}/src/vendor"
 COMPAT_VENDOR_DIR="${PACKAGE_DIR}/src/vendor"
 REVISION_FILE="${VENDOR_DIR}/VERSION"
-GHOSTTY_REVISION="$(tr -d '[:space:]' < "${REVISION_FILE}")"
-GHOSTTY_SOURCE_DIR="${GHOSTTY_SOURCE_DIR:-${HOME}/.cache/yaade/ghostty-${GHOSTTY_REVISION:0:8}}"
-GHOSTTY_ZIG_VERSION="${GHOSTTY_ZIG_VERSION:-0.15.2}"
-GHOSTTY_ZIG="${GHOSTTY_ZIG:-}"
+PREPARE_SCRIPT="${PACKAGE_DIR}/../../scripts/prepare-ghostty-source.mjs"
+PREPARED_JSON="$(node "${PREPARE_SCRIPT}" prepare --json)"
+GHOSTTY_REVISION="$(node -e 'const value = JSON.parse(process.argv[1]); process.stdout.write(value.revision)' "${PREPARED_JSON}")"
+GHOSTTY_SOURCE_DIR="$(node -e 'const value = JSON.parse(process.argv[1]); process.stdout.write(value.source)' "${PREPARED_JSON}")"
+GHOSTTY_ZIG="$(node -e 'const value = JSON.parse(process.argv[1]); process.stdout.write(value.zig)' "${PREPARED_JSON}")"
+GHOSTTY_ZIG_GLOBAL_CACHE_DIR="$(node -e 'const value = JSON.parse(process.argv[1]); process.stdout.write(value.zigGlobalCache)' "${PREPARED_JSON}")"
 
 log() {
   printf '[ghostty-vt-wasm] %s\n' "$*"
 }
-
-die() {
-  printf '[ghostty-vt-wasm] error: %s\n' "$*" >&2
-  exit 1
-}
-
-require_cmd() {
-  command -v "$1" >/dev/null 2>&1 || die "missing required command: $1"
-}
-
-ensure_zig() {
-  if [[ -n "${GHOSTTY_ZIG}" ]]; then
-    [[ -x "${GHOSTTY_ZIG}" ]] || die "GHOSTTY_ZIG is not executable: ${GHOSTTY_ZIG}"
-    return
-  fi
-  if command -v zig >/dev/null 2>&1 && [[ "$(zig version)" == "${GHOSTTY_ZIG_VERSION}" ]]; then
-    GHOSTTY_ZIG="$(command -v zig)"
-    return
-  fi
-
-  local host_os host_arch cache_dir
-  host_os="$(uname -s | tr '[:upper:]' '[:lower:]')"
-  host_arch="$(uname -m)"
-  case "${host_os}" in
-    darwin) host_os="macos" ;;
-    linux) ;;
-    *) die "unsupported host OS for Zig download: ${host_os}" ;;
-  esac
-  case "${host_arch}" in
-    arm64) host_arch="aarch64" ;;
-    aarch64|x86_64) ;;
-    *) die "unsupported host architecture: ${host_arch}" ;;
-  esac
-
-  cache_dir="${HOME}/.cache/yaade/zig-${GHOSTTY_ZIG_VERSION}"
-  GHOSTTY_ZIG="${cache_dir}/zig"
-  if [[ -x "${GHOSTTY_ZIG}" ]]; then
-    return
-  fi
-
-  require_cmd curl
-  require_cmd tar
-  mkdir -p "${cache_dir}"
-  log "downloading Zig ${GHOSTTY_ZIG_VERSION}"
-  curl -fsSL \
-    "https://ziglang.org/download/${GHOSTTY_ZIG_VERSION}/zig-${host_arch}-${host_os}-${GHOSTTY_ZIG_VERSION}.tar.xz" \
-    | tar -xJ --strip-components=1 -C "${cache_dir}"
-}
-
-ensure_ghostty_source() {
-  require_cmd git
-  if [[ ! -d "${GHOSTTY_SOURCE_DIR}/.git" ]]; then
-    mkdir -p "$(dirname "${GHOSTTY_SOURCE_DIR}")"
-    log "cloning Ghostty ${GHOSTTY_REVISION}"
-    git clone --filter=blob:none --no-checkout https://github.com/ghostty-org/ghostty.git \
-      "${GHOSTTY_SOURCE_DIR}"
-  fi
-
-  local actual_revision
-  actual_revision="$(git -C "${GHOSTTY_SOURCE_DIR}" rev-parse HEAD 2>/dev/null || echo none)"
-  if [[ "${actual_revision}" != "${GHOSTTY_REVISION}" ]]; then
-    log "checking out Ghostty ${GHOSTTY_REVISION}"
-    git -C "${GHOSTTY_SOURCE_DIR}" fetch --depth=1 origin "${GHOSTTY_REVISION}"
-    git -C "${GHOSTTY_SOURCE_DIR}" checkout --detach "${GHOSTTY_REVISION}"
-  fi
-
-  actual_revision="$(git -C "${GHOSTTY_SOURCE_DIR}" rev-parse HEAD)"
-  [[ "${actual_revision}" == "${GHOSTTY_REVISION}" ]] || \
-    die "expected Ghostty ${GHOSTTY_REVISION}, found ${actual_revision}"
-}
-
-ensure_zig
-ensure_ghostty_source
 
 build_root="$(mktemp -d)"
 trap 'rm -rf "${build_root}"' EXIT
@@ -102,6 +31,8 @@ log "building ${GHOSTTY_REVISION} for wasm32-freestanding"
     -Doptimize=ReleaseSmall \
     -Dstrip=true \
     -Dlib-version-string="0.1.0-dev+${GHOSTTY_REVISION}" \
+    --global-cache-dir "${GHOSTTY_ZIG_GLOBAL_CACHE_DIR}" \
+    --system "${GHOSTTY_ZIG_GLOBAL_CACHE_DIR}/p" \
     -p "${build_root}"
 )
 

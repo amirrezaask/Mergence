@@ -23,6 +23,7 @@ use uuid::Uuid;
 
 use crate::{
     event_hub::EventHub,
+    model::ProcessIdentity,
     terminal_control::{
         RuntimeTerminalLease, TerminalControlError, TerminalControlRegistry, TerminalLeaseRequest,
     },
@@ -87,18 +88,6 @@ pub struct TerminalLaunch {
     pub cols: Option<u16>,
     pub rows: Option<u16>,
     pub theme: Option<TerminalTheme>,
-}
-
-#[derive(Clone, Debug, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct ProcessIdentity {
-    pub pid: u32,
-    pub platform: &'static str,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub boot_id: Option<String>,
-    pub start_token: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub executable_path: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -625,6 +614,14 @@ impl TerminalHost {
     }
 
     #[must_use]
+    pub fn is_live_terminal(&self, id: &str) -> bool {
+        self.entries
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .contains_key(id)
+    }
+
+    #[must_use]
     pub fn inspect(&self, id: &str) -> Option<TerminalInspect> {
         let entry = self.entry(id).ok()?;
         self.request(&entry, |reply| TerminalCommand::Inspect { reply })
@@ -728,24 +725,72 @@ impl TerminalHost {
         client_id: &str,
         after_sequence: u64,
     ) -> Result<TerminalAttach, TerminalError> {
-        let entry = self.entry(id)?;
-        self.request(&entry, |reply| TerminalCommand::Attach {
-            client_id: client_id.to_owned(),
-            after_sequence,
-            reply,
-        })
+        match self.entry(id) {
+            Ok(entry) => self.request(&entry, |reply| TerminalCommand::Attach {
+                client_id: client_id.to_owned(),
+                after_sequence,
+                reply,
+            }),
+            Err(TerminalError::NotFound(_)) => {
+                let metadata = self
+                    .history
+                    .inspect(id)?
+                    .ok_or_else(|| TerminalError::NotFound(id.to_owned()))?;
+                Ok(TerminalAttach {
+                    id: id.to_owned(),
+                    title: None,
+                    terminal_epoch: id.to_owned(),
+                    checkpoint: None,
+                    replay_quality: "exact",
+                    output_chunks: Vec::new(),
+                    output: Base64Bytes(Bytes::new()),
+                    replay_truncated: false,
+                    replay_needs_query_responses: false,
+                    archive_available: metadata.last_sequence > after_sequence,
+                    last_sequence: metadata.last_sequence,
+                    cols: 80,
+                    rows: 24,
+                    status: TerminalProcessStatus::Exited,
+                    exit_code: None,
+                    signal: None,
+                })
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub fn read_replay_page(
         &self,
         id: &str,
-        after_sequence: u64,
+        cursor_sequence: u64,
         max_bytes: Option<usize>,
+        reverse: bool,
     ) -> Result<Option<TerminalHistoryPage>, TerminalError> {
-        self.entry(id)?;
-        self.history
-            .read_page(id, after_sequence, max_bytes)
-            .map_err(Into::into)
+        if reverse {
+            self.history
+                .read_page_reverse(id, cursor_sequence, max_bytes)
+                .map_err(Into::into)
+        } else {
+            self.history
+                .read_page(id, cursor_sequence, max_bytes)
+                .map_err(Into::into)
+        }
+    }
+
+    #[must_use]
+    pub fn history_available(&self, id: &str) -> bool {
+        self.history.available(id)
+    }
+
+    pub fn terminate_stale_process(
+        &self,
+        identity: &ProcessIdentity,
+    ) -> Result<bool, TerminalError> {
+        if !process_identity_matches(identity) {
+            return Ok(false);
+        }
+        terminate_process_group(identity.pid)?;
+        Ok(true)
     }
 
     pub fn mark_replay_ready(&self, id: &str, client_id: &str) -> Result<(), TerminalError> {
@@ -1858,6 +1903,34 @@ fn command_output(command: &str, args: &[&str]) -> Option<String> {
     (!value.is_empty()).then_some(value)
 }
 
+fn process_identity_matches(identity: &ProcessIdentity) -> bool {
+    capture_process_identity(identity.pid).as_ref() == Some(identity)
+}
+
+fn terminate_process_group(pid: u32) -> Result<(), TerminalError> {
+    #[cfg(unix)]
+    let status = ProcessCommand::new("kill")
+        .args(["-KILL", &format!("-{pid}")])
+        .status();
+    #[cfg(target_os = "windows")]
+    let status = ProcessCommand::new("taskkill.exe")
+        .args(["/PID", &pid.to_string(), "/T", "/F"])
+        .status();
+    #[cfg(not(any(unix, target_os = "windows")))]
+    return Err(TerminalError::Runtime(
+        "stale process cleanup is unsupported on this platform".to_owned(),
+    ));
+    #[cfg(any(unix, target_os = "windows"))]
+    match status {
+        Ok(result) if result.success() => Ok(()),
+        Ok(_) if capture_process_identity(pid).is_none() => Ok(()),
+        Ok(result) => Err(TerminalError::Runtime(format!(
+            "failed to terminate stale terminal process group {pid}: {result}"
+        ))),
+        Err(error) => Err(TerminalError::Runtime(error.to_string())),
+    }
+}
+
 pub(crate) fn capture_process_identity(pid: u32) -> Option<ProcessIdentity> {
     #[cfg(target_os = "linux")]
     {
@@ -1874,7 +1947,7 @@ pub(crate) fn capture_process_identity(pid: u32) -> Option<ProcessIdentity> {
             .map(|path| path.display().to_string());
         return Some(ProcessIdentity {
             pid,
-            platform: "linux",
+            platform: "linux".to_owned(),
             boot_id,
             start_token,
             executable_path,
@@ -1890,7 +1963,7 @@ pub(crate) fn capture_process_identity(pid: u32) -> Option<ProcessIdentity> {
         let executable_path = command_output("ps", &["-p", &pid_text, "-o", "comm="]);
         return Some(ProcessIdentity {
             pid,
-            platform: "darwin",
+            platform: "darwin".to_owned(),
             boot_id: None,
             start_token,
             executable_path,
@@ -1918,7 +1991,7 @@ pub(crate) fn capture_process_identity(pid: u32) -> Option<ProcessIdentity> {
         );
         return Some(ProcessIdentity {
             pid,
-            platform: "windows",
+            platform: "windows".to_owned(),
             boot_id: None,
             start_token,
             executable_path,
@@ -2001,6 +2074,21 @@ fn default_shell_args(shell: &str) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn stale_process_identity_does_not_match_a_live_reused_pid() {
+        let mut child = ProcessCommand::new("sleep")
+            .arg("5")
+            .spawn()
+            .expect("spawn child");
+        let mut identity = capture_process_identity(child.id()).expect("process identity");
+        identity.start_token.push_str("-stale");
+        assert!(!process_identity_matches(&identity));
+        assert!(child.try_wait().expect("child status").is_none());
+        child.kill().expect("kill child");
+        child.wait().expect("reap child");
+    }
 
     #[test]
     fn terminal_query_scanner_handles_da1_queries_split_across_chunks() {

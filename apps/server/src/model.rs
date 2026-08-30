@@ -80,6 +80,18 @@ pub enum ActivityState {
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
+pub struct ProcessIdentity {
+    pub pid: u32,
+    pub platform: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub boot_id: Option<String>,
+    pub start_token: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub executable_path: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct TerminalOutput {
     #[serde(rename = "_tag")]
     pub tag: String,
@@ -87,6 +99,10 @@ pub struct TerminalOutput {
     pub terminal_instance_id: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pty_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub history_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_identity: Option<ProcessIdentity>,
     pub generation: u64,
     pub process_state: ProcessState,
     pub activity_state: ActivityState,
@@ -104,6 +120,8 @@ impl TerminalOutput {
             kind: "process".to_owned(),
             terminal_instance_id: "pending".to_owned(),
             pty_id: None,
+            history_id: None,
+            process_identity: None,
             generation: 1,
             process_state: ProcessState::Starting,
             activity_state: ActivityState::Starting,
@@ -114,12 +132,18 @@ impl TerminalOutput {
     }
 
     #[must_use]
-    pub fn running(pty_id: String, generation: u64) -> Self {
+    pub fn running(
+        pty_id: String,
+        generation: u64,
+        process_identity: Option<ProcessIdentity>,
+    ) -> Self {
         Self {
             tag: "TerminalOutput".to_owned(),
             kind: "process".to_owned(),
             terminal_instance_id: uuid::Uuid::new_v4().to_string(),
+            history_id: Some(pty_id.clone()),
             pty_id: Some(pty_id),
+            process_identity,
             generation,
             process_state: ProcessState::Running,
             activity_state: ActivityState::Working,

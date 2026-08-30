@@ -202,12 +202,14 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
         "flex-1",
       )}
       data-yaade-window-tabs=""
+      data-tauri-drag-region=""
     >
       <LayoutGroup id="yaade-window-tabs">
         <nav
           className="flex h-full min-w-0 flex-1 items-center overflow-x-auto"
           aria-label="Windows"
           role="tablist"
+          data-tauri-drag-region=""
           onKeyDown={handleWindowTabKeyDown}
         >
           {props.tabs.map((tab) => {
@@ -332,12 +334,12 @@ export function SessionWindowTabStrip(props: SessionWindowTabStripProps) {
             })}
         </nav>
       </LayoutGroup>
-      <ShortcutTooltip label="New tab" shortcut={newTabShortcut} side="bottom">
+      <ShortcutTooltip label="New Window" shortcut={newTabShortcut} side="bottom">
         <Button
           type="button"
           variant="ghost"
           size="icon-sm"
-          aria-label="New tab"
+          aria-label="New Window"
           data-yaade-new-session-tab=""
           className="size-[var(--yaade-tab-pill-height)]"
           onClick={props.onCreate}

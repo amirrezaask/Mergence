@@ -12,7 +12,7 @@ import {
 import { applyInitialAppearance } from "./hooks/useAppearanceSettings.js"
 import { registerPwa } from "./pwa.js"
 import { ServerConnectionsProvider } from "./server-connections.js"
-import { resolveCurrentHostUrl } from "./client-environment.js"
+import { isDesktopClient, resolveCurrentHostUrl } from "./client-environment.js"
 
 const startupWindow = window as Window & { __yaadeStartupBootstrapAt?: number }
 startupWindow.__yaadeStartupBootstrapAt ??= performance.now()
@@ -47,4 +47,4 @@ createRoot(document.getElementById("root")!).render(
   </StrictMode>,
 )
 
-registerPwa()
+if (!isDesktopClient(window.location)) registerPwa()

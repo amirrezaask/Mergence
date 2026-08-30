@@ -61,6 +61,10 @@ export type TerminalReplayChunk = {
 export type TerminalAttachOptions = {
   /** A new parser has no continuity with the previous renderer. */
   readonly replay: "resume" | "full"
+  /** Paints a bounded newest-tail preview while exact replay catches up. */
+  readonly onReplayPreview?: (
+    chunk: TerminalReplayChunk,
+  ) => void | Promise<void>
   /** Receives bounded, ordered replay pages before live output is released. */
   readonly onReplay?: (
     chunk: TerminalReplayChunk,

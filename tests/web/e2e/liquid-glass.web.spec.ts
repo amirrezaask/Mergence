@@ -245,19 +245,32 @@ test("top Window tabs use compact separated pills with a raised active surface",
   await expect(page.locator("[data-yaade-top-tabbar] > span")).toHaveCount(0);
 });
 
-test("pane controls stay quiet until the pane is hovered or keyboard-focused", async ({
+test("pane controls stay quiet until the top-right area is hovered or keyboard-focused", async ({
   launchApp,
 }) => {
   const { page } = await launchApp();
-  const paneChrome = page.locator('[data-yaade-mux-pane-chrome]').first();
+  const pane = page.locator("[data-yaade-panel-leaf]").first();
+  const paneChrome = pane.locator('[data-yaade-mux-pane-chrome]');
+  const controlZone = paneChrome.locator('[data-yaade-mux-pane-control-zone=""]');
   const paneControls = paneChrome.locator('[data-yaade-mux-pane-controls=""]');
 
-  await expect(paneChrome).toBeVisible();
+  await expect(pane).toBeVisible();
+  await page.locator("[data-ghostty-terminal-input]").first().focus();
+  await page.mouse.move(0, 0);
   await expect(paneControls).toHaveCSS("opacity", "0");
-  await paneChrome.hover();
+
+  await pane.hover();
+  await expect(paneControls).toHaveCSS("opacity", "0");
+  await controlZone.hover();
   await expect(paneControls).toHaveCSS("opacity", "1");
-  await expect(paneControls.getByRole("button", { name: "Split right" })).toBeVisible();
+  const splitRight = paneControls.getByRole("button", { name: "Split right" });
+  await expect(splitRight).toBeVisible();
   await expect(paneControls.getByRole("button", { name: "Close pane" })).toBeVisible();
+
+  await page.locator("[data-yaade-top-tabbar]").hover();
+  await expect(paneControls).toHaveCSS("opacity", "0");
+  await splitRight.focus();
+  await expect(paneControls).toHaveCSS("opacity", "1");
 });
 
 test("window tabs close with the x button and have no overflow menu", async ({ launchApp }) => {

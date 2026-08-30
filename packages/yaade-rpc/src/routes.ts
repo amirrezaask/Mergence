@@ -162,6 +162,7 @@ const TerminalReplayPageArgs = Schema.Tuple(
   Schema.String,
   Schema.Number,
   Schema.optionalElement(Schema.Number),
+  Schema.optionalElement(Schema.Literal("forward", "backward")),
 )
 const TerminalWriteArgs = Schema.Tuple(
   Schema.String,

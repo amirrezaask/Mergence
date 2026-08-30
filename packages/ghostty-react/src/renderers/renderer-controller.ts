@@ -2,6 +2,7 @@ import type {
   GhosttyRenderUpdate,
   GhosttyViewportModel,
 } from "@yaade/ghostty-core";
+import type { GhosttyColor } from "../core.js";
 import type { GhosttyCellMetrics } from "../renderer.js";
 import type {
   TerminalRenderer,
@@ -78,8 +79,12 @@ export class RendererController {
     };
   }
 
+  clear(background: GhosttyColor): void {
+    this.run("clear", renderer => renderer.clear(background));
+  }
+
   resize(viewport: TerminalRenderViewport): void {
-    this.run("resize", (renderer) => renderer.resize(viewport));
+    this.run("resize", renderer => renderer.resize(viewport));
   }
 
   async setFont(font: TerminalRenderFont): Promise<GhosttyCellMetrics | null> {

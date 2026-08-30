@@ -65,6 +65,26 @@ test("terminal theme routes preserve the colors used for protocol queries", () =
   )
 })
 
+test("terminal replay pages accept an explicit backward cursor direction", () => {
+  assert.deepEqual(
+    decodeHostRouteArgs("terminal:readReplayPage", [
+      "pty-1",
+      0,
+      256 * 1024,
+      "backward",
+    ]),
+    ["pty-1", 0, 256 * 1024, "backward"],
+  )
+  assert.throws(() =>
+    decodeHostRouteArgs("terminal:readReplayPage", [
+      "pty-1",
+      0,
+      256 * 1024,
+      "sideways",
+    ]),
+  )
+})
+
 test("terminal attach preserves the owner identity used by binary snapshots", () => {
   const encoded = {
     id: "pty-1",

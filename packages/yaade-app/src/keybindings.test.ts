@@ -1,7 +1,9 @@
 import { describe, it } from "vite-plus/test";
 import assert from "node:assert/strict";
+import { Option } from "effect";
 import {
 	createMuxSessionKeymapState,
+	decodeMuxSessionCommand,
 	muxSessionDirectShortcutFor,
 	resolveMuxSessionKeydown,
 	type MuxSessionKeyEvent,
@@ -28,6 +30,27 @@ const baseContext = {
 	inPrefixButton: false,
 	zoomed: false,
 };
+
+describe("mux session command boundary", () => {
+	it("accepts native menu commands and rejects unknown payloads", () => {
+		assert.equal(
+			Option.getOrUndefined(decodeMuxSessionCommand("terminal.newTerminal")),
+			"terminal.newTerminal",
+		);
+		assert.equal(
+			Option.getOrUndefined(decodeMuxSessionCommand("settings.show")),
+			"settings.show",
+		);
+		assert.equal(
+			Option.getOrUndefined(decodeMuxSessionCommand("terminal.deleteEverything")),
+			undefined,
+		);
+		assert.equal(
+			Option.getOrUndefined(decodeMuxSessionCommand({ command: "settings.show" })),
+			undefined,
+		);
+	});
+});
 
 describe("direct mux session bindings", () => {
 	it("uses the primary modifier plus B to toggle a vertical sidebar", () => {

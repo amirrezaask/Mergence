@@ -1,6 +1,59 @@
 import { expect } from "@playwright/test";
 import { test } from "../../fixtures/e2e.js";
-import { focusTerminal } from "./_launch.js";
+import { focusTerminal, type ShellDriver } from "./_launch.js";
+
+type TerminalBackgroundFrameStats = {
+  readonly sampledFrames: number;
+  readonly missingFrames: number;
+  readonly mismatchedFrames: number;
+};
+
+async function sampleTerminalBackgroundFrames(
+  page: ShellDriver,
+  terminalId: string,
+  actionSelector: string,
+  frameCount: number,
+): Promise<TerminalBackgroundFrameStats> {
+  return page.evaluate(
+    async ({ terminalId: id, actionSelector: selector, frameCount: count }) => {
+      const canvasSelector = `[data-yaade-terminal-tile="${CSS.escape(id)}"] [data-ghostty-terminal-canvas]`;
+      const readBackground = () => {
+        const canvas = document.querySelector<HTMLCanvasElement>(canvasSelector);
+        const context = canvas?.getContext("2d");
+        if (!canvas || !context || canvas.width < 1 || canvas.height < 1) return null;
+        const pixel = context.getImageData(0, 0, 1, 1).data;
+        return { red: pixel[0], green: pixel[1], blue: pixel[2] };
+      };
+      const baseline = readBackground();
+      if (!baseline) throw new Error("terminal canvas background is unavailable");
+      const action = document.querySelector<HTMLButtonElement>(selector);
+      if (!action) throw new Error(`terminal geometry action is unavailable: ${selector}`);
+
+      let sampledFrames = 0;
+      let missingFrames = 0;
+      let mismatchedFrames = 0;
+      action.click();
+      for (let frame = 0; frame < count; frame += 1) {
+        await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+        const color = readBackground();
+        if (!color) {
+          missingFrames += 1;
+          continue;
+        }
+        sampledFrames += 1;
+        if (
+          color.red !== baseline.red ||
+          color.green !== baseline.green ||
+          color.blue !== baseline.blue
+        ) {
+          mismatchedFrames += 1;
+        }
+      }
+      return { sampledFrames, missingFrames, mismatchedFrames };
+    },
+    { terminalId, actionSelector, frameCount },
+  );
+}
 
 test("Session shell exposes only Terminal", async ({ launchApp }) => {
   const { page } = await launchApp();
@@ -10,7 +63,10 @@ test("Session shell exposes only Terminal", async ({ launchApp }) => {
   const topBar = page.locator("[data-yaade-top-tabbar]");
   await expect(topBar).toBeVisible();
   await expect(topBar.getByRole("button", { name: "Switch terminal" })).toHaveCount(0);
-  await expect(topBar.getByRole("button", { name: /Switch session/ })).toBeVisible();
+  const sessionSwitcher = topBar.getByRole("button", { name: /Switch session/ });
+  await expect(sessionSwitcher).toBeVisible();
+  await expect(sessionSwitcher).toContainText("Session 1");
+  await expect.poll(() => page.evaluate(() => document.title)).toBe("Window 1 — Session 1 — YAADE");
   await expect(topBar.locator('[data-yaade-session-settings=""]')).toBeVisible();
   await expect(topBar.getByRole("button", { name: "Settings" })).toBeVisible();
 
@@ -27,22 +83,28 @@ test("responsive layout moves one resident terminal without reattach", async ({ 
     () => window.__yaadeTest?.getState().activeMuxTerminalId ?? null,
   );
   if (!terminalId) throw new Error("active terminal is unavailable");
-  let before: Awaited<ReturnType<NonNullable<typeof window.__yaadeTest>["getTerminalLifecycle"]>> = null;
-  await expect.poll(async () => {
+  let before: Awaited<ReturnType<NonNullable<typeof window.__yaadeTest>["getTerminalLifecycle"]>> =
+    null;
+  await expect
+    .poll(
+      async () => {
     before = await page.evaluate(
-      id => window.__yaadeTest?.getTerminalLifecycle(id) ?? null,
+          (id) => window.__yaadeTest?.getTerminalLifecycle(id) ?? null,
       terminalId,
     );
     return before;
-  }, { timeout: 30_000 }).not.toBeNull();
+      },
+      { timeout: 30_000 },
+    )
+    .not.toBeNull();
 
   await focusTerminal(page);
   const marker = "YAADE_RESIDENT_BREAKPOINT";
   await page.keyboard.type(`printf '${marker}\\n'`);
   await page.keyboard.press("Enter");
-  await expect.poll(
-    () => page.evaluate(id => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId),
-  ).toContain(marker);
+  await expect
+    .poll(() => page.evaluate((id) => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId))
+    .toContain(marker);
 
   for (const width of [760, 820, 760, 900]) {
     await page.setViewportSize({ width, height: 700 });
@@ -56,7 +118,7 @@ test("responsive layout moves one resident terminal without reattach", async ({ 
   }
 
   const after = await page.evaluate(
-    id => window.__yaadeTest?.getTerminalLifecycle(id) ?? null,
+    (id) => window.__yaadeTest?.getTerminalLifecycle(id) ?? null,
     terminalId,
   );
   expect(after?.surfaceInstanceId).toBe(before?.surfaceInstanceId);
@@ -64,9 +126,9 @@ test("responsive layout moves one resident terminal without reattach", async ({ 
   expect(after?.rendererGeneration).toBe(before?.rendererGeneration);
   expect(after?.attachCount).toBe(before?.attachCount);
   expect(after?.rendererRecoveries).toBe(before?.rendererRecoveries);
-  await expect.poll(
-    () => page.evaluate(id => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId),
-  ).toContain(marker);
+  await expect
+    .poll(() => page.evaluate((id) => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId))
+    .toContain(marker);
 });
 
 test("session switcher creates and archives a session", async ({ launchApp }) => {
@@ -81,6 +143,9 @@ test("session switcher creates and archives a session", async ({ launchApp }) =>
   await switcher.click();
   const popover = page.locator('[data-yaade-session-switcher-popover=""]');
   await expect(popover).toBeVisible();
+  await expect(popover.getByRole("option", { name: /Session 1/ })).toContainText(
+    "This client · 1 terminal",
+  );
   const newSessionButton = popover.locator('[data-yaade-new-session=""]');
   await expect(newSessionButton).toBeVisible();
   await newSessionButton.focus();
@@ -97,14 +162,14 @@ test("session switcher creates and archives a session", async ({ launchApp }) =>
   const renameInput = popover.getByRole("textbox", { name: "Rename New session" });
   await renameInput.fill("API work");
   await renameInput.press("Enter");
-  await expect(
-    page.getByRole("button", { name: "Switch session, current API work" }),
-  ).toBeVisible({ timeout: 30_000 });
+  await expect(page.getByRole("button", { name: "Switch session, current API work" })).toBeVisible({
+    timeout: 30_000,
+  });
   await expect(popover.getByRole("option", { name: "API work" })).toBeVisible();
 
   await popover.getByRole("button", { name: "Close API work" }).click();
-  await expect(page.getByRole("dialog", { name: "Close session?" })).toBeVisible();
-  await page.getByRole("button", { name: "Stop terminals and archive" }).click();
+  await expect(page.getByRole("dialog", { name: "Close “API work”?" })).toBeVisible();
+  await page.getByRole("button", { name: "Stop terminals and close" }).click();
   await expect(page.getByRole("button", { name: "Switch session, current Session 1" })).toBeVisible(
     { timeout: 30_000 },
   );
@@ -173,75 +238,64 @@ test("two browser clients can both write to the same terminal", async ({ launchA
   }
 });
 
-test("two clients keep independent Window navigation", async ({
-  launchApp,
-  browser,
-}) => {
+test("two clients keep independent Window navigation", async ({ launchApp, browser }) => {
   const launched = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
-  })
-  if (!launched.baseUrl) throw new Error("host URL is unavailable")
-  const tabs = launched.page.locator(
-    "[data-yaade-window-tabs] [data-yaade-session-tab]",
-  )
-  await launched.page.getByRole("button", { name: "New tab" }).click()
-  await expect(tabs).toHaveCount(2)
+  });
+  if (!launched.baseUrl) throw new Error("host URL is unavailable");
+  const tabs = launched.page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
+  await launched.page.getByRole("button", { name: "New Window" }).click();
+  await expect(tabs).toHaveCount(2);
   await expect
     .poll(() =>
-      launched.page.evaluate(
-        () => window.__yaadeTest?.getState().muxTerminals.length ?? 0,
-      ),
+      launched.page.evaluate(() => window.__yaadeTest?.getState().muxTerminals.length ?? 0),
     )
-    .toBe(2)
+    .toBe(2);
 
-  const secondContext = await browser.newContext()
-  const secondPage = await secondContext.newPage()
+  const secondContext = await browser.newContext();
+  const secondPage = await secondContext.newPage();
   try {
-    await secondPage.goto(launched.baseUrl, { waitUntil: "domcontentloaded" })
-    await secondPage.waitForFunction(() => window.__yaadeTest != null)
-    await secondPage.evaluate(() => window.__yaadeTest!.waitForReady())
+    await secondPage.goto(launched.baseUrl, { waitUntil: "domcontentloaded" });
+    await secondPage.waitForFunction(() => window.__yaadeTest != null);
+    await secondPage.evaluate(() => window.__yaadeTest!.waitForReady());
 
     const initial = await launched.page.evaluate(() => {
-      const state = window.__yaadeTest?.getState()
+      const state = window.__yaadeTest?.getState();
       return {
         sessionId: state?.activeSessionId ?? null,
         revision: state?.sessions[0]?.revision ?? 0,
-        tabIds: state?.tabs.map(tab => tab.id) ?? [],
-      }
-    })
-    const [firstTabId, secondTabId] = initial.tabIds
+        tabIds: state?.tabs.map((tab) => tab.id) ?? [],
+      };
+    });
+    const [firstTabId, secondTabId] = initial.tabIds;
     if (!initial.sessionId || !firstTabId || !secondTabId) {
-      throw new Error("two Window ids are required")
+      throw new Error("two Window ids are required");
     }
-    await tabs.nth(0).getByRole("tab").click()
+    await tabs.nth(0).getByRole("tab").click();
     await expect
-      .poll(() =>
-        launched.page.evaluate(
-          () => window.__yaadeTest?.getState().activeTabId ?? null,
-        ),
-      )
-      .toBe(firstTabId)
+      .poll(() => launched.page.evaluate(() => window.__yaadeTest?.getState().activeTabId ?? null))
+      .toBe(firstTabId);
 
     await secondPage.evaluate(
       async ({ sessionId, tabId }) => {
-        if (!window.yaade?.mux) throw new Error("mux API is unavailable")
+        if (!window.yaade?.mux) throw new Error("mux API is unavailable");
         await window.yaade.mux.selectTab({
           _tag: "SelectSessionTab",
           sessionId,
           tabId,
-        })
+        });
       },
       { sessionId: initial.sessionId, tabId: secondTabId },
-    )
+    );
     await expect
       .poll(() =>
         launched.page.evaluate(
           ({ expectedTabId, previousRevision }) => {
-            const state = window.__yaadeTest?.getState()
+            const state = window.__yaadeTest?.getState();
             return (
               state?.activeTabId === expectedTabId &&
               (state.sessions[0]?.revision ?? 0) > previousRevision
-            )
+            );
           },
           {
             expectedTabId: firstTabId,
@@ -249,11 +303,11 @@ test("two clients keep independent Window navigation", async ({
           },
         ),
       )
-      .toBe(true)
+      .toBe(true);
   } finally {
-    await secondContext.close()
+    await secondContext.close();
   }
-})
+});
 
 test("terminal output is replayed after a browser reload", async ({ launchApp }) => {
   const { page } = await launchApp({
@@ -272,11 +326,55 @@ test("terminal output is replayed after a browser reload", async ({ launchApp })
     });
   await expect.poll(terminalText, { timeout: 15_000 }).toContain(marker);
 
-  await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible();
-  await page.evaluate(() => window.__yaadeTest!.waitForReady());
-  await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible();
-  await expect.poll(terminalText, { timeout: 15_000 }).toContain(marker);
+  await page.addInitScript(() => {
+    const originalFetch = window.fetch.bind(window);
+    let forwardReplayReleased = false;
+    window.addEventListener("yaade:test-release-forward-replay", () => {
+      forwardReplayReleased = true;
+    });
+    window.fetch = (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const body = typeof init?.body === "string" ? init.body : "";
+      if (
+        !forwardReplayReleased &&
+        body.includes('"channel":"terminal:readReplayPage"') &&
+        !body.includes('"backward"')
+      ) {
+        document.documentElement.dataset.yaadeTestForwardReplayRequested = "";
+        return new Promise<Response>((resolve, reject) => {
+          window.addEventListener(
+            "yaade:test-release-forward-replay",
+            () => {
+              void originalFetch(input, init).then(resolve, reject);
+            },
+            { once: true },
+          );
+        });
+      }
+      return originalFetch(input, init);
+    };
+  });
+
+  try {
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.locator('[data-yaade-shell="terminal-multiplexer"]')).toBeVisible();
+    await page.evaluate(() => window.__yaadeTest!.waitForReady());
+    await expect(page.locator("[data-yaade-terminal-panel]")).toBeVisible();
+    await expect(
+      page.locator("html[data-yaade-test-forward-replay-requested]"),
+    ).toHaveCount(1);
+    await expect(page.locator('[data-yaade-terminal-replay-phase="preview"]')).toBeVisible();
+    await expect.poll(terminalText, { timeout: 15_000 }).toContain(marker);
+
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("yaade:test-release-forward-replay"));
+    });
+    await expect(page.locator("[data-yaade-terminal-replay-phase]")).toHaveCount(0);
+    await expect.poll(terminalText, { timeout: 15_000 }).toContain(marker);
+  } finally {
+    await page.evaluate(() => {
+      window.dispatchEvent(new Event("yaade:test-release-forward-replay"));
+    });
+  }
 });
 
 test("Windows and pane state survive a browser reload", async ({ launchApp }) => {
@@ -286,7 +384,7 @@ test("Windows and pane state survive a browser reload", async ({ launchApp }) =>
   const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
 
   await expect(windowTabs).toHaveCount(1);
-  await page.getByRole("button", { name: "New tab" }).click();
+  await page.getByRole("button", { name: "New Window" }).click();
   await expect(windowTabs).toHaveCount(2);
   await expect(page.locator("[data-yaade-terminal-tile]")).toHaveCount(1, {
     timeout: 30_000,
@@ -328,7 +426,7 @@ test("switching Windows reconstructs each shell before releasing live output", a
   expect(first.id).not.toBeNull();
   expect(first.ptyId).not.toBeNull();
   const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
-  await page.getByRole("button", { name: "New tab" }).click();
+  await page.getByRole("button", { name: "New Window" }).click();
   await expect(windowTabs).toHaveCount(2);
 
   // A later terminal-create response must not steal focus from this newer
@@ -384,16 +482,16 @@ test("Window close is painted before the host request resolves", async ({ launch
   const { page } = await launchApp({ workspaceRel: "fixtures/sample-workspace" });
   const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
   await expect(windowTabs).toHaveCount(1);
-  await page.getByRole("button", { name: "New tab" }).click();
+  await page.getByRole("button", { name: "New Window" }).click();
   await expect(windowTabs).toHaveCount(2);
 
   await page.evaluate(() => {
     const mux = window.yaade?.mux;
     if (!mux) throw new Error("mux API is not ready");
     const archiveTab = mux.archiveTab;
-    mux.archiveTab = async command => {
+    mux.archiveTab = async (command) => {
       document.documentElement.dataset.yaadeTestCloseState = "started";
-      await new Promise<void>(resolve => {
+      await new Promise<void>((resolve) => {
         window.addEventListener("yaade:test-release-close", () => resolve(), { once: true });
       });
       const result = await archiveTab(command);
@@ -402,17 +500,20 @@ test("Window close is painted before the host request resolves", async ({ launch
     };
   });
 
-  await windowTabs.filter({ hasText: "Window 2" })
+  await windowTabs
+    .filter({ hasText: "Window 2" })
     .getByRole("button", { name: "Close Window 2" })
     .click();
-  await expect.poll(() => page.locator("html").getAttribute("data-yaade-test-close-state"))
+  await expect
+    .poll(() => page.locator("html").getAttribute("data-yaade-test-close-state"))
     .toBe("started");
   await expect(windowTabs).toHaveCount(1);
-  await page.evaluate(() => new Promise<void>(resolve => requestAnimationFrame(() => resolve())));
+  await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
   await expect(windowTabs).toHaveCount(1);
 
   await page.evaluate(() => window.dispatchEvent(new Event("yaade:test-release-close")));
-  await expect.poll(() => page.locator("html").getAttribute("data-yaade-test-close-state"))
+  await expect
+    .poll(() => page.locator("html").getAttribute("data-yaade-test-close-state"))
     .toBe("settled");
   await expect(page.getByRole("alert").filter({ hasText: "Action failed" })).toHaveCount(0);
 });
@@ -450,7 +551,7 @@ test("closing a new Window during automatic terminal creation stays quiet", asyn
 
   const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
   await expect(windowTabs).toHaveCount(1);
-  await page.getByRole("button", { name: "New tab" }).click();
+  await page.getByRole("button", { name: "New Window" }).click();
   await expect(windowTabs).toHaveCount(2);
   await expect
     .poll(() => page.locator("html").getAttribute("data-yaade-test-create-state"))
@@ -473,9 +574,7 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
     mobile: true,
   });
   await expect(
-    page.locator(
-      '[data-yaade-terminal-panel][data-yaade-terminal-status="running"]',
-    ),
+    page.locator('[data-yaade-terminal-panel][data-yaade-terminal-status="running"]'),
   ).toHaveCount(1, { timeout: 30_000 });
   await page.evaluate(() => {
     localStorage.removeItem("yaade:last-terminal-multiplexer-route");
@@ -513,6 +612,65 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
   await expect(
     page.locator(`[data-yaade-mobile-terminal][data-terminal-kind="terminal"]`),
   ).toHaveCount(2);
+});
+
+test("terminal stays painted while sidebar and pane geometry change", async ({ launchApp }) => {
+  const { page } = await launchApp({
+    workspaceRel: "fixtures/sample-workspace",
+  });
+  await page.evaluate(() => localStorage.setItem("yaade:terminal-renderer", "canvas2d"));
+  await page.reload({ waitUntil: "domcontentloaded" });
+  await expect(page.locator("[data-yaade-terminal-tile]")).toHaveCount(1, {
+    timeout: 30_000,
+  });
+  const panel = page.locator('[data-yaade-terminal-panel][data-yaade-terminal-status="running"]');
+  await expect(panel).toHaveAttribute("data-yaade-terminal-render-backend", "canvas2d");
+  const terminalId = await page.evaluate(
+    () => window.__yaadeTest?.getState().activeMuxTerminalId ?? null,
+  );
+  if (!terminalId) throw new Error("active terminal is unavailable");
+
+  await focusTerminal(page);
+  const marker = "YAADE_GEOMETRY_PAINT_GUARD";
+  await page.keyboard.type(`printf '${marker}\\n'`);
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate((id) => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId))
+    .toContain(marker);
+
+  await page.getByRole("button", { name: "Settings" }).click();
+  const settings = page.getByRole("dialog", { name: "Settings" });
+  await settings.getByRole("radio", { name: "Sidebar" }).click();
+  await settings.getByRole("button", { name: "Close settings" }).click();
+  const navigation = page.getByRole("complementary", { name: "Windows" });
+  await expect(navigation).toBeVisible();
+
+  const sidebarFrames = await sampleTerminalBackgroundFrames(
+    page,
+    terminalId,
+    '[aria-label="Hide Window sidebar"]',
+    18,
+  );
+  expect(sidebarFrames.sampledFrames).toBeGreaterThanOrEqual(12);
+  expect(sidebarFrames.missingFrames).toBe(0);
+  expect(sidebarFrames.mismatchedFrames).toBe(0);
+  await expect(navigation).toBeHidden();
+
+  const splitFrames = await sampleTerminalBackgroundFrames(
+    page,
+    terminalId,
+    '[data-yaade-mux-split="right"]',
+    18,
+  );
+  expect(splitFrames.sampledFrames).toBeGreaterThanOrEqual(12);
+  expect(splitFrames.missingFrames).toBe(0);
+  expect(splitFrames.mismatchedFrames).toBe(0);
+  await expect(page.locator("[data-yaade-terminal-tile]")).toHaveCount(2, {
+    timeout: 30_000,
+  });
+  await expect
+    .poll(() => page.evaluate((id) => window.__yaadeTest?.getTerminalText(id) ?? "", terminalId))
+    .toContain(marker);
 });
 
 test("split shortcuts split the focused pane in both directions", async ({ launchApp }) => {
@@ -561,7 +719,13 @@ test("dragging a pane tab to a dock target retiles both terminals", async ({ lau
   });
   const source = panes.nth(1).locator("[data-yaade-mux-pane-title]");
   const sourceBox = await source.boundingBox();
-  if (!sourceBox) throw new Error("pane tab has no bounds");
+  if (!sourceBox) throw new Error("pane drag layer has no bounds");
+  const sourcePaneBox = await panes.nth(1).boundingBox();
+  const sourceTerminalBox = await panes.nth(1).locator("[data-yaade-terminal-tile]").boundingBox();
+  if (!sourcePaneBox || !sourceTerminalBox) throw new Error("source pane has no bounds");
+  expect(sourceBox.height).toBeGreaterThanOrEqual(24);
+  expect(Math.abs(sourceBox.y - sourcePaneBox.y)).toBeLessThanOrEqual(2);
+  expect(sourceTerminalBox.y).toBeLessThan(sourceBox.y + sourceBox.height);
 
   await page.mouse.move(sourceBox.x + sourceBox.width / 2, sourceBox.y + sourceBox.height / 2);
   await page.mouse.down();
@@ -645,7 +809,7 @@ test("dragging a Window tab into the workspace docks its focused terminal", asyn
   if (!first.tabId || !first.terminalId) throw new Error("first Window is unavailable");
 
   const windowTabs = page.locator("[data-yaade-window-tabs] [data-yaade-session-tab]");
-  await page.getByRole("button", { name: "New tab" }).click();
+  await page.getByRole("button", { name: "New Window" }).click();
   await expect(windowTabs).toHaveCount(2);
   await expect
     .poll(() => page.evaluate(() => window.__yaadeTest?.getState().muxTerminals.length ?? 0), {
@@ -810,9 +974,7 @@ test("split controls open Terminal by default and the picker with a modifier", a
   await expect(page.locator('[data-yaade-mux-split="down"]').first()).toBeVisible();
 });
 
-test("switches between horizontal and vertical tab layouts in Settings", async ({
-  launchApp,
-}) => {
+test("switches between horizontal and vertical tab layouts in Settings", async ({ launchApp }) => {
   const { page } = await launchApp({
     workspaceRel: "fixtures/sample-workspace",
   });
@@ -822,11 +984,8 @@ test("switches between horizontal and vertical tab layouts in Settings", async (
   await page.getByRole("button", { name: "Settings" }).click();
   const settings = page.getByRole("dialog", { name: "Settings" });
   await expect(settings).toBeVisible();
-  await settings.getByRole("radio", { name: "Vertical tabs" }).click();
-  await expect(shell).toHaveAttribute(
-    "data-yaade-session-layout",
-    "single-sidebar",
-  );
+  await settings.getByRole("radio", { name: "Sidebar" }).click();
+  await expect(shell).toHaveAttribute("data-yaade-session-layout", "single-sidebar");
   await settings.getByRole("button", { name: "Close settings" }).click();
 
   const navigation = page.getByRole("complementary", { name: "Windows" });
@@ -835,7 +994,7 @@ test("switches between horizontal and vertical tab layouts in Settings", async (
   await expect(navigation.locator('[data-slot="sidebar"]')).toHaveCount(1);
   await expect(navigation.getByRole("button", { name: /Switch session/ })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
-  await expect(navigation.getByRole("button", { name: "New tab" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "New Window" })).toBeVisible();
   await expect(navigation.getByText("Windows", { exact: true })).toHaveCount(0);
   const windowTabs = navigation.getByRole("tablist", { name: "Windows" });
   await expect(windowTabs).toHaveAttribute("aria-orientation", "vertical");
@@ -863,14 +1022,11 @@ test("switches between horizontal and vertical tab layouts in Settings", async (
   await expect(navigation).toBeVisible();
 
   await page.reload();
-  await expect(shell).toHaveAttribute(
-    "data-yaade-session-layout",
-    "single-sidebar",
-  );
+  await expect(shell).toHaveAttribute("data-yaade-session-layout", "single-sidebar");
   await expect(navigation).toBeVisible();
 
   await navigation.getByRole("button", { name: "Settings" }).click();
-  await settings.getByRole("radio", { name: "Horizontal tabs" }).click();
+  await settings.getByRole("radio", { name: "Top bar" }).click();
   await expect(shell).toHaveAttribute("data-yaade-session-layout", "tabs");
 });
 

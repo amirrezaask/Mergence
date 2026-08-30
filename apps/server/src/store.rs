@@ -1,6 +1,7 @@
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::{
+    collections::HashSet,
     fs,
     path::Path,
     sync::{Mutex, MutexGuard},
@@ -14,8 +15,8 @@ use uuid::Uuid;
 use crate::{
     database_owner::{DatabaseError, DatabaseOwner},
     model::{
-        AppSession, MuxTerminal, SessionSnapshot, SessionTab, TerminalInput, TerminalOutput,
-        TerminalStatus, now_iso,
+        ActivityState, AppSession, MuxTerminal, ProcessIdentity, ProcessState, SessionSnapshot,
+        SessionTab, TerminalInput, TerminalOutput, TerminalStatus, now_iso,
     },
 };
 
@@ -68,9 +69,38 @@ impl From<serde_json::Error> for StoreError {
 struct PersistedState {
     schema_version: u32,
     machine: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_server_epoch: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    last_restart: Option<HostRestartMetadata>,
     sessions: Vec<AppSession>,
     tabs: Vec<SessionTab>,
     terminals: Vec<MuxTerminal>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostRestartMetadata {
+    reason: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    previous_server_epoch: Option<String>,
+    new_server_epoch: String,
+    occurred_at: String,
+    interrupted_terminal_ids: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartupTerminal {
+    pub terminal_id: String,
+    pub history_id: Option<String>,
+    pub process_identity: Option<ProcessIdentity>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StartupReconciliation {
+    pub previous_server_epoch: Option<String>,
+    pub new_server_epoch: String,
+    pub interrupted_terminal_ids: Vec<String>,
 }
 
 impl PersistedState {
@@ -78,6 +108,8 @@ impl PersistedState {
         let mut state = Self {
             schema_version: STATE_SCHEMA_VERSION,
             machine,
+            last_server_epoch: None,
+            last_restart: None,
             sessions: Vec::new(),
             tabs: Vec::new(),
             terminals: Vec::new(),
@@ -212,11 +244,76 @@ impl StateStore {
         })
     }
 
-    pub fn reset_runtime_state(&self) -> Result<(), StoreError> {
-        let machine = self.state().machine.clone();
+    #[must_use]
+    pub fn startup_terminals(&self) -> Vec<StartupTerminal> {
+        self.state()
+            .terminals
+            .iter()
+            .filter(|terminal| terminal.status.is_live())
+            .map(|terminal| StartupTerminal {
+                terminal_id: terminal.id.clone(),
+                history_id: terminal
+                    .output
+                    .history_id
+                    .clone()
+                    .or_else(|| terminal.output.pty_id.clone()),
+                process_identity: terminal.output.process_identity.clone(),
+            })
+            .collect()
+    }
+
+    pub fn reconcile_startup(
+        &self,
+        server_epoch: &str,
+        available_history_ids: &HashSet<String>,
+    ) -> Result<StartupReconciliation, StoreError> {
+        let previous_server_epoch = self.state().last_server_epoch.clone();
+        if previous_server_epoch.as_deref() == Some(server_epoch) {
+            return Ok(StartupReconciliation {
+                previous_server_epoch,
+                new_server_epoch: server_epoch.to_owned(),
+                interrupted_terminal_ids: Vec::new(),
+            });
+        }
         self.mutate(|state| {
-            *state = PersistedState::new(machine);
-            Ok(())
+            let timestamp = now_iso();
+            let previous_server_epoch = state.last_server_epoch.clone();
+            let mut interrupted_terminal_ids = Vec::new();
+            for terminal in &mut state.terminals {
+                if !terminal.status.is_live() {
+                    continue;
+                }
+                let history_id = terminal
+                    .output
+                    .history_id
+                    .clone()
+                    .or_else(|| terminal.output.pty_id.clone());
+                terminal.status = TerminalStatus::Disconnected;
+                terminal.output.process_state = ProcessState::Interrupted;
+                terminal.output.activity_state = ActivityState::Idle;
+                terminal.output.pty_id = None;
+                terminal.output.history_id = history_id.clone();
+                terminal.output.process_identity = None;
+                terminal.output.replay_available = history_id
+                    .as_ref()
+                    .is_some_and(|id| available_history_ids.contains(id));
+                terminal.revision = terminal.revision.saturating_add(1);
+                terminal.updated_at.clone_from(&timestamp);
+                interrupted_terminal_ids.push(terminal.id.clone());
+            }
+            state.last_server_epoch = Some(server_epoch.to_owned());
+            state.last_restart = Some(HostRestartMetadata {
+                reason: "host_restart".to_owned(),
+                previous_server_epoch: previous_server_epoch.clone(),
+                new_server_epoch: server_epoch.to_owned(),
+                occurred_at: timestamp,
+                interrupted_terminal_ids: interrupted_terminal_ids.clone(),
+            });
+            Ok(StartupReconciliation {
+                previous_server_epoch,
+                new_server_epoch: server_epoch.to_owned(),
+                interrupted_terminal_ids,
+            })
         })
     }
 
@@ -1273,6 +1370,125 @@ mod tests {
     }
 
     #[test]
+    fn startup_reconciliation_preserves_catalog_and_interrupts_only_live_terminals_once() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let path = dir.path().join("yaade.sqlite3");
+        let store = StateStore::open(&path, "machine".to_owned()).expect("store");
+        let first = store.list_snapshots(false).remove(0);
+        let first_tab = first.tabs[0].clone();
+        let layout = r#"{\"version\":1,\"root\":{\"kind\":\"leaf\"}}"#;
+        let saved_tab = store
+            .save_tab_layout(&first_tab.id, layout, Some(first_tab.revision))
+            .expect("layout");
+        let running = store
+            .create_terminal(
+                &first.session.id,
+                Some(&first_tab.id),
+                "Running",
+                TerminalInput::default(),
+            )
+            .expect("running terminal");
+        let running = store
+            .update_terminal(&running.id, Some(running.revision), |terminal| {
+                terminal.status = TerminalStatus::Running;
+                terminal.output = TerminalOutput::running("pty-history".to_owned(), 7, None);
+            })
+            .expect("running state");
+        let exited = store
+            .create_terminal(
+                &first.session.id,
+                Some(&first_tab.id),
+                "Exited",
+                TerminalInput::default(),
+            )
+            .expect("exited terminal");
+        let exited = store
+            .update_terminal(&exited.id, Some(exited.revision), |terminal| {
+                terminal.status = TerminalStatus::Succeeded;
+                terminal.output.process_state = ProcessState::Exited;
+                terminal.output.activity_state = ActivityState::Idle;
+                terminal.output.exit_code = Some(0);
+            })
+            .expect("exited state");
+        let second = store.create_session("Second").expect("second session");
+        let second_snapshot = store.get_snapshot(&second.id).expect("second snapshot");
+        let second_running = store
+            .create_terminal(
+                &second.id,
+                second_snapshot.session.active_tab_id.as_deref(),
+                "Second running",
+                TerminalInput::default(),
+            )
+            .expect("second terminal");
+        let second_running = store
+            .update_terminal(
+                &second_running.id,
+                Some(second_running.revision),
+                |terminal| {
+                    terminal.status = TerminalStatus::Waiting;
+                    terminal.output = TerminalOutput::running("pty-missing".to_owned(), 3, None);
+                },
+            )
+            .expect("second running state");
+        let session_ids = store
+            .list_snapshots(false)
+            .into_iter()
+            .map(|snapshot| snapshot.session.id)
+            .collect::<Vec<_>>();
+        drop(store);
+
+        let reopened = StateStore::open(&path, "machine".to_owned()).expect("reopen");
+        assert_eq!(
+            reopened
+                .list_snapshots(false)
+                .into_iter()
+                .map(|snapshot| snapshot.session.id)
+                .collect::<Vec<_>>(),
+            session_ids
+        );
+        assert_eq!(
+            reopened
+                .get_tab(&saved_tab.id)
+                .expect("saved tab")
+                .layout_json,
+            Some(layout.to_owned())
+        );
+        let before = reopened.commit_count();
+        let report = reopened
+            .reconcile_startup("epoch-2", &HashSet::from(["pty-history".to_owned()]))
+            .expect("reconcile");
+        assert_eq!(reopened.commit_count() - before, 1);
+        assert_eq!(
+            report.interrupted_terminal_ids,
+            vec![running.id.clone(), second_running.id.clone()]
+        );
+        let interrupted = reopened.get_terminal(&running.id).expect("interrupted");
+        assert_eq!(interrupted.status, TerminalStatus::Disconnected);
+        assert_eq!(interrupted.output.process_state, ProcessState::Interrupted);
+        assert_eq!(interrupted.output.activity_state, ActivityState::Idle);
+        assert_eq!(interrupted.output.pty_id, None);
+        assert_eq!(
+            interrupted.output.history_id.as_deref(),
+            Some("pty-history")
+        );
+        assert!(interrupted.output.replay_available);
+        assert_eq!(interrupted.output.generation, 7);
+        assert_eq!(interrupted.revision, running.revision + 1);
+        let missing = reopened
+            .get_terminal(&second_running.id)
+            .expect("missing archive");
+        assert!(!missing.output.replay_available);
+        assert_eq!(reopened.get_terminal(&exited.id), Some(exited));
+
+        let before_repeat = reopened.commit_count();
+        let repeated = reopened
+            .reconcile_startup("epoch-2", &HashSet::new())
+            .expect("repeat");
+        assert!(repeated.interrupted_terminal_ids.is_empty());
+        assert_eq!(reopened.commit_count(), before_repeat);
+    }
+
+    #[test]
     fn incomplete_reorders_are_rejected_and_valid_reorders_increment_revisions() {
         let store = store();
         let first = store.list_snapshots(false)[0].session.clone();
@@ -1325,7 +1541,7 @@ mod tests {
         let running = store
             .update_terminal(&terminal.id, Some(terminal.revision), |value| {
                 value.status = TerminalStatus::Running;
-                value.output = TerminalOutput::running("pty-1".to_owned(), 0);
+                value.output = TerminalOutput::running("pty-1".to_owned(), 0, None);
             })
             .expect("running");
         let target = store
@@ -1419,7 +1635,7 @@ mod tests {
         let running = store
             .update_terminal(&terminal.id, Some(terminal.revision), |value| {
                 value.status = TerminalStatus::Running;
-                value.output = TerminalOutput::running("pty-1".to_owned(), 1);
+                value.output = TerminalOutput::running("pty-1".to_owned(), 1, None);
             })
             .expect("running");
         let before = store.commit_count();

@@ -16,10 +16,13 @@
         "title": "YAADE",
         "width": 1440,
         "height": 900,
-        "minWidth": 900,
-        "minHeight": 600,
+        "minWidth": 800,
+        "minHeight": 520,
         "resizable": true,
         "shadow": true,
+        "titleBarStyle": "Overlay",
+        "hiddenTitle": true,
+        "acceptFirstMouse": true,
         "zoomHotkeysEnabled": true
       }
     ],
