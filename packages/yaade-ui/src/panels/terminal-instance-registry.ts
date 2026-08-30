@@ -67,6 +67,14 @@ export function readTerminalLifecycle(
   return resolveTerminal(tabId)?.lifecycleSnapshot() ?? null
 }
 
+/** Advance only the idle-policy clock for deterministic browser memory gates. */
+export function maintainTerminalIdleCapacity(tabId?: string): boolean {
+  const terminal = resolveTerminal(tabId)
+  if (!terminal) return false
+  const idleAt = performance.now() + 120_000
+  return terminal.maintainIdleCapacity(idleAt) || terminal.maintainIdleCapacity(idleAt + 120_000)
+}
+
 export function readTerminalPixelStats(tabId?: string) {
   return resolveTerminal(tabId)?.capturePixelStats() ?? Promise.resolve(null)
 }

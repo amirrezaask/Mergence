@@ -93,6 +93,36 @@ test("validates every worker command family and rejects malformed envelopes", ()
   assert.equal(validateTerminalWorkerCommand({ ...envelope, type: "unknown" }), false)
 })
 
+test("requires payload-free worker capacity diagnostics", () => {
+  const diagnostics = {
+    writes: 1,
+    bytesParsed: 2,
+    renderBuilds: 3,
+    transfers: 4,
+    suppressedHidden: 5,
+    suppressedSynchronized: 6,
+    fullCatchUps: 7,
+    synchronizationTimeouts: 8,
+    pendingPresentation: false,
+    slotsInFlight: 0,
+    bufferAllocations: 24,
+    renderBytesUsed: 1024,
+    renderBytesAllocated: 4096,
+    renderIdleTrims: 1,
+    renderIdleBytesReclaimed: 2048,
+    renderIdleRegrows: 1,
+    schedulerQueueBytes: 0,
+    schedulerQueueCommands: 0,
+    schedulerInFlight: 0,
+  }
+  assert.equal(validateTerminalWorkerEvent({ ...envelope, type: "parsed", diagnostics }), true)
+  const { renderBytesUsed: _, ...staleDiagnostics } = diagnostics
+  assert.equal(
+    validateTerminalWorkerEvent({ ...envelope, type: "parsed", diagnostics: staleDiagnostics }),
+    false,
+  )
+})
+
 test("validates packed events and transfers ownership of every packed buffer", () => {
   const update = packedUpdate()
   const event = {

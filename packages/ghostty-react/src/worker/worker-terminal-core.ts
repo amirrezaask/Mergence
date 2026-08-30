@@ -131,7 +131,8 @@ const EMPTY_DIAGNOSTICS: TerminalWorkerDiagnostics = {
   writes: 0, bytesParsed: 0, renderBuilds: 0, transfers: 0,
   suppressedHidden: 0, suppressedSynchronized: 0, fullCatchUps: 0,
   synchronizationTimeouts: 0, pendingPresentation: false, slotsInFlight: 0,
-  bufferAllocations: 0,
+  bufferAllocations: 0, renderBytesUsed: 0, renderBytesAllocated: 0,
+  renderIdleTrims: 0, renderIdleBytesReclaimed: 0, renderIdleRegrows: 0,
   schedulerQueueBytes: 0, schedulerQueueCommands: 0, schedulerInFlight: 0,
 };
 

@@ -172,18 +172,28 @@ test("reclaims oversized returned slots only after idle hysteresis", () => {
   const large = builder.build({
     snapshot: snapshot([wideRow], [0]), frameId: 1, generation: 1, full: true,
   })
+  assert.equal(builder.trimIdle(0, 120_000), false, "leased storage is owner-ineligible")
   builder.release(large)
   const small = builder.build({
     snapshot: snapshot([[cell("x")]], [0]), frameId: 2, generation: 1, full: true,
   })
   builder.release(small)
-  const before = builder.diagnostics().backingBytesAllocated
+  const before = builder.diagnostics()
+  assert.ok(before.backingBytesAllocated > before.backingBytesUsed)
   assert.equal(builder.trimIdle(0, 30_000), false, "cooldown still active")
   assert.equal(builder.trimIdle(0, 120_000), true)
   const after = builder.diagnostics()
-  assert.ok(after.backingBytesAllocated < before)
+  assert.ok(after.backingBytesAllocated < before.backingBytesAllocated)
   assert.equal(after.idleTrims, 1)
   assert.ok(after.idleBytesReclaimed >= 1024 * 1024)
+
+  const resumed = builder.build({
+    snapshot: snapshot([wideRow], [0]), frameId: 3, generation: 1, full: true,
+  })
+  assert.equal(resumed.graphemeLengths.length, 100_000)
+  assert.equal(builder.diagnostics().idleRegrows, 1)
+  builder.release(resumed)
+  assert.equal(builder.trimIdle(120_000, 150_000), false, "resume resets idle eligibility")
 })
 
 test("rejects malformed versions, lengths, row order, and grapheme offsets", () => {

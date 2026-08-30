@@ -81,6 +81,46 @@ model apply, surface disposal, and worker recovery explicitly release or abandon
 the old generation's ownership. Capacity growth is bounded to the three slots,
 and warm same-size circulation allocates no replacement backing buffers.
 
+## Idle high-water reclamation
+
+Transient capacity is accounted separately from durable history, Ghostty parser
+and scrollback state, retained WebGL rows, and the glyph-atlas cache. A single
+10-second worker maintenance loop and a single shared 10-second renderer loop
+evaluate owners; there is no timer per slot, row, or GPU buffer.
+
+Worker render slots use a 30-second idle interval, 60-second grow/trim cooldown,
+4× allocated-to-target hysteresis, 1 MiB minimum reclaim, and two power-of-two
+buckets of headroom over the latest used rows/cells/graphemes. All transferred
+leases must return and no presentation command may be pending. Hidden parsing
+updates owner activity, so hidden output cannot be treated as idle. Diagnostics
+report used/allocated bytes, trims, reclaimed bytes, and first regrows without
+recording payloads.
+
+WebGL applies the same idle/cooldown/minimum but a measured 2× hysteresis because
+its target already includes two buckets of CPU and GPU headroom. At the
+renderer-owned barrier it compacts row and retained-scene typed arrays, resizes
+GPU buffers, immediately re-uploads the complete retained scene, and releases
+bounded glyph scratch canvases. It does not clear retained rows or the 4 MiB
+atlas texture/cache. Canvas 2D has no equivalent growing terminal-owned scene
+buffers. Lifecycle diagnostics distinguish current scene use, CPU allocation,
+GPU allocation, target transient capacity, glyph scratch, and atlas cache.
+
+The history owner checks staging every 10 seconds after an empty mailbox turn.
+Empty encoded/compressed vectors trim after 30 seconds idle and 60 seconds since
+growth/trim when they exceed 4× the two 64 KiB minimum buffers and can reclaim
+at least 256 KiB. Pending records and active-file durability are untouched.
+`/api/v1/diagnostics` reports history staging owner/class, used/allocated and
+durable-pending bytes, trims, reclaimed bytes, and regrows. PTY actor write
+scratch is capped at 256 KiB and is intentionally retained below the history
+reclaim threshold; channel capacities never change.
+
+Resume permits one bounded regrow. Cooldown and hysteresis prevent a second
+trim/grow cycle under the resumed small workload. The release browser gate grows
+a WebGL scene above 1 MiB, shrinks geometry, advances the policy clock, asserts
+capacity falls, then verifies terminal text and non-background pixels on the
+first resumed frame. The six-terminal benchmark and server history unit gate
+also assert exact state and zero repeated reclaim.
+
 ## WebGPU decision
 
 Official references checked on 2026-08-29:

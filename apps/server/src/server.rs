@@ -329,6 +329,9 @@ async fn diagnostics(State(state): State<AppState>, headers: HeaderMap, uri: Uri
                 "connectedClients": state.runtime.events.subscriber_count().saturating_sub(1),
                 "runningTerminals": state.runtime.running_terminal_count(),
             },
+            "memory": {
+                "terminalHistory": state.runtime.terminal.history_capacity_diagnostics(),
+            },
             "devices": state.runtime.devices.list().unwrap_or_default().into_iter().map(|device| json!({
                 "id": device.id,
                 "name": device.name,

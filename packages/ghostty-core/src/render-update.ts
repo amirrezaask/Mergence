@@ -104,6 +104,7 @@ export type GhosttyRenderUpdateBuilderDiagnostics = {
   readonly slotsCreated: number
   readonly backingBuffersAllocated: number
   readonly backingBytesAllocated: number
+  readonly backingBytesUsed: number
   readonly leasesBuilt: number
   readonly leasesReclaimed: number
   readonly reclaimRejected: number
@@ -111,6 +112,7 @@ export type GhosttyRenderUpdateBuilderDiagnostics = {
   readonly maxInFlight: number
   readonly idleTrims: number
   readonly idleBytesReclaimed: number
+  readonly idleRegrows: number
 }
 
 interface BuilderSlot {
@@ -190,8 +192,10 @@ export class GhosttyRenderUpdateBuilder {
     maxInFlight: 0,
     idleTrims: 0,
     idleBytesReclaimed: 0,
+    idleRegrows: 0,
   }
   private lastCapacityChangeAt = 0
+  private trimmedSinceGrowth = false
 
   constructor(slotCount = 3) {
     const count = Math.max(1, Math.min(3, Math.trunc(slotCount)))
@@ -209,7 +213,10 @@ export class GhosttyRenderUpdateBuilder {
   }
 
   diagnostics(): GhosttyRenderUpdateBuilderDiagnostics {
-    return { ...this.mutableDiagnostics }
+    return {
+      ...this.mutableDiagnostics,
+      backingBytesUsed: this.slots.reduce((total, slot) => total + usedSlotBytes(slot), 0),
+    }
   }
 
   build(options: {
@@ -271,10 +278,15 @@ export class GhosttyRenderUpdateBuilder {
     }
     const growth = slotBytes(slot) - beforeBytes
     this.mutableDiagnostics.backingBytesAllocated += growth
-    if (growth > 0) this.lastCapacityChangeAt = clockNow()
+    if (growth > 0) {
+      if (this.trimmedSinceGrowth) {
+        this.mutableDiagnostics.idleRegrows += 1
+        this.trimmedSinceGrowth = false
+      }
+      this.lastCapacityChangeAt = clockNow()
+    }
     slot.targetRows = Math.max(1, rows.length)
     slot.targetCells = Math.max(1, cellCount)
-    slot.targetGraphemes = Math.max(1, graphemeCapacity)
 
     let cellIndex = 0;
     let graphemeOffset = 0;
@@ -325,6 +337,7 @@ export class GhosttyRenderUpdateBuilder {
       styles: slot.styles.subarray(0, cellCount),
       graphemes: slot.graphemes.subarray(0, graphemeOffset),
     };
+    slot.targetGraphemes = Math.max(1, graphemeOffset)
     const lease = { slotId: slot.id, leaseToken: slot.leaseToken, update }
     this.owners.set(update, lease)
     this.mutableDiagnostics.leasesBuilt += 1
@@ -348,6 +361,7 @@ export class GhosttyRenderUpdateBuilder {
     this.mutableDiagnostics.idleTrims += 1
     this.mutableDiagnostics.idleBytesReclaimed += allocatedBytes - afterBytes
     this.lastCapacityChangeAt = now
+    this.trimmedSinceGrowth = true
     return true
   }
 
@@ -380,6 +394,10 @@ export class GhosttyRenderUpdateBuilder {
 
 function clockNow(): number {
   return globalThis.performance?.now() ?? Date.now()
+}
+
+function usedSlotBytes(slot: BuilderSlot): number {
+  return slot.targetRows * 5 + slot.targetCells * 18 + slot.targetGraphemes
 }
 
 function targetSlotBytes(slot: BuilderSlot): number {

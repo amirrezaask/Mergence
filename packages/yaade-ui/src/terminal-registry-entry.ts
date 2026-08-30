@@ -1,5 +1,6 @@
 export {
   findTerminalBufferMatch,
+  maintainTerminalIdleCapacity,
   readTerminalBufferText,
   readTerminalCellHeight,
   readTerminalCellSize,

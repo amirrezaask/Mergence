@@ -109,6 +109,17 @@ export class RendererController {
     });
   }
 
+  trimIdle(lastActivityAt: number, now?: number): boolean {
+    const active = this.active
+    if (active === null || this.stateValue === "disposed" || !active.renderer.trimIdle) return false
+    try {
+      return active.renderer.trimIdle(lastActivityAt, now)
+    } catch (error) {
+      this.handleFailure("idle-trim", error)
+      return false
+    }
+  }
+
   render(
     model: GhosttyViewportModel,
     update: GhosttyRenderUpdate | null,

@@ -26,8 +26,22 @@ export class WebGlRectBatch {
   get data(): Float32Array { return this.values.subarray(0, this.countValue * WEBGL_RECT_FLOATS); }
   get usedBytes(): number { return this.countValue * WEBGL_RECT_FLOATS * Float32Array.BYTES_PER_ELEMENT; }
   get allocatedBytes(): number { return this.values.byteLength; }
+  get targetAllocatedBytes(): number {
+    return nextCapacity(this.countValue * 2, this.maximumInstances) *
+      WEBGL_RECT_FLOATS * Float32Array.BYTES_PER_ELEMENT
+  }
 
   clear(): void { this.countValue = 0; }
+
+  trimCapacity(): number {
+    const targetLength = this.targetAllocatedBytes / Float32Array.BYTES_PER_ELEMENT
+    if (targetLength >= this.values.length) return 0
+    const previousBytes = this.values.byteLength
+    const next = new Float32Array(targetLength)
+    next.set(this.data)
+    this.values = next
+    return previousBytes - next.byteLength
+  }
 
   append(other: WebGlRectBatch): boolean {
     if (!this.reserve(other.count)) return false;
@@ -100,8 +114,22 @@ export class WebGlGlyphBatch {
   get data(): Float32Array { return this.values.subarray(0, this.countValue * WEBGL_GLYPH_FLOATS); }
   get usedBytes(): number { return this.countValue * WEBGL_GLYPH_FLOATS * Float32Array.BYTES_PER_ELEMENT; }
   get allocatedBytes(): number { return this.values.byteLength; }
+  get targetAllocatedBytes(): number {
+    return nextCapacity(this.countValue * 2, this.maximumInstances) *
+      WEBGL_GLYPH_FLOATS * Float32Array.BYTES_PER_ELEMENT
+  }
 
   clear(): void { this.countValue = 0; }
+
+  trimCapacity(): number {
+    const targetLength = this.targetAllocatedBytes / Float32Array.BYTES_PER_ELEMENT
+    if (targetLength >= this.values.length) return 0
+    const previousBytes = this.values.byteLength
+    const next = new Float32Array(targetLength)
+    next.set(this.data)
+    this.values = next
+    return previousBytes - next.byteLength
+  }
 
   append(other: WebGlGlyphBatch): boolean {
     if (!this.reserve(other.count)) return false;

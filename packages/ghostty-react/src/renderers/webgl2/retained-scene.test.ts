@@ -67,6 +67,33 @@ test("retained scene merges adjacent ranges and keeps sparse ranges separate", (
   ]);
 });
 
+test("retained scene trims transient high water without changing authoritative data", () => {
+  const scene = new WebGlRetainedScene()
+  const backgrounds = new WebGlRectBatch(131_072)
+  for (let index = 0; index < 65_536; index += 1) {
+    assert.equal(backgrounds.push(index, 0, 1, 1, 1, 1, 1), true)
+  }
+  scene.replaceAll([{
+    backgrounds,
+    decorations: new WebGlRectBatch(1),
+    glyphs: new WebGlGlyphBatch(1),
+  }])
+  const highWater = scene.allocatedBytes
+  const current = row(1, 1, 1, 42)
+  scene.replaceAll([current])
+  const expected = {
+    backgrounds: Array.from(scene.backgroundData),
+    decorations: Array.from(scene.decorationData),
+    glyphs: Array.from(scene.glyphData),
+  }
+  const reclaimed = scene.trimCapacity()
+  assert.ok(reclaimed >= 1024 * 1024)
+  assert.ok(scene.allocatedBytes < highWater)
+  assert.deepEqual(Array.from(scene.backgroundData), expected.backgrounds)
+  assert.deepEqual(Array.from(scene.decorationData), expected.decorations)
+  assert.deepEqual(Array.from(scene.glyphData), expected.glyphs)
+})
+
 test("mixed partial and topology updates equal a fresh full compaction", () => {
   const scene = new WebGlRetainedScene();
   const rows = [row(1, 0, 1, 1), row(2, 1, 1, 10), row(0, 2, 2, 20)];

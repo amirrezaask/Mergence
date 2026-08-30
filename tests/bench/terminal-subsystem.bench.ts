@@ -3,6 +3,11 @@ import {
   TERMINAL_METRIC_STAGES,
   TerminalStageMetrics,
 } from "../../packages/ghostty-react/src/terminal-metrics.js"
+import { WebGlGlyphBatch, WebGlRectBatch } from "../../packages/ghostty-react/src/renderers/webgl2/batches.js"
+import {
+  WebGlRetainedScene,
+  type RetainedRowBatches,
+} from "../../packages/ghostty-react/src/renderers/webgl2/retained-scene.js"
 import { FairWorkerScheduler } from "../../packages/ghostty-react/src/worker/fair-scheduler.js"
 import { benchContext, logBenchContext } from "./_bench.js"
 import { validateTerminalCorpora } from "./terminal-corpora.js"
@@ -36,6 +41,59 @@ test("bench corpus manifest and metric schema are exact and payload-free", () =>
   expect(JSON.stringify(snapshot)).not.toContain("payload")
   console.log(`[bench-corpora] ${JSON.stringify(manifest)}`)
   console.log(`[bench-metrics] ${JSON.stringify(snapshot)}`)
+})
+
+test("bench six-terminal idle high water reclaims capacity without oscillation", () => {
+  const smallRow = (seed: number): RetainedRowBatches => {
+    const backgrounds = new WebGlRectBatch(131_072)
+    if (!backgrounds.push(seed, 0, 1, 1, 1, 1, 1)) {
+      throw new Error("small benchmark row exceeded its bound")
+    }
+    return {
+      backgrounds,
+      decorations: new WebGlRectBatch(1),
+      glyphs: new WebGlGlyphBatch(1),
+    }
+  }
+  const scenes = Array.from({ length: 6 }, (_, index) => {
+    const scene = new WebGlRetainedScene()
+    scene.replaceAll([smallRow(index)])
+    return scene
+  })
+  const flood = new WebGlRectBatch(131_072)
+  for (let index = 0; index < 65_536; index += 1) {
+    if (!flood.push(index, 0, 1, 1, 1, 1, 1)) {
+      throw new Error("high-water benchmark row exceeded its bound")
+    }
+  }
+  scenes[5]?.replaceAll([{
+    backgrounds: flood,
+    decorations: new WebGlRectBatch(1),
+    glyphs: new WebGlGlyphBatch(1),
+  }])
+  scenes[5]?.replaceAll([smallRow(99)])
+  const before = scenes.reduce((total, scene) => total + scene.allocatedBytes, 0)
+  const expected = Array.from(scenes[5]?.backgroundData ?? [])
+  const reclaimed = scenes.reduce((total, scene) => total + scene.trimCapacity(), 0)
+  const after = scenes.reduce((total, scene) => total + scene.allocatedBytes, 0)
+  const afterTrim = Array.from(scenes[5]?.backgroundData ?? [])
+  const repeatedReclaim = scenes.reduce((total, scene) => total + scene.trimCapacity(), 0)
+  scenes[5]?.updateRows([{ row: 0, batches: smallRow(100) }])
+
+  expect(reclaimed).toBeGreaterThanOrEqual(1024 * 1024)
+  expect(after).toBeLessThan(before)
+  expect(afterTrim).toEqual(expected)
+  expect(repeatedReclaim).toBe(0)
+  expect(expected).toHaveLength(8)
+  expect(scenes[5]?.backgroundData[0]).toBe(100)
+  console.log(`[bench-idle-capacity] ${JSON.stringify({
+    terminals: scenes.length,
+    allocatedBefore: before,
+    allocatedAfter: after,
+    reclaimed,
+    repeatedReclaim,
+    resumedUsedBytes: scenes[5]?.usedBytes ?? 0,
+  })}`)
 })
 
 test("bench production worker reaches parsed, transferred, and presented fences", async () => {

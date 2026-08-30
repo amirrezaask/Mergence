@@ -30,6 +30,22 @@ test("packed rectangle colors expose exact used and allocated bytes", () => {
   assert.equal(batch.allocatedBytes, allocated);
 });
 
+test("idle batch trimming keeps current primitives and headroom", () => {
+  const batch = new WebGlRectBatch(4_096)
+  for (let index = 0; index < 2_048; index += 1) {
+    assert.equal(batch.push(index, 2, 3, 4, 1, 1, 1), true)
+  }
+  const highWater = batch.allocatedBytes
+  batch.clear()
+  assert.equal(batch.push(7, 8, 9, 10, 1, 1, 1), true)
+  const expected = Array.from(batch.data)
+  const reclaimed = batch.trimCapacity()
+  assert.ok(reclaimed > 0)
+  assert.ok(batch.allocatedBytes < highWater)
+  assert.ok(batch.allocatedBytes >= batch.usedBytes * 2)
+  assert.deepEqual(Array.from(batch.data), expected)
+})
+
 test("glyph batches retain UV, tint, alpha, and color mode", () => {
   const batch = new WebGlGlyphBatch(1);
   assert.equal(batch.push(1, 2, 3, 4, 0.1, 0.2, 0.3, 0.4, 1, 0.5, 0.25, 0.75, 1), true);

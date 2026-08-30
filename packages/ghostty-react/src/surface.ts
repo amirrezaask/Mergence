@@ -632,6 +632,25 @@ export interface GhosttyTerminalLifecycleSnapshot {
 
 let nextSurfaceInstanceId = 1;
 const MAX_RENDERER_CPU_SAMPLES = 256;
+const IDLE_MAINTENANCE_INTERVAL_MS = 10_000
+const rendererIdleMaintainers = new Set<(now: number) => void>()
+let rendererIdleMaintenanceTimer: number | null = null
+
+function registerRendererIdleMaintenance(maintain: (now: number) => void): () => void {
+  rendererIdleMaintainers.add(maintain)
+  if (rendererIdleMaintenanceTimer === null) {
+    rendererIdleMaintenanceTimer = window.setInterval(() => {
+      const now = performance.now()
+      for (const callback of rendererIdleMaintainers) callback(now)
+    }, IDLE_MAINTENANCE_INTERVAL_MS)
+  }
+  return () => {
+    rendererIdleMaintainers.delete(maintain)
+    if (rendererIdleMaintainers.size > 0 || rendererIdleMaintenanceTimer === null) return
+    window.clearInterval(rendererIdleMaintenanceTimer)
+    rendererIdleMaintenanceTimer = null
+  }
+}
 
 function rendererCpuPercentiles(samples: readonly number[]): TerminalRendererCpuPercentiles {
   if (samples.length === 0) return { samples: 0, p50: 0, p95: 0, p99: 0 };
@@ -759,6 +778,9 @@ export class GhosttyTerminalSurface {
   private lastNextPaintObservedFrame = 0;
   private pendingPresentationFrame = 0;
   private readonly rendererCpuSamples: number[] = [];
+  private lastRendererActivityAt = performance.now()
+  private lastObservedWorkerBytes = 0
+  private unregisterIdleMaintenance: (() => void) | null = null
 
   private constructor(
     mount: HTMLElement,
@@ -811,6 +833,9 @@ export class GhosttyTerminalSurface {
         this.requestRender();
       },
     );
+    this.unregisterIdleMaintenance = registerRendererIdleMaintenance(now => {
+      this.maintainIdleCapacity(now)
+    })
     this.updateRendererDiagnostics();
     this.geometryCoordinator = new TerminalGeometryCoordinator({
       padding: CONTENT_PADDING,
@@ -1050,6 +1075,7 @@ export class GhosttyTerminalSurface {
   }
 
   private afterTerminalWrite(forceFullRender = false, workerPrepared = false): void {
+    this.lastRendererActivityAt = performance.now()
     this.terminalStateDirty = true;
     this.syncTitle();
     // Restart the blink cycle from the visible phase so the cursor never sits
@@ -1461,9 +1487,27 @@ export class GhosttyTerminalSurface {
     this.options.onTitleChange?.(title);
   }
 
+  maintainIdleCapacity(now = performance.now()): boolean {
+    if (this.disposed) return false
+    const worker = this.core.workerDiagnostics()
+    if (
+      worker.bytesParsed !== this.lastObservedWorkerBytes ||
+      worker.pendingPresentation ||
+      worker.schedulerQueueCommands > 0 ||
+      worker.schedulerInFlight > 0
+    ) {
+      this.lastObservedWorkerBytes = worker.bytesParsed
+      this.lastRendererActivityAt = now
+      return false
+    }
+    return this.rendererController.trimIdle(this.lastRendererActivityAt, now)
+  }
+
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.unregisterIdleMaintenance?.()
+    this.unregisterIdleMaintenance = null
     this.resizeObserver.disconnect();
     this.geometryCoordinator.dispose();
     document.fonts.removeEventListener("loadingdone", this.onFontsLoaded);
@@ -2413,6 +2457,8 @@ export class GhosttyTerminalSurface {
       for (const consumed of consumedUpdates) this.core.releaseRenderUpdate(consumed);
     }
     const submittedAt = performance.now();
+    this.lastRendererActivityAt = submittedAt
+    this.lastObservedWorkerBytes = this.core.workerDiagnostics().bytesParsed
     this.rendererCpuSamples.push(submittedAt - renderStartedAt);
     if (this.rendererCpuSamples.length > MAX_RENDERER_CPU_SAMPLES) this.rendererCpuSamples.shift();
     const modelFrameId = this.viewportModel.currentFrameId;

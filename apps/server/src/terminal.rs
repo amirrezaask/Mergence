@@ -27,7 +27,10 @@ use crate::{
     terminal_control::{
         RuntimeTerminalLease, TerminalControlError, TerminalControlRegistry, TerminalLeaseRequest,
     },
-    terminal_history::{Base64Bytes, HistoryError, TerminalHistoryArchive, TerminalHistoryPage},
+    terminal_history::{
+        Base64Bytes, HistoryError, TerminalHistoryArchive, TerminalHistoryCapacityDiagnostics,
+        TerminalHistoryPage,
+    },
     wire::{TerminalLeaseMode, TerminalMutationFence},
 };
 
@@ -783,6 +786,11 @@ impl TerminalHost {
     #[must_use]
     pub fn history_available(&self, id: &str) -> bool {
         self.history.available(id)
+    }
+
+    #[must_use]
+    pub fn history_capacity_diagnostics(&self) -> TerminalHistoryCapacityDiagnostics {
+        self.history.capacity_diagnostics()
     }
 
     pub fn terminate_stale_process(

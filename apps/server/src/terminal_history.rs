@@ -5,7 +5,7 @@ use std::{
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex, MutexGuard, mpsc},
     thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use base64::{
@@ -34,6 +34,12 @@ const MAX_BLOCK_RECORDS: usize = 1_000_000;
 const INGEST_MAX_MESSAGES: usize = 1024;
 const INGEST_MAX_BYTES: usize = 32 * 1024 * 1024;
 const FINALIZE_MAX_MESSAGES: usize = 1024;
+const HISTORY_MAINTENANCE_INTERVAL: Duration = Duration::from_secs(10);
+const HISTORY_STAGING_IDLE: Duration = Duration::from_secs(30);
+const HISTORY_STAGING_COOLDOWN: Duration = Duration::from_secs(60);
+const HISTORY_STAGING_MIN_BYTES: usize = 64 * 1024;
+const HISTORY_STAGING_MIN_RECLAIM_BYTES: usize = 256 * 1024;
+const HISTORY_STAGING_SHRINK_RATIO: usize = 4;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Base64Bytes(pub Bytes);
@@ -83,6 +89,77 @@ struct ArchiveState {
     pending_bytes: usize,
     encoded_staging: Vec<u8>,
     compressed_staging: Vec<u8>,
+    last_activity_at: Instant,
+    last_capacity_change_at: Instant,
+    idle_trims: u64,
+    idle_bytes_reclaimed: u64,
+    idle_regrows: u64,
+    trimmed_since_growth: bool,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalHistoryCapacityDiagnostics {
+    pub owner: &'static str,
+    pub memory_class: &'static str,
+    pub states: usize,
+    pub used_bytes: u64,
+    pub allocated_bytes: u64,
+    pub durable_pending_bytes: u64,
+    pub idle_trims: u64,
+    pub idle_bytes_reclaimed: u64,
+    pub idle_regrows: u64,
+}
+
+impl ArchiveState {
+    fn staging_used_bytes(&self) -> usize {
+        self.encoded_staging
+            .len()
+            .saturating_add(self.compressed_staging.len())
+    }
+
+    fn staging_allocated_bytes(&self) -> usize {
+        self.encoded_staging
+            .capacity()
+            .saturating_add(self.compressed_staging.capacity())
+    }
+
+    fn record_staging_growth(&mut self, before: usize, now: Instant) {
+        if self.staging_allocated_bytes() <= before {
+            return;
+        }
+        if self.trimmed_since_growth {
+            self.idle_regrows = self.idle_regrows.saturating_add(1);
+            self.trimmed_since_growth = false;
+        }
+        self.last_capacity_change_at = now;
+    }
+
+    fn trim_idle_staging(&mut self, now: Instant) -> bool {
+        let allocated = self.staging_allocated_bytes();
+        let target = HISTORY_STAGING_MIN_BYTES.saturating_mul(2);
+        if !self.pending.is_empty()
+            || self.staging_used_bytes() > 0
+            || now.saturating_duration_since(self.last_activity_at) < HISTORY_STAGING_IDLE
+            || now.saturating_duration_since(self.last_capacity_change_at)
+                < HISTORY_STAGING_COOLDOWN
+            || allocated < target.saturating_mul(HISTORY_STAGING_SHRINK_RATIO)
+            || allocated.saturating_sub(target) < HISTORY_STAGING_MIN_RECLAIM_BYTES
+        {
+            return false;
+        }
+        self.encoded_staging = Vec::with_capacity(HISTORY_STAGING_MIN_BYTES);
+        self.compressed_staging = Vec::with_capacity(HISTORY_STAGING_MIN_BYTES);
+        let reclaimed = allocated.saturating_sub(self.staging_allocated_bytes());
+        if reclaimed == 0 {
+            return false;
+        }
+        self.last_capacity_change_at = now;
+        self.idle_trims = self.idle_trims.saturating_add(1);
+        self.idle_bytes_reclaimed = self.idle_bytes_reclaimed.saturating_add(reclaimed as u64);
+        self.trimmed_since_growth = true;
+        true
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -537,6 +614,11 @@ impl TerminalHistoryArchive {
             .is_some_and(|metadata| metadata.last_sequence > 0)
     }
 
+    #[must_use]
+    pub fn capacity_diagnostics(&self) -> TerminalHistoryCapacityDiagnostics {
+        self.shared.capacity_diagnostics()
+    }
+
     fn snapshot(&self) -> Result<(), HistoryError> {
         let (snapshot_tx, snapshot_rx) = mpsc::channel();
         self.ingest_tx
@@ -568,6 +650,46 @@ impl Drop for TerminalHistoryArchive {
 }
 
 impl HistoryShared {
+    fn capacity_diagnostics(&self) -> TerminalHistoryCapacityDiagnostics {
+        let states = self.states().values().cloned().collect::<Vec<_>>();
+        let mut diagnostics = TerminalHistoryCapacityDiagnostics {
+            owner: "history-owner",
+            memory_class: "transient-staging",
+            states: states.len(),
+            ..TerminalHistoryCapacityDiagnostics::default()
+        };
+        for state in states {
+            let state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            diagnostics.used_bytes = diagnostics
+                .used_bytes
+                .saturating_add(state.staging_used_bytes() as u64);
+            diagnostics.allocated_bytes = diagnostics
+                .allocated_bytes
+                .saturating_add(state.staging_allocated_bytes() as u64);
+            diagnostics.durable_pending_bytes = diagnostics
+                .durable_pending_bytes
+                .saturating_add(state.pending_bytes as u64);
+            diagnostics.idle_trims = diagnostics.idle_trims.saturating_add(state.idle_trims);
+            diagnostics.idle_bytes_reclaimed = diagnostics
+                .idle_bytes_reclaimed
+                .saturating_add(state.idle_bytes_reclaimed);
+            diagnostics.idle_regrows = diagnostics.idle_regrows.saturating_add(state.idle_regrows);
+        }
+        diagnostics
+    }
+
+    fn maintain_idle_staging(&self, now: Instant) {
+        let states = self.states().values().cloned().collect::<Vec<_>>();
+        for state in states {
+            state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .trim_idle_staging(now);
+        }
+    }
+
     fn reserve_ingest_bytes(&self, bytes: usize) {
         let mut used = self
             .budget
@@ -624,6 +746,7 @@ impl HistoryShared {
                 command.sequence
             )));
         }
+        state.last_activity_at = Instant::now();
         append_active_record(&mut state.active, command.sequence, &command.data)?;
         state.pending_bytes = state.pending_bytes.saturating_add(command.data.len());
         state.pending.push(HistoryRecord {
@@ -702,6 +825,7 @@ impl HistoryShared {
             .map_or(0, |block| block.last_sequence);
         let (active, pending) = open_active_segment(&dir, block_sequence)?;
         let pending_bytes = pending.iter().map(|record| record.data.len()).sum();
+        let now = Instant::now();
         let candidate = Arc::new(Mutex::new(ArchiveState {
             dir,
             manifest,
@@ -710,6 +834,12 @@ impl HistoryShared {
             pending_bytes,
             encoded_staging: Vec::new(),
             compressed_staging: Vec::new(),
+            last_activity_at: now,
+            last_capacity_change_at: now,
+            idle_trims: 0,
+            idle_bytes_reclaimed: 0,
+            idle_regrows: 0,
+            trimmed_since_growth: false,
         }));
         let state = self
             .states()
@@ -897,6 +1027,7 @@ fn run_history_owner(
     finalize: mpsc::Receiver<FinalizeCommand>,
 ) {
     let mut closes = Vec::<(String, u64)>::new();
+    let mut next_maintenance = Instant::now() + HISTORY_MAINTENANCE_INTERVAL;
     loop {
         while let Ok(FinalizeCommand::Close {
             terminal_id,
@@ -907,9 +1038,16 @@ fn run_history_owner(
         }
         finalize_ready(shared, &mut closes);
 
-        let command = match ingest.recv_timeout(std::time::Duration::from_millis(5)) {
+        let command = match ingest.recv_timeout(Duration::from_millis(5)) {
             Ok(command) => command,
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                let now = Instant::now();
+                if now >= next_maintenance {
+                    shared.maintain_idle_staging(now);
+                    next_maintenance = now + HISTORY_MAINTENANCE_INTERVAL;
+                }
+                continue;
+            }
             Err(mpsc::RecvTimeoutError::Disconnected) => break,
         };
         match command {
@@ -981,6 +1119,7 @@ fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
     if state.pending.is_empty() {
         return Ok(());
     }
+    let staging_before = state.staging_allocated_bytes();
     let records = state.pending.clone();
     let uncompressed_bytes = state.pending_bytes as u64;
     let first_sequence = records.first().map_or(0, |record| record.sequence);
@@ -1014,6 +1153,9 @@ fn flush_state(state: &mut ArchiveState) -> Result<(), HistoryError> {
     state.pending.clear();
     state.pending_bytes = 0;
     reset_active_segment(&mut state.active)?;
+    state.encoded_staging.clear();
+    state.compressed_staging.clear();
+    state.record_staging_growth(staging_before, Instant::now());
     Ok(())
 }
 
@@ -1358,6 +1500,64 @@ mod tests {
         );
         assert!(final_page.complete);
         fs::remove_dir_all(root).expect("cleanup");
+    }
+
+    #[test]
+    fn idle_reclaim_trims_history_staging_and_resume_regrows_once() {
+        let root = temp_dir();
+        let archive =
+            TerminalHistoryArchive::with_limits(&root, 256 * 1024, 1024 * 1024).expect("archive");
+        let state = archive.shared.state_for("term-idle").expect("state");
+        let now = Instant::now();
+        {
+            let mut state = state
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner());
+            state.encoded_staging = Vec::with_capacity(2 * 1024 * 1024);
+            state.compressed_staging = Vec::with_capacity(2 * 1024 * 1024);
+            state.last_activity_at = now - Duration::from_secs(120);
+            state.last_capacity_change_at = now - Duration::from_secs(120);
+            assert!(state.trim_idle_staging(now));
+            assert_eq!(state.staging_used_bytes(), 0);
+            assert_eq!(
+                state.staging_allocated_bytes(),
+                HISTORY_STAGING_MIN_BYTES * 2
+            );
+        }
+        let trimmed = archive.capacity_diagnostics();
+        assert_eq!(trimmed.memory_class, "transient-staging");
+        assert_eq!(trimmed.durable_pending_bytes, 0);
+        assert_eq!(trimmed.idle_trims, 1);
+        assert!(trimmed.idle_bytes_reclaimed >= 3 * 1024 * 1024);
+
+        for sequence in 1..=4 {
+            archive
+                .append(
+                    "term-idle",
+                    sequence,
+                    Bytes::from(vec![sequence as u8; 64 * 1024]),
+                )
+                .expect("append after trim");
+        }
+        archive.flush_all().expect("flush after trim");
+        let resumed = archive.capacity_diagnostics();
+        assert_eq!(resumed.idle_regrows, 1);
+        let page = archive
+            .read_page("term-idle", 0, None)
+            .expect("read after trim")
+            .expect("history page");
+        assert_eq!(page.chunks.len(), 4);
+        assert_eq!(page.chunks[0].0[0], 1);
+        assert_eq!(page.chunks[3].0[0], 4);
+
+        let state = state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        assert!(!state.trimmed_since_growth);
+        assert_eq!(state.staging_used_bytes(), 0);
+        drop(state);
+        drop(archive);
+        fs::remove_dir_all(root).expect("remove temp dir");
     }
 
     #[test]

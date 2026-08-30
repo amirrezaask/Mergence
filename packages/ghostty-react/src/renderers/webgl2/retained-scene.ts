@@ -58,6 +58,10 @@ class PrimitiveScene {
   get data(): Float32Array {
     return this.values.subarray(0, checkedLength(this.countValue, this.floatsPerInstance));
   }
+  get allocatedBytes(): number { return this.values.byteLength }
+  get targetAllocatedBytes(): number {
+    return this.targetLength() * Float32Array.BYTES_PER_ELEMENT
+  }
 
   clear(): void {
     this.ranges = [];
@@ -93,6 +97,23 @@ class PrimitiveScene {
     this.ranges = ranges;
     this.countValue = count;
     return { kind: "full", data: values };
+  }
+
+  trimCapacity(): number {
+    const targetLength = this.targetLength()
+    if (targetLength >= this.values.length) return 0
+    const previousBytes = this.values.byteLength
+    const next = new Float32Array(targetLength)
+    next.set(this.data)
+    this.values = next
+    return previousBytes - next.byteLength
+  }
+
+  private targetLength(): number {
+    const required = checkedLength(this.countValue * 2, this.floatsPerInstance)
+    let target = 64 * this.floatsPerInstance
+    while (target < required) target *= 2
+    return target
   }
 
   updateRows(
@@ -165,6 +186,33 @@ export class WebGlRetainedScene {
   get glyphData(): Float32Array { return this.glyphScene.data; }
   get usedBytes(): number {
     return this.backgroundData.byteLength + this.decorationData.byteLength + this.glyphData.byteLength;
+  }
+  get allocatedBytes(): number {
+    return this.backgroundScene.allocatedBytes + this.decorationScene.allocatedBytes +
+      this.glyphScene.allocatedBytes + this.rows.reduce(
+        (total, row) => total + row.backgrounds.allocatedBytes +
+          row.decorations.allocatedBytes + row.glyphs.allocatedBytes,
+        0,
+      )
+  }
+  get targetAllocatedBytes(): number {
+    return this.backgroundScene.targetAllocatedBytes + this.decorationScene.targetAllocatedBytes +
+      this.glyphScene.targetAllocatedBytes + this.rows.reduce(
+        (total, row) => total + row.backgrounds.targetAllocatedBytes +
+          row.decorations.targetAllocatedBytes + row.glyphs.targetAllocatedBytes,
+        0,
+      )
+  }
+
+  trimCapacity(): number {
+    let reclaimed = this.backgroundScene.trimCapacity() + this.decorationScene.trimCapacity() +
+      this.glyphScene.trimCapacity()
+    for (const row of this.rows) {
+      reclaimed += row.backgrounds.trimCapacity()
+      reclaimed += row.decorations.trimCapacity()
+      reclaimed += row.glyphs.trimCapacity()
+    }
+    return reclaimed
   }
 
   replaceAll(rows: readonly RetainedRowBatches[]): SceneSubmissionPlan {
