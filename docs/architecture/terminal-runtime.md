@@ -50,10 +50,18 @@ or incomplete UTF-8 replays exactly. Output is batched by byte count to reduce
 framing overhead, while small interactive chunks flush immediately. A
 fresh browser renderer attaches behind a replay barrier: history pages are
 parsed in order, concurrent live bytes remain bounded, and only bytes newer
-than the replay cursor are released afterward. Each browser has an isolated
-bounded socket queue; a slow viewer cannot pause the PTY or another viewer.
-Semantic snapshots use a replaceable binary lane rather than the reliable
-control mailbox. The history archive can rebuild terminal bytes after the live replay ring trims
+than the replay cursor are released afterward. Each admitted WebSocket has one writer task as the sole sink owner. The reader
+handles commands and ACKs without awaiting network output; every producer uses
+a non-awaiting `ConnectionOutbound` backed by bounded reliable, ordered raw, and
+replaceable semantic lanes. `EventHub` indexes weak subscribers by terminal and
+connection, so a raw terminal frame visits only attached clients while metadata
+retains the shared sequence source. On raw/flow overflow the connection rejects
+later live bytes for that terminal and enqueues one reliable replay-required
+fence at the parser-acknowledged sequence; reliable overflow closes with 1013.
+A successful attach/replay resets the fence. Consequently a slow viewer cannot
+pause the PTY, another viewer, or its own inbound command task. Semantic
+snapshots use a replaceable binary lane rather than the reliable control
+mailbox. The history archive can rebuild terminal bytes after the live replay ring trims
 old chunks and can serve validated pages without a live terminal entry. It does
 not keep the PTY alive across host restarts. Mailbox acceptance is a bounded
 in-memory fence, not an `fsync` promise. `flush_all` waits for accepted records,

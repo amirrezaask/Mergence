@@ -8,9 +8,10 @@ YAADE's only host implementation is the Rust crate in `apps/server`. It owns HTT
 2. `database_owner` owns one SQLite connection on a dedicated bounded worker.
 3. `store` owns Session, Window, layout, and terminal mutations.
 4. `terminal` owns PTYs, checkpoints, compressed replay history, leases, and process cleanup.
-5. `event_hub` sequences events and retains bounded non-PTY history.
-6. `server` handles HTTP and WebSocket admission and transport.
-7. `runtime` wires the modules and dispatches typed host routes.
+5. `event_hub` sequences events, retains bounded non-PTY history, and indexes attached terminal subscribers.
+6. `connection_outbound` owns each admitted connection's bounded reliable/raw/semantic mailbox.
+7. `server` handles HTTP/WebSocket admission and gives the socket sink to one writer task.
+8. `runtime` wires the modules and dispatches typed host routes.
 
 The terminal interface hides Unix PTY and Windows ConPTY differences. Client disconnects preserve PTYs; explicit terminal close and host shutdown terminate them.
 
