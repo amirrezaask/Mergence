@@ -118,6 +118,19 @@ export const MUX_SESSION_DIRECT_BINDINGS: readonly MuxSessionDirectBinding[] = [
     repeatable: false,
     riskyReason: "Mod-Shift-d is the terminal multiplexer split chord.",
   },
+  {
+    key: "Mod-b",
+    command: "sidebar.toggle",
+    desc: "Toggle sidebar",
+    repeatable: false,
+    riskyReason: "Mod-b is the terminal multiplexer sidebar toggle chord.",
+  },
+  {
+    key: "Mod-,",
+    command: "settings.show",
+    desc: "Open settings",
+    repeatable: false,
+  },
 ];
 
 export const MUX_SESSION_CONTEXT_BINDINGS: readonly MuxSessionContextBinding[] =
@@ -211,6 +224,8 @@ export type MuxSessionKeydownContext = {
   readonly inTerminal: boolean;
   readonly inPrefixButton: boolean;
   readonly zoomed: boolean;
+  /** Whether a layout with a toggleable vertical sidebar is active. */
+  readonly sidebarLayout?: boolean;
   readonly contextKind?: string;
 };
 
@@ -249,6 +264,7 @@ export function resolveMuxSessionKeydown(
 ): MuxSessionKeydownResult | null {
   if (context.overlayOpen || context.inEditable || context.inPrefixButton) return null;
   const binding = matchMuxSessionDirectBinding(event);
+  if (binding?.command === "sidebar.toggle" && context.sidebarLayout === false) return null;
   return binding ? commandResult(binding, event) : null;
 }
 

@@ -845,6 +845,16 @@ test("switches between horizontal and vertical tab layouts in Settings", async (
   await expect(navigation.getByRole("tablist", { name: "Sessions" })).toHaveCount(0);
   await expect(navigation.getByRole("tablist", { name: "Terminals" })).toHaveCount(0);
 
+  const modifier = process.platform === "darwin" ? "Meta" : "Control";
+  await page.keyboard.press(`${modifier}+b`);
+  await expect(navigation).toBeHidden();
+  await page.keyboard.press(`${modifier}+b`);
+  await expect(navigation).toBeVisible();
+
+  await page.keyboard.press(`${modifier}+,`);
+  await expect(settings).toBeVisible();
+  await settings.getByRole("button", { name: "Close settings" }).click();
+
   await navigation.getByRole("button", { name: "Hide Window sidebar" }).click();
   await expect(navigation).toBeHidden();
   const showSidebar = page.getByRole("button", { name: "Show sidebars" });

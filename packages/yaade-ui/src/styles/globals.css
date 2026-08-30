@@ -521,18 +521,19 @@ body {
 }
 
 [data-yaade-terminal-workspace] [data-yaade-mux-pane-chrome] {
-  height: 2rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--border) 42%, transparent);
-  background: color-mix(in srgb, var(--background) 24%, transparent);
-  box-shadow: inset 0 1px var(--yaade-material-specular-soft);
-  -webkit-backdrop-filter: none;
-  backdrop-filter: none;
+  pointer-events: none;
+  position: absolute;
+  inset-inline: 0;
+  top: 0;
+  z-index: 20;
+  height: 0;
+  min-height: 0;
 }
 
 [data-yaade-terminal-workspace] [data-yaade-mux-pane-controls] {
   pointer-events: none;
   opacity: 0;
-  transform: translateX(0.25rem);
+  transform: translateY(-0.25rem);
   border: 1px solid transparent;
   border-radius: var(--yaade-pill-radius);
   padding: 0.125rem;
@@ -545,11 +546,11 @@ body {
 }
 
 [data-yaade-terminal-workspace]
-  [data-yaade-mux-pane-chrome]:is(:hover, :focus-within)
+  [data-yaade-panel-leaf]:is(:hover, :focus-within)
   [data-yaade-mux-pane-controls] {
   pointer-events: auto;
   opacity: 1;
-  transform: translateX(0);
+  transform: translateY(0);
   border-color: var(--yaade-material-light-edge);
   background: var(--yaade-material-chrome-fill);
 }

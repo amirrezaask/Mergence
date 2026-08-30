@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { Terminal as TerminalIcon } from "lucide-react";
 import type { PanelEvent } from "@yaade/panels";
 import type {
@@ -12,7 +12,6 @@ import {
   KeyBindingKbd,
   MuxPaneChrome,
   PanelDockInDnd,
-  SessionHeaderChromeProvider,
   type PanelSlotMeta,
 } from "@yaade/ui/session";
 import {
@@ -138,29 +137,6 @@ export default function TerminalTilingWorkspace({
       splitTerminalTarget != null,
     );
   }, [onChromeOverlayChange, splitTerminalTarget]);
-  // Mode-specific chrome is owned by the terminal renderer but lives in its pane header.
-  const [headerTargets, setHeaderTargets] = useState<ReadonlyMap<number, HTMLElement>>(
-    () => new Map(),
-  );
-  const headerTargetRefs = useRef(
-    new Map<number, (element: HTMLElement | null) => void>(),
-  );
-  const headerContextRef = useCallback((panelId: number) => {
-    const existing = headerTargetRefs.current.get(panelId);
-    if (existing) return existing;
-    const ref = (element: HTMLElement | null) => {
-      setHeaderTargets(current => {
-        if (current.get(panelId) === element) return current;
-        const next = new Map(current);
-        if (element) next.set(panelId, element);
-        else next.delete(panelId);
-        return next;
-      });
-    };
-    headerTargetRefs.current.set(panelId, ref);
-    return ref;
-  }, []);
-
   const renderHeader = useCallback(
     (view: TerminalPaneView, panelId: PanelId, meta: PanelSlotMeta) => {
       const activeTerminal =
@@ -183,8 +159,6 @@ export default function TerminalTilingWorkspace({
           zoomed={zoomedPanelId?.id === panelId.id}
           canZoom={canZoom}
           draggable={activeTerminal != null}
-          processName={activeTerminal?.kind}
-          contextRef={headerContextRef(panelId.id)}
           onSplitButton={(direction, event) => {
             const edge = direction === "right" ? "right" : "bottom";
             if (event.metaKey || event.ctrlKey) {
@@ -241,13 +215,12 @@ export default function TerminalTilingWorkspace({
       return chrome;
     },
     [
-          canZoom,
-      headerContextRef,
+      canZoom,
       onAddSplitTerminal,
       onCloseView,
-          onSplit,
+      onSplit,
       onZoom,
-              runtimeTitles,
+      runtimeTitles,
       splitTerminalTarget,
       terminalsById,
       zoomedPanelId,
@@ -274,20 +247,16 @@ export default function TerminalTilingWorkspace({
         );
       }
       return (
-        <SessionHeaderChromeProvider
-          target={headerTargets.get(panelId.id) ?? null}
+        <div
+          className="flex h-full min-h-0 min-w-0 flex-col"
+          data-yaade-terminal-tile={terminal.id}
+          data-focused={meta.focused ? "" : undefined}
         >
-          <div
-            className="flex h-full min-h-0 min-w-0 flex-col"
-            data-yaade-terminal-tile={terminal.id}
-            data-focused={meta.focused ? "" : undefined}
-          >
-            {renderTerminal(terminal, meta.focused)}
-          </div>
-        </SessionHeaderChromeProvider>
+          {renderTerminal(terminal, meta.focused)}
+        </div>
       );
     },
-    [headerTargets, renderTerminal, terminalsById],
+    [renderTerminal, terminalsById],
   );
 
   const zoomedView = zoomedPanelId

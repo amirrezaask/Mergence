@@ -8,6 +8,11 @@ const backgroundQueryFixture = resolve(
   REPO_ROOT,
   "fixtures/terminal-background-query.mjs",
 )
+const themeUpdatesFixture = resolve(
+  REPO_ROOT,
+  "fixtures/terminal-theme-updates.mjs",
+)
+
 test.describe("terminal compatibility", () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
 
@@ -182,6 +187,51 @@ test.describe("terminal compatibility", () => {
       return created.id
     })
     await queryBackground(lightTerminalId, "e0e0/e3e3/e7e7")
+  })
+
+  test("notifies terminal applications when the color scheme changes", async ({
+    launchApp,
+  }) => {
+    const { page } = await launchApp()
+    const terminalId = await page.evaluate(() => {
+      const id = window.__yaadeTest?.getState().activeMuxTerminalId
+      if (!id) throw new Error("active terminal missing")
+      return id
+    })
+    const panel = page.locator(
+      `[data-yaade-terminal-tile="${terminalId}"] [data-yaade-terminal-panel]`,
+    )
+    await expect(panel).toHaveAttribute("data-yaade-terminal-status", "running", {
+      timeout: 30_000,
+    })
+    await focusTerminal(page)
+    await expect(panel.locator("[data-ghostty-terminal-input]")).toBeFocused()
+    await page.keyboard.type(`node ${JSON.stringify(themeUpdatesFixture)}`)
+    await page.keyboard.press("Enter")
+
+    const terminalText = () =>
+      page.evaluate(
+        id => window.__yaadeTest?.getTerminalText?.(id) ?? "",
+        terminalId,
+      )
+    await expect.poll(terminalText, { timeout: 15_000 }).toContain(
+      "YAADE_TERMINAL_THEME_READY:2:0e0e/1515/1b1b",
+    )
+
+    await page.emulateMedia({ colorScheme: "light" })
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          getComputedStyle(document.documentElement)
+            .getPropertyValue("--yaade-terminal-background")
+            .trim(),
+        ),
+      )
+      .toBe("#e0e3e7")
+    await expect.poll(terminalText, { timeout: 15_000 }).toContain(
+      "YAADE_TERMINAL_THEME_UPDATED:2:e0e0/e3e3/e7e7",
+    )
+    expect(await terminalText()).not.toContain("YAADE_TERMINAL_THEME_ERROR")
   })
 
   test("default worker runtime preserves key and Unicode input order", async ({

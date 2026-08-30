@@ -1308,7 +1308,7 @@ export function TerminalMultiplexer() {
 	const selectedTerminalRef = useRef(selected);
 	selectedTerminalRef.current = selected;
 	const keybindingContextRef = useRef<
-		Pick<MuxSessionKeydownContext, "overlayOpen" | "zoomed" | "contextKind">
+		Pick<MuxSessionKeydownContext, "overlayOpen" | "zoomed" | "sidebarLayout" | "contextKind">
 	>({ overlayOpen: false, zoomed: false });
 	keybindingContextRef.current = {
 		overlayOpen: Boolean(
@@ -1321,6 +1321,7 @@ export function TerminalMultiplexer() {
 		zoomed: Boolean(
 			activeSession && activeTab && terminalWorkspaces.get(activeTab.id)?.zoomedPanelId,
 		),
+		sidebarLayout,
 		contextKind: selected?.kind,
 	};
 
@@ -1850,23 +1851,23 @@ export function TerminalMultiplexer() {
 													className={isMobile ? "absolute inset-0 min-h-0" : "hidden"}
 													data-yaade-mobile-layout-host=""
 												>
-												{isMobile ? (
-												<MobileTerminalView
-													sessions={visibleSessions}
-													terminalsById={snapshot.terminalsById}
-													terminalIdsBySession={snapshot.terminalIdsBySession}
-													routeMuxTerminalId={parseMuxSessionRoute(location.href).muxTerminalId}
-													runtimeTitles={runtimeTitles}
-													onSelect={selectTerminal}
-													onShowTerminalList={showMobileTerminalList}
-													onCreateTerminal={(sessionId, kind) => createTerminal(kind, sessionId)}
-													onCreateSession={createSession}
-													onCloseSession={requestCloseSession}
-													actionError={actionError}
-													onCloseTerminal={(terminal) => runTerminalAction("archive", terminal)}
-													renderTerminal={renderMobileTerminal}
-												/>
-												) : null}
+													{isMobile ? (
+														<MobileTerminalView
+															sessions={visibleSessions}
+															terminalsById={snapshot.terminalsById}
+															terminalIdsBySession={snapshot.terminalIdsBySession}
+															routeMuxTerminalId={parseMuxSessionRoute(location.href).muxTerminalId}
+															runtimeTitles={runtimeTitles}
+															onSelect={selectTerminal}
+															onShowTerminalList={showMobileTerminalList}
+															onCreateTerminal={(sessionId, kind) => createTerminal(kind, sessionId)}
+															onCreateSession={createSession}
+															onCloseSession={requestCloseSession}
+															actionError={actionError}
+															onCloseTerminal={(terminal) => runTerminalAction("archive", terminal)}
+															renderTerminal={renderMobileTerminal}
+														/>
+													) : null}
 												</div>
 												<div
 													className={cn(
@@ -1895,33 +1896,26 @@ export function TerminalMultiplexer() {
 																terminalCounts={terminalCounts}
 																serverNamesBySessionId={serverNamesBySessionId}
 															/>
-															<ShortcutTooltip
-																label="Settings"
-																shortcut={muxSessionDirectShortcutFor("settings.show")}
-																side="bottom"
+															<Button
+																type="button"
+																size="icon-sm"
+																variant="ghost"
+																onClick={() => setSettingsOpen(true)}
+																data-yaade-session-settings=""
+																className="size-[var(--yaade-tab-pill-height)] shrink-0 opacity-55 transition-opacity hover:opacity-100 focus-visible:opacity-100"
 															>
-																<Button
-																	type="button"
-																	size="icon-sm"
-																	variant="ghost"
-																	aria-label="Settings"
-																	onClick={() => setSettingsOpen(true)}
-																	data-yaade-session-settings=""
-																	className="size-[var(--yaade-tab-pill-height)] shrink-0 opacity-55 transition-opacity hover:opacity-100 focus-visible:opacity-100"
-																>
-																	<Settings />
-																</Button>
-															</ShortcutTooltip>
+																<Settings />
+															</Button>
 															{!singleSidebarLayout ? (
-															<SessionWindowTabStrip
-																tabs={visibleTabs}
-																activeTabId={activeTab?.id}
-																onSelect={selectTab}
-																onCreate={() => void createTab()}
-																onClose={closeTab}
-																onRename={(id, title) => void renameTab(id, title)}
-																dockTerminalIdsByTab={dockTerminalIdsByTab}
-															/>
+																<SessionWindowTabStrip
+																	tabs={visibleTabs}
+																	activeTabId={activeTab?.id}
+																	onSelect={selectTab}
+																	onCreate={() => void createTab()}
+																	onClose={closeTab}
+																	onRename={(id, title) => void renameTab(id, title)}
+																	dockTerminalIdsByTab={dockTerminalIdsByTab}
+																/>
 															) : null}
 														</header>
 													) : null}

@@ -1,14 +1,12 @@
 import {
-  ChevronDown,
   Columns2,
   Maximize2,
   Minimize2,
   Rows2,
-  Terminal,
   X,
 } from "lucide-react"
 import { useDraggable } from "@dnd-kit/core"
-import type { MouseEvent, ReactNode, RefCallback } from "react"
+import type { MouseEvent, ReactNode } from "react"
 import type { PanelId } from "@yaade/shared"
 import { Button } from "@/components/ui/button.js"
 import {
@@ -22,7 +20,6 @@ import {
 import { formatKeyBinding } from "@/lib/format-key.js"
 import { cn } from "@/lib/utils.js"
 import { tabDndId, type TabDragData } from "../dock/tab-dnd-types.js"
-import { processIdentity } from "./process-identity.js"
 
 export type MuxPaneChromeProps = {
   title: string
@@ -33,10 +30,6 @@ export type MuxPaneChromeProps = {
   canZoom: boolean
   /** Empty placeholders and other non-resident panes cannot be docked. */
   draggable?: boolean
-  /** Foreground process basename for the identity glyph. */
-  processName?: string | null
-  /** Provider running in a terminal (`terminal` for a shell). */
-  terminalProvider?: string | null
   onSplitButton?: (
     direction: "right" | "down",
     event: MouseEvent<HTMLButtonElement>,
@@ -50,17 +43,11 @@ export type MuxPaneChromeProps = {
   onSplitDown: () => void
   onZoom: () => void
   onClose: () => void
-  /** Open a pane-specific title editor from the title bar. */
-  onOpenContext?: () => void
-  /** Whether the pane title editor is currently open. */
-  contextOpen?: boolean
   /**
    * Resolve a display shortcut for a command id (e.g. `mux.zoomPane` → `Mod-k z`).
    * App layer owns the binding table; UI must not import mux-keymap.
    */
   shortcutFor?: (commandId: string) => string | undefined
-  /** Portal target for pane-specific header chrome. */
-  contextRef?: RefCallback<HTMLElement | null>
   className?: string
 }
 
@@ -118,18 +105,13 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     zoomed,
     canZoom,
     draggable: draggableProp = true,
-    processName,
-    terminalProvider,
     onSplitButton,
     wrapSplitButton,
     onSplitRight,
     onSplitDown,
     onZoom,
     onClose,
-    onOpenContext,
-    contextOpen = false,
     shortcutFor,
-    contextRef,
     className,
   } = props
 
@@ -150,7 +132,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
     } satisfies TabDragData,
   })
 
-  const identity = processIdentity(processName)
   const splitRightShortcut = shortcutFor?.("mux.splitRight")
   const splitDownShortcut = shortcutFor?.("mux.splitDown")
   const zoomShortcut = shortcutFor?.("mux.zoomPane")
@@ -158,29 +139,6 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
   const zoomTitle = zoomShortcut
     ? `${zoomed ? "Restore" : "Zoom"} (${formatKeyBinding(zoomShortcut)})`
     : zoomLabel
-  const contextTrigger = onOpenContext ? (
-    <Button
-      type="button"
-      variant="ghost"
-      size="icon-xs"
-      aria-label="Set terminal context"
-      aria-haspopup="dialog"
-      aria-expanded={contextOpen}
-      data-yaade-mux-context-trigger=""
-      className="size-5 text-muted-foreground/55 opacity-0 hover:text-foreground focus-visible:text-foreground group-hover/mux-chrome:opacity-70 group-focus-within/mux-chrome:opacity-70"
-      onPointerDown={event => event.stopPropagation()}
-      onClick={event => {
-        event.stopPropagation()
-        onOpenContext()
-      }}
-    >
-      {terminalProvider ? (
-        <Terminal className="size-3.5" aria-hidden />
-      ) : (
-        <ChevronDown />
-      )}
-    </Button>
-  ) : null
 
   return (
     <ContextMenu>
@@ -194,21 +152,14 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
           data-zoomed={zoomed ? "" : undefined}
           data-dragging={isDragging ? "" : undefined}
           className={cn(
-            "group/mux-chrome relative flex h-7 shrink-0 items-center gap-0.5 px-1.5 transition-opacity duration-[var(--yaade-motion-fast)] ease-[var(--yaade-ease-out)]",
-            draggable && "cursor-grab touch-none active:cursor-grabbing",
+            "group/mux-chrome pointer-events-none absolute inset-x-0 top-0 z-20 h-0 min-h-0",
             isDragging && "opacity-30",
             className,
           )}
           {...(draggable ? listeners : {})}
           onDoubleClick={event => {
             const target = event.target
-            if (
-              target instanceof Element &&
-              target.closest("button") &&
-              !target.closest("[data-yaade-mux-pane-title]")
-            ) {
-              return
-            }
+            if (target instanceof Element && target.closest("button")) return
             if (canZoom) onZoom()
           }}
         >
@@ -217,60 +168,15 @@ export function MuxPaneChrome(props: MuxPaneChromeProps) {
             aria-roledescription={draggable ? "draggable pane tab" : undefined}
             title={draggable ? `${title || "Pane"} — drag to dock pane` : title || "Pane"}
             data-yaade-mux-pane-drag=""
+            data-yaade-mux-pane-title=""
             className={cn(
-              "flex min-w-0 flex-1 items-center gap-2 self-stretch px-1.5",
+              "pointer-events-auto absolute inset-x-0 top-0 h-px opacity-0",
               draggable ? "cursor-grab touch-none active:cursor-grabbing" : "",
             )}
             {...(draggable ? attributes : {})}
-          >
-            {terminalProvider ? (
-              contextTrigger ?? (
-                <span
-                  aria-hidden
-                  data-yaade-mux-pane-process={processName ?? ""}
-                  className="grid size-5 shrink-0 place-items-center"
-                >
-                  <Terminal className="size-3.5" aria-hidden />
-                </span>
-              )
-            ) : (
-              <>
-                <span
-                  aria-hidden
-                  data-yaade-mux-pane-process={processName ?? ""}
-                  className="shrink-0 font-mono text-xs font-medium text-muted-foreground/55"
-                >
-                  {identity.glyph}
-                </span>
-                {contextTrigger}
-              </>
-            )}
-            <span
-              data-yaade-mux-pane-title=""
-              className={cn(
-                "min-w-0 truncate font-sans text-xs font-medium tracking-[-0.015em]",
-                focused ? "text-foreground" : "text-muted-foreground/55",
-              )}
-            >
-              {title || "Pane"}
-            </span>
-          </div>
-          <div
-            ref={contextRef}
-            data-yaade-session-header-context=""
-            className="flex min-h-0 min-w-0 flex-1 items-stretch self-stretch overflow-hidden"
-            onPointerDown={event => {
-              const target = event.target
-              if (
-                target instanceof Element &&
-                target.closest("button,input,[role='tab'],[data-no-pane-drag]")
-              ) {
-                event.stopPropagation()
-              }
-            }}
           />
           <div
-            className="flex shrink-0 items-center gap-0.5"
+            className="pointer-events-none absolute top-2 right-2 flex items-center gap-0.5"
             data-yaade-mux-pane-controls=""
             onPointerDown={event => event.stopPropagation()}
           >
