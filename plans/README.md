@@ -36,7 +36,7 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [018](018-asynchronous-binary-terminal-history.md) | Move terminal history behind a bounded asynchronous binary pipeline | SolPro P0-6 | P1 | L | 013, 015 | DONE |
 | [019](019-owned-terminal-runtime-mailboxes.md) | Give each terminal one state/control owner with bounded mailboxes | SolPro P0-3 | P1 | L | 012, 015, 017, 018 | DONE |
 | [020](020-native-ghostty-source-and-abi.md) | Pin, build, and validate native libghostty-vt | SolPro P1-7 prerequisite | P2 | L | — | DONE |
-| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | TODO |
+| [021](021-safe-rust-libghostty-vt-wrapper.md) | Wrap libghostty-vt in a thread-confined safe Rust API | SolPro P1-7 wrapper | P2 | M | 020 | DONE |
 | [022](blocked/022-native-wasm-ghostty-differential-corpus.md) | Run one terminal corpus through native and WASM Ghostty | SolPro P1-7 parity | P2 | M | 015, 020, 021 | BLOCKED (015, 021) |
 | [023](blocked/023-migrate-server-terminal-state-to-ghostty.md) | Replace server vt100 and custom scanners with native Ghostty | SolPro P1-7/8 migration | P2 | L | 019, 021, 022 | BLOCKED (019, 021, 022) |
 | [024](blocked/024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | BLOCKED (018, 022, 023, 027) |
