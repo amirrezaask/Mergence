@@ -792,7 +792,7 @@ impl TerminalHost {
         if !process_identity_matches(identity) {
             return Ok(false);
         }
-        terminate_process_group(identity.pid)?;
+        terminate_process_group(identity)?;
         Ok(true)
     }
 
@@ -2149,28 +2149,79 @@ fn process_identity_matches(identity: &ProcessIdentity) -> bool {
     capture_process_identity(identity.pid).as_ref() == Some(identity)
 }
 
-fn terminate_process_group(pid: u32) -> Result<(), TerminalError> {
+fn terminate_process_group(identity: &ProcessIdentity) -> Result<(), TerminalError> {
+    let pid = identity.pid;
     #[cfg(unix)]
-    let status = ProcessCommand::new("kill")
-        .args(["-KILL", &format!("-{pid}")])
-        .status();
-    #[cfg(target_os = "windows")]
-    let status = ProcessCommand::new("taskkill.exe")
-        .args(["/PID", &pid.to_string(), "/T", "/F"])
-        .status();
-    #[cfg(not(any(unix, target_os = "windows")))]
-    return Err(TerminalError::Runtime(
-        "stale process cleanup is unsupported on this platform".to_owned(),
-    ));
-    #[cfg(any(unix, target_os = "windows"))]
-    match status {
-        Ok(result) if result.success() => Ok(()),
-        Ok(_) if capture_process_identity(pid).is_none() => Ok(()),
-        Ok(result) => Err(TerminalError::Runtime(format!(
-            "failed to terminate stale terminal process group {pid}: {result}"
-        ))),
-        Err(error) => Err(TerminalError::Runtime(error.to_string())),
+    {
+        let process_group = format!("-{pid}");
+        let graceful = ProcessCommand::new("kill")
+            .args(["-TERM", &process_group])
+            .status();
+        match graceful {
+            Ok(result) if result.success() => {}
+            Ok(_) if !process_identity_matches(identity) => return Ok(()),
+            Ok(result) => {
+                return Err(TerminalError::Runtime(format!(
+                    "failed to terminate stale terminal process group {pid}: {result}"
+                )));
+            }
+            Err(error) => return Err(TerminalError::Runtime(error.to_string())),
+        }
+
+        let deadline = Instant::now() + std::time::Duration::from_millis(100);
+        while Instant::now() < deadline {
+            if !process_group_exists(&process_group) {
+                return Ok(());
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let forced = ProcessCommand::new("kill")
+            .args(["-KILL", &process_group])
+            .status();
+        match forced {
+            Ok(result) if result.success() || !process_group_exists(&process_group) => Ok(()),
+            Ok(result) => Err(TerminalError::Runtime(format!(
+                "failed to kill stale terminal process group {pid}: {result}"
+            ))),
+            Err(error) => Err(TerminalError::Runtime(error.to_string())),
+        }
     }
+    #[cfg(target_os = "windows")]
+    {
+        let pid_text = pid.to_string();
+        let _ = ProcessCommand::new("taskkill.exe")
+            .args(["/PID", &pid_text, "/T"])
+            .status();
+        let deadline = Instant::now() + std::time::Duration::from_millis(100);
+        while Instant::now() < deadline {
+            if !process_identity_matches(identity) {
+                return Ok(());
+            }
+            thread::sleep(std::time::Duration::from_millis(10));
+        }
+        let forced = ProcessCommand::new("taskkill.exe")
+            .args(["/PID", &pid_text, "/T", "/F"])
+            .status();
+        match forced {
+            Ok(result) if result.success() || !process_identity_matches(identity) => Ok(()),
+            Ok(result) => Err(TerminalError::Runtime(format!(
+                "failed to terminate stale terminal process tree {pid}: {result}"
+            ))),
+            Err(error) => Err(TerminalError::Runtime(error.to_string())),
+        }
+    }
+    #[cfg(not(any(unix, target_os = "windows")))]
+    Err(TerminalError::Runtime(
+        "stale process cleanup is unsupported on this platform".to_owned(),
+    ))
+}
+
+#[cfg(unix)]
+fn process_group_exists(process_group: &str) -> bool {
+    ProcessCommand::new("kill")
+        .args(["-0", process_group])
+        .status()
+        .is_ok_and(|status| status.success())
 }
 
 pub(crate) fn capture_process_identity(pid: u32) -> Option<ProcessIdentity> {

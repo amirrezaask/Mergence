@@ -45,8 +45,9 @@ Startup performs one atomic store reconciliation. Restart metadata records the
 reason and previous/new server epochs outside terminal output. Before stale
 process identity is cleared, the host compares the persisted PID start token,
 boot identity where available, and executable path with the current process. It
-terminates only an exact matching PTY process group (or Windows process tree) and
-never adopts the old PTY or signals a reused PID.
+terminates only an exact matching PTY process group (or Windows process tree),
+first requesting graceful termination and then applying a bounded forced-kill
+fallback. It never adopts the old PTY or signals a reused PID.
 
 ## Data path
 
