@@ -576,6 +576,19 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
   await expect(
     page.locator('[data-yaade-terminal-panel][data-yaade-terminal-status="running"]'),
   ).toHaveCount(1, { timeout: 30_000 });
+  const firstTerminal = await page.evaluate(() => {
+    const state = window.__yaadeTest?.getState();
+    const terminal = state?.muxTerminals.find(
+      candidate => candidate.id === state.activeMuxTerminalId,
+    );
+    return {
+      id: terminal?.id ?? null,
+      ptyId: terminal?.output.kind === "process" ? (terminal.output.ptyId ?? null) : null,
+    };
+  });
+  if (!firstTerminal.id || !firstTerminal.ptyId) {
+    throw new Error("initial mobile terminal is unavailable");
+  }
   await page.evaluate(() => {
     localStorage.removeItem("yaade:last-terminal-multiplexer-route");
     history.pushState(null, "", "/");
@@ -596,6 +609,37 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
   await expect(
     page.locator('[data-yaade-mobile-retained-terminal][data-active="true"]'),
   ).toHaveCount(0);
+  await expect(
+    page.locator(`[data-yaade-mobile-retained-terminal="${firstTerminal.id}"]`),
+  ).toHaveCount(1);
+
+  const hiddenBefore = await page.evaluate(
+    id => window.__yaadeTest?.getTerminalLifecycle(id)?.workerDiagnostics ?? null,
+    firstTerminal.id,
+  );
+  expect(hiddenBefore).not.toBeNull();
+  await page.evaluate(async ({ ptyId }) => {
+    if (!window.yaade?.terminal) throw new Error("terminal API is not ready");
+    await window.yaade.terminal.write(ptyId, "printf 'MOBILE_HIDDEN_OUTPUT\\n'\\n");
+  }, { ptyId: firstTerminal.ptyId });
+  await expect.poll(
+    () => page.evaluate(
+      id => window.__yaadeTest?.getTerminalLifecycle(id)?.workerDiagnostics.bytesParsed ?? 0,
+      firstTerminal.id,
+    ),
+  ).toBeGreaterThan(hiddenBefore?.bytesParsed ?? 0);
+  await expect.poll(
+    () => page.evaluate(
+      id => window.__yaadeTest?.getTerminalLifecycle(id)?.workerDiagnostics.suppressedHidden ?? 0,
+      firstTerminal.id,
+    ),
+  ).toBeGreaterThan(hiddenBefore?.suppressedHidden ?? 0);
+  const hiddenAfter = await page.evaluate(
+    id => window.__yaadeTest?.getTerminalLifecycle(id)?.workerDiagnostics ?? null,
+    firstTerminal.id,
+  );
+  expect(hiddenAfter?.renderBuilds).toBe(hiddenBefore?.renderBuilds);
+  expect(hiddenAfter?.transfers).toBe(hiddenBefore?.transfers);
 
   const keys = page.locator("[data-yaade-mobile-terminal-keys]");
   await expect(keys).toBeVisible();
@@ -612,6 +656,19 @@ test("mobile Terminal exposes accessory keys and keeps its surface mounted", asy
   await expect(
     page.locator(`[data-yaade-mobile-terminal][data-terminal-kind="terminal"]`),
   ).toHaveCount(2);
+  await page.locator(`[data-yaade-mobile-terminal="${firstTerminal.id}"]`).click();
+  await expect.poll(
+    () => page.evaluate(
+      id => window.__yaadeTest?.getTerminalText(id) ?? "",
+      firstTerminal.id,
+    ),
+  ).toContain("MOBILE_HIDDEN_OUTPUT");
+  await expect.poll(
+    () => page.evaluate(
+      id => window.__yaadeTest?.getTerminalLifecycle(id)?.workerDiagnostics.fullCatchUps ?? 0,
+      firstTerminal.id,
+    ),
+  ).toBeGreaterThan(hiddenAfter?.fullCatchUps ?? 0);
 });
 
 test("terminal stays painted while sidebar and pane geometry change", async ({ launchApp }) => {

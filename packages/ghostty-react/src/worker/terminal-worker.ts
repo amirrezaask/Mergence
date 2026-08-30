@@ -164,9 +164,11 @@ function requestPresentation(command: TerminalWorkerCommand, entry: RuntimeEntry
   if (!synchronized && entry.sync === "timedOut") {
     entry.sync = "inactive";
   }
+  const catchingUp = entry.pendingCommand !== null || entry.pendingFull;
   entry.pendingCommand = null;
   const catchUpFull = entry.pendingFull || forceFull;
   entry.pendingFull = false;
+  if (catchingUp) entry.diagnostics.fullCatchUps += 1;
   emitOrSchedule(command, entry.core, catchUpFull);
 }
 

@@ -29,7 +29,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
@@ -278,14 +278,28 @@ packing/transfer.
 
 ## Done criteria
 
-- [ ] Worker receives explicit generation-scoped visibility/focus state.
-- [ ] Hidden terminals parse and ACK with zero render build/transfer work.
-- [ ] Show emits one full authoritative catch-up.
-- [ ] Mode 2026 suppresses extraction and emits one catch-up on completion.
-- [ ] Stuck synchronized output resumes by the safety deadline and remains live.
-- [ ] Parsing/effects never wait for presentation or render slots.
-- [ ] Resize/recovery/dispose races leak no slots, timers, or stale frames.
-- [ ] Browser and Tauri tests verify visible behavior and scoped counters.
+- [x] Worker receives explicit generation-scoped visibility/focus state.
+- [x] Hidden terminals parse and ACK with zero render build/transfer work.
+- [x] Show emits one full authoritative catch-up.
+- [x] Mode 2026 suppresses extraction and emits one catch-up on completion.
+- [x] Stuck synchronized output resumes by the safety deadline and remains live.
+- [x] Parsing/effects never wait for presentation or render slots.
+- [x] Resize/recovery/dispose races leak no slots, timers, or stale frames.
+- [x] Browser and Tauri tests verify visible behavior and scoped counters.
+
+## Completion record
+
+The baseline already carried explicit generation-scoped presentation state into
+the worker and suppressed render extraction for hidden and synchronized
+terminals while posting parsed acknowledgements. Completion fixes hidden-show
+diagnostics so every pending authoritative full frame is counted, then extends
+browser coverage to prove hidden mobile terminals parse bytes without increasing
+render-build/transfer counts and emit one catch-up when shown. The synchronized
+safety test now also asserts worker suppression and catch-up counters. Focused
+checks passed three consecutive runs; worker/core/UI/web tests, typecheck, Tauri
+tests, and browser/Tauri production builds pass. The unchanged repository-wide
+lint findings and unrelated full-suite E2E flakes remain under the operator's
+baseline waiver.
 
 ## STOP conditions
 

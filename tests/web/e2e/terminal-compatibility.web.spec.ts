@@ -346,6 +346,16 @@ test.describe("terminal compatibility", () => {
       { timeout: 5_000 },
     ).toBeGreaterThan(before?.synchronizationTimeouts ?? 0)
     await expect.poll(
+      () => page.evaluate(
+        () => window.__yaadeTest?.getTerminalLifecycle()?.workerDiagnostics.suppressedSynchronized ?? 0,
+      ),
+    ).toBeGreaterThan(before?.suppressedSynchronized ?? 0)
+    await expect.poll(
+      () => page.evaluate(
+        () => window.__yaadeTest?.getTerminalLifecycle()?.workerDiagnostics.fullCatchUps ?? 0,
+      ),
+    ).toBeGreaterThan(before?.fullCatchUps ?? 0)
+    await expect.poll(
       () => page.evaluate(() => window.__yaadeTest?.getTerminalText?.() ?? ""),
     ).toContain("YAADE_SYNC_TIMEOUT")
   })
