@@ -12,13 +12,16 @@ small reader thread only reads the blocking PTY and sends immutable chunks over
 a bounded channel. The owner services bounded urgent and normal command lanes
 between measured output quanta. Queue saturation returns a typed runtime error.
 
-The history owner accepts records through a separate mailbox bounded by message
-count and bytes. It writes a checksummed append-only active segment before
-adding each record to the compression batch. Startup keeps complete records and
+The history owner accepts records through a 1,024-message / 32 MiB ingest
+mailbox. A separate bounded 1,024-message close lane reserves lifecycle progress;
+a full or stopped lane returns a typed error rather than dropping finalization.
+The owner writes a checksummed append-only active segment before adding each
+record to its 512 KiB binary block batch. Startup keeps complete records and
 truncates a torn tail. Block and manifest publication clears the active segment
-only after the manifest rename. Compression and file work never hold the
-terminal map lock. There is no detached supervisor or disk-backed process
-recovery.
+only after the manifest rename. Compression uses reusable gzip level-6 staging;
+no codec latency advantage is claimed by this completion. Compression and file
+work never run on a PTY reader or hold the terminal map lock. There is no
+detached supervisor or disk-backed process recovery.
 
 ## Lifetime
 

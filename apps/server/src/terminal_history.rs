@@ -33,6 +33,7 @@ const MAX_RECORD_BYTES: usize = 64 * 1024;
 const MAX_BLOCK_RECORDS: usize = 1_000_000;
 const INGEST_MAX_MESSAGES: usize = 1024;
 const INGEST_MAX_BYTES: usize = 32 * 1024 * 1024;
+const FINALIZE_MAX_MESSAGES: usize = 1024;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Base64Bytes(pub Bytes);
@@ -153,13 +154,13 @@ struct HistoryShared {
     budget: IngestBudget,
 }
 
-/// Durable block-compressed PTY history. Live appends stay synchronous on PTY
-/// reader threads. Closed-history compression, manifests, and global quota
-/// maintenance are serialized on a dedicated finalizer thread.
+/// Durable block-compressed PTY history. Live appends enter a count- and
+/// byte-bounded ingest mailbox. Compression, manifests, and quota maintenance
+/// run on the dedicated history owner, never on a PTY reader thread.
 pub struct TerminalHistoryArchive {
     shared: Arc<HistoryShared>,
     ingest_tx: mpsc::SyncSender<IngestCommand>,
-    finalize_tx: mpsc::Sender<FinalizeCommand>,
+    finalize_tx: mpsc::SyncSender<FinalizeCommand>,
     worker: Mutex<Option<thread::JoinHandle<()>>>,
 }
 
@@ -201,7 +202,7 @@ impl TerminalHistoryArchive {
             shared.cleanup_expired()?;
         }
         let (ingest_tx, ingest_rx) = mpsc::sync_channel(INGEST_MAX_MESSAGES);
-        let (finalize_tx, finalize_rx) = mpsc::channel();
+        let (finalize_tx, finalize_rx) = mpsc::sync_channel(FINALIZE_MAX_MESSAGES);
         let worker_shared = Arc::clone(&shared);
         let worker = thread::Builder::new()
             .name("yaade-history-owner".to_owned())
@@ -485,18 +486,16 @@ impl TerminalHistoryArchive {
             .get(terminal_id)
             .copied()
             .unwrap_or(0);
-        if self
-            .finalize_tx
-            .send(FinalizeCommand::Close {
-                terminal_id: terminal_id.to_owned(),
-                through_sequence,
-            })
-            .is_err()
-        {
+        if let Err(error) = self.finalize_tx.try_send(FinalizeCommand::Close {
+            terminal_id: terminal_id.to_owned(),
+            through_sequence,
+        }) {
             self.shared.pending_closes().remove(terminal_id);
-            return Err(HistoryError::Corrupt(
-                "history finalizer stopped".to_owned(),
-            ));
+            let reason = match error {
+                mpsc::TrySendError::Full(_) => "history finalizer mailbox is full",
+                mpsc::TrySendError::Disconnected(_) => "history finalizer stopped",
+            };
+            return Err(HistoryError::Corrupt(reason.to_owned()));
         }
         Ok(())
     }
