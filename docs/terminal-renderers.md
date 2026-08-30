@@ -41,6 +41,22 @@ Row batches retain typed-array capacity across warm same-shape updates. Cumulati
 
 The pre-change Apple M4 / Chromium 149 probe used a 180×44 viewport. A static focused terminal moved 326,384 bytes in 1.25 seconds, and five coalesced presents for ten fixed-width one-row updates moved 855,140 retained-scene bytes. These numbers characterize the removed full-upload path; no latency claim is made until three matched release benchmark runs establish a repeatable CPU distribution.
 
+## Worker render-update ownership ring
+
+Each worker terminal owns exactly three packed render-update slots. Building an
+update leases one slot and transfers its eight typed-array buffers to the main
+thread. `releaseRenderUpdate` transfers the same generation-scoped slot and
+lease token back to the worker, where buffer lengths and alignment are validated
+before the slot becomes reusable. Duplicate, stale, detached, or malformed
+returns do not free a slot.
+
+When all three slots are in flight, parsing and parsed ACKs continue. Dirty state
+is not extracted or consumed; one pending newest update retains any full-frame
+requirement and is emitted after a valid slot return. Queue discard, failed
+model apply, surface disposal, and worker recovery explicitly release or abandon
+the old generation's ownership. Capacity growth is bounded to the three slots,
+and warm same-size circulation allocates no replacement backing buffers.
+
 ## WebGPU decision
 
 Official references checked on 2026-08-29:
