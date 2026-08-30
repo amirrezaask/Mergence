@@ -689,6 +689,10 @@ export class MultiServerHostClient {
         const owner = self.ownerForPty(id)
         return self.connectionForOwner(owner).api.terminal.resize(owner.localId, cols, rows)
       },
+      setTheme: (id, theme) => {
+        const owner = self.ownerForPty(id)
+        return self.connectionForOwner(owner).api.terminal.setTheme(owner.localId, theme)
+      },
       markReplayReady: (id) => {
         const owner = self.ownerForPty(id)
         return self.connectionForOwner(owner).api.terminal.markReplayReady(owner.localId)

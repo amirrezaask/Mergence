@@ -12,6 +12,7 @@
     "dev:web": "vp run --filter @yaade/web dev",
     "dev:desktop": "vp run --filter @yaade/desktop dev",
     "dev:web:lan": "vp run --filter @yaade/web dev -- --host 0.0.0.0",
+    "service:reinstall": "cargo run --release --locked --manifest-path apps/server/Cargo.toml --bin yaade -- install --host 127.0.0.1 --port 7774",
     "test:server": "cargo test --manifest-path apps/server/Cargo.toml",
     "test:server:rust": "cargo test --manifest-path apps/server/Cargo.toml",
     "test:web": "vp test apps/web packages/yaade-app",

@@ -67,6 +67,12 @@ export type TerminalAttachOptions = {
   ) => void | Promise<void>
 }
 
+export type TerminalTheme = {
+  foreground: { r: number; g: number; b: number }
+  background: { r: number; g: number; b: number }
+  cursor: { r: number; g: number; b: number }
+}
+
 export type HostTerminal = {
   create(
     cwdUri: string,
@@ -76,6 +82,7 @@ export type HostTerminal = {
       env?: Record<string, string>
       cols?: number
       rows?: number
+      theme?: TerminalTheme
     },
   ): Promise<{ id: string; title?: string }>
   attach(id: string, options?: TerminalAttachOptions): Promise<{
@@ -109,6 +116,7 @@ export type HostTerminal = {
   write(id: string, data: string): Promise<void>
   writeBinary(id: string, dataBase64: string): Promise<void>
   resize(id: string, cols: number, rows: number): Promise<void>
+  setTheme(id: string, theme: TerminalTheme): Promise<void>
   markReplayReady(id: string): Promise<void>
   getCwd(id: string): Promise<string | null>
   getForegroundProcess(id: string): Promise<string | null>

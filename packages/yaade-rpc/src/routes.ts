@@ -82,12 +82,24 @@ function route<
 const StringArgs = Schema.Tuple(Schema.String)
 const StringStringArgs = Schema.Tuple(Schema.String, Schema.String)
 const OptionalStringArgs = Schema.Tuple(Schema.optionalElement(Schema.String))
+const TerminalColorChannel = Schema.Int.pipe(Schema.between(0, 255))
+const TerminalColor = Schema.Struct({
+  r: TerminalColorChannel,
+  g: TerminalColorChannel,
+  b: TerminalColorChannel,
+})
+const TerminalTheme = Schema.Struct({
+  foreground: TerminalColor,
+  background: TerminalColor,
+  cursor: TerminalColor,
+})
 const TerminalLaunch = Schema.Struct({
   command: Schema.optional(Schema.String),
   args: Schema.optional(Schema.Array(Schema.String)),
   env: Schema.optional(Schema.Record({ key: Schema.String, value: Schema.String })),
   cols: Schema.optional(Schema.Number),
   rows: Schema.optional(Schema.Number),
+  theme: Schema.optional(TerminalTheme),
 })
 const TerminalCreateArgs = Schema.Tuple(
   Schema.String,
@@ -162,6 +174,7 @@ const TerminalResizeArgs = Schema.Tuple(
   Schema.Number,
   Schema.optionalElement(RpcTerminalMutationFence),
 )
+const TerminalSetThemeArgs = Schema.Tuple(Schema.String, TerminalTheme)
 const SessionSnapshot = Schema.Struct({
   session: AppSession,
   tabs: Schema.Array(SessionTab),
@@ -221,6 +234,7 @@ type HostRouteResultOverrides = {
   "terminal:write": void
   "terminal:writeBinary": void
   "terminal:resize": void
+  "terminal:setTheme": void
   "terminal:ready": void
   "terminal:detach": void
   "terminal:dispose": void
@@ -266,6 +280,7 @@ export const HOST_ROUTES = {
   "terminal:write": route(TerminalWriteArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:writeBinary": route(TerminalWriteArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
   "terminal:resize": route(TerminalResizeArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" }, realtime: true }),
+  "terminal:setTheme": route(TerminalSetThemeArgs, Schema.Unknown, { pathPolicy: { kind: "terminal-id-or-path" } }),
   "terminal:acquireLease": route(
     Schema.Tuple(Schema.String, Schema.optionalElement(Schema.Literal("writer", "observer"))),
     Schema.NullOr(TerminalLease),

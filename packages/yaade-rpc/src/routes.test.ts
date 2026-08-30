@@ -40,6 +40,31 @@ test("terminal move routes validate both terminal and Window identifiers", () =>
   )
 })
 
+test("terminal theme routes preserve the colors used for protocol queries", () => {
+  const theme = {
+    foreground: { r: 1, g: 2, b: 3 },
+    background: { r: 4, g: 5, b: 6 },
+    cursor: { r: 7, g: 8, b: 9 },
+  }
+  assert.deepEqual(
+    decodeHostRouteArgs("terminal:create", [
+      "/workspace",
+      { cols: 120, rows: 40, theme },
+    ]),
+    ["/workspace", { cols: 120, rows: 40, theme }],
+  )
+  assert.deepEqual(
+    decodeHostRouteArgs("terminal:setTheme", ["pty-1", theme]),
+    ["pty-1", theme],
+  )
+  assert.throws(() =>
+    decodeHostRouteArgs("terminal:setTheme", [
+      "pty-1",
+      { ...theme, background: { r: 256, g: 5, b: 6 } },
+    ]),
+  )
+})
+
 test("terminal attach preserves the owner identity used by binary snapshots", () => {
   const decoded = decodeHostRouteResult("terminal:attach", {
     id: "pty-1",

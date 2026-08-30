@@ -200,6 +200,14 @@ function terminalTheme(theme: YaadeTheme): GhosttyTheme {
   }
 }
 
+function hostTerminalTheme(theme: GhosttyTheme) {
+  return {
+    foreground: theme.foreground,
+    background: theme.background,
+    cursor: theme.cursor,
+  }
+}
+
 function focusTerminalInput(tabId: string): void {
   const terminal = getRegisteredTerminal(tabId)
   if (terminal) {
@@ -367,17 +375,20 @@ export function TerminalPanel({
     const launchCommandAtStart = launchCommandRef.current
     const launchArgsAtStart = launchArgsRef.current
     const launchEnvAtStart = launchEnvRef.current
-    const launchForSize = (cols: number, rows: number) => ({
-      ...(launchCommandAtStart
-        ? {
-            command: launchCommandAtStart,
-            args: launchArgsAtStart,
-            env: launchEnvAtStart,
-          }
-        : {}),
-      cols,
-      rows,
-    })
+    const launchForSize = (cols: number, rows: number) => {
+      const theme = hostTerminalTheme(terminalTheme(themeRef.current))
+      if (launchCommandAtStart) {
+        return {
+          command: launchCommandAtStart,
+          args: launchArgsAtStart,
+          env: launchEnvAtStart,
+          cols,
+          rows,
+          theme,
+        }
+      }
+      return { cols, rows, theme }
+    }
     const shouldPrecreatePty =
       !deferPty &&
       !existingPtyId &&
@@ -476,9 +487,15 @@ export function TerminalPanel({
     }
 
     let receivingReplay = false
+    const syncHostTheme = (id: string, nextTheme: GhosttyTheme) => {
+      if (readOnly) return
+      void terminalApi.setTheme(id, hostTerminalTheme(nextTheme)).catch(() => {})
+    }
+
     const connectPty = (id: string, replayMayNeedQueryResponses = false) => {
       if (!session || !surface || cancelled) return
       session.ptyId = id
+      syncHostTheme(id, terminalTheme(themeRef.current))
       setConnectedPtyId(id)
       setDisplayStatus("running")
       setDisplayExitCode(undefined)
@@ -697,9 +714,9 @@ export function TerminalPanel({
           theme: terminalTheme(themeRef.current),
           font: { family: readTerminalFontFamily(), size: readRootFontSize() },
           visible: visibleRef.current,
-          // The host-side Ghostty runtime owns device/query responses. This
-          // browser core renders and encodes user input only, preventing every
-          // attached viewer from answering the same terminal query.
+          // The host terminal runtime owns device/query responses. This browser
+          // core renders and encodes user input only, preventing every attached
+          // viewer from answering the same terminal query.
           responsePolicy: "render-only",
           onData: data => {
             onInputRef.current?.(tabId, data)
@@ -822,7 +839,10 @@ export function TerminalPanel({
     const unsubscribeRootStyleObserver = subscribeRootStyle(() => {
       const next = sessionRef.current?.surface
       if (!next) return
-      next.setTheme(terminalTheme(themeRef.current))
+      const nextTheme = terminalTheme(themeRef.current)
+      next.setTheme(nextTheme)
+      const ptyId = sessionRef.current?.ptyId
+      if (ptyId) syncHostTheme(ptyId, nextTheme)
       void next.setFont({ family: readTerminalFontFamily(), size: readRootFontSize() })
     })
 
@@ -834,10 +854,7 @@ export function TerminalPanel({
       if (surfaceRef.current === surface) surfaceRef.current = null
       unsubscribeRootStyleObserver()
       exitUnsubscribe()
-      // Flush parser output before disposing the input writer: Ghostty may have
-      // queued a DSR/DA response while the page is being replaced. Dropping
-      // that microtask leaves a live shell waiting for a query response, and
-      // the next attach correctly suppresses archived replay side effects.
+      // Drain pending parser work and terminal input before replacing the page.
       outputWriter?.flush()
       void inputWriter?.flush()
       if (session?.ptyId) void terminalApi.markReplayReady(session.ptyId).catch(() => {})
@@ -873,8 +890,14 @@ export function TerminalPanel({
   useEffect(() => {
     const surface = surfaceRef.current
     if (!surface) return
-    surface.setTheme(terminalTheme(themeRef.current))
-  }, [theme.id])
+    const nextTheme = terminalTheme(themeRef.current)
+    surface.setTheme(nextTheme)
+    const ptyId = sessionRef.current?.ptyId
+    const terminalApi = window.yaade?.terminal
+    if (ptyId && terminalApi && !readOnly) {
+      void terminalApi.setTheme(ptyId, hostTerminalTheme(nextTheme)).catch(() => {})
+    }
+  }, [theme.id, readOnly])
 
   useEffect(() => {
     surfaceRef.current?.setVisible(visible)

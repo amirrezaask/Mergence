@@ -1,8 +1,9 @@
 # Terminal Rendering Implementation Plans
 
-Generated on 2026-08-30 at commit `717ed49f` and extended after the resize/TUI
-audit at commit `f21fcdf4`. These plans modernize the shared browser/Tauri
-terminal renderer without creating a desktop-only implementation. Execute them
+Generated on 2026-08-30 at commit `717ed49f`, extended after the resize/TUI
+audit at commit `f21fcdf4`, and extended with close-latency Plan 013 at commit
+`4341fd51`. These plans modernize the shared browser/Tauri terminal and its
+host lifecycle without creating a desktop-only implementation. Execute them
 in the order below unless the dependency waves say otherwise. Each executor must
 read its plan fully, preserve pre-existing working-tree changes, honor STOP
 conditions, and update its status.
@@ -23,6 +24,7 @@ conditions, and update its status.
 | [010](010-retained-gpu-scene-and-glyph-cache.md) | Add a retained GPU scene and stable glyph cache | — | P1 | L | 007, 009 | DONE |
 | [011](011-packed-viewport-hot-path.md) | Keep viewport data packed through rendering | — | P2 | L | 004, 005, 010 | DONE |
 | [012](012-transactional-terminal-resize.md) | Make resize and DPR changes transactional | — | P1 | L | 007, 008, 010, 011 | DONE |
+| [013](013-immediate-terminal-window-close.md) | Make terminal and Window close feedback immediate and bounded | — | P1 | L | 007, 008 | TODO |
 
 Status values: `TODO`, `IN PROGRESS`, `DONE`, `BLOCKED (<reason>)`, or
 `REJECTED (<reason>)`.
@@ -51,6 +53,12 @@ production context keeps `preserveDrawingBuffer` disabled. Responsive and pane
 layout changes move the existing surface without PTY/runtime/renderer reattach;
 local and host geometry commits are coalesced latest-wins.
 
+Plan 013 addresses the next observed interaction bottleneck outside rendering:
+terminal and Window close currently wait on serial host teardown, full-state
+persistence, and synchronous history finalization. It adds immediate local
+feedback while preserving explicit-close process termination and authoritative
+revision ordering.
+
 ## Dependency notes
 
 - **001 before 002:** WebGL2 must consume a renderer-neutral packed update, not
@@ -70,8 +78,12 @@ local and host geometry commits are coalesced latest-wins.
   wide/combining glyphs, and fractional-DPR geometry have differential guards.
 - **010 before 011:** packed hot-path access should target the final retained
   scene interface, not force two renderer-model migrations.
-- **012 last:** resize coordination relies on stable residency, cheap full-scene
-  composition, packed model application, and presented-frame measurement.
+- **012 after renderer/residency work:** resize coordination relies on stable
+  residency, cheap full-scene composition, packed model application, and
+  presented-frame measurement.
+- **013 after 007/008:** close latency needs trustworthy next-paint measurement
+  and the resident-session lifecycle seam so optimistic placement removal never
+  becomes PTY disposal by accident.
 
 ## Recommended execution waves
 
@@ -81,7 +93,9 @@ local and host geometry commits are coalesced latest-wins.
    through Plan 007 lifecycle/frame IDs.
 3. Run Plan 011.
 4. Run Plan 012 and re-run all resize, multiplexer, compatibility, and benchmark
-   suites as the final integration gate.
+   suites as the renderer/resize integration gate.
+5. Run Plan 013 independently of further renderer experiments; it touches the
+   mux control plane, PTY teardown, persistence, and history finalization.
 
 ## Cross-plan invariants
 
@@ -106,11 +120,15 @@ local and host geometry commits are coalesced latest-wins.
     TUIs, including decorations, cursor glyphs, wide/combining cells, and DPR.
 12. Resize has distinct local, runtime, host, and presented generations; stale
     completions may parse but may not replace newer visible geometry.
+13. Explicit close removes local placement immediately but is complete only
+    after the host has accepted PTY termination and committed authoritative mux
+    state; history IO may not delay or prevent process termination.
 
 ## Existing evidence and baseline
 
-- `packages/ghostty-react/src/surface.ts` owns the DOM, Canvas 2D context,
-  `GhosttyTerminalCore`, input, selection, scrolling, and frame scheduling.
+- `packages/ghostty-react/src/surface.ts` owns DOM input/selection/scrolling and
+  presentation, while a worker-backed runtime proxy owns the default Ghostty
+  parser path.
 - `packages/ghostty-react/src/renderer.ts` paints dirty rows with Canvas 2D
   `fillRect`, `fillText`, and `strokeRect` calls.
 - `packages/ghostty-core/src/core.ts` reads Ghostty render state into mutable JS
@@ -132,13 +150,33 @@ local and host geometry commits are coalesced latest-wins.
 - Pane zoom in `TerminalTilingWorkspace.tsx` also replaces `PanelDockInDnd` with
   a separately rendered leaf, which remounts the terminal component.
 - WebGL is a custom YAADE renderer over Ghostty terminal state, not Ghostty's
-  native renderer. It currently caches whole changing row runs, uses
-  `preserveDrawingBuffer: true`, and turns atlas rebuilds into recovery errors.
-- The current backend E2E proves equal retained text and non-empty pixels, not
-  Canvas/WebGL visual parity. WebGL currently collapses underline styles and
-  omits Canvas's block-cursor glyph inversion and fractional-DPR edge snapping.
-- Current stream and typing-under-flood benchmarks can finish before the relevant
-  output is presented, so Plans 007–012 use a presented-frame endpoint.
+  native renderer. It now retains row batches and uses a non-preserved default
+  framebuffer, but every dirty frame concatenates all retained rows into global
+  batches and uploads the complete scene. Even an empty dirty-row set currently
+  marks the scene for re-upload, so cursor blink/focus-only frames repeat that work.
+- A 2026-08-30 method probe at commit `4341fd51` confirmed the static cost: an
+  idle focused 180×44 terminal uploaded two 163,176-byte retained scenes plus a
+  32-byte cursor in 1.25 seconds. Ten one-row updates coalesced into five
+  presents, but each still uploaded a 170,612–171,132-byte complete scene
+  (855,140 scene bytes total). Codify this probe before changing submission.
+- A dirty row allocates three fresh typed-array batches. Row construction also
+  creates per-cell color tuples and empty underline arrays, despite Plan 010's
+  allocation target. WebGL counters do not expose scene-copy/upload bytes through
+  the lifecycle/test bridge, so the existing benchmark cannot attribute this cost.
+- Worker packed updates are validated once in `protocol.ts` and again in
+  `GhosttyViewportModel.apply()`. Transferring the builder buffers detaches them,
+  but `releaseRenderUpdate()` does not recycle them to the worker, so default
+  worker frames allocate fresh transfer storage. Ghostty extraction still builds
+  compatibility cells before UTF-8 repacking.
+- Resident hidden surfaces keep their WebGL contexts and per-terminal atlases;
+  there is no document-wide context/atlas budget or hidden-runtime update
+  suppression. Atlas capacity pressure resets the whole atlas and retained scene.
+- The current backend E2E proves equal retained text, dimensions, and coarse
+  non-background pixel counts, not same-machine structural pixel parity.
+- Presented-frame clocks now gate terminal benchmarks, but the dashboard case
+  reports only total command duration and renderer generation. WebGL scene-copy,
+  instance-upload, atlas, model-apply, and per-frame distributions are not yet
+  available through the test bridge.
 
 ## Global verification gates
 

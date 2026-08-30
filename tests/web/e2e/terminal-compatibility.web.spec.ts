@@ -1,8 +1,13 @@
 import { expect } from "@playwright/test"
+import { resolve } from "node:path"
 import { test } from "../../fixtures/e2e.js"
-import { focusTerminal } from "./_launch.js"
+import { focusTerminal, REPO_ROOT } from "./_launch.js"
 
 const ptyAvailable = process.platform !== "win32"
+const backgroundQueryFixture = resolve(
+  REPO_ROOT,
+  "fixtures/terminal-background-query.mjs",
+)
 test.describe("terminal compatibility", () => {
   test.skip(!ptyAvailable, "node-pty cannot spawn a shell on this machine")
 
@@ -116,6 +121,67 @@ test.describe("terminal compatibility", () => {
       })
     await expect.poll(terminalText, { timeout: 15_000 }).toContain("─ YAADE_UTF8_OK")
     expect(await terminalText()).not.toContain("�")
+  })
+
+  test("reports the configured background color to terminal applications", async ({
+    launchApp,
+  }) => {
+    const { page } = await launchApp()
+    const queryBackground = async (terminalId: string, expected: string) => {
+      const panel = page.locator(
+        `[data-yaade-terminal-tile="${terminalId}"] [data-yaade-terminal-panel]`,
+      )
+      await expect(panel).toHaveAttribute("data-yaade-terminal-status", "running", {
+        timeout: 30_000,
+      })
+      await panel.locator(".yaade-terminal-surface").click()
+      await panel.locator("[data-ghostty-terminal-input]").focus()
+      await page.keyboard.type(`node ${JSON.stringify(backgroundQueryFixture)}`)
+      await page.keyboard.press("Enter")
+
+      const terminalText = () =>
+        page.evaluate(
+          id => window.__yaadeTest?.getTerminalText?.(id) ?? "",
+          terminalId,
+        )
+      await expect.poll(terminalText, { timeout: 15_000 }).toContain(
+        `YAADE_TERMINAL_QUERY_RESPONSE:${expected}`,
+      )
+      expect(await terminalText()).not.toMatch(/E1568|Terminal did not respond/)
+    }
+
+    const initialTerminalId = await page.evaluate(() => {
+      const terminalId = window.__yaadeTest?.getState().activeMuxTerminalId
+      if (!terminalId) throw new Error("active terminal missing")
+      return terminalId
+    })
+    await queryBackground(initialTerminalId, "0e0e/1515/1b1b")
+
+    await page.emulateMedia({ colorScheme: "light" })
+    await expect
+      .poll(() =>
+        page.evaluate(() =>
+          getComputedStyle(document.documentElement)
+            .getPropertyValue("--yaade-terminal-background")
+            .trim(),
+        ),
+      )
+      .toBe("#e0e3e7")
+
+    const lightTerminalId = await page.evaluate(async () => {
+      const terminals = window.yaade?.mux
+      const sessionId = window.__yaadeTest?.getState().activeSessionId
+      if (!terminals || !sessionId) throw new Error("terminal API or session missing")
+      const created = await terminals.createTerminal({
+        _tag: "CreateTerminal",
+        sessionId,
+        kind: "terminal",
+        input: { _tag: "TerminalInput", kind: "terminal" },
+      })
+      await window.__yaadeTest?.selectMuxTerminal?.(created.id)
+      return created.id
+    })
+    await queryBackground(lightTerminalId, "e0e0/e3e3/e7e7")
   })
 
   test("default worker runtime preserves key and Unicode input order", async ({

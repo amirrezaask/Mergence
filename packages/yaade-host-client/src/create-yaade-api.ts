@@ -833,6 +833,7 @@ export function createYaadeApi(transport: YaadeHostTransport): YaadeHostAPI {
         }
         return invokeTerminalHot(transport, "terminal:resize", id, cols, rows);
       },
+      setTheme: (id, theme) => transport.invoke("terminal:setTheme", id, theme),
       markReplayReady: (id) =>
         invokeTerminalHot(transport, "terminal:ready", id),
       getCwd: (id) => transport.invoke("terminal:getCwd", id),

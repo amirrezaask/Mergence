@@ -13,7 +13,7 @@ use crate::{
         TerminalOutput, TerminalStatus, now_iso,
     },
     store::{StateStore, StoreError},
-    terminal::{TerminalError, TerminalHost, TerminalLaunch},
+    terminal::{TerminalError, TerminalHost, TerminalLaunch, TerminalTheme},
     wire::{ServerCapabilities, ServerIdentity, TerminalLeaseMode, TerminalMutationFence},
 };
 
@@ -879,6 +879,19 @@ impl HostRuntime {
                 )?;
                 Ok(Value::Null)
             }
+            "terminal:setTheme" => {
+                let theme = args
+                    .get(1)
+                    .cloned()
+                    .map(serde_json::from_value::<TerminalTheme>)
+                    .transpose()
+                    .map_err(|error| RuntimeError::Invalid(error.to_string()))?
+                    .ok_or_else(|| {
+                        RuntimeError::Invalid("terminal theme is required".to_owned())
+                    })?;
+                self.terminal.set_theme(id, theme)?;
+                Ok(Value::Null)
+            }
             "terminal:acquireLease" => Ok(json!(
                 self.terminal
                     .acquire_lease(
@@ -1095,6 +1108,7 @@ fn validate_route_args(channel: &str, args: &[Value]) -> Result<(), RuntimeError
                 && number_at(2)
                 && (args.len() == 3 || object_at(3))
         }
+        "terminal:setTheme" => args.len() == 2 && string_at(0) && object_at(1),
         "terminal:acquireLease" => {
             (args.len() == 1 || args.len() == 2)
                 && string_at(0)
@@ -1165,6 +1179,7 @@ fn is_known_route(channel: &str) -> bool {
             | "terminal:write"
             | "terminal:writeBinary"
             | "terminal:resize"
+            | "terminal:setTheme"
             | "terminal:acquireLease"
             | "terminal:renewLease"
             | "terminal:releaseLease"
@@ -1265,6 +1280,10 @@ mod tests {
             RouteCapability::Observe
         );
         assert_eq!(route_capability("terminal:write"), RouteCapability::Control);
+        assert_eq!(
+            route_capability("terminal:setTheme"),
+            RouteCapability::Control
+        );
         assert_eq!(route_capability("terminal:dispose"), RouteCapability::Admin);
         assert_eq!(
             route_capability("terminal:stopAll"),
@@ -1316,6 +1335,21 @@ mod tests {
         assert!(
             validate_route_args("terminal:resize", &[json!("id"), json!("80"), json!(24)]).is_err()
         );
+        assert!(
+            validate_route_args(
+                "terminal:setTheme",
+                &[
+                    json!("id"),
+                    json!({
+                        "foreground": { "r": 1, "g": 2, "b": 3 },
+                        "background": { "r": 4, "g": 5, "b": 6 },
+                        "cursor": { "r": 7, "g": 8, "b": 9 }
+                    })
+                ]
+            )
+            .is_ok()
+        );
+        assert!(validate_route_args("terminal:setTheme", &[json!("id"), json!("dark")]).is_err());
         assert!(
             validate_route_args(
                 "terminal:attach",

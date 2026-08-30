@@ -36,6 +36,44 @@ const CHECKPOINT_BYTES: usize = 512 * 1024;
 const CHECKPOINT_INTERVAL: std::time::Duration = std::time::Duration::from_secs(2);
 const EXITED_DISPOSE_TTL: std::time::Duration = std::time::Duration::from_secs(90);
 
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalColor {
+    pub r: u8,
+    pub g: u8,
+    pub b: u8,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+pub struct TerminalTheme {
+    pub foreground: TerminalColor,
+    pub background: TerminalColor,
+    pub cursor: TerminalColor,
+}
+
+impl Default for TerminalTheme {
+    fn default() -> Self {
+        Self {
+            foreground: TerminalColor {
+                r: 238,
+                g: 242,
+                b: 247,
+            },
+            background: TerminalColor {
+                r: 14,
+                g: 21,
+                b: 27,
+            },
+            cursor: TerminalColor {
+                r: 0,
+                g: 106,
+                b: 222,
+            },
+        }
+    }
+}
+
 #[derive(Clone, Debug, Default, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TerminalLaunch {
@@ -46,6 +84,7 @@ pub struct TerminalLaunch {
     pub env: HashMap<String, String>,
     pub cols: Option<u16>,
     pub rows: Option<u16>,
+    pub theme: Option<TerminalTheme>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -178,7 +217,8 @@ struct EntryState {
     rows: u16,
     disposed: bool,
     replay_ready_clients: HashSet<String>,
-    da1_leftover: String,
+    query_leftover: String,
+    terminal_theme: TerminalTheme,
     live_cwd: Option<PathBuf>,
     recorder: Option<vt100::Parser>,
     checkpoint: Option<TerminalCheckpoint>,
@@ -280,6 +320,7 @@ impl TerminalHost {
             }
         }
         let launch = launch.unwrap_or_default();
+        let terminal_theme = launch.theme.unwrap_or_default();
         let cols = launch.cols.unwrap_or(80).clamp(1, 1000);
         let rows = launch.rows.unwrap_or(24).clamp(1, 1000);
         let command = launch.command.clone().unwrap_or_else(default_shell);
@@ -370,7 +411,8 @@ impl TerminalHost {
                 rows,
                 disposed: false,
                 replay_ready_clients: HashSet::new(),
-                da1_leftover: String::new(),
+                query_leftover: String::new(),
+                terminal_theme,
                 live_cwd: None,
                 recorder: self.checkpoints.then(|| vt100::Parser::new(rows, cols, 0)),
                 checkpoint: None,
@@ -456,6 +498,16 @@ impl TerminalHost {
             .decode(encoded)
             .map_err(|error| TerminalError::Invalid(error.to_string()))?;
         self.write(id, &data)
+    }
+
+    pub fn set_theme(&self, id: &str, theme: TerminalTheme) -> Result<(), TerminalError> {
+        let entry = self.entry(id)?;
+        entry
+            .state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+            .terminal_theme = theme;
+        Ok(())
     }
 
     pub fn resize(&self, id: &str, cols: u16, rows: u16) -> Result<(), TerminalError> {
@@ -887,7 +939,8 @@ fn output_loop(
                         state.replay_truncated = true;
                     }
                 }
-                let da1_queries = feed_da1_queries(&mut state.da1_leftover, &data);
+                let terminal_queries = feed_terminal_queries(&mut state.query_leftover, &data);
+                let terminal_theme = state.terminal_theme;
                 if let Some(cwd) = parse_osc7_cwd(&data) {
                     state.live_cwd = Some(cwd.canonicalize().unwrap_or(cwd));
                 }
@@ -905,11 +958,11 @@ fn output_loop(
                 if let Err(error) = host.history.append(&entry.id, sequence, &data) {
                     eprintln!("[terminal-history] {error}");
                 }
-                if da1_queries > 0
+                if !terminal_queries.is_empty()
                     && let Ok(mut writer) = entry.writer.lock()
                 {
-                    for _ in 0..da1_queries {
-                        let _ = writer.write_all(b"\x1b[?64;1;2;6;9;15;18;21;22c");
+                    for query in terminal_queries {
+                        let _ = write_terminal_query_response(&mut **writer, query, terminal_theme);
                     }
                     let _ = writer.flush();
                 }
@@ -1054,23 +1107,46 @@ fn signal_number(signal: &str) -> Option<i32> {
     }
 }
 
-fn feed_da1_queries(leftover: &mut String, chunk: &str) -> usize {
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TerminalQuery {
+    PrimaryDeviceAttributes,
+    OperatingStatus,
+    ForegroundColor,
+    BackgroundColor,
+    CursorColor,
+}
+
+const TERMINAL_QUERY_SEQUENCES: [(&str, TerminalQuery); 9] = [
+    ("\u{1b}[c", TerminalQuery::PrimaryDeviceAttributes),
+    ("\u{1b}[0c", TerminalQuery::PrimaryDeviceAttributes),
+    ("\u{1b}[5n", TerminalQuery::OperatingStatus),
+    ("\u{1b}]10;?\u{7}", TerminalQuery::ForegroundColor),
+    ("\u{1b}]10;?\u{1b}\\", TerminalQuery::ForegroundColor),
+    ("\u{1b}]11;?\u{7}", TerminalQuery::BackgroundColor),
+    ("\u{1b}]11;?\u{1b}\\", TerminalQuery::BackgroundColor),
+    ("\u{1b}]12;?\u{7}", TerminalQuery::CursorColor),
+    ("\u{1b}]12;?\u{1b}\\", TerminalQuery::CursorColor),
+];
+
+fn feed_terminal_queries(leftover: &mut String, chunk: &str) -> Vec<TerminalQuery> {
     let data = std::mem::take(leftover) + chunk;
-    let mut queries = 0;
+    let mut queries = Vec::new();
     let mut cursor = 0;
     while let Some(offset) = data[cursor..].find('\u{1b}') {
         let escape = cursor + offset;
         let rest = &data[escape..];
-        if matches!(rest, "\u{1b}" | "\u{1b}[" | "\u{1b}[0") {
-            *leftover = rest.to_owned();
+        if let Some((sequence, query)) = TERMINAL_QUERY_SEQUENCES
+            .iter()
+            .find(|(sequence, _)| rest.starts_with(sequence))
+        {
+            queries.push(*query);
+            cursor = escape + sequence.len();
+        } else if TERMINAL_QUERY_SEQUENCES
+            .iter()
+            .any(|(sequence, _)| sequence.starts_with(rest))
+        {
+            leftover.push_str(rest);
             break;
-        }
-        if rest.starts_with("\u{1b}[c") {
-            queries += 1;
-            cursor = escape + 3;
-        } else if rest.starts_with("\u{1b}[0c") {
-            queries += 1;
-            cursor = escape + 4;
         } else {
             cursor = escape + 1;
         }
@@ -1079,6 +1155,38 @@ fn feed_da1_queries(leftover: &mut String, chunk: &str) -> usize {
         }
     }
     queries
+}
+
+fn write_terminal_query_response<W: Write + ?Sized>(
+    writer: &mut W,
+    query: TerminalQuery,
+    theme: TerminalTheme,
+) -> std::io::Result<()> {
+    match query {
+        TerminalQuery::PrimaryDeviceAttributes => {
+            writer.write_all(b"\x1b[?64;1;2;6;9;15;18;21;22c")
+        }
+        TerminalQuery::OperatingStatus => writer.write_all(b"\x1b[0n"),
+        TerminalQuery::ForegroundColor
+        | TerminalQuery::BackgroundColor
+        | TerminalQuery::CursorColor => {
+            let (selector, color) = match query {
+                TerminalQuery::ForegroundColor => (10, theme.foreground),
+                TerminalQuery::BackgroundColor => (11, theme.background),
+                TerminalQuery::CursorColor => (12, theme.cursor),
+                TerminalQuery::PrimaryDeviceAttributes | TerminalQuery::OperatingStatus => {
+                    unreachable!()
+                }
+            };
+            write!(
+                writer,
+                "\x1b]{selector};rgb:{:04x}/{:04x}/{:04x}\x1b\\",
+                u16::from(color.r) * 0x101,
+                u16::from(color.g) * 0x101,
+                u16::from(color.b) * 0x101,
+            )
+        }
+    }
 }
 
 fn command_output(command: &str, args: &[&str]) -> Option<String> {
@@ -1235,12 +1343,63 @@ mod tests {
     use super::*;
 
     #[test]
-    fn da1_scanner_handles_queries_split_across_chunks() {
+    fn terminal_query_scanner_handles_da1_queries_split_across_chunks() {
         let mut leftover = String::new();
-        assert_eq!(feed_da1_queries(&mut leftover, "before\u{1b}["), 0);
+        assert!(feed_terminal_queries(&mut leftover, "before\u{1b}[").is_empty());
         assert_eq!(leftover, "\u{1b}[");
-        assert_eq!(feed_da1_queries(&mut leftover, "0cafter\u{1b}[c"), 2);
+        assert_eq!(
+            feed_terminal_queries(&mut leftover, "0cafter\u{1b}[c"),
+            vec![
+                TerminalQuery::PrimaryDeviceAttributes,
+                TerminalQuery::PrimaryDeviceAttributes,
+            ]
+        );
         assert!(leftover.is_empty());
+    }
+
+    #[test]
+    fn terminal_query_scanner_handles_color_and_status_queries() {
+        let mut leftover = String::new();
+        assert!(feed_terminal_queries(&mut leftover, "before\u{1b}]11;").is_empty());
+        assert_eq!(leftover, "\u{1b}]11;");
+        assert_eq!(
+            feed_terminal_queries(&mut leftover, "?\u{7}\u{1b}[5"),
+            vec![TerminalQuery::BackgroundColor]
+        );
+        assert_eq!(leftover, "\u{1b}[5");
+        assert_eq!(
+            feed_terminal_queries(&mut leftover, "n\u{1b}]10;?\u{1b}"),
+            vec![TerminalQuery::OperatingStatus]
+        );
+        assert_eq!(leftover, "\u{1b}]10;?\u{1b}");
+        assert_eq!(
+            feed_terminal_queries(&mut leftover, "\\\u{1b}]12;?\u{7}"),
+            vec![TerminalQuery::ForegroundColor, TerminalQuery::CursorColor]
+        );
+        assert!(leftover.is_empty());
+    }
+
+    #[test]
+    fn terminal_query_responses_report_the_configured_theme() {
+        let theme = TerminalTheme {
+            foreground: TerminalColor { r: 1, g: 2, b: 3 },
+            background: TerminalColor {
+                r: 16,
+                g: 32,
+                b: 48,
+            },
+            cursor: TerminalColor {
+                r: 254,
+                g: 253,
+                b: 252,
+            },
+        };
+        let mut response = Vec::new();
+        write_terminal_query_response(&mut response, TerminalQuery::BackgroundColor, theme)
+            .expect("background response");
+        write_terminal_query_response(&mut response, TerminalQuery::OperatingStatus, theme)
+            .expect("status response");
+        assert_eq!(response, b"\x1b]11;rgb:1010/2020/3030\x1b\\\x1b[0n");
     }
 
     #[test]
