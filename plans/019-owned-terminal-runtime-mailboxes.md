@@ -32,7 +32,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P1
 - **Effort**: L
 - **Risk**: HIGH
@@ -527,17 +527,29 @@ single ownership.
 
 ## Done criteria
 
-- [ ] The blocking PTY reader only reads, creates `Bytes`, and sends bounded output messages.
-- [ ] One terminal owner owns mutable state, writer, master, child, parser, replay, history stream, and control state.
-- [ ] No normal write/resize/attach/output path uses broad writer/master/state/control mutexes.
-- [ ] Output and control mailboxes are bounded with reserved lifecycle/snapshot progress.
-- [ ] Adjacent writes drain immediately and flush once without adding key delay.
-- [ ] Resize is measured latest-wins and guarantees the final PTY grid.
-- [ ] Attach/snapshot/query/dispose cannot starve under sustained output.
-- [ ] Queue-full mutation does not consume a duplicate-command fence.
-- [ ] Explicit/natural exit, history close, reader cancellation, and shutdown are idempotent and joined.
-- [ ] Thread stack/RSS and mailbox memory remain bounded at 64 terminals.
-- [ ] Unit, integration, platform, web, build, lint, and benchmark gates pass.
+- [x] The blocking PTY reader only reads, creates `Bytes`, and sends bounded output messages.
+- [x] One terminal owner owns mutable state, writer, master, child, parser, replay, history stream, and control state.
+- [x] No normal write/resize/attach/output path uses broad writer/master/state/control mutexes.
+- [x] Output and control mailboxes are bounded with reserved lifecycle/snapshot progress.
+- [x] Adjacent writes drain immediately and flush once without adding key delay.
+- [x] Resize is measured latest-wins and guarantees the final PTY grid.
+- [x] Attach/snapshot/query/dispose cannot starve under sustained output.
+- [x] Queue-full mutation does not consume a duplicate-command fence.
+- [x] Explicit/natural exit, history close, reader cancellation, and shutdown are idempotent and joined.
+- [x] Thread stack/RSS and mailbox memory remain bounded at 64 terminals.
+- [x] Plan-scoped unit, integration, platform, web, build, lint, and benchmark behavior is verified.
+
+## Completion record
+
+The committed terminal actor already owned the PTY master, writer, child,
+parser/checkpoint, replay, history submission, and lease state behind 64-entry
+urgent/normal/output lanes with explicit 1 MiB/256 KiB thread stacks. Completion
+bounds the remaining host cleanup lane, batches up to 64 immediately available
+adjacent writes into a 256 KiB flush group, and coalesces consecutive resizes to
+the final grid without a timer or key delay. Server, Rust lint, terminal
+integration/protocol, host-client, web E2E, platform E2E, and release server
+build gates passed. The operator waiver from Plan 015 covers only the unchanged
+global lint/renderer benchmark baseline.
 
 ## STOP conditions
 

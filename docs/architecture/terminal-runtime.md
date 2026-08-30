@@ -8,9 +8,15 @@ browser  <->  host server  <->  TerminalHost  <->  node-pty children
 
 `TerminalHost` maps terminal IDs to handles. One owner thread per terminal owns
 the PTY master, writer, child, replay, checkpoint parser, and writer leases. A
-small reader thread only reads the blocking PTY and sends immutable chunks over
-a bounded channel. The owner services bounded urgent and normal command lanes
-between measured output quanta. Queue saturation returns a typed runtime error.
+small 256 KiB-stack reader thread only reads the blocking PTY and sends at most
+64 immutable 64 KiB chunks over a bounded channel. The 1 MiB-stack owner
+services 64-entry urgent and normal command lanes between 1 MiB output quanta.
+It drains up to 64 immediately available adjacent writes into one bounded 256
+KiB scratch batch and flushes once; a lone keystroke is never timer-delayed.
+Consecutive resize bursts are latest-wins within the same owner turn, all
+receipts resolve, and the final dimensions update the PTY, recorder, and
+checkpoint together. Terminal-map cleanup also uses a bounded 256-entry lane.
+Queue saturation returns a typed runtime error.
 
 The history owner accepts records through a 1,024-message / 32 MiB ingest
 mailbox. A separate bounded 1,024-message close lane reserves lifecycle progress;
