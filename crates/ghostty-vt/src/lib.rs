@@ -66,7 +66,7 @@ pub use render::{
 };
 pub use terminal::{
     ActiveScreen, MAX_APC_BYTES, MAX_SCROLLBACK_ROWS, Mode, ScrollbarState, Terminal,
-    TerminalColors, TerminalOptions, TerminalState,
+    TerminalColors, TerminalOptions, TerminalState, build_revision,
 };
 pub use types::{Rgb, TerminalText};
 

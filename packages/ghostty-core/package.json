@@ -18,6 +18,7 @@
   },
   "devDependencies": {
     "@types/node": "^22.15.29",
+    "effect": "^3.22.1",
     "typescript": "^7.0.2"
   }
 }

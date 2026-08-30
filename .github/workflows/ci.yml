@@ -78,6 +78,7 @@ jobs:
       - run: cargo test --manifest-path crates/ghostty-vt-sys/Cargo.toml
       - run: cargo test --release --manifest-path crates/ghostty-vt-sys/Cargo.toml
       - run: cargo clippy --manifest-path crates/ghostty-vt-sys/Cargo.toml --all-targets -- -D warnings
+      - run: vp run test:ghostty:parity
       - if: runner.os == 'Linux'
         run: cargo run --manifest-path crates/ghostty-vt-sys/Cargo.toml --features bindgen-tool --bin gen-bindings -- --check
       - run: vp run typecheck

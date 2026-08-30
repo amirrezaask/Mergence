@@ -157,6 +157,8 @@ pub struct TerminalState {
     pub height_pixels: u32,
     /// Whether the viewport follows the active area.
     pub viewport_active: bool,
+    /// Current Kitty keyboard protocol flags.
+    pub kitty_keyboard_flags: u8,
     /// Scrollbar metadata.
     pub scrollbar: ScrollbarState,
     /// Copied title bytes.
@@ -335,6 +337,20 @@ impl Terminal {
         ffi_result(result, Operation::TerminalMode)
     }
 
+    /// Set whether DECSCUSR reset returns to a blinking cursor.
+    pub fn set_default_cursor_blink(&mut self, blinking: bool) -> Result<(), GhosttyError> {
+        // SAFETY: The terminal is live and exclusive, and Ghostty copies the
+        // checked boolean during this call.
+        let result = unsafe {
+            ffi::ghostty_terminal_set(
+                self.raw.as_ptr(),
+                ffi::TerminalOption::DEFAULT_CURSOR_BLINK,
+                ptr::from_ref(&blinking).cast::<c_void>(),
+            )
+        };
+        ffi_result(result, Operation::TerminalSet)
+    }
+
     /// Set default foreground, background, and cursor colors.
     pub fn set_default_colors(
         &mut self,
@@ -435,6 +451,7 @@ impl Terminal {
             width_pixels: self.get(ffi::TerminalData::WIDTH_PX)?,
             height_pixels: self.get(ffi::TerminalData::HEIGHT_PX)?,
             viewport_active: self.get(ffi::TerminalData::VIEWPORT_ACTIVE)?,
+            kitty_keyboard_flags: self.get(ffi::TerminalData::KITTY_KEYBOARD_FLAGS)?,
             scrollbar: ScrollbarState {
                 total: scrollbar.total,
                 offset: scrollbar.offset,
@@ -658,6 +675,15 @@ fn build_info_string_bytes(value: ffi::String) -> Result<&'static [u8], GhosttyE
     // SAFETY: Build-info strings are immutable library-owned data documented as
     // valid for the entire process lifetime.
     Ok(unsafe { std::slice::from_raw_parts(value.ptr, value.len) })
+}
+
+/// Return the exact Ghostty revision after validating linked build-info.
+///
+/// This value is safe to include in diagnostics and test observations. It is
+/// not a parser-state or persistence version.
+pub fn build_revision() -> Result<&'static str, GhosttyError> {
+    initialize_process()?;
+    Ok(ffi::GHOSTTY_REVISION)
 }
 
 fn initialize_process() -> Result<(), GhosttyError> {
