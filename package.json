@@ -12,6 +12,7 @@
     "check:ghostty-source": "node scripts/prepare-ghostty-source.mjs check",
     "build:ghostty-native": "cargo build --release --manifest-path crates/ghostty-vt-sys/Cargo.toml",
     "test:ghostty-native": "cargo test --manifest-path crates/ghostty-vt-sys/Cargo.toml",
+    "test:ghostty:parity": "node scripts/test-ghostty-parity.mjs",
     "dev": "vp run --parallel --filter @yaade/server --filter @yaade/web dev",
     "dev:server": "vp run @yaade/server#dev",
     "dev:web": "vp run --filter @yaade/web dev",

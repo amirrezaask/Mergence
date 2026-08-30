@@ -23,7 +23,7 @@
 
 ## Status
 
-- **Status**: BLOCKED (Plans 015 and 021)
+- **Status**: IN PROGRESS
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
@@ -257,14 +257,20 @@ Expected locally: all pass. Plan completion requires the three-platform matrix.
 - Wrong native/WASM revision rejection.
 - Three-platform deterministic output.
 
+## Implementation result
+
+The repository now has six deterministic binary fixtures, independent native and WASM runners, sparse hand-authored assertions, bounded Effect Schema and serde decoders, and a strict comparator. Local native, WASM, and parity gates pass at revision `9f62873bf195e4d8a762d768a1405a5f2f7b1697`. The `runtime-platform` matrix runs parity on Linux, macOS, and Windows.
+
+`vp run lint` still reports existing errors in files unchanged by this plan. Linting every TypeScript and JavaScript file changed by Plan 022 passes. Keep this plan `IN PROGRESS` until the repository lint baseline and the three hosted platform jobs pass.
+
 ## Done criteria
 
-- [ ] One reviewed binary corpus drives native and WASM with identical options/events/chunks.
-- [ ] Both runners expose only bounded public Ghostty observations.
-- [ ] Critical semantics have hand-authored assertions in addition to equality.
-- [ ] Exact write-PTY responses and malformed byte behavior compare equal.
-- [ ] Comparator rejects revision mismatch and reports precise differences.
-- [ ] No production protocol/checkpoint depends on the test observation schema.
+- [x] One reviewed binary corpus drives native and WASM with identical options/events/chunks.
+- [x] Both runners expose only bounded public Ghostty observations.
+- [x] Critical semantics have hand-authored assertions in addition to equality.
+- [x] Exact write-PTY responses and malformed byte behavior compare equal.
+- [x] Comparator rejects revision mismatch and reports precise differences.
+- [x] No production protocol/checkpoint depends on the test observation schema.
 - [ ] `test:ghostty:parity` passes on Linux, macOS, and Windows.
 
 ## STOP conditions

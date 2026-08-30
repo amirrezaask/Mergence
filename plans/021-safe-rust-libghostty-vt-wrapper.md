@@ -23,7 +23,7 @@
 
 ## Status
 
-- **Status**: TODO
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: HIGH
@@ -258,14 +258,14 @@ Expected: docs build without warnings and unsafe invariants are reviewable.
 
 ## Done criteria
 
-- [ ] `ghostty-vt` exposes a narrow safe API over Plan 020's sys crate.
-- [ ] Terminal and borrowed views are `!Send + !Sync` and cannot escape mutation lifetimes.
-- [ ] All C handles and partial constructions free through RAII.
-- [ ] Effects are bounded, synchronous, nonblocking, and non-reentrant.
-- [ ] Public render/state traversal exposes no private Ghostty representation.
-- [ ] Arbitrary input and lifecycle tests show no panic, leak, or unsafe escape.
-- [ ] Server code remains unchanged.
-- [ ] Rustfmt, Clippy, rustdoc, release tests, and supported sanitizers pass.
+- [x] `ghostty-vt` exposes a narrow safe API over Plan 020's sys crate.
+- [x] Terminal and borrowed views are `!Send + !Sync` and cannot escape mutation lifetimes.
+- [x] All C handles and partial constructions free through RAII.
+- [x] Effects are bounded, synchronous, nonblocking, and non-reentrant.
+- [x] Public render/state traversal exposes no private Ghostty representation.
+- [x] Arbitrary input and lifecycle tests show no panic, leak, or unsafe escape.
+- [x] Server code remains unchanged.
+- [x] Rustfmt, Clippy, rustdoc, release tests, and supported sanitizers pass.
 
 ## STOP conditions
 

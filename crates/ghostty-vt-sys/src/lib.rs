@@ -10,6 +10,9 @@ use std::ops::Deref;
 
 pub use bindings::*;
 
+/// Exact Ghostty source revision linked by this checked sys crate.
+pub const GHOSTTY_REVISION: &str = env!("YAADE_GHOSTTY_REVISION");
+
 /// Initialize a "sized" FFI object.
 #[macro_export]
 macro_rules! sized {
