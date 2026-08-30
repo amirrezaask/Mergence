@@ -28,6 +28,30 @@ Test host: Apple M4, macOS 27, 2026-08-29. Browser: project Chromium 149.0.7827.
 
 The local results vary enough that they do not justify a performance claim. Project policy enables the worker and scheduler by operator direction so lower-spec and busier systems can keep parsing away from browser input and layout. Existing benchmark budgets remain unchanged.
 
+## Benchmark contract
+
+The serial Playwright benchmark project runs against the release web artifact.
+Its versioned, payload-free stage dictionary is `host-frame-received` →
+`scheduler-posted` → `worker-command-received` → `parsed` → `render-build` →
+`transferred` → `model-applied` → `scene-submitted` → `presented` →
+`slot-reclaimed`. Timing samples are capped at 256 entries. Exact counters,
+final-state fences, corpus hashes, and slot/upload bounds are correctness gates;
+median/p95/p99/CV timings use `budgets.json` only after repeatability supports a
+ceiling.
+
+`terminal-corpora.ts` materializes fixed ASCII, Unicode/wide, ANSI, synchronized
+TUI, 16 MiB replay, and six-terminal contention inputs before measured regions
+and validates their committed SHA-256 identities. Every measured browser result
+logs commit, pinned Ghostty revision, release worker/WASM artifact hash, browser,
+renderer, runtime, OS, CPU/core/memory context, DPR, and grid. CI runs the stable
+schema/corpus/semantic-fence and cursor-submission subset serially and uploads a
+content-free JSON report.
+
+The deterministic same-worker contention gate places a focused key at service
+turn five under FIFO against a target of at most one; the bounded weighted
+scheduler serves it at turn zero while every hidden lane is served by turn five.
+This justifies the Plan 026 scheduler rather than the measured-rejection outcome.
+
 ## Incremental WebGL scene submission
 
 WebGL retains one compact CPU/GPU scene while continuing to clear and redraw the complete default framebuffer on every present. Submission is planned independently for backgrounds, decorations, and glyphs:

@@ -42,7 +42,7 @@ pre-existing working-tree changes, honor STOP conditions, and update its status.
 | [024](blocked/024-terminal-checkpoint-restore-contract.md) | Prove checkpoint restore feasibility before defining its wire format | SolPro P1-8 checkpoint | P2 | M | 018, 022, 023, 027 | BLOCKED (018, 022, 023, 027) |
 | [025](025-worker-presentation-suppression.md) | Suppress hidden and synchronized worker frame preparation | SolPro P1-9/10 | P2 | M | 014, 015, 016 | DONE |
 | [026](026-focused-terminal-worker-fairness.md) | Bound shared-worker queues and prioritize focused terminals fairly | SolPro worker priority | P2 | M | 015, 025, 027 | IN PROGRESS |
-| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | IN PROGRESS |
+| [027](027-browser-terminal-subsystem-benchmarks.md) | Build a browser terminal subsystem benchmark harness | SolPro benchmark discipline | P2 | M | 014, 015, 016, 025 | DONE |
 | [028](blocked/028-ghostty-wasm-optimization-and-simd.md) | Select Ghostty WASM optimization mode and verify SIMD/features | SolPro build optimization | P2 | M | 020, 022, 027 | BLOCKED (022, 027) |
 | [029](blocked/029-rust-release-profile-and-packaging.md) | Measure Rust release profiles and package native Ghostty portably | SolPro release/platform | P3 | M | 020, 023, 027 | BLOCKED (023, 027) |
 | [030](030-idle-high-water-buffer-reclamation.md) | Reclaim oversized terminal buffers after measured idle periods | SolPro idle reclamation | P3 | M | 016, 018, 019, 025, 027 | IN PROGRESS |

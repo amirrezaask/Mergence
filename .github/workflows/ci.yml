@@ -27,6 +27,23 @@ jobs:
       - run: vp run test:web:e2e
         env:
           YAADE_E2E_RUN_FLAKY: "1"
+      - name: Run stable terminal benchmark subset
+        run: >-
+          vp exec playwright test --project=bench
+          tests/bench/terminal-subsystem.bench.ts
+          tests/bench/terminal-renderer-submission.bench.ts
+          --reporter=json
+        env:
+          JET_SKIP_E2E_BUILD: "1"
+          PLAYWRIGHT_JSON_OUTPUT_NAME: terminal-benchmark-report.json
+      - name: Upload terminal benchmark report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: terminal-benchmark-${{ runner.os }}-${{ github.sha }}
+          path: terminal-benchmark-report.json
+          if-no-files-found: error
+          retention-days: 14
       - run: vp exec playwright test --project=security-e2e
         env:
           JET_SKIP_E2E_BUILD: "1"

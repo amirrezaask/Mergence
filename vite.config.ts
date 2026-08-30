@@ -1,5 +1,9 @@
 import { defineConfig } from "vite-plus";
 
+const recoveryFilterActive = process.argv.some(argument =>
+  argument.includes("tests/recovery"),
+);
+
 export default defineConfig({
   pack: {
     platform: "node",
@@ -60,23 +64,25 @@ export default defineConfig({
     options: { typeAware: false, typeCheck: false },
   },
   test: {
-    exclude: [
-      ".repos/**",
-      "tests/bench/**",
-      "tests/chaos/**",
-      "tests/fixtures/**",
-      "tests/helpers/**",
-      "tests/multi-server/**",
-      "tests/platform/**",
-      "tests/runtime/**",
-      "tests/security/**",
-      "tests/shell/**",
-      "tests/soak/**",
-      "tests/web/**",
-      "**/node_modules/**",
-      "**/dist/**",
-      "**/out/**",
-    ],
+    exclude: recoveryFilterActive
+      ? [
+          ".repos/**",
+          "tests/bench/**",
+          "tests/chaos/**",
+          "tests/fixtures/**",
+          "tests/helpers/**",
+          "tests/multi-server/**",
+          "tests/platform/**",
+          "tests/runtime/**",
+          "tests/security/**",
+          "tests/shell/**",
+          "tests/soak/**",
+          "tests/web/**",
+          "**/node_modules/**",
+          "**/dist/**",
+          "**/out/**",
+        ]
+      : [".repos/**", "tests/**", "**/node_modules/**", "**/dist/**", "**/out/**"],
     testTimeout: 30_000,
     hookTimeout: 30_000,
   },

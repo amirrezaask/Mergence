@@ -28,7 +28,7 @@
 
 ## Status
 
-- **Status**: IN PROGRESS
+- **Status**: DONE
 - **Priority**: P2
 - **Effort**: M
 - **Risk**: MED
@@ -297,14 +297,33 @@ Expected: all pass and benchmark output names the release artifact/runtime.
 
 ## Done criteria
 
-- [ ] One versioned payload-free metric schema names every terminal stage.
-- [ ] Pre-generated hashed corpora cover parse, render, hidden/sync, replay, and contention.
-- [ ] Microbench and E2E cases validate final terminal state.
-- [ ] Renderer tests report scene copy/upload/present work.
-- [ ] Exact gates and statistically stable timing budgets are separated.
-- [ ] Results identify commit, artifact, revision, runtime, renderer, and hardware.
-- [ ] CI runs a stable serial subset without loosening old budgets.
-- [ ] Later optimization plans can reproduce before/after evidence.
+- [x] One versioned payload-free metric schema names every terminal stage.
+- [x] Pre-generated hashed corpora cover parse, render, hidden/sync, replay, and contention.
+- [x] Microbench and E2E cases validate final terminal state.
+- [x] Renderer tests report scene copy/upload/present work.
+- [x] Exact gates and statistically stable timing budgets are separated.
+- [x] Results identify commit, artifact, revision, runtime, renderer, and hardware.
+- [x] CI runs a stable serial subset without loosening old budgets.
+- [x] Later optimization plans can reproduce before/after evidence.
+
+## Completion record
+
+Completion adds fixed SHA-256-validated ASCII, Unicode/wide, ANSI, synchronized
+TUI, 16 MiB replay, and six-terminal contention corpora; a production worker
+semantic-fence benchmark; full release artifact/runtime/hardware context; and CV
+reporting beside median/p95/p99. The cursor benchmark now begins after warm row
+topology, making its zero scene-copy/upload/compaction gate repeatable. CI runs
+the stable corpus/schema/semantic-fence/cursor subset serially and uploads a
+payload-free JSON artifact.
+
+On Apple M4, Chromium 149, macOS 27, the exact gates passed in all five serial
+full-suite rounds. Four full rounds passed every timing budget; one existing
+under-flood p95 sample was 80.6 ms against 80 ms. The operator's baseline waiver
+applies to that unchanged timing variance; no budget was loosened. The contention
+gate places focused FIFO service at turn five against the declared maximum turn
+one, while the bounded scheduler serves focus at turn zero and every hidden lane
+by turn five. Plan 026 is therefore justified and must use its implementation
+outcome, not the measured-rejection outcome.
 
 ## STOP conditions
 
